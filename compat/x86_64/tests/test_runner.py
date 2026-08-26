@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -86,6 +86,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_poll_reference.sh', source)
         self.assertIn('run_ppoll_reference()', source)
         self.assertIn('compat/x86_64/run_x86_ppoll_reference.sh', source)
+        self.assertIn('run_epoll_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_epoll_reference.sh', source)
         self.assertIn('run_process_identity_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_identity_reference.sh', source)
         self.assertIn('run_process_session_reference()', source)
@@ -114,6 +116,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             source,
         )
         self.assertIn('--test x86_64_eventfd', source)
+        self.assertIn('--test x86_64_epoll', source)
         self.assertIn('--test x86_64_fcntl_getlk', source)
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_fs_advice', source)
@@ -229,6 +232,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             encoding="utf-8"
         )
         ppoll_reference = (ROOT / "compat" / "x86_64" / "run_x86_ppoll_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        epoll_reference = (ROOT / "compat" / "x86_64" / "run_x86_epoll_reference.sh").read_text(
             encoding="utf-8"
         )
         process_identity_reference = (
@@ -367,6 +373,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_ppoll_reference_probe.c', ppoll_reference)
         self.assertIn('ppoll/pause signal-mask reference', ppoll_reference)
         self.assertNotIn('-p crabc-libc', ppoll_reference)
+        self.assertIn('x86_epoll_reference_probe.c', epoll_reference)
+        self.assertIn('epoll ABI/behavior reference', epoll_reference)
+        self.assertIn('run_musl_oracle.sh', epoll_reference)
+        self.assertNotIn('-p crabc-libc', epoll_reference)
         self.assertIn('x86_process_identity_reference_probe.c', process_identity_reference)
         self.assertIn('process-identity reference', process_identity_reference)
         self.assertNotIn('-p crabc-libc', process_identity_reference)
@@ -686,6 +696,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "fenv",
                     "--test",
                     "x86_64_foundation",
+                    "--test",
+                    "x86_64_epoll",
                     "--test",
                     "x86_64_eventfd",
                     "--test",

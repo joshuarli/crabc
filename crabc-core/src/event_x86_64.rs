@@ -1,14 +1,14 @@
 //! Deliberately bounded Linux/x86-64 event-descriptor operations.
 //!
-//! This target-specific module owns the `poll(2)` and `ppoll(2)` syscall seams.
-//! The x86-64 `pollfd` record is kept separate from the AArch64 event module so
-//! that a caller cannot accidentally pass an AArch64-owned event record to an
-//! x86 syscall. The typed facade admits bounded `poll`, `ppoll`, and signal-only
-//! `pause`; pselect, epoll, signalfd, and wider event records remain deferred.
+//! This target-specific module owns the `poll(2)`, `ppoll(2)`, and epoll syscall
+//! seams. The x86-64 records are kept separate from the AArch64 event module so
+//! that a caller cannot accidentally pass an AArch64-owned record to an x86
+//! syscall. These are native core operations only; choosing a public facade or
+//! claiming x86-64 support remains outside this module.
 
 use crate::syscall::{
-    decode, syscall2, syscall3, syscall5, SYS_EVENTFD2, SYS_POLL, SYS_PPOLL, SYS_READ,
-    SYS_WRITE,
+    decode, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_EPOLL_CREATE1,
+    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2, SYS_POLL, SYS_PPOLL, SYS_READ, SYS_WRITE,
 };
 use crate::{RawFd, Result};
 
@@ -29,6 +29,27 @@ const _: () = assert!(core::mem::align_of::<KernelPollFd>() == 4);
 const _: () = assert!(core::mem::offset_of!(KernelPollFd, fd) == 0);
 const _: () = assert!(core::mem::offset_of!(KernelPollFd, events) == 4);
 const _: () = assert!(core::mem::offset_of!(KernelPollFd, revents) == 6);
+
+/// The packed Linux/x86-64 `struct epoll_event` kernel record.
+///
+/// x86-64 intentionally places the eight-byte data union at byte offset four;
+/// this is not the naturally aligned 16-byte layout used by AArch64. Callers
+/// reading a field from an array of these records must preserve the packed
+/// record contract (for example, by copying the field value rather than
+/// forming an unaligned reference).
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct KernelEpollEvent {
+    /// Readiness and behavior bits reported by or registered with Linux.
+    pub events: u32,
+    /// Caller-provided opaque event data.
+    pub data: u64,
+}
+
+const _: () = assert!(core::mem::size_of::<KernelEpollEvent>() == 12);
+const _: () = assert!(core::mem::align_of::<KernelEpollEvent>() == 1);
+const _: () = assert!(core::mem::offset_of!(KernelEpollEvent, events) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelEpollEvent, data) == 4);
 
 /// Creates a Linux eventfd counter without libc or TLS `errno`.
 #[inline]
@@ -73,6 +94,110 @@ pub fn eventfd_write(fd: RawFd, value: u64) -> Result<()> {
         return Err(crate::Errno::IO);
     }
     Ok(())
+}
+
+/// Creates a Linux epoll descriptor without using libc or TLS `errno`.
+#[inline]
+pub fn epoll_create1(flags: u32) -> Result<RawFd> {
+    // SAFETY: Linux validates the epoll flags; no user memory is accessed by
+    // this operation.
+    decode(unsafe { syscall1(SYS_EPOLL_CREATE1, flags as usize) }).map(|fd| fd as RawFd)
+}
+
+/// Adds, modifies, or removes a descriptor from an epoll interest list.
+///
+/// # Safety
+///
+/// For `EPOLL_CTL_ADD` and `EPOLL_CTL_MOD`, `event` must point to one
+/// readable [`KernelEpollEvent`] that remains live for the syscall. For
+/// `EPOLL_CTL_DEL`, `event` may be null as required by Linux. The descriptor
+/// arguments are passed directly to the kernel for validation.
+#[inline]
+pub unsafe fn epoll_ctl_raw(
+    epoll_fd: RawFd,
+    operation: u32,
+    source_fd: RawFd,
+    event: *const KernelEpollEvent,
+) -> Result<()> {
+    // SAFETY: The caller owns the optional packed-event pointer contract;
+    // Linux validates the operation and both descriptors.
+    decode(unsafe {
+        syscall4(
+            SYS_EPOLL_CTL,
+            epoll_fd as usize,
+            operation as usize,
+            source_fd as usize,
+            event as usize,
+        )
+    })
+    .map(|_| ())
+}
+
+/// Waits for epoll readiness with an optional Linux signal mask.
+///
+/// `timeout_ms` is Linux's signed millisecond representation: `-1` waits
+/// indefinitely and zero performs a non-blocking query. `maxevents` is the
+/// signed `int` width required by the x86-64 kernel ABI; typed callers should
+/// validate their `usize` buffer length before converting it to `i32`.
+///
+/// # Safety
+///
+/// `events` must point to writable storage for `maxevents` consecutive
+/// [`KernelEpollEvent`] records and remain live for the syscall. `sigmask`
+/// must be null or point to a kernel-sized Linux signal mask of `sigsetsize`
+/// bytes. The caller owns the pointed-to storage and ABI layout.
+#[inline]
+pub unsafe fn epoll_pwait_raw(
+    epoll_fd: RawFd,
+    events: *mut KernelEpollEvent,
+    maxevents: i32,
+    timeout_ms: i32,
+    sigmask: *const u8,
+    sigsetsize: usize,
+) -> Result<usize> {
+    // SAFETY: The caller owns the writable packed-event array and optional
+    // signal-mask contract; Linux validates descriptor, count, timeout, and
+    // signal-mask values.
+    decode(unsafe {
+        syscall6(
+            SYS_EPOLL_PWAIT,
+            epoll_fd as usize,
+            events as usize,
+            maxevents as usize,
+            timeout_ms as usize,
+            sigmask as usize,
+            sigsetsize,
+        )
+    })
+}
+
+/// Waits for epoll readiness without changing a signal mask.
+///
+/// This is the x86-64 null-mask form of [`epoll_pwait_raw`].
+///
+/// # Safety
+///
+/// `events` must point to writable storage for `maxevents` consecutive
+/// [`KernelEpollEvent`] records and remain live for the syscall.
+#[inline]
+pub unsafe fn epoll_wait_raw(
+    epoll_fd: RawFd,
+    events: *mut KernelEpollEvent,
+    maxevents: i32,
+    timeout_ms: i32,
+) -> Result<usize> {
+    // A null mask leaves the calling thread's signal mask unchanged. The
+    // x86-64 kernel signal-set size is eight bytes even for this null mask.
+    unsafe {
+        epoll_pwait_raw(
+            epoll_fd,
+            events,
+            maxevents,
+            timeout_ms,
+            core::ptr::null(),
+            core::mem::size_of::<usize>(),
+        )
+    }
 }
 
 /// Waits for readiness in caller-owned x86-64 `pollfd` records.

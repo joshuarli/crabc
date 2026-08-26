@@ -1,18 +1,21 @@
 //! The deliberately narrow Linux/x86-64 event facade.
 //!
 //! This target admits the scalar `eventfd2` counter seam and typed `poll(2)`,
-//! `ppoll(2)`, and signal-only `pause` readiness operations. `pselect`, epoll,
-//! signalfd, and their event-record contracts remain absent until each has
-//! independent x86-64 evidence.
+//! `ppoll(2)`, signal-only `pause`, and epoll readiness operations. `pselect`
+//! and signalfd remain absent until each has independent x86-64 evidence.
 
 use core::convert::TryFrom;
+use core::ffi::c_void;
+use core::hash::{Hash, Hasher};
+use core::mem::size_of;
 use core::ptr;
 
 use bitflags::bitflags;
 
+use crate::buffer::Buffer;
 use crate::signal::SignalSet;
 pub use crate::time::Timespec;
-use crate::{AsFd, BorrowedFd, Result};
+use crate::{AsFd, BorrowedFd, OwnedFd, Result};
 
 pub use crate::eventfd::{EventfdFlags, eventfd, eventfd_read, eventfd_write};
 
@@ -124,6 +127,312 @@ pub fn poll(fds: &mut [PollFd<'_>], timeout: Option<&Timespec>) -> Result<usize>
     // SAFETY: `PollFd` has the exact x86-64 `pollfd` layout, and each record's
     // descriptor borrow remains valid while the mutable slice is borrowed.
     unsafe { crabc_core::event::poll_raw(fds.as_mut_ptr().cast(), fds.len(), timeout_ms) }
+}
+
+/// Direct Linux epoll operations.
+pub mod epoll {
+    use super::*;
+
+    bitflags! {
+        /// Closed flags accepted by Linux `epoll_create1`.
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub struct CreateFlags: u32 {
+            /// `EPOLL_CLOEXEC`.
+            const CLOEXEC = 0x0008_0000;
+        }
+    }
+
+    bitflags! {
+        /// Closed readiness and behavior flags accepted by Linux epoll.
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+        pub struct EventFlags: u32 {
+            /// `EPOLLIN`.
+            const IN = 0x0000_0001;
+            /// `EPOLLPRI`.
+            const PRI = 0x0000_0002;
+            /// `EPOLLOUT`.
+            const OUT = 0x0000_0004;
+            /// `EPOLLERR`.
+            const ERR = 0x0000_0008;
+            /// `EPOLLHUP`.
+            const HUP = 0x0000_0010;
+            /// `EPOLLNVAL`.
+            const NVAL = 0x0000_0020;
+            /// `EPOLLRDNORM`.
+            const RDNORM = 0x0000_0040;
+            /// `EPOLLRDBAND`.
+            const RDBAND = 0x0000_0080;
+            /// `EPOLLWRNORM`.
+            const WRNORM = 0x0000_0100;
+            /// `EPOLLWRBAND`.
+            const WRBAND = 0x0000_0200;
+            /// `EPOLLMSG`.
+            const MSG = 0x0000_0400;
+            /// `EPOLLRDHUP`.
+            const RDHUP = 0x0000_2000;
+            /// `EPOLLONESHOT`.
+            const ONESHOT = 0x4000_0000;
+            /// `EPOLLEXCLUSIVE`.
+            const EXCLUSIVE = 0x1000_0000;
+            /// `EPOLLWAKEUP`.
+            const WAKEUP = 0x2000_0000;
+            /// `EPOLLET`.
+            const ET = 0x8000_0000;
+        }
+    }
+
+    /// Data associated with an [`Event`], represented as a 64-bit token or
+    /// pointer without crossing the C ABI.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub union EventData {
+        as_u64: u64,
+        pointer: *mut c_void,
+    }
+
+    impl EventData {
+        /// Creates event data containing a 64-bit integer token.
+        #[inline]
+        pub const fn new_u64(value: u64) -> Self {
+            Self { as_u64: value }
+        }
+
+        /// Creates event data containing a pointer token.
+        #[inline]
+        pub const fn new_ptr(value: *mut c_void) -> Self {
+            Self { pointer: value }
+        }
+
+        /// Reads the data as a 64-bit integer token.
+        #[inline]
+        pub fn u64(self) -> u64 {
+            // SAFETY: The union is intentionally transparent at this API
+            // boundary; both representations are exactly eight bytes.
+            unsafe { self.as_u64 }
+        }
+
+        /// Reads the data as a pointer token.
+        #[inline]
+        pub fn ptr(self) -> *mut c_void {
+            // SAFETY: See [`Self::u64`].
+            unsafe { self.pointer }
+        }
+    }
+
+    impl PartialEq for EventData {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            self.u64() == other.u64()
+        }
+    }
+
+    impl Eq for EventData {}
+
+    impl Hash for EventData {
+        #[inline]
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.u64().hash(state);
+        }
+    }
+
+    impl core::fmt::Debug for EventData {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter.debug_tuple("EventData").field(&self.u64()).finish()
+        }
+    }
+
+    /// One Linux/x86-64 `struct epoll_event` record.
+    ///
+    /// x86-64 uses the packed 12-byte kernel layout: the 32-bit event mask at
+    /// offset zero followed immediately by the 64-bit data union at offset
+    /// four. Fields are private so callers cannot accidentally take an
+    /// unaligned reference; use [`Self::flags`] and [`Self::data`] instead.
+    #[repr(C, packed)]
+    #[derive(Clone, Copy)]
+    pub struct Event {
+        flags: EventFlags,
+        data: EventData,
+    }
+
+    const _: () = assert!(size_of::<Event>() == 12);
+    const _: () = assert!(core::mem::align_of::<Event>() == 1);
+    const _: () = assert!(core::mem::offset_of!(Event, flags) == 0);
+    const _: () = assert!(core::mem::offset_of!(Event, data) == 4);
+
+    impl Event {
+        /// Constructs an event record for an epoll registration or result.
+        #[inline]
+        pub const fn new(flags: EventFlags, data: EventData) -> Self {
+            Self { flags, data }
+        }
+
+        /// Returns readiness and behavior flags from this event.
+        #[inline]
+        pub fn flags(self) -> EventFlags {
+            self.flags
+        }
+
+        /// Returns caller-provided data from this event.
+        #[inline]
+        pub fn data(self) -> EventData {
+            self.data
+        }
+    }
+
+    impl PartialEq for Event {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            self.flags() == other.flags() && self.data() == other.data()
+        }
+    }
+
+    impl Eq for Event {}
+
+    impl Hash for Event {
+        #[inline]
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.flags().hash(state);
+            self.data().hash(state);
+        }
+    }
+
+    impl core::fmt::Debug for Event {
+        fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            formatter
+                .debug_struct("Event")
+                .field("flags", &self.flags())
+                .field("data", &self.data())
+                .finish()
+        }
+    }
+
+    /// Creates an epoll descriptor.
+    #[inline]
+    #[doc(alias = "epoll_create1")]
+    pub fn create(flags: CreateFlags) -> Result<OwnedFd> {
+        let fd = crabc_core::event::epoll_create1(flags.bits())?;
+        // SAFETY: a successful Linux `epoll_create1` returns one new,
+        // non-negative, uniquely-owned descriptor.
+        unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
+    }
+
+    /// Creates an epoll descriptor using the legacy positive-size contract.
+    #[inline]
+    #[doc(alias = "epoll_create")]
+    pub fn create_legacy(size: usize) -> Result<OwnedFd> {
+        if size == 0 {
+            return Err(crate::Errno::INVAL);
+        }
+        create(CreateFlags::empty())
+    }
+
+    /// Registers a source descriptor with an epoll object.
+    #[inline]
+    #[doc(alias = "epoll_ctl")]
+    pub fn add<EpollFd: AsFd, SourceFd: AsFd>(
+        epoll: EpollFd,
+        source: SourceFd,
+        data: EventData,
+        event_flags: EventFlags,
+    ) -> Result<()> {
+        ctl(epoll, source, 1, Event::new(event_flags, data))
+    }
+
+    /// Modifies a source descriptor's epoll registration.
+    #[inline]
+    #[doc(alias = "epoll_ctl")]
+    pub fn modify<EpollFd: AsFd, SourceFd: AsFd>(
+        epoll: EpollFd,
+        source: SourceFd,
+        data: EventData,
+        event_flags: EventFlags,
+    ) -> Result<()> {
+        ctl(epoll, source, 3, Event::new(event_flags, data))
+    }
+
+    fn ctl<EpollFd: AsFd, SourceFd: AsFd>(
+        epoll: EpollFd,
+        source: SourceFd,
+        operation: u32,
+        event: Event,
+    ) -> Result<()> {
+        let epoll = epoll.as_fd();
+        let source = source.as_fd();
+        // SAFETY: `Event` has the exact packed x86-64 epoll layout and lives
+        // through the syscall; both descriptor borrows remain open as well.
+        unsafe {
+            crabc_core::event::epoll_ctl_raw(
+                epoll.as_raw_fd(),
+                operation,
+                source.as_raw_fd(),
+                (&event as *const Event).cast::<crabc_core::event::KernelEpollEvent>(),
+            )
+        }
+    }
+
+    /// Removes a source descriptor from an epoll object.
+    #[inline]
+    #[doc(alias = "epoll_ctl")]
+    pub fn delete<EpollFd: AsFd, SourceFd: AsFd>(epoll: EpollFd, source: SourceFd) -> Result<()> {
+        let epoll = epoll.as_fd();
+        let source = source.as_fd();
+        // SAFETY: Linux requires a null event pointer for `EPOLL_CTL_DEL`.
+        unsafe {
+            crabc_core::event::epoll_ctl_raw(
+                epoll.as_raw_fd(),
+                2,
+                source.as_raw_fd(),
+                ptr::null(),
+            )
+        }
+    }
+
+    /// Waits for registered events, initializing the supplied event buffer.
+    ///
+    /// `timeout` is rounded up to Linux's signed millisecond representation.
+    /// Invalid timespec fields and values which do not fit that representation
+    /// return [`crate::Errno::INVAL`].
+    #[inline]
+    #[allow(private_interfaces)]
+    pub fn wait<EpollFd: AsFd, Buf: Buffer<Event>>(
+        epoll: EpollFd,
+        mut event_list: Buf,
+        timeout: Option<&Timespec>,
+    ) -> Result<Buf::Output> {
+        let timeout = timeout.map(timeout_millis).transpose()?.unwrap_or(-1);
+        let epoll = epoll.as_fd();
+        let (events, maxevents) = event_list.parts_mut();
+        // The Linux ABI takes this count as a signed `int`; reject values
+        // which cannot be represented before crossing the raw seam.
+        let maxevents = i32::try_from(maxevents).map_err(|_| crate::Errno::INVAL)?;
+        // SAFETY: `Buffer` supplies writable storage for `maxevents` packed
+        // x86-64 records, and the epoll descriptor remains open for the call.
+        let ready = unsafe {
+            crabc_core::event::epoll_wait_raw(
+                epoll.as_raw_fd(),
+                events.cast::<crabc_core::event::KernelEpollEvent>(),
+                maxevents,
+                timeout,
+            )?
+        };
+        // SAFETY: Linux initialized exactly the returned event prefix.
+        unsafe { Ok(event_list.assume_init(ready)) }
+    }
+
+    fn timeout_millis(timeout: &Timespec) -> Result<i32> {
+        if timeout.tv_sec < 0 || !(0..1_000_000_000).contains(&timeout.tv_nsec) {
+            return Err(crate::Errno::INVAL);
+        }
+        let millis = timeout
+            .tv_sec
+            .checked_mul(1_000)
+            .and_then(|seconds| seconds.checked_add((timeout.tv_nsec + 999_999) / 1_000_000))
+            .and_then(|millis| i32::try_from(millis).ok())
+            .ok_or(crate::Errno::INVAL)?;
+        Ok(millis)
+    }
 }
 
 /// Waits for descriptor readiness while temporarily installing a signal mask.

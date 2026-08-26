@@ -35,6 +35,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh relative-sleep-reference
 ./scripts/dev-x86_64.sh poll-reference
 ./scripts/dev-x86_64.sh ppoll-reference
+./scripts/dev-x86_64.sh epoll-reference
 ./scripts/dev-x86_64.sh process-identity-reference
 ./scripts/dev-x86_64.sh process-session-reference
 ./scripts/dev-x86_64.sh pidfd-open-reference
@@ -192,6 +193,14 @@ facade. It does not compile a project C header or select a C ABI artifact.
 restoration, and `EINTR` completion. It is evidence for only the typed Rust
 readiness slice, not C polling support or `crabc-libc` selection.
 
+`epoll-reference` executes a pinned-musl x86 lifecycle fixture and pins the
+packed 12-byte, align-1 `epoll_event` layout (event bits at offset zero and the
+64-bit data union at offset four), the `epoll_create1`/`epoll_ctl`/
+`epoll_pwait` syscall numbers, and create/add/modify/delete readiness behavior.
+It is private evidence for one record-owning x86 vertical slice only; it does
+not make the broader epoll family, C polling support, or a general x86 facade
+selectable.
+
 `process-identity-reference` executes pinned-musl scalar and
 real/effective/saved UID/GID observations. It is an oracle for the bounded
 typed Rust read-only identity facade, not C process API support.
@@ -270,7 +279,7 @@ helpers. It is a source-only prerequisite: it does not select `crabc-libc` or
 establish pthread, TLS, or C ABI parity.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
-`fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
+`fenv`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
@@ -293,14 +302,19 @@ page-residency output/rounding, including a sparse 4 GiB file offset; it permits
 `MREMAP_DONTUNMAP` deferred. The readiness regression proves typed
 borrowed-record empty/readable/hangup pipe behavior, temporary `ppoll`
 signal-mask restoration, signal-only `pause` completion, requested-flag
-retention, and timeout-range rejection. The filesystem regression proves only a
+retention, and timeout-range rejection. The packed epoll regression proves the
+x86 12-byte event record, close-on-exec creation, legacy-size validation, empty
+and pipe readiness, caller token preservation, modification, deletion, and
+initialized-prefix handling. It remains a privately evidenced record-owning
+slice. The filesystem regression proves only a
 typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, owned
 nonblocking pidfds, read-only `getpriority`, conflicting-lock `F_GETLK` records,
 and scheduler-priority bounds; the system and thread regressions prove the named
 bounded kernel observations. It verifies the explicitly admitted Rust subset
-only; it does not make pselect, epoll, signalfd, broader filesystem path-core
-behavior, global locking policy, wider mapping policy, other
+only; it does not make pselect, epoll signal-mask variants or the broader
+epoll family, signalfd, broader filesystem path-core behavior, global locking
+policy, wider mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.
 

@@ -45,6 +45,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   relative-sleep-reference  verify pinned-musl x86 nanosleep behavior
   poll-reference  verify pinned-musl x86 poll ABI and behavior reference
   ppoll-reference  verify pinned-musl x86 ppoll/pause signal-mask behavior
+  epoll-reference  verify pinned-musl x86 packed epoll ABI and behavior
   process-identity-reference  verify pinned-musl x86 process-identity behavior
   process-session-reference  verify pinned-musl x86 process group/session behavior
   pidfd-open-reference  verify pinned-musl x86 pidfd_open behavior
@@ -66,7 +67,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
-subset; `musl-oracle` proves only C/POSIX oracle provenance, and
+subset plus one privately evidenced packed-epoll slice; neither makes the
+record-owning family selectable. `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
 type declarations and does not link an x86 libc artifact.
@@ -87,12 +89,16 @@ boundaries used by the typed Rust facade.
 `fs-advice-reference` establishes only the typed Rust file-access advice and
 readahead boundary; it does not select a C filesystem API.
 `rand-reference`, `time-abi-reference`, `time-observation-reference`,
-`relative-sleep-reference`, `poll-reference`, `ppoll-reference`,
+`relative-sleep-reference`, `poll-reference`, `ppoll-reference`, and
+`epoll-reference`,
 `process-identity-reference`, `process-session-reference`,
 `pidfd-open-reference`, `fcntl-getlk-reference`,
 `scheduler-priority-bounds-reference`, `fstat-reference`,
 `system-reference`, and `thread-reference` establish only their named
 pinned-musl kernel boundaries for separately admitted Rust slices.
+`epoll-reference` proves only the x86 packed epoll record and the focused
+private readiness lifecycle; it does not promote the broader record-owning
+facade family.
 `priority-reference` establishes only the typed Rust read-only getpriority
 boundary; it does not select scheduling mutation or a C process API.
 `libc-syscall` compiles only the unintegrated raw syscall module.
@@ -299,6 +305,10 @@ run_ppoll_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_ppoll_reference.sh
 }
 
+run_epoll_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_epoll_reference.sh
+}
+
 run_process_identity_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_process_identity_reference.sh
 }
@@ -378,7 +388,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -522,6 +532,11 @@ case "$command" in
         ensure_image
         run_ppoll_reference
         ;;
+    epoll-reference)
+        [ "$#" -eq 0 ] || fail "epoll-reference takes no arguments"
+        ensure_image
+        run_epoll_reference
+        ;;
     process-identity-reference)
         [ "$#" -eq 0 ] || fail "process-identity-reference takes no arguments"
         ensure_image
@@ -577,7 +592,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
             -- --test-threads=1
         ;;
     libc-syscall)
