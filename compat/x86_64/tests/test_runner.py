@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|mm-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -46,8 +46,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
         self.assertIn('run_syscall_header_abi()', source)
         self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
+        self.assertIn('run_signal_header_abi()', source)
+        self.assertIn('compat/x86_64/run_signal_header_abi.sh', source)
+        self.assertIn('run_mman_header_abi()', source)
+        self.assertIn('compat/x86_64/run_mman_header_abi.sh', source)
         self.assertIn('run_mm_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
+        self.assertIn('run_rand_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -62,6 +68,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
+        self.assertIn('--test x86_64_rand', source)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_libc_errno_tls_probe()', source)
@@ -71,6 +78,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_ldso_relocation_tests()', source)
         self.assertIn('ldso/src/x86_64_relocation.rs', source)
         self.assertIn('rustup run nightly-2026-07-24 rustc --edition=2021 --test', source)
+        self.assertIn('run_ldso_image_tests()', source)
+        self.assertIn('/workspace/ldso/run-x86_64-image.sh test', source)
         self.assertNotIn('"$ROOT_DIR/compat/allocator/run-x86_64.sh"', source)
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn('-p crabc-libc', source)
@@ -100,6 +109,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         mapping = (ROOT / "compat" / "x86_64" / "run_x86_mm_reference.sh").read_text(
             encoding="utf-8"
         )
+        signal = (ROOT / "compat" / "x86_64" / "run_signal_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        mman = (ROOT / "compat" / "x86_64" / "run_mman_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        random = (ROOT / "compat" / "x86_64" / "run_x86_rand_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        image = (ROOT / "ldso" / "run-x86_64-image.sh").read_text(encoding="utf-8")
         sys_types = (ROOT / "include" / "sys" / "types.h").read_text(encoding="utf-8")
 
         self.assertIn('ARG MUSL_VERSION=1.2.6', dockerfile)
@@ -132,6 +151,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_mm_reference_probe.c', mapping)
         self.assertIn('-fsyntax-only', mapping)
         self.assertNotIn('-p crabc-libc', mapping)
+        self.assertIn('signal_header_abi_probe.c', signal)
+        self.assertIn('signal_header_posix_abi_probe.c', signal)
+        self.assertIn('-fsyntax-only', signal)
+        self.assertNotIn('-p crabc-libc', signal)
+        self.assertIn('mman_header_abi_probe.c', mman)
+        self.assertIn('mman_header_abi_probe.cpp', mman)
+        self.assertIn('include/sys/mman.h', mman)
+        self.assertIn('include/bits/mman.h', mman)
+        self.assertIn('-fsyntax-only', mman)
+        self.assertNotIn('-p crabc-libc', mman)
+        self.assertIn('x86_rand_reference_probe.c', random)
+        self.assertIn('getrandom ABI/behavior reference', random)
+        self.assertNotIn('-p crabc-libc', random)
+        self.assertIn('x86_64_image.rs', image)
+        self.assertIn('--test', image)
+        self.assertNotIn('-p crabc-ldso', image)
         self.assertIn('#if defined(__x86_64__) && !defined(__cplusplus)', sys_types)
 
     def test_x86_parity_ledger_is_a_required_contract_check(self) -> None:
@@ -406,6 +441,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_param",
                     "--test",
                     "x86_64_pipe",
+                    "--test",
+                    "x86_64_rand",
                     "--",
                     "--test-threads=1",
                 ],

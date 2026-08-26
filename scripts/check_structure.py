@@ -50,9 +50,11 @@ X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/signal.rs"),
 }
 # This source-only loader foundation has no `crabc-ldso` integration or public
-# interpreter boundary. It is listed independently so a later loader slice
-# cannot inherit an artifact-wide x86 exception.
+# interpreter boundary. The image parser validates file-facing metadata before
+# the relative-relocation leaf consumes it; both are listed independently so a
+# later loader slice cannot inherit an artifact-wide x86 exception.
 X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
+    Path("ldso/src/x86_64_image.rs"),
     Path("ldso/src/x86_64_relocation.rs"),
 }
 # This control-transfer leaf is compiled only by its dedicated native probe.

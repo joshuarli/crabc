@@ -15,13 +15,17 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
+./scripts/dev-x86_64.sh signal-header-abi
+./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
+./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
 ./scripts/dev-x86_64.sh libc-errno-tls
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh ldso-relocation
+./scripts/dev-x86_64.sh ldso-image
 ```
 
 The runner rejects non-Linux and non-x86_64 hosts before Docker, requests
@@ -63,9 +67,22 @@ not select a pthread implementation or `crabc-libc`.
 complete 384-pair `__NR_*`/`SYS_*` macro surface with pinned musl 1.2.6. It is
 compile-only and provides no syscall behavior or C runtime artifact.
 
+`signal-header-abi` compile-checks staged GNU and POSIX x86 `<signal.h>`
+signal-frame layouts, including general-register, floating-state, context, and
+alternate-stack records, against pinned musl. It is source-only and does not
+select C signal behavior or `crabc-libc`.
+
+`mman-header-abi` compile-checks staged C and C++ `<sys/mman.h>` declarations
+and selected Linux/x86 mapping values, including `MAP_32BIT`, against pinned
+musl. It is source-only and does not select mapping behavior or `crabc-libc`.
+
 `mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mprotect`/`munmap`
 numbers and the closed constants used by the native Rust mapping facade. It
 does not compile project C headers or select a C ABI artifact.
+
+`rand-reference` runs a pinned-musl native x86 reference executable for
+`getrandom` syscall/flag values and initialized-length behavior. It does not
+link or select a crabc artifact.
 
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent
@@ -99,7 +116,7 @@ selected `crabc-libc` artifact or general x86 C ABI claim.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`, and
-`x86_64_io`, `x86_64_mm`, and `x86_64_pipe` tests. The I/O regression proves vector segment
+`x86_64_io`, `x86_64_mm`, `x86_64_pipe`, and `x86_64_rand` tests. The I/O regression proves vector segment
 and short-read behavior, 64-bit positioned/vector offsets, `preadv2`/
 `pwritev2` flags and current-offset sentinel, plus descriptor duplication and
 `fcntl` flags. The eventfd regression proves `NONBLOCK`/`CLOEXEC`, counter
@@ -116,12 +133,22 @@ explicitly admitted direct Rust subset only; it does not make polling, epoll,
 signalfd, remapping, mapping policy, other kernel-record-owning facade
 families, or a general x86-64 facade selectable or supported.
 
+The random regression proves raw Linux `getrandom` flag values and initialized
+prefix handling, musl's bounded 256-byte `getentropy` behavior, and owned
+deterministic state without C random globals. It does not broaden the facade
+or make the C random API selectable.
+
 `ldso-relocation` compiles and runs only the unintegrated
 `ldso/src/x86_64_relocation.rs` source tests under the pinned native image. It
 proves checked symbol-free `R_X86_64_RELATIVE` RELA and ELF64 RELR handling,
 including no-mutation rejection of malformed, overlapping-table, and duplicate
 targets. It does not select `crabc-ldso`, an ELF interpreter, or dynamic loader
 entry point.
+
+`ldso-image` compiles and runs only the unintegrated checked x86 ELF image
+parser. It validates file-facing ELF/program-header and RELA/RELR metadata
+before a future mapper or relocation engine can consume it; it neither maps an
+image nor selects `crabc-ldso`.
 
 The lane owns no allocator evidence and exposes no generic Cargo, shell,
 crabc-libc artifact, dynamic-loader artifact, CRT, or sysroot command. Those

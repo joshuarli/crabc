@@ -25,13 +25,17 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
+  signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
+  mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
+  rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
   libc-errno-tls  run the source-only x86 C errno/initial-TLS probe
   libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
+  ldso-image  run the source-only checked x86 ELF image parser tests
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
@@ -43,12 +47,15 @@ type declarations and does not link an x86 libc artifact.
 `sys-reg-header-abi` compiles only the staged ptrace register-index header.
 `types-header-abi` compiles only staged C/C++ type declarations and opaque
 pthread object layouts. `syscall-header-abi` compares only staged syscall
-number macros. `mm-abi-reference` establishes only the pinned-musl constants
-used by the separately admitted Rust mapping facade.
+number macros. `signal-header-abi` and `mman-header-abi` compile only staged
+signal-frame and mapping declarations. `mm-abi-reference` establishes only
+the pinned-musl constants used by the separately admitted Rust mapping facade.
+`rand-reference` establishes only the pinned-musl getrandom kernel boundary.
 `libc-syscall` compiles only the unintegrated raw syscall module.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
 `libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
 `ldso-relocation` compiles only the unintegrated checked relocation source.
+`ldso-image` compiles only the unintegrated checked ELF image parser.
 None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
 support claim.
 EOF
@@ -167,8 +174,20 @@ run_syscall_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_x86_syscall_header.sh
 }
 
+run_signal_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_signal_header_abi.sh
+}
+
+run_mman_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_mman_header_abi.sh
+}
+
 run_mm_abi_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_mm_reference.sh
+}
+
+run_rand_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_rand_reference.sh
 }
 
 run_libc_syscall_probe() {
@@ -197,6 +216,10 @@ run_ldso_relocation_tests() {
     '
 }
 
+run_ldso_image_tests() {
+    run_in_container bash /workspace/ldso/run-x86_64-image.sh test
+}
+
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
@@ -206,7 +229,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|mm-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -250,10 +273,25 @@ case "$command" in
         ensure_image
         run_syscall_header_abi
         ;;
+    signal-header-abi)
+        [ "$#" -eq 0 ] || fail "signal-header-abi takes no arguments"
+        ensure_image
+        run_signal_header_abi
+        ;;
+    mman-header-abi)
+        [ "$#" -eq 0 ] || fail "mman-header-abi takes no arguments"
+        ensure_image
+        run_mman_header_abi
+        ;;
     mm-abi-reference)
         [ "$#" -eq 0 ] || fail "mm-abi-reference takes no arguments"
         ensure_image
         run_mm_abi_reference
+        ;;
+    rand-reference)
+        [ "$#" -eq 0 ] || fail "rand-reference takes no arguments"
+        ensure_image
+        run_rand_reference
         ;;
     core)
         [ "$#" -eq 0 ] || fail "core takes no arguments"
@@ -265,7 +303,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe \
+            --test x86_64_eventfd --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_rand \
             -- --test-threads=1
         ;;
     libc-syscall)
@@ -287,5 +325,10 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"
         ensure_image
         run_ldso_relocation_tests
+        ;;
+    ldso-image)
+        [ "$#" -eq 0 ] || fail "ldso-image takes no arguments"
+        ensure_image
+        run_ldso_image_tests
         ;;
 esac
