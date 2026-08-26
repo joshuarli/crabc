@@ -505,7 +505,7 @@ through its long lifecycle; it cannot reopen short map access, scan, or take a
 fresh fallback. This proves no production page-on-demand option. A bitmap miss,
 malformed state, scalar extension error, or any other post-transfer failure
 likewise retains the target owner. Non-direct-small, malformed or
-out-of-profile no-immediate direct-small metadata, full, aggregate-registry, singleton,
+out-of-profile no-immediate direct-small metadata, full, multi-member aggregate-registry, singleton,
 unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 
@@ -538,12 +538,18 @@ returns the still-live route, releases one page, or releases the last page and
 completes the map route. A terminal free re-derives that page's regular span
 before unregistration, so the one-slice small, 8-slice medium, and 64-slice
 large spans remain distinct source shapes. A retired/force-empty traversal returns the
-ordinary drain instead of creating an empty registry. Fresh engines may serialize
-independent PageMap operations between frees, but the current engine surface
-exposes no allocation-time adoption, reclaim, or requeue capability for a
-registered aggregate member. Apart from the explicit sole-medium handoff
-above, it exposes no allocation-time claim, reclaim, or requeue for a
-post-exit route.
+ordinary drain instead of creating an empty registry. When that completed
+source traversal itself leaves exactly one initially-nonfull medium page with
+an immediate local head, it captures that exact page/span/bin witness while
+the queues are still source-owned and returns the established one-page mapped
+route instead of constructing this registry. Its reclaim revalidates the
+immediate head, so no extension, direct commitment, fresh-page fallback, or
+bitmap/PageMap search is available. Fresh engines may serialize independent
+PageMap operations between frees, but the current engine surface exposes no
+allocation-time adoption, reclaim, or requeue capability for a registered
+aggregate member, including a registry that becomes one member only after a
+client free. Apart from the explicit one-page medium handoffs, it exposes no
+allocation-time claim, reclaim, or requeue for a post-exit route.
 
 Other live-page states are rejected before aggregate detach: full, singleton,
 huge, unmapped, foreign, malformed, or non-source-derived direct-cache state

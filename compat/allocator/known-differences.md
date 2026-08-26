@@ -539,8 +539,8 @@ its retained long lifecycle. This is not a production option, scan, or fresh
 fallback. A bitmap miss, malformed state, scalar extension error, or any other
 post-transfer failure remains terminally retained. Non-direct-small, other
 no-immediate direct-small cases, full, singleton,
-unmapped, huge, foreign, automatic-scanning, concurrent, and aggregate-
-registry adoption remain absent.
+unmapped, huge, foreign, automatic-scanning, concurrent, and multi-member
+aggregate-registry adoption remain absent.
 
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
@@ -564,10 +564,16 @@ registry adoption remain absent.
   bit; a nonempty result keeps the pairing, and a terminal free re-derives its
   complete regular span before release (one slice for small, 8 for medium, 64
   for large).
-  A retired/force-empty traversal returns the ordinary drain. Fresh engines may
-  serialize independent map
-  operations between frees, but no current engine receives an adoption,
-  reclaim, or requeue capability for an aggregate registry member. Other
+  A retired/force-empty traversal returns the ordinary drain. If that completed
+  source traversal releases every other member and leaves exactly one
+  initially-nonfull medium with an immediate local head, it captures that
+  exact page/span/bin witness before registry construction and returns the
+  established one-page mapped handoff instead. Reclaim revalidates the head,
+  so this edge cannot extend, commit, scan, or take a fresh-page fallback.
+  Fresh engines may serialize independent map operations between frees, but no
+  current engine receives an adoption, reclaim, or requeue capability for an
+  aggregate registry member, including one reduced to a single member by a
+  later client free. Other
   full/singleton/unmapped/huge/foreign pages, malformed direct-cache images, concurrent
   client-free routes, source deferred
   callbacks, arena collection, statistics merge, and retry/reuse as a normal
@@ -712,11 +718,13 @@ registry adoption remain absent.
   `later_thread_exit_mapped_regular_pages_route_releases_retired_direct_small_before_live_medium`
   proves a normally retired all-free direct-small page retains its complete
   rounded cache image until the source prepass clears it and releases its
-  one-slice span before the remaining live medium page becomes a post-exit
-  registry member; and
-  `later_thread_exit_mapped_regular_pages_route_releases_retired_large_before_live_medium`
+  one-slice span before the remaining no-immediate-head medium remains a
+  sequential aggregate registry member; and
+  `later_thread_exit_mapped_regular_pages_route_adopts_sole_immediate_medium_after_retired_large`
   proves a normally retired all-free large span releases before the remaining
-  live medium page becomes a post-exit registry member;
+  immediate-head medium becomes that exact one-page handoff, reclaims/reuses
+  the same PageMap identity, and does not observe an armed direct-commit
+  fault; and
   `later_thread_exit_mapped_regular_pages_route_rejects_malformed_direct_image_before_mutation`
   proves a stale direct-small cache slot rejects before retirement, collection,
   queue removal, or PageMap mutation; and

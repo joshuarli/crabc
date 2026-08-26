@@ -99,8 +99,12 @@ direct slot empty; the direct-small page remains in its ordinary bin until its
 rounded direct-cache range is cleared during removal));
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
-through sequential client frees. A fresh later-main owner can explicitly
-reclaim a sole mapped medium route that began owner exit nonfull, or a sole
+through sequential client frees. When the completed aggregate traversal itself
+releases every other member and leaves exactly one initial nonfull medium with
+an immediate local head, it returns the existing one-page mapped route before
+registry construction; multi-member routes and routes later reduced to one
+member remain sequential client-free-only. A fresh later-main owner can
+explicitly reclaim a sole mapped medium route that began owner exit nonfull, or a sole
 direct-small route that retains an immediate local free block, the exhausted
 fully committed scalar-extension shape, the exact exhausted prefix-covered
 extension shape, or the exact exhausted on-demand page-area-commit shape after
@@ -109,8 +113,8 @@ sequential client-free-only. The reserved fixtures cover both medium and
 direct-small prefixes, prefix-covered direct-small reuse without a direct
 commit, direct page-area commitment, and failed-commit mapped reabandonment
 before a same-candidate retry; non-direct-small, malformed or out-of-profile
-no-immediate direct-small metadata, and aggregate members remain sequential
-client-free-only.
+no-immediate direct-small metadata, and aggregate registry members remain
+sequential client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -304,9 +308,14 @@ releases. The direct-small retirement regression retains the exact rounded
 cache image through ordinary local retirement, then proves the source prepass
 clears it as the one-slice span releases before a live medium member is
 published. If retirement/force collection empties every page, it returns the
-ordinary drain. Fresh engines may serialize independent PageMap operations
-between client frees, but no current path can adopt, reclaim, or requeue an
-aggregate registry member. Full/singleton/unmapped/huge/foreign pages, malformed
+ordinary drain. If the completed source traversal instead leaves exactly one
+initial nonfull medium page with an immediate local head, it captures that
+exact page/span/bin fact before registry construction and returns the existing
+one-page mapped route. Its reclaim revalidates the immediate head and cannot
+extend, commit, scan, or take a fresh-page fallback. Fresh engines may
+serialize independent PageMap operations between client frees, but no current
+path can adopt, reclaim, or requeue an aggregate registry member, including a
+registry later reduced to one member by a client free. Full/singleton/unmapped/huge/foreign pages, malformed
 direct-cache images, concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits

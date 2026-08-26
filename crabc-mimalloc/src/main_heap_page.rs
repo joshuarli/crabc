@@ -42,7 +42,9 @@
 //! remaining live nonfull regular small, medium, or large arena page only when
 //! every queued member has that supported shape: it releases pages made empty
 //! by force collection and registers every survivor in one linear process
-//! route. Each route free serializes its plain PageMap operation briefly. One
+//! route, except when the completed traversal itself leaves exactly one
+//! initial nonfull medium with an immediate head, which becomes the existing
+//! one-page route before registry construction. Each route free serializes its plain PageMap operation briefly. One
 //! explicit consuming edge additionally reclaims a sole mapped medium route,
 //! or a sole direct-small route with either an immediate local free block, an
 //! exhausted fully committed scalar-extension shape, an exact exhausted
@@ -60,7 +62,7 @@
 //! fallback.
 //! Non-direct-small, malformed or out-of-profile no-immediate direct-small
 //! metadata,
-//! full, aggregate, concurrent, singleton, unmapped, and huge adoption remain
+//! full, multi-member aggregate, concurrent, singleton, unmapped, and huge adoption remain
 //! absent, as do source deferred callbacks and arena collection.
 
 use core::ptr::NonNull;
@@ -194,8 +196,11 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
 /// member, and requeue at the source tail. Non-direct small pages,
 /// malformed or out-of-profile no-immediate direct-small metadata, and every
 /// force-collected full origin remain client-free-only. This route deliberately
-/// does not scan arbitrary routes, take a fresh-page fallback, adopt aggregate
-/// members, or expose concurrent producer protocol.
+/// does not scan arbitrary routes, take a fresh-page fallback, turn an
+/// aggregate registry member into a claimant, or expose concurrent producer
+/// protocol. Its separately typed aggregate-origin medium variant exists only
+/// when the completed source traversal proved one immediate survivor before a
+/// registry was constructed.
 #[must_use = "a post-exit mapped regular route must release every client block or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
@@ -912,6 +917,10 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure<'att
 #[must_use = "the aggregate traversal outcome retains either its process route or empty drain"]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin<'attachment, 'main> {
     Route(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
+    /// The completed aggregate traversal itself left exactly one
+    /// initially-nonfull medium page with an immediate local head. It is now
+    /// a one-page route, not an aggregate registry that became small later.
+    SoleImmediateMedium(MainHeapThreadProcessPageExitMappedRegularRoute<'main>),
     Drained(MainHeapThreadProcessPageExitDrain<'attachment, 'main>),
 }
 
@@ -935,11 +944,24 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure
         terminal: ThreadExitMappedRegularPagesPostExitTeardownTerminal<'attachment, 'main, 'static>,
         page_map_lifecycle: ProcessPageMapMutationLease,
     },
+    /// The aggregate traversal proved the special sole immediate-medium
+    /// source outcome, but the old attachment could not complete teardown.
+    /// Its one-page facts remain terminally coupled to the long map lease.
+    SoleImmediateMediumTeardown {
+        terminal: ThreadExitMappedRegularPostExitTeardownTerminal<'attachment, 'main, 'static>,
+        page_map_lifecycle: ProcessPageMapMutationLease,
+    },
     /// The former Theap/TLD is gone, but the long map lifecycle could not be
     /// converted to short access. The map root is poisoned and the registry
     /// remains retained for an explicit terminal decision.
     PageMap {
         parts: ThreadExitMappedRegularPagesPostExitParts<'main, 'static>,
+        error: ProcessPageMapError,
+    },
+    /// The source had become the special one-page outcome, but the long map
+    /// lifecycle could not become its short route. The map root is poisoned.
+    SoleImmediateMediumPageMap {
+        parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
     },
 }
@@ -2140,13 +2162,17 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
     /// false-collect, queue-detach, and publish every remaining supported
     /// arena page.
     ///
-    /// The returned route remains deliberately linear. Its short PageMap
-    /// operations serialize with a fresh engine, but no current engine gets a
-    /// capability to claim/reclaim/requeue any of its mapped-abandoned
-    /// members; it does not expose a general allocation-time adoption or
-    /// concurrent free protocol. If collection makes every page empty,
-    /// `Drained` preserves the ordinary attachment finish path instead of
-    /// inventing an empty process route.
+    /// The returned aggregate route remains deliberately linear. Its short
+    /// PageMap operations serialize with a fresh engine, but no current
+    /// engine gets a capability to claim/reclaim/requeue any of its
+    /// mapped-abandoned members. The sole exception is a completed traversal
+    /// that itself leaves exactly one initially-nonfull medium page with an
+    /// immediate local head: that source fact becomes the older one-page
+    /// route before any aggregate registry exists. A multi-member route, or
+    /// one later reduced to a single member by client frees, never gains that
+    /// capability. If collection makes every page empty, `Drained` preserves
+    /// the ordinary attachment finish path instead of inventing an empty
+    /// process route.
     ///
     /// # Safety
     ///
@@ -2176,6 +2202,39 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
                         page_map_lifecycle,
                     },
                 ));
+            }
+            Ok(ThreadExitMappedRegularPagesPostExitAbandonOutcome::SoleImmediateMedium(detach)) => {
+                let parts = match detach.finish_thread_owner() {
+                    Ok(parts) => parts,
+                    Err(terminal) => {
+                        return Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown {
+                                terminal,
+                                page_map_lifecycle,
+                            },
+                        );
+                    }
+                };
+                // SAFETY: the completed source traversal has already proved
+                // there is exactly one registered immediate-medium page and
+                // no old queue/direct/page-count owner. This turns only that
+                // one-page fact into the established short mapped route.
+                return match unsafe { page_map_lifecycle.into_post_exit_access() } {
+                    Ok(page_map_access) => Ok(
+                        MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(
+                            MainHeapThreadProcessPageExitMappedRegularRoute {
+                                parts,
+                                page_map_access,
+                            },
+                        ),
+                    ),
+                    Err(error) => Err(
+                        MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap {
+                            parts,
+                            error,
+                        },
+                    ),
+                };
             }
             Ok(ThreadExitMappedRegularPagesPostExitAbandonOutcome::Detached(detach)) => detach,
             Err(ThreadExitMappedRegularPagesPostExitAbandonFailure::Rejected { engine, error }) => {
@@ -2799,8 +2858,8 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// queue-tail order. A bitmap miss and every post-transfer failure retain
     /// the target owner; this slice never allocates a fresh replacement or
     /// broadens into non-direct-small, malformed or out-of-profile
-    /// no-immediate metadata, full-origin,
-    /// aggregate, or concurrent adoption.
+    /// no-immediate metadata, full-origin, multi-member aggregate-registry,
+    /// or concurrent adoption.
     pub(crate) fn adopt_into_later_main<'attachment>(
         self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -6951,6 +7010,10 @@ mod tests {
                             core::mem::forget(parts);
                             panic!("the full small boundary rejects before PageMap-route transfer: {error:?}");
                         }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown { .. }
+                            | MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap { .. },
+                        ) => panic!("the full small boundary rejects before a sole-medium handoff"),
                         Ok(route) => {
                             core::mem::forget(route);
                             panic!("a full non-direct small page cannot cross into the process route");
@@ -10616,6 +10679,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("mixed aggregate members cannot become the sole immediate-medium handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("mixed live small, medium, and large pages cannot become an empty drain")
@@ -10866,38 +10933,15 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("a sole medium without an immediate head must remain an aggregate registry route")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("one live medium page still requires a process route")
                         }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Rejected {
-                            drain,
-                            error,
-                        }) => {
-                            core::mem::forget(drain);
-                            panic!("the retired direct-small source prepass releases before the live medium route: {error:?}")
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::RetainedDrain {
-                            drain,
-                            error,
-                        }) => {
-                            core::mem::forget(drain);
-                            panic!("direct-small retirement retains only a failed source transition: {error:?}")
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Teardown {
-                            terminal,
-                            ..
-                        }) => {
-                            core::mem::forget(terminal);
-                            panic!("the retired direct-small prepass still tears down the old Theap/TLD")
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::PageMap {
-                            parts,
-                            error,
-                        }) => {
-                            core::mem::forget(parts);
-                            panic!("the live medium page transfers its short PageMap route: {error:?}")
-                        }
+                        Err(_) => panic!("the retired direct-small source prepass releases before the live medium route"),
                     };
                     assert_eq!(
                         owner.finish_after_page_drain(),
@@ -10905,6 +10949,10 @@ mod tests {
                         "the route tears down the old Theap/TLD after source retirement"
                     );
                     assert_eq!(route.test_remaining_pages(), 1);
+                    assert!(
+                        unsafe { live_page.as_ref().free_list_head() }.is_null(),
+                        "a sole medium without an immediate head remains sequential client-free-only"
+                    );
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) }.is_null(),
                         "the retired direct-small page releases before the live page is published into the route"
@@ -10953,7 +11001,7 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_mapped_regular_pages_route_releases_retired_large_before_live_medium() {
+    fn later_thread_exit_mapped_regular_pages_route_adopts_sole_immediate_medium_after_retired_large() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -10996,6 +11044,16 @@ mod tests {
                         .expect("the fixture creates a live medium page in another bin");
                     let live_page = NonNull::new(unsafe { allocator.test_page_for_block(live) })
                         .expect("the live medium page is PageMap-published");
+                    let live_spare = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates one immediate medium block");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(live_spare) },
+                        live_page.as_ptr(),
+                        "the spare allocation remains in the exact live medium page"
+                    );
+                    unsafe { allocator.free(live_spare) }
+                        .expect("the fixture returns one block to the live medium's immediate list");
                     assert_ne!(
                         retired_page, live_page,
                         "the retirement fixture keeps an all-free and live page independently queued"
@@ -11019,6 +11077,13 @@ mod tests {
                         Some(crate::types::PageKind::Medium),
                         "the live route member remains a medium page"
                     );
+                    let live_bin = crate::size_class::bin(unsafe { live_page.as_ref().block_size() })
+                        .expect("the live medium page has one regular bin");
+                    let live_memory = unsafe { live_page.as_ref().memid() };
+                    let live_slice = live_memory
+                        .arena_memory()
+                        .expect("the live medium belongs to the paired arena")
+                        .slice_index as usize;
                     let retired_memory = unsafe { retired_page.as_ref().memid() };
                     let retired_slice = retired_memory
                         .arena_memory()
@@ -11059,46 +11124,29 @@ mod tests {
                         panic!("thread exit enters its post-fast-slot drain: {error:?}");
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+                            core::mem::forget(route);
+                            panic!("the completed traversal's sole immediate medium must use the one-page handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("one live medium page still requires a process route")
                         }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Rejected {
-                            drain,
-                            error,
-                        }) => {
-                            core::mem::forget(drain);
-                            panic!("the retired-page source prepass releases before the live medium route: {error:?}")
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::RetainedDrain {
-                            drain,
-                            error,
-                        }) => {
-                            core::mem::forget(drain);
-                            panic!("retired-page collection retains only a failed source transition: {error:?}")
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Teardown {
-                            terminal,
-                            ..
-                        }) => {
-                            core::mem::forget(terminal);
-                            panic!("the retired-page prepass still tears down the old Theap/TLD")
-                        }
-                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::PageMap {
-                            parts,
-                            error,
-                        }) => {
-                            core::mem::forget(parts);
-                            panic!("the live page transfers its short PageMap route: {error:?}")
-                        }
+                        Err(_) => panic!(
+                            "the retired-page source prepass releases before the sole immediate-medium handoff"
+                        ),
                     };
                     assert_eq!(
                         owner.finish_after_page_drain(),
                         Err(MainHeapThreadAttachmentError::TornDown),
                         "the route tears down the old Theap/TLD after source retirement"
                     );
-                    assert_eq!(route.test_remaining_pages(), 1);
+                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert!(
+                        !unsafe { live_page.as_ref().free_list_head() }.is_null(),
+                        "source collection leaves the sole medium's immediate local head for exact aggregate reclaim"
+                    );
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) }.is_null(),
                         "the retired page releases before the live page is published into the route"
@@ -11118,22 +11166,104 @@ mod tests {
                     assert_eq!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(live.as_ptr()) },
                         live_page.as_ptr(),
-                        "only the live medium page remains PageMap-registered for its client free"
+                        "only the live medium page remains PageMap-registered for exact reclaim"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(live_slice, 1),
+                        Some(false),
+                        "the sole handoff retains the live medium's ordinary arena bit"
                     );
 
-                    match unsafe { route.remote_free_after_thread_exit(live) } {
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {}
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
-                        | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
-                            core::mem::forget(route);
-                            panic!("the one live routed page releases after its final client free")
+                    let mut target = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("fresh target attachment rejected: {error:?}")
                         }
-                        Err(_) => panic!("the final live client releases through the aggregate route"),
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("fresh target attachment retained: {error:?}")
+                        }
+                    };
+                    let fault = fault::install(fault::Plan::disabled());
+                    fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                    let mut target_allocator = match route.adopt_into_later_main(&mut target, pair) {
+                        Ok(allocator) => allocator,
+                        Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                            route,
+                            error,
+                        }) => {
+                            core::mem::forget(route);
+                            panic!("the qualified sole aggregate survivor transfers into its fresh owner: {error:?}")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                            adoption,
+                            error,
+                        }) => {
+                            core::mem::forget(adoption);
+                            panic!("the immediate medium handoff cannot retain terminally: {error:?}")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                            adoption,
+                            error,
+                        }) => {
+                            core::mem::forget(adoption);
+                            panic!("an immediate medium handoff cannot enter the direct-commit retry path: {error:?}")
+                        }
+                    };
+                    assert_eq!(
+                        fault.observed(),
+                        0,
+                        "the immediate-medium handoff cannot touch the armed direct commit seam"
+                    );
+                    assert_eq!(target_allocator.test_queue_count(live_bin), Some(1));
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(live) },
+                        live_page.as_ptr(),
+                        "the target keeps the exact source PageMap identity after aggregate handoff"
+                    );
+                    let reused = target_allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the target consumes the immediate head without a fresh-page fallback");
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(reused) },
+                        live_page.as_ptr(),
+                        "the matching target request reuses the exact aggregate survivor"
+                    );
+                    unsafe {
+                        target_allocator
+                            .free(live)
+                            .expect("the inherited live block remains freeable by the new owner");
+                        target_allocator
+                            .free(reused)
+                            .expect("the reused immediate block remains freeable by the new owner");
                     }
+                    fault.set(fault::Plan::disabled());
+                    match target_allocator.finish() {
+                        Ok(()) => {}
+                        Err(allocator) => {
+                            core::mem::forget(allocator);
+                            panic!("the fresh owner finishes after both medium blocks are free")
+                        }
+                    }
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(live.as_ptr()) }.is_null(),
+                        "normal target cleanup unregisters the reclaimed medium page"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(live_slice, 1),
+                        Some(true),
+                        "normal target cleanup clears the reclaimed medium's ordinary arena bit"
+                    );
+                    assert_eq!(
+                        target.finish_after_user_destructors(),
+                        Ok(()),
+                        "the fresh target tears down after its reclaimed page releases"
+                    );
                     assert_eq!(
                         page_map.begin_page_lifecycle().unwrap().finish(),
                         Ok(()),
-                        "the live route's final release reopens the process map after retirement"
+                        "the reclaimed target releases its process-map lifecycle after retirement"
                     );
                 });
                 worker
@@ -11235,6 +11365,10 @@ mod tests {
                             core::mem::forget(parts);
                             panic!("the stale direct image must reject before PageMap-route transfer: {error:?}")
                         }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown { .. }
+                            | MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap { .. },
+                        ) => panic!("the stale direct image must reject before a sole-medium handoff"),
                         Ok(route) => {
                             core::mem::forget(route);
                             panic!("a malformed direct-cache image cannot cross into an aggregate route")
@@ -11348,6 +11482,10 @@ mod tests {
                             core::mem::forget(parts);
                             panic!("the malformed predecessor must reject before PageMap-route transfer: {error:?}")
                         }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown { .. }
+                            | MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap { .. },
+                        ) => panic!("the malformed predecessor must reject before a sole-medium handoff"),
                         Ok(route) => {
                             core::mem::forget(route);
                             panic!("the malformed predecessor cannot cross into an aggregate route")
@@ -11460,6 +11598,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("a large page cannot become the sole immediate-medium handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("one live large page requires a post-exit process route")
@@ -11492,6 +11634,10 @@ mod tests {
                             core::mem::forget(parts);
                             panic!("the large route transfers its short PageMap access: {error:?}")
                         }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown { .. }
+                            | MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap { .. },
+                        ) => panic!("a large page cannot reach the sole immediate-medium handoff"),
                     };
                     assert_eq!(
                         owner.finish_after_page_drain(),
@@ -11607,6 +11753,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("multiple aggregate members cannot become the sole immediate-medium handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two live large pages cannot become an empty drain")
@@ -11639,6 +11789,10 @@ mod tests {
                             core::mem::forget(parts);
                             panic!("multi-bin route transfers its PageMap access: {error:?}")
                         }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown { .. }
+                            | MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap { .. },
+                        ) => panic!("multiple aggregate members cannot reach the sole immediate-medium handoff"),
                     };
                     assert_eq!(
                         owner.finish_after_page_drain(),
@@ -11776,6 +11930,10 @@ mod tests {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
                             core::mem::forget(route);
                             panic!("force collection releases every client before a process route is needed")
+                        }
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("force collection releases every client before a sole immediate-medium handoff")
                         }
                         Err(_) => panic!("force collection keeps the large page in the source traversal"),
                     };

@@ -79,8 +79,10 @@
 // regular small, medium, or large arena page when no other page shape remains,
 // releases pages
 // made empty by force collection, and registers surviving mapped pages without
-// retaining a raw former-Theap page list. One explicit consumer can reclaim
-// only the sole mapped nonfull medium route or four direct-small source shapes
+// retaining a raw former-Theap page list. When the completed traversal itself
+// leaves exactly one initially-nonfull medium page with an immediate head, it
+// yields the established one-page route before a registry exists. One explicit
+// consumer can reclaim only that one-page mapped nonfull medium route or four direct-small source shapes
 // (an immediate head, a fully committed scalar extension, a prefix-covered
 // extension, or an exact on-demand page-area commit) into a fresh
 // later-main Theap; it claims the exact page identity and appends it to the
@@ -91,8 +93,8 @@
 // free-list mutation or performs the source mapped reabandon tail for a
 // same-candidate retry. It is not a production option or generic
 // allocation-time policy.
-// Small/direct, full, aggregate, and all automatic allocation-time routes
-// remain absent.
+// Small/direct, full, multi-member aggregate, and all automatic allocation-time
+// routes remain absent.
 // A bounded false-force collector runs in
 // the source regular candidate scan and in the non-abandoning full-page pass.
 // `RemoteFreeProducer` is one private linear, scoped route to create that
@@ -685,6 +687,12 @@ enum ThreadExitMappedRegularPostExitOrigin {
     /// The page was already a nonfull medium regular member when source owner
     /// exit began. Its allocation-time adoption/requeue proof is complete.
     InitiallyNonfullMedium,
+    /// A source-shaped aggregate traversal released every other member and
+    /// left exactly this initially-nonfull medium page with an immediate
+    /// local free-list head. It reuses the one-page handoff facts but never
+    /// exposes a claim edge for a multi-member registry or a registry reduced
+    /// to one member later by client frees.
+    AggregateExitSoleInitialMediumImmediate,
     /// The page was already a nonfull small regular member, but its rounded
     /// block size is outside the direct-cache range. It remains
     /// client-free-only until a distinct non-direct-small proof exists.
@@ -853,11 +861,30 @@ pub(crate) struct ThreadExitMappedRegularPagesPostExitDetach<'attachment, 'main,
     parts: ThreadExitMappedRegularPagesPostExitParts<'main, 'arena>,
 }
 
+/// One source-local witness that a completed aggregate traversal has exactly
+/// one surviving initially-nonfull medium page with an immediate local head.
+///
+/// This is deliberately not stored in the ordinary aggregate registry. It
+/// exists only while the traversal still owns the source queues, then either
+/// becomes the pre-existing one-page post-exit facts or is discarded. A
+/// second mapped survivor clears it, so a route that later reaches one member
+/// through client frees cannot manufacture an allocation-time claim edge.
+#[derive(Clone, Copy)]
+struct ThreadExitMappedRegularAggregateSoleImmediateMedium {
+    page: NonNull<Page>,
+    memory: MemoryId,
+    slice_start: *mut u8,
+    size: usize,
+    bin: usize,
+}
+
 /// The typed process-lifetime registry for one linear aggregate post-exit
 /// route. `remaining_pages` counts only spans that remain PageMap-registered;
 /// it is decremented after each complete PageMap -> ordinary-bit -> metadata
 /// -> arena-slice terminal release. It stores no former-Theap pointer and no
-/// raw page list, so allocation-time adoption, reclaim/requeue, and general
+/// raw page list. Except for the separately typed source outcome that proves
+/// exactly one initially-nonfull immediate medium survivor before this
+/// registry exists, allocation-time adoption, reclaim/requeue, and general
 /// concurrent routing remain outside this bounded owner.
 #[must_use = "aggregate post-exit page facts must remain coupled to PageMap access until every span is released"]
 pub(crate) struct ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
@@ -1363,6 +1390,10 @@ pub(crate) enum ThreadExitMappedRegularPagesPostExitAbandonOutcome<'attachment, 
     /// At least one live regular page crossed into the typed process
     /// registry.
     Detached(ThreadExitMappedRegularPagesPostExitDetach<'attachment, 'main, 'arena>),
+    /// The aggregate traversal itself released every other member and left
+    /// one initially-nonfull medium page with an immediate head. This is a
+    /// distinct one-page handoff, not an aggregate-registry adoption edge.
+    SoleImmediateMedium(ThreadExitMappedRegularPostExitDetach<'attachment, 'main, 'arena>),
     /// Force collection made every preflighted page all-free. The ordinary
     /// empty drain still owns the later attachment's root/list/TLD finish.
     Drained(
@@ -5138,6 +5169,7 @@ impl<'attachment, 'main, 'arena, 'map>
         }
 
         let mut detached_pages = 0usize;
+        let mut sole_immediate_medium = None;
         for bin in 0..BIN_COUNT {
             let mut page = match self.session.queue(bin) {
                 Some(queue) => queue.first(),
@@ -5228,6 +5260,41 @@ impl<'attachment, 'main, 'arena, 'map>
                     ));
                 }
 
+                // This is not an aggregate-registry selection or a bitmap
+                // scan. While the source still owns every queue, retain one
+                // exact candidate only for the initial medium/immediate
+                // shape. A later mapped survivor clears it below, and an
+                // all-free page never becomes a registry member at all.
+                let immediate_medium = if detached_pages == 0
+                    && size_class::page_kind_for_block_size(page_ref.block_size())
+                        == Some(PageKind::Medium)
+                    && !page_ref.free_list_head().is_null()
+                {
+                    match self.release_span(page_nonnull.as_ptr()) {
+                        Some(ReleaseSpan::Arena {
+                            memory,
+                            slice_start,
+                            size,
+                        }) if memory
+                            .arena_memory()
+                            .is_some_and(|arena_memory| {
+                                arena_memory.arena
+                                    == core::ptr::from_ref(self.arena.arena()).cast_mut()
+                                    && self.arena.slice_start(arena_memory.slice_index as usize)
+                                        == Some(slice_start)
+                            }) => Some(ThreadExitMappedRegularAggregateSoleImmediateMedium {
+                            page: page_nonnull,
+                            memory,
+                            slice_start,
+                            size,
+                            bin,
+                        }),
+                        Some(ReleaseSpan::Arena { .. }) | Some(ReleaseSpan::Os(_)) | None => None,
+                    }
+                } else {
+                    None
+                };
+
                 let queue = match self.session.queue_mut(bin) {
                     Some(queue) => queue as *mut _,
                     None => {
@@ -5277,6 +5344,11 @@ impl<'attachment, 'main, 'arena, 'map>
                                     ThreadExitMappedRegularPagesPostExitAbandonError::RouteCountOverflow,
                                 ));
                             }
+                        };
+                        sole_immediate_medium = if detached_pages == 1 {
+                            immediate_medium
+                        } else {
+                            None
                         };
                     }
                     Ok(outcome) => {
@@ -5355,6 +5427,29 @@ impl<'attachment, 'main, 'arena, 'map>
         debug_assert!(collection_poison.is_none());
         drop(pending_os_release);
         let _ = collection_poison;
+
+        if let Some(sole) = sole_immediate_medium {
+            debug_assert_eq!(detached_pages, 1);
+            return Ok(
+                ThreadExitMappedRegularPagesPostExitAbandonOutcome::SoleImmediateMedium(
+                    ThreadExitMappedRegularPostExitDetach {
+                        session,
+                        parts: ThreadExitMappedRegularPostExitParts {
+                            arena,
+                            main_heap,
+                            page: sole.page,
+                            memory: sole.memory,
+                            slice_start: sole.slice_start,
+                            size: sole.size,
+                            bin: sole.bin,
+                            kind: PageKind::Medium,
+                            origin:
+                                ThreadExitMappedRegularPostExitOrigin::AggregateExitSoleInitialMediumImmediate,
+                        },
+                    },
+                ),
+            );
+        }
 
         Ok(ThreadExitMappedRegularPagesPostExitAbandonOutcome::Detached(
             ThreadExitMappedRegularPagesPostExitDetach {
@@ -6673,6 +6768,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                 PageKind::Medium,
                 ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullMedium
             ) | (
+                PageKind::Medium,
+                ThreadExitMappedRegularPostExitOrigin::AggregateExitSoleInitialMediumImmediate
+            ) | (
                 PageKind::Small,
                 ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate
             ) | (
@@ -6847,6 +6945,8 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         let page_ref = unsafe { page.as_ref() };
         let immediate_direct_small = self.origin
             == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate;
+        let aggregate_sole_immediate_medium = self.origin
+            == ThreadExitMappedRegularPostExitOrigin::AggregateExitSoleInitialMediumImmediate;
         let scalar_extension_direct_small = self.origin
             == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension;
         let prefix_covered_extension_direct_small = self.origin
@@ -6871,6 +6971,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             || (direct_small
                 && (page_ref.block_size() > SMALL_SIZE_MAX
                     || page_ref.reserved() < 16))
+            || (aggregate_sole_immediate_medium && page_ref.free_list_head().is_null())
             || (immediate_direct_small && page_ref.free_list_head().is_null())
             || (scalar_extension_direct_small
                 && (!page_ref.free_list_head().is_null()
@@ -6910,6 +7011,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         // `_mi_os_commit`; a prefix-covered plan still extends the local free
         // list without changing arena callback slice accounting.
         if unsafe { page.as_ref() }.free_list_head().is_null() {
+            if aggregate_sole_immediate_medium {
+                return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageState);
+            }
             let (capacity, reserved, block_size, slice_pcommitted, page_offset, memory) = {
                 let page_ref = unsafe { page.as_ref() };
                 (

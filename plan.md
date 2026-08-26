@@ -332,8 +332,11 @@ mapping path. This does not add a production page-on-demand option, a generic
 fresh fallback, or a bitmap scan. A bitmap miss, malformed state, scalar
 extension error, or any other post-transfer error remains terminally retained.
 Non-direct-small, malformed or out-of-profile no-immediate direct-small metadata, full, singleton,
-unmapped, huge, foreign, aggregate-registry, automatic-
-scanning, and concurrent adoption remain deliberately absent.
+unmapped, huge, foreign, multi-member aggregate-registry, automatic-
+scanning, and concurrent adoption remain deliberately absent. The one aggregate
+exception is described below: a completed source traversal may turn exactly
+one initial nonfull medium survivor with an immediate local head into the
+existing one-page handoff before a registry exists.
 
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
@@ -370,10 +373,19 @@ this permits distinct small, medium, and large bins without retaining stale
 page metadata. A nonempty free retains its pairing, while a final free
 re-derives the supported page's complete regular span (one slice for small,
 eight for medium, and 64 for large) before clearing identity/bit/count and
-performing PageMap -> `pages_main` -> metadata -> slice release. A fresh engine
-may serialize an independent map operation between frees, but no current
-allocator path receives a capability to adopt, reclaim, or requeue a registry
-member.
+performing PageMap -> `pages_main` -> metadata -> slice release. If that complete
+source traversal releases every other page and leaves exactly one
+initially-nonfull medium page with an immediate local head, the traversal
+captures its exact page/span/bin witness while it still owns every queue and
+returns the established one-page mapped route instead of creating a registry.
+That route reuses only its exact bitmap member through the established
+fresh-later-main claim/requeue path; its immediate-head revalidation forbids
+extension, direct commitment, a fresh-page fallback, and a bitmap/PageMap
+search. A multi-member registry, a non-medium/no-immediate survivor, and a
+registry later reduced to one member by client frees remain sequential
+client-free-only. A fresh engine may serialize an independent map operation
+between frees, but no current allocator path receives a capability to adopt,
+reclaim, or requeue a registry member.
 
 An empty drain still returns for the ordinary post-drain root/list/TLD teardown;
 the process routes use their separate typed attachment finish. Every route
@@ -448,11 +460,12 @@ direct-small routes have the explicit inverse bridge into one fresh later-main
 mutation lease. The mapped-medium route's bounded reserved-prefix fixture now
 covers source direct page-area commitment and failed-commit reabandonment
 before a same-candidate retry; it is not a generic allocation policy. The
-aggregate registry intentionally stops
-at nonfull regular small, medium, and large pages and has no adoption
-capability. Do not extend either boundary to another page shape without its
-source-specific publication, terminal-release, allocation-time claim/reclaim,
-and concurrency evidence.
+aggregate registry intentionally stops at nonfull regular small, medium, and
+large pages and has no adoption capability; only the completed traversal's
+separately typed sole initial-medium/immediate-head outcome becomes the
+existing one-page route before registry construction. Do not extend either
+boundary to another page shape without its source-specific publication,
+terminal-release, allocation-time claim/reclaim, and concurrency evidence.
 
 Checkpoint evidence is green: the focused
 `dynamic_theap::tests::dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page`,
@@ -528,7 +541,9 @@ reserved-prefix-covered no-commit extension, and reserved-prefix page-area-
 commit fresh-owner reclaim/reuse regressions (including failed-commit
 direct-cache repair and same-candidate retry); and the aggregate
 regular-pages registry's mixed small/medium/large
-release, retired-direct-small and retired-large prepass, malformed direct-image and malformed-predecessor
+release, retired-direct-small prepass, and retired-large prepass followed by
+sole immediate-medium exact reclaim/reuse with an armed no-commit fault,
+malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
 selection, large-span terminal release,
 and large force-collection-to-drained regressions), and
@@ -554,9 +569,9 @@ The frozen-profile direct-small no-immediate source family is now exhaustive:
 after force/false collection, every valid nonfull page has either a fully
 committed scalar extension, a prefix-covered extension, or a positive
 page-area-commit extension. The defensive unsupported classifier is only for
-malformed or out-of-profile metadata. The next local frontier is therefore a
-separately proven aggregate-registry policy or another source-shaped owner-exit
-class, then complete process and real pthread/TLS lifecycle integration—not a
+malformed or out-of-profile metadata. The next local frontier is therefore
+another separately proven aggregate-registry policy or another source-shaped
+owner-exit class, then complete process and real pthread/TLS lifecycle integration—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later
 page-owner slices.

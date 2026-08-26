@@ -76,9 +76,12 @@ the bounded aggregate regular-pages traversal, teardown, or public routing.
 Only the explicit consuming medium and direct-small handoffs (immediate-head,
 exhausted fully committed scalar extension, exact prefix-covered extension, or
 exact on-demand page-area commit) can turn a detached route's short PageMap
-access back into one long later-main lifecycle; ordinary routes, other
-no-immediate direct-small cases, and aggregate-registry use remain sequential
-client-free access.
+access back into one long later-main lifecycle. A completed aggregate
+traversal may use the existing immediate-medium handoff only when it itself
+leaves exactly one initial nonfull medium survivor with an immediate head,
+before a registry is built; ordinary routes, other no-immediate direct-small
+cases, multi-member registries, and registries later reduced by client frees
+remain sequential client-free access.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished
 reservation failure or dropped unfinished lifecycle terminally poisons rather
@@ -472,8 +475,10 @@ tail, preserving the PageMap and ordinary arena membership for a consuming
 same-candidate retry. This is not a production page-on-demand option or a
 fresh allocation fallback. A bitmap miss, malformed state, scalar extension
 error, or other post-transfer failure is retained terminally. Non-direct-small,
-malformed or out-of-profile no-immediate direct-small metadata, full, and aggregate members remain
-client-free-only. The
+malformed or out-of-profile no-immediate direct-small metadata, full, and
+aggregate registry members remain client-free-only. The completed aggregate
+traversal's separate sole initial-medium/immediate-head outcome becomes the
+existing one-page route before that registry exists. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
 only after the source mostly-used boundary. The full direct-small route also
@@ -487,7 +492,10 @@ teardown; its `used < reserved` guard excludes full small pages. The
 separate regular-pages source-order aggregate traversal validates the complete
 source direct-cache image, refreshes its queue head before page-count detach,
 and returns an ordinary drain when retirement/force collection empties every
-page. It still does not claim a general thread
+page. When it instead leaves exactly one initial nonfull medium with an
+immediate head, it returns that exact existing one-page handoff rather than an
+aggregate registry; multi-member and post-free-reduced registries never gain
+that edge. It still does not claim a general thread
 lifecycle, abandonment traversal, or `pthread`
 integration claim. The compiler-TLS codegen probe proves hidden
 initial-exec AArch64 root access and direct thread-pointer identity without a
