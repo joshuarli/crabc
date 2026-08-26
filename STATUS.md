@@ -716,6 +716,21 @@ terminal release. Neither dynamic handoff scans, reclaims, adopts, requeues,
 accepts a second free, or generalizes thread exit. Only an empty drain may
 resume the existing cached-root/list/key teardown.
 
+`DynamicThreadExitDrain::abandon_mapped_two_block_medium` is a separate
+post-TLS dynamic handoff for exactly one sole nonfull `MemoryKind::Arena`
+`PageKind::Medium` page with `block_size > SMALL_SIZE_MAX`, `reserved > 2`,
+`used == 2`, zero retirement countdown, one regular queue member, an empty
+direct-cache image, and no other queue/direct entry. It preserves source force
+-> false collection -> queue removal -> page-count decrement -> non-direct
+no-op cache update -> dynamic mapped identity/bit/count/unown. The private
+handoff retains no client pointer/list: its first exact canonical free must
+produce `UnownedMapped` and keep the bit/count with one live block, while only
+the final free may produce `Empty`, clear that pair, and release the
+queue-detached PageMap -> dynamic ordinary bit -> metadata -> arena-slice
+span. One or three live blocks, another page, other source classes, reclaim,
+adoption, requeue, scanning, producers, concurrency, and general owner exit
+remain excluded.
+
 The first fresh page in that private non-abandoning dynamic session now owns
 one exact source-shaped heap-local `mi_arena_pages_t` image. Creation first
 requires the registry-published arena's non-null `Arena::subprocess` to equal

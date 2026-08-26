@@ -188,6 +188,21 @@ ordinary bit -> metadata -> arena slices. The large route validates the full
 departed Theap, requeue, adopt, scan, accept a second free, or generalize
 dynamic owner exit.
 
+`DynamicThreadExitDrain::abandon_mapped_two_block_medium` is a separate,
+source-shaped post-TLS dynamic handoff. It admits only one sole nonfull
+`MemoryKind::Arena` `PageKind::Medium` page with `block_size >
+SMALL_SIZE_MAX`, `reserved > 2`, `used == 2`, zero retirement countdown, one
+regular queue member, an empty direct-cache image, and no other queue/direct
+entry. It preserves force -> false collection -> regular-queue removal ->
+page-count decrement -> non-direct no-op cache update -> mapped
+identity/bit/count/unown. Its private token stores no client pointer or list:
+the first exact canonical client free must return `UnownedMapped` and keep the
+dynamic bit/count with one block live; the final free alone may return `Empty`,
+clear that pair, and release PageMap -> dynamic ordinary bit -> metadata ->
+arena slices. One or three live blocks, another page, any other source class,
+reclaim/adoption/requeue/scanning, producers, concurrency, and general owner
+exit remain excluded.
+
 `DynamicThreadExitDrain::abandon_full_medium` is a separate disjoint dynamic
 owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` medium
 page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct
@@ -827,18 +842,18 @@ and large force-collection-to-drained regressions), and
 which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
-`subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 525 tests. `./scripts/dev.sh test -p crabc-mimalloc
+`subproc::tests` all pass. The current pinned Linux/AArch64 container
+`cargo test -p crabc-mimalloc --lib` run passes all 530 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 115 items and 119
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 116 items and 120
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small or mapped-two-block-medium cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
 The frozen-profile direct-small no-immediate source family is now exhaustive:

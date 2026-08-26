@@ -1169,6 +1169,20 @@ aggregate-registry adoption remain absent.
   `Heap::abandoned_count[bin]`, then releases PageMap -> dynamic ordinary-bit
   -> metadata -> slice release. It cannot reclaim the departed Theap, adopt,
   requeue, scan, or represent a second page or free.
+  `DynamicThreadExitDrain::abandon_mapped_two_block_medium` is a separate
+  post-TLS dynamic source class: exactly one sole nonfull `MemoryKind::Arena`
+  `PageKind::Medium` page with `block_size > SMALL_SIZE_MAX`, `reserved > 2`,
+  `used == 2`, zero retirement countdown, one regular queue member, an empty
+  direct-cache image, and no other queue/direct entry. It preserves force ->
+  false collection -> regular-queue removal -> page-count decrement ->
+  non-direct no-op cache update -> dynamic mapped identity/bit/count/unown.
+  Its private handoff retains no client pointer/list; the first exact canonical
+  client free must produce `UnownedMapped` and keep the matching dynamic pair
+  with one live block, while the final free alone may produce `Empty`, clear
+  the pair, and release PageMap -> dynamic ordinary-bit -> metadata -> slice.
+  One/three live blocks, another page, every other source class, reclaim,
+  adoption, requeue, scans, producer/concurrent routing, and a general
+  multi-free owner-exit traversal remain absent.
   Its first dynamic arena page first proves the registry-published arena's
   non-null subprocess identity equals the attachment's selected main
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
@@ -1379,7 +1393,15 @@ aggregate-registry adoption remain absent.
   and `dynamic_thread_exit_mapped_one_block_direct_small_handoff_retains_collection_failure`
   prove the partial-collector terminal release, wholly pre-detach stale-cache
   refusal, direct-range clearing before page-count detach, and retained
-  collection failure for the separate direct-small class. The raw
+  collection failure for the separate direct-small class. The two-block-medium
+  `dynamic_thread_exit_mapped_two_block_medium_handoff_keeps_first_free_mapped_then_releases`,
+  `dynamic_thread_exit_mapped_two_block_medium_handoff_rejects_one_live_block_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_medium_handoff_rejects_three_live_blocks_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_medium_handoff_rejects_another_page_before_detach`,
+  and `dynamic_thread_exit_mapped_two_block_medium_handoff_retains_collection_failure`
+  prove the two-free `UnownedMapped` then `Empty` state transition, dynamic
+  bitmap/count preservation then cleanup, wholly pre-detach live-count and
+  sole-page refusals, and retained post-TLS collection poison. The raw
   `mapped_direct_one_block_owner_exit_free_collects_its_final_head_then_releases`
   and
   `mapped_direct_one_block_owner_exit_free_rejects_small_geometry_without_source_reserve`

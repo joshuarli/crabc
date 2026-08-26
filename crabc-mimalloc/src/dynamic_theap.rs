@@ -1824,6 +1824,10 @@ mod tests {
         DynamicThreadExitMappedOneBlockAbandonError,
         DynamicThreadExitMappedOneBlockAbandonFailure,
         DynamicThreadExitMappedOneBlockRemoteFreeFailure,
+        DynamicThreadExitMappedTwoBlockMediumAbandonError,
+        DynamicThreadExitMappedTwoBlockMediumAbandonFailure,
+        DynamicThreadExitMappedTwoBlockMediumFreeResult,
+        DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure,
         DynamicThreadExitSingletonAbandonError,
         DynamicThreadExitSingletonAbandonFailure,
         DynamicThreadExitSingletonRemoteFreeError,
@@ -6028,6 +6032,444 @@ mod tests {
             assert!(drain.finish());
             assert!(unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null());
             DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_two_block_medium_handoff_keeps_first_free_mapped_then_releases() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the dynamic fixture allocates its first regular medium block");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first regular medium block remains PageMap-published");
+            let second = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the dynamic fixture allocates its second regular medium block");
+            assert_eq!(
+                unsafe { allocator.page_for_block(second) },
+                page.as_ptr(),
+                "the two-block route starts from one shared medium page"
+            );
+            let (memory, bin) = {
+                // SAFETY: both client blocks are live and the source page has
+                // not crossed its dynamic thread-exit owner boundary.
+                let page_ref = unsafe { page.as_ref() };
+                let memory = page_ref.memid();
+                let bin = crate::size_class::bin(page_ref.block_size())
+                    .expect("the regular medium page has one source bin");
+                assert_eq!(memory.kind(), MemoryKind::Arena);
+                assert_eq!(
+                    crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                    Some(crate::types::PageKind::Medium)
+                );
+                assert!(page_ref.reserved() > 2);
+                assert_eq!(page_ref.used(), 2);
+                (memory, bin)
+            };
+            assert_eq!(allocator.queue_count(bin), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+
+            // SAFETY: `first` and `second` are the exact two current client
+            // allocations in this sole nonfull medium source page. The
+            // returned handoff serializes their distinct source free tails.
+            let handoff = match unsafe { drain.abandon_mapped_two_block_medium(first) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the two-block medium page enters its dynamic owner-exit handoff: {error:?}");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("two-block mapped abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_page_count(), 0);
+            assert_eq!(unsafe { handoff.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(handoff.test_abandoned_count(), Some(1));
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+
+            // SAFETY: this exact first live block leaves one client block in
+            // the source page, so the failed-reclaim tail must re-unown its
+            // mapped abandoned identity without terminal release.
+            let handoff = match unsafe { handoff.remote_free_after_thread_exit(first) } {
+                Ok(DynamicThreadExitMappedTwoBlockMediumFreeResult::StillLive(handoff)) => handoff,
+                Ok(DynamicThreadExitMappedTwoBlockMediumFreeResult::Released(drain)) => {
+                    core::mem::forget(drain);
+                    panic!("the first of two medium frees must not release the page");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the first two-block medium free preserves the mapped handoff: {error:?}");
+                }
+            };
+            assert_eq!(unsafe { handoff.test_page_for_block(second) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            assert_eq!(handoff.test_abandoned_count(), Some(1));
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+
+            // SAFETY: `second` is now the handoff's exact final live client
+            // block, so the source mapped tail clears the dynamic bit/count
+            // before the queue-detached PageMap/arena release.
+            let drain = match unsafe { handoff.remote_free_after_thread_exit(second) } {
+                Ok(DynamicThreadExitMappedTwoBlockMediumFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitMappedTwoBlockMediumFreeResult::StillLive(handoff)) => {
+                    core::mem::forget(handoff);
+                    panic!("the final two-block medium free must release the page");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the final two-block medium free releases its dynamic arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(first) }.is_null());
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert_eq!(drain.test_page_count(), 0);
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(memory));
+            assert!(drain.finish());
+            assert!(unsafe { page_map.checked_lookup(first.as_ptr()) }.is_null());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_two_block_medium_handoff_rejects_one_live_block_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates one medium live block");
+            let page = unsafe { allocator.page_for_block(block) };
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the medium page has one source bin");
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: this medium page has only one live allocation. The
+            // two-block endpoint must refuse before source collection, queue
+            // detachment, or dynamic bitmap/count publication.
+            let drain = match unsafe { drain.abandon_mapped_two_block_medium(block) } {
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitMappedTwoBlockMediumAbandonError::NotMappedTwoBlock,
+                }) => drain,
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the one-block refusal is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the one-block refusal is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("one live medium block must not enter the two-block handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(block) }, page);
+            assert_eq!(unsafe { (*page).used() }, 1);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_two_block_medium_handoff_rejects_three_live_blocks_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its first medium live block");
+            let page = unsafe { allocator.page_for_block(first) };
+            let second = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its second medium live block");
+            let third = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its third medium live block");
+            assert_eq!(unsafe { allocator.page_for_block(second) }, page);
+            assert_eq!(unsafe { allocator.page_for_block(third) }, page);
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the medium page has one source bin");
+            assert_eq!(unsafe { (*page).used() }, 3);
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: three exact live client blocks remain in the one source
+            // medium page. The two-block endpoint cannot silently turn into a
+            // general multi-free route.
+            let drain = match unsafe { drain.abandon_mapped_two_block_medium(first) } {
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitMappedTwoBlockMediumAbandonError::NotMappedTwoBlock,
+                }) => drain,
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the three-block refusal is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the three-block refusal is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("three live medium blocks must not enter the two-block handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page);
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, page);
+            assert_eq!(unsafe { drain.test_page_for_block(third) }, page);
+            assert_eq!(unsafe { (*page).used() }, 3);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_two_block_medium_handoff_rejects_another_page_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its first two-block-medium member");
+            let page = unsafe { allocator.page_for_block(first) };
+            let second = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its second two-block-medium member");
+            assert_eq!(unsafe { allocator.page_for_block(second) }, page);
+            let other = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates a second live source page");
+            let other_page = unsafe { allocator.page_for_block(other) };
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the medium page has one source bin");
+            assert_eq!(unsafe { (*page).used() }, 2);
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the selected page has exactly two live medium blocks,
+            // but the extra live page proves this endpoint cannot skip the
+            // rest of the source `MI_ABANDON` traversal.
+            let drain = match unsafe { drain.abandon_mapped_two_block_medium(first) } {
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitMappedTwoBlockMediumAbandonError::NotOnlyPage,
+                }) => drain,
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the extra-page refusal is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the extra-page refusal is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("another live source page must block the two-block medium handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page);
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, page);
+            assert_eq!(unsafe { drain.test_page_for_block(other) }, other_page);
+            assert_eq!(unsafe { (*page).used() }, 2);
+            assert_eq!(drain.test_page_count(), 2);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_two_block_medium_handoff_retains_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its first medium block for source collection");
+            let page = unsafe { allocator.page_for_block(first) };
+            let second = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its second medium block for source collection");
+            assert_eq!(unsafe { allocator.page_for_block(second) }, page);
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the medium page has one source bin");
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the exact two-block source image remains queue-linked;
+            // the one-shot seam fails force collection before source detach,
+            // retaining the poisoned post-TLS drain as the only owner.
+            let drain = match unsafe { drain.abandon_mapped_two_block_medium(first) } {
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitMappedTwoBlockMediumAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("injected source collection failure retains the dynamic drain: {error:?}");
+                }
+                Err(DynamicThreadExitMappedTwoBlockMediumAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("collection fails before a terminal two-block mapped handoff: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("the injected collection failure cannot abandon the two-block medium page");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page);
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, page);
+            assert_eq!(unsafe { (*page).used() }, 2);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
         });
     }
 

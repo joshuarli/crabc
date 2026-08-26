@@ -1013,6 +1013,21 @@ dynamic ordinary bit -> metadata -> arena slices. The large route validates
 its complete 64-slice span before that release. It cannot adopt, requeue, scan,
 reclaim the departed Theap, or handle multiple pages or frees.
 
+`DynamicThreadExitDrain::abandon_mapped_two_block_medium` deliberately remains
+a distinct post-TLS dynamic handoff. It admits only one sole nonfull
+`MemoryKind::Arena` `PageKind::Medium` page with `block_size > SMALL_SIZE_MAX`,
+`reserved > 2`, `used == 2`, zero retirement countdown, one regular queue
+member, an empty direct-cache image, and no other queue/direct entry. It
+preserves source force -> false collection -> regular-queue removal ->
+page-count decrement -> non-direct no-op cache update -> mapped
+identity/bit/count/unown. Its token retains no client pointer/list: the first
+exact canonical free must take `UnownedMapped` and preserve the dynamic
+bit/count with one block live; the final free alone may take `Empty`, clear
+that pair, and release PageMap -> dynamic ordinary bit -> metadata -> arena
+slices. It cannot reclaim, adopt, requeue, scan, retain a general multi-free
+route, or cover another page, source class, producer, concurrent free, or
+owner-exit traversal.
+
 On the first fresh dynamic arena page, that same session lazily creates one
 private `DynamicArenaPagesOwner`. Before allocating it proves that the
 registry-published arena has a non-null `Arena::subprocess` equal to the
