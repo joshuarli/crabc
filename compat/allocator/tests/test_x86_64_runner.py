@@ -60,6 +60,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-dynamic-full-large-homogeneous-aggregate",
             "allocator-dynamic-full-medium-homogeneous-aggregate",
             "allocator-dynamic-full-non-direct-small-homogeneous-aggregate",
+            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
             "allocator-dynamic-os-aligned-singleton",
             "allocator-unit",
             "allocator-core-unit",
@@ -467,6 +468,30 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn(
             "allocator-dynamic-full-non-direct-small-homogeneous-aggregate takes no arguments",
+            result.stderr,
+        )
+
+    def test_dynamic_nonfull_regular_pages_distinct_bin_aggregate_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(
+            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate)",
+            source,
+        )
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_dynamic_nonfull_regular_pages_distinct_bin_aggregate_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
+            "unexpected",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate takes no arguments",
             result.stderr,
         )
 

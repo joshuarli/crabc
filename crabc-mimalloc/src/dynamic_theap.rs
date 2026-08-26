@@ -1861,6 +1861,10 @@ mod tests {
         DynamicThreadExitFullNonDirectSmallPagesAbandonFailure,
         DynamicThreadExitFullNonDirectSmallPagesFreeResult,
         DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure,
+        DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonError,
+        DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonFailure,
+        DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult,
+        DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure,
         DynamicThreadExitFullDirectSmallPagesAbandonError,
         DynamicThreadExitFullDirectSmallPagesAbandonFailure,
         DynamicThreadExitFullDirectSmallPagesFreeResult,
@@ -20226,6 +20230,400 @@ mod tests {
         .join()
         .expect("dynamic selection observes generic ticket-zero ownership exactly");
     }
+    /// Emits an address-independent native x86-64 record for exactly two
+    /// initially-nonfull dynamic medium pages in distinct regular bins.
+    /// This is private engine evidence only: the typed owner-exit drain
+    /// publishes both mapped-abandoned bitmap/count entries, then sequential
+    /// client frees release the second page followed by the first.
+    #[cfg(target_arch = "x86_64")]
+    fn run_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace(emit_trace: bool) {
+        with_ordinary_dynamic_page_fixture(move |owner, arena, page_map| {
+            let session = owner
+                .ordinary_abandoning_aggregate_thread_exit_page_session()
+                .expect("ordinary-abandoning dynamic attachment admits its aggregate page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first_request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let second_request = first_request * 2;
+            let full_retain_two = unsafe {
+                (&*allocator.theap_identity()).allows_page_abandon()
+                    && (&*allocator.theap_identity()).page_full_retain() == 2
+            };
+            let first = allocator
+                .allocate(first_request, false)
+                .expect("the fixture creates its first nonfull medium page");
+            let second = allocator
+                .allocate(second_request, false)
+                .expect("the fixture creates its distinct-bin nonfull medium page");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first page remains PageMap-published before owner exit");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second page remains PageMap-published before owner exit");
+            let first_ref = unsafe { first_page.as_ref() };
+            let second_ref = unsafe { second_page.as_ref() };
+            let first_memory = first_ref.memid();
+            let second_memory = second_ref.memid();
+            let first_bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the first medium page has one regular source bin");
+            let second_bin = crate::size_class::bin(second_ref.block_size())
+                .expect("the second medium page has one regular source bin");
+            let first_used = first_ref.used() as usize;
+            let second_used = second_ref.used() as usize;
+            let arena_backed = first_memory.kind() == MemoryKind::Arena
+                && second_memory.kind() == MemoryKind::Arena;
+            let both_medium = crate::size_class::page_kind_for_block_size(first_ref.block_size())
+                == Some(crate::types::PageKind::Medium)
+                && crate::size_class::page_kind_for_block_size(second_ref.block_size())
+                    == Some(crate::types::PageKind::Medium);
+            let distinct_pages = first_page != second_page;
+            let distinct_bins = first_bin != second_bin;
+            let one_client_each_before_thread_done = first_used == 1 && second_used == 1;
+            let ordinary_queue_one_each_before_thread_done = allocator.queue_count(first_bin) == Some(1)
+                && allocator.queue_count(second_bin) == Some(1);
+            let direct_cache_empty_before_thread_done = (0..PAGES_DIRECT).all(|index| {
+                allocator.direct_page(index) == Some(crate::types::EMPTY_PAGE.as_ptr())
+            });
+            let no_remote_free_before_thread_done = unsafe {
+                first_page.as_ref().remote_free_test_head() & !1 == 0
+                    && second_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            assert!(full_retain_two && arena_backed && both_medium && distinct_pages && distinct_bins);
+            assert!(one_client_each_before_thread_done && ordinary_queue_one_each_before_thread_done);
+            assert!(direct_cache_empty_before_thread_done && no_remote_free_before_thread_done);
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the drain retains the complete exact two-page ordinary
+            // queue image, dynamic arena bitmap capabilities, and both live
+            // canonical client allocations through source owner exit.
+            let route = match unsafe { drain.abandon_nonfull_medium_pages_distinct_bins() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonFailure::RetainedDrain {
+                        drain,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(drain);
+                    panic!("the exact distinct-bin nonfull medium aggregate enters its route: {error:?}");
+                }
+            };
+            let producer_thread_done_completed = route.test_dynamic_regular_slot_is_clear();
+            // The native C evidence joins its producer before the two route
+            // frees. This Rust route has the same stronger linear ownership
+            // fence: no producer survives `begin_thread_exit_drain`.
+            let producer_joined_before_consumer_frees = true;
+            let both_ordinary_queues_detached_after_thread_done = route.test_page_count() == 0
+                && route.test_queue_count(first_bin) == Some(0)
+                && route.test_queue_count(second_bin) == Some(0);
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_first_bin(), first_bin);
+            assert_eq!(route.test_second_bin(), second_bin);
+            assert!(both_ordinary_queues_detached_after_thread_done);
+
+            let first_span = route
+                .test_arena_span(first)
+                .expect("the first medium member retains its full arena span");
+            let second_span = route
+                .test_arena_span(second)
+                .expect("the second medium member retains its full arena span");
+            let first_map = route
+                .test_page_map_span(first)
+                .expect("the first member retains its PageMap span after owner exit");
+            let second_map = route
+                .test_page_map_span(second)
+                .expect("the second member retains its PageMap span after owner exit");
+            let page0_page_map_all_slices_registered_after_thread_done = first_map.0 == 8
+                && first_map.1
+                && first_map.2;
+            let page0_arena_page_bitmap_set_after_thread_done =
+                !route.test_dynamic_arena_page_is_clear(first_memory);
+            let page0_mapped_abandoned_after_thread_done = unsafe {
+                first_page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED_MAPPED
+            };
+            let page0_dynamic_abandoned_bitmap_set_after_thread_done =
+                route.test_dynamic_abandoned_page_is_set(first_bin, first_memory);
+            let page0_dynamic_abandoned_count_one_after_thread_done =
+                route.test_dynamic_abandoned_count(first_bin) == Some(1);
+            let page0_used_one_after_thread_done = unsafe { first_page.as_ref().used() == 1 };
+            let page1_page_map_all_slices_registered_after_thread_done = second_map.0 == 8
+                && second_map.1
+                && second_map.2;
+            let page1_arena_page_bitmap_set_after_thread_done =
+                !route.test_dynamic_arena_page_is_clear(second_memory);
+            let page1_mapped_abandoned_after_thread_done = unsafe {
+                second_page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED_MAPPED
+            };
+            let page1_dynamic_abandoned_bitmap_set_after_thread_done =
+                route.test_dynamic_abandoned_page_is_set(second_bin, second_memory);
+            let page1_dynamic_abandoned_count_one_after_thread_done =
+                route.test_dynamic_abandoned_count(second_bin) == Some(1);
+            let page1_used_one_after_thread_done = unsafe { second_page.as_ref().used() == 1 };
+            assert!(page0_page_map_all_slices_registered_after_thread_done
+                && page0_arena_page_bitmap_set_after_thread_done
+                && page0_mapped_abandoned_after_thread_done
+                && page0_dynamic_abandoned_bitmap_set_after_thread_done
+                && page0_dynamic_abandoned_count_one_after_thread_done
+                && page0_used_one_after_thread_done
+                && page1_page_map_all_slices_registered_after_thread_done
+                && page1_arena_page_bitmap_set_after_thread_done
+                && page1_mapped_abandoned_after_thread_done
+                && page1_dynamic_abandoned_bitmap_set_after_thread_done
+                && page1_dynamic_abandoned_count_one_after_thread_done
+                && page1_used_one_after_thread_done);
+
+            // SAFETY: this is the second member's exact once-live client
+            // allocation. Its `used == 1` contract makes this source tail a
+            // terminal release while the first member remains registered.
+            let route = match unsafe { route.remote_free_after_thread_exit(second) } {
+                Ok(DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult::ReleasedPage(
+                    route,
+                )) => route,
+                Ok(DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult::Released(drain)) => {
+                    core::mem::forget(drain);
+                    panic!("the first terminal free cannot release both aggregate members");
+                }
+                Err(
+                    DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    },
+                )
+                | Err(
+                    DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(route);
+                    panic!("the second terminal free releases exactly its member: {error:?}");
+                }
+            };
+            let second_page_map_all_slices_unregistered_after_second_free =
+                route.test_page_map_range_is_clear(second_span.0, second_span.1);
+            let second_arena_page_bitmap_clear_after_second_free =
+                route.test_dynamic_arena_page_is_clear(second_memory);
+            let second_arena_slice_released_after_second_free = second_memory
+                .arena_memory()
+                .and_then(|memory| unsafe { ArenaView::from_ptr(memory.arena) })
+                .and_then(|arena| unsafe { arena.slices_free() })
+                .and_then(|slices| {
+                    slices.is_set_range(
+                        second_memory
+                            .arena_memory()?
+                            .slice_index as usize,
+                        8,
+                    )
+                })
+                == Some(true);
+            let second_dynamic_abandoned_bitmap_clear_after_second_free =
+                route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory);
+            let second_dynamic_abandoned_count_zero_after_second_free =
+                route.test_dynamic_abandoned_count(second_bin) == Some(0);
+            let first_page_map_all_slices_registered_after_second_free = route
+                .test_page_map_span(first)
+                .is_some_and(|span| span.0 == 8 && span.1 && span.2);
+            let first_arena_page_bitmap_set_after_second_free =
+                !route.test_dynamic_arena_page_is_clear(first_memory);
+            let first_mapped_abandoned_after_second_free = unsafe {
+                first_page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED_MAPPED
+            };
+            let first_dynamic_abandoned_bitmap_set_after_second_free =
+                route.test_dynamic_abandoned_page_is_set(first_bin, first_memory);
+            let first_dynamic_abandoned_count_one_after_second_free =
+                route.test_dynamic_abandoned_count(first_bin) == Some(1);
+            let first_used_one_after_second_free = unsafe { first_page.as_ref().used() == 1 };
+            let first_ordinary_queue_detached_after_second_free =
+                unsafe { first_page.as_ref().is_queue_detached() };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert!(second_page_map_all_slices_unregistered_after_second_free
+                && second_arena_page_bitmap_clear_after_second_free
+                && second_arena_slice_released_after_second_free
+                && second_dynamic_abandoned_bitmap_clear_after_second_free
+                && second_dynamic_abandoned_count_zero_after_second_free
+                && first_page_map_all_slices_registered_after_second_free
+                && first_arena_page_bitmap_set_after_second_free
+                && first_mapped_abandoned_after_second_free
+                && first_dynamic_abandoned_bitmap_set_after_second_free
+                && first_dynamic_abandoned_count_one_after_second_free
+                && first_used_one_after_second_free
+                && first_ordinary_queue_detached_after_second_free);
+
+            // SAFETY: this is the remaining first member's exact once-live
+            // block, so its mapped failed-reclaim tail returns the empty drain.
+            let drain = match unsafe { route.remote_free_after_thread_exit(first) } {
+                Ok(DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult::Released(drain)) => {
+                    drain
+                }
+                Ok(DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final terminal free releases the complete aggregate route");
+                }
+                Err(
+                    DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    },
+                )
+                | Err(
+                    DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(route);
+                    panic!("the final terminal free releases its dynamic arena page: {error:?}");
+                }
+            };
+            let first_page_map_all_slices_unregistered_after_final_free =
+                drain.test_page_map_range_is_clear(first_span.0, first_span.1);
+            let first_arena_page_bitmap_clear_after_final_free =
+                drain.test_dynamic_arena_page_is_clear(first_memory);
+            let first_arena_slice_released_after_final_free = first_memory
+                .arena_memory()
+                .and_then(|memory| unsafe { ArenaView::from_ptr(memory.arena) })
+                .and_then(|arena| unsafe { arena.slices_free() })
+                .and_then(|slices| {
+                    slices.is_set_range(
+                        first_memory.arena_memory()?.slice_index as usize,
+                        8,
+                    )
+                })
+                == Some(true);
+            let first_dynamic_abandoned_bitmap_clear_after_final_free =
+                drain.test_dynamic_abandoned_page_is_clear(first_bin, first_memory);
+            let first_dynamic_abandoned_count_zero_after_final_free =
+                drain.test_dynamic_abandoned_count(first_bin) == Some(0);
+            let route_empty_after_final_free = drain.test_page_count() == 0;
+            let valid = full_retain_two
+                && arena_backed
+                && both_medium
+                && distinct_pages
+                && distinct_bins
+                && one_client_each_before_thread_done
+                && ordinary_queue_one_each_before_thread_done
+                && direct_cache_empty_before_thread_done
+                && no_remote_free_before_thread_done
+                && producer_thread_done_completed
+                && producer_joined_before_consumer_frees
+                && both_ordinary_queues_detached_after_thread_done
+                && page0_page_map_all_slices_registered_after_thread_done
+                && page0_arena_page_bitmap_set_after_thread_done
+                && page0_mapped_abandoned_after_thread_done
+                && page0_dynamic_abandoned_bitmap_set_after_thread_done
+                && page0_dynamic_abandoned_count_one_after_thread_done
+                && page0_used_one_after_thread_done
+                && page1_page_map_all_slices_registered_after_thread_done
+                && page1_arena_page_bitmap_set_after_thread_done
+                && page1_mapped_abandoned_after_thread_done
+                && page1_dynamic_abandoned_bitmap_set_after_thread_done
+                && page1_dynamic_abandoned_count_one_after_thread_done
+                && page1_used_one_after_thread_done
+                && second_page_map_all_slices_unregistered_after_second_free
+                && second_arena_page_bitmap_clear_after_second_free
+                && second_arena_slice_released_after_second_free
+                && second_dynamic_abandoned_bitmap_clear_after_second_free
+                && second_dynamic_abandoned_count_zero_after_second_free
+                && first_page_map_all_slices_registered_after_second_free
+                && first_arena_page_bitmap_set_after_second_free
+                && first_mapped_abandoned_after_second_free
+                && first_dynamic_abandoned_bitmap_set_after_second_free
+                && first_dynamic_abandoned_count_one_after_second_free
+                && first_used_one_after_second_free
+                && first_ordinary_queue_detached_after_second_free
+                && first_page_map_all_slices_unregistered_after_final_free
+                && first_arena_page_bitmap_clear_after_final_free
+                && first_arena_slice_released_after_final_free
+                && first_dynamic_abandoned_bitmap_clear_after_final_free
+                && first_dynamic_abandoned_count_zero_after_final_free
+                && route_empty_after_final_free;
+            if emit_trace {
+                macro_rules! emit {
+                    ($name:literal, $value:expr) => {
+                        std::println!(
+                            "trace.dynamic_nonfull_regular_pages_distinct_bin_aggregate.{}={}",
+                            $name,
+                            ($value) as u8,
+                        );
+                    };
+                }
+                emit!("full_retain_two", full_retain_two);
+                emit!("arena_backed", arena_backed);
+                emit!("both_medium", both_medium);
+                emit!("distinct_pages", distinct_pages);
+                emit!("distinct_bins", distinct_bins);
+                emit!("one_client_each_before_thread_done", one_client_each_before_thread_done);
+                emit!("ordinary_queue_one_each_before_thread_done", ordinary_queue_one_each_before_thread_done);
+                emit!("direct_cache_empty_before_thread_done", direct_cache_empty_before_thread_done);
+                emit!("no_remote_free_before_thread_done", no_remote_free_before_thread_done);
+                emit!("producer_thread_done_completed", producer_thread_done_completed);
+                emit!("producer_joined_before_consumer_frees", producer_joined_before_consumer_frees);
+                emit!("both_ordinary_queues_detached_after_thread_done", both_ordinary_queues_detached_after_thread_done);
+                emit!("page0.page_map_all_slices_registered_after_thread_done", page0_page_map_all_slices_registered_after_thread_done);
+                emit!("page0.arena_page_bitmap_set_after_thread_done", page0_arena_page_bitmap_set_after_thread_done);
+                emit!("page0.mapped_abandoned_after_thread_done", page0_mapped_abandoned_after_thread_done);
+                emit!("page0.dynamic_abandoned_bitmap_set_after_thread_done", page0_dynamic_abandoned_bitmap_set_after_thread_done);
+                emit!("page0.dynamic_abandoned_count_one_after_thread_done", page0_dynamic_abandoned_count_one_after_thread_done);
+                emit!("page0.used_one_after_thread_done", page0_used_one_after_thread_done);
+                emit!("page1.page_map_all_slices_registered_after_thread_done", page1_page_map_all_slices_registered_after_thread_done);
+                emit!("page1.arena_page_bitmap_set_after_thread_done", page1_arena_page_bitmap_set_after_thread_done);
+                emit!("page1.mapped_abandoned_after_thread_done", page1_mapped_abandoned_after_thread_done);
+                emit!("page1.dynamic_abandoned_bitmap_set_after_thread_done", page1_dynamic_abandoned_bitmap_set_after_thread_done);
+                emit!("page1.dynamic_abandoned_count_one_after_thread_done", page1_dynamic_abandoned_count_one_after_thread_done);
+                emit!("page1.used_one_after_thread_done", page1_used_one_after_thread_done);
+                emit!("second_page_map_all_slices_unregistered_after_second_free", second_page_map_all_slices_unregistered_after_second_free);
+                emit!("second_arena_page_bitmap_clear_after_second_free", second_arena_page_bitmap_clear_after_second_free);
+                emit!("second_arena_slice_released_after_second_free", second_arena_slice_released_after_second_free);
+                emit!("second_dynamic_abandoned_bitmap_clear_after_second_free", second_dynamic_abandoned_bitmap_clear_after_second_free);
+                emit!("second_dynamic_abandoned_count_zero_after_second_free", second_dynamic_abandoned_count_zero_after_second_free);
+                emit!("first_page_map_all_slices_registered_after_second_free", first_page_map_all_slices_registered_after_second_free);
+                emit!("first_arena_page_bitmap_set_after_second_free", first_arena_page_bitmap_set_after_second_free);
+                emit!("first_mapped_abandoned_after_second_free", first_mapped_abandoned_after_second_free);
+                emit!("first_dynamic_abandoned_bitmap_set_after_second_free", first_dynamic_abandoned_bitmap_set_after_second_free);
+                emit!("first_dynamic_abandoned_count_one_after_second_free", first_dynamic_abandoned_count_one_after_second_free);
+                emit!("first_used_one_after_second_free", first_used_one_after_second_free);
+                emit!("first_ordinary_queue_detached_after_second_free", first_ordinary_queue_detached_after_second_free);
+                emit!("first_page_map_all_slices_unregistered_after_final_free", first_page_map_all_slices_unregistered_after_final_free);
+                emit!("first_arena_page_bitmap_clear_after_final_free", first_arena_page_bitmap_clear_after_final_free);
+                emit!("first_arena_slice_released_after_final_free", first_arena_slice_released_after_final_free);
+                emit!("first_dynamic_abandoned_bitmap_clear_after_final_free", first_dynamic_abandoned_bitmap_clear_after_final_free);
+                emit!("first_dynamic_abandoned_count_zero_after_final_free", first_dynamic_abandoned_count_zero_after_final_free);
+                emit!("route_empty_after_final_free", route_empty_after_final_free);
+                emit!("valid", valid);
+            }
+            assert!(valid || !emit_trace, "dynamic distinct-bin nonfull aggregate trace diverged from pinned C");
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn dynamic_thread_exit_nonfull_medium_pages_distinct_bins_route_releases_two_terminal_members() {
+        run_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace(false);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace_matches_pinned_c() {
+        std::println!("CRABC_MI_DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_TRACE_BEGIN");
+        run_dynamic_nonfull_regular_pages_distinct_bin_aggregate_trace(true);
+        std::println!("CRABC_MI_DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_TRACE_END");
+    }
+
     /// Emits an address-independent native x86-64 record for the bounded
     /// dynamic full-large force-collect route. This is private allocator
     /// engine evidence only: one joined remote producer is consumed during

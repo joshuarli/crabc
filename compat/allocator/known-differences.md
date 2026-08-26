@@ -1266,6 +1266,19 @@ existing teardown. A sole, arena-backed, non-singleton,
   allocation-time, reclaim/adoption/requeue, scan, producer, concurrent, and
   joined-remote nonfull cases remain absent, while a collection failure retains
   the drain; production ordinary dynamic allocation remains sealed.
+  `DynamicThreadExitDrain::abandon_nonfull_medium_pages_distinct_bins` is a
+  separate exact dynamic owner-exit aggregate, not a general regular-page
+  registry: it requires exactly two active `MemoryKind::Arena`
+  `PageKind::Medium` members in distinct ordinary non-`BIN_FULL` regular bins,
+  the ordinary `allow_page_abandon == true` and `page_full_retain == 2` source
+  image, one live client per member, zero retirement countdowns, canonical
+  eight-slice spans, empty direct/other queue state, the exact owner-only empty
+  remote-list word, and clear matching dynamic bitmap/count capability. Source
+  force -> false collection -> queue/count detach -> dynamic publication ->
+  unown drives the transition. Its route retains sealed bin/size witnesses,
+  permits only two sequential terminal canonical frees, and then returns the
+  drain. Full, direct-small, same-bin, retired, nonterminal, adoption, reclaim,
+  requeue, allocation-scan, producer, and concurrent cases remain absent.
   `DynamicThreadExitDrain::abandon_full_medium` is a separate sequential
   dynamic owner-exit endpoint for the drain's sole full `MemoryKind::Arena`
   medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no

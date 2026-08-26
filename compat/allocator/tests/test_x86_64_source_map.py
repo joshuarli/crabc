@@ -29,6 +29,10 @@ FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-non-direct-small-homogeneous-aggregate-evidence-v3.5.0.json"
 )
+DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
+)
 SCRIPT_PATH = ROOT / "compat/allocator/x86_64_source_map.py"
 SPEC = importlib.util.spec_from_file_location("crabc_x86_64_source_map", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -392,6 +396,94 @@ class X86_64SourceMapTests(unittest.TestCase):
             ],
             1,
         )
+
+    def test_dynamic_nonfull_regular_pages_distinct_bin_aggregate_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_nonfull_regular_pages_distinct_bin_aggregate_evidence.py",
+            "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_nonfull_regular_pages_distinct_bin_aggregate_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        schema = json.loads(
+            DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA.read_text(
+                encoding="utf-8"
+            )
+        )
+        expected = schema["trace"]["expected_values"]
+        prefix = "trace.dynamic_nonfull_regular_pages_distinct_bin_aggregate"
+        global_trace_fields = {
+            "full_retain_two",
+            "arena_backed",
+            "both_medium",
+            "distinct_pages",
+            "distinct_bins",
+            "one_client_each_before_thread_done",
+            "ordinary_queue_one_each_before_thread_done",
+            "direct_cache_empty_before_thread_done",
+            "no_remote_free_before_thread_done",
+            "producer_thread_done_completed",
+            "producer_joined_before_consumer_frees",
+            "both_ordinary_queues_detached_after_thread_done",
+        }
+        page_after_exit = {
+            "page_map_all_slices_registered_after_thread_done",
+            "arena_page_bitmap_set_after_thread_done",
+            "mapped_abandoned_after_thread_done",
+            "dynamic_abandoned_bitmap_set_after_thread_done",
+            "dynamic_abandoned_count_one_after_thread_done",
+            "used_one_after_thread_done",
+        }
+        expected_keys = {f"{prefix}.{leaf}" for leaf in global_trace_fields}
+        for page in ("page0", "page1"):
+            expected_keys.update(f"{prefix}.{page}.{leaf}" for leaf in page_after_exit)
+        expected_keys.update(
+            {
+                f"{prefix}.second_page_map_all_slices_unregistered_after_second_free",
+                f"{prefix}.second_arena_page_bitmap_clear_after_second_free",
+                f"{prefix}.second_arena_slice_released_after_second_free",
+                f"{prefix}.second_dynamic_abandoned_bitmap_clear_after_second_free",
+                f"{prefix}.second_dynamic_abandoned_count_zero_after_second_free",
+                f"{prefix}.first_page_map_all_slices_registered_after_second_free",
+                f"{prefix}.first_arena_page_bitmap_set_after_second_free",
+                f"{prefix}.first_mapped_abandoned_after_second_free",
+                f"{prefix}.first_dynamic_abandoned_bitmap_set_after_second_free",
+                f"{prefix}.first_dynamic_abandoned_count_one_after_second_free",
+                f"{prefix}.first_used_one_after_second_free",
+                f"{prefix}.first_ordinary_queue_detached_after_second_free",
+                f"{prefix}.first_page_map_all_slices_unregistered_after_final_free",
+                f"{prefix}.first_arena_page_bitmap_clear_after_final_free",
+                f"{prefix}.first_arena_slice_released_after_final_free",
+                f"{prefix}.first_dynamic_abandoned_bitmap_clear_after_final_free",
+                f"{prefix}.first_dynamic_abandoned_count_zero_after_final_free",
+                f"{prefix}.route_empty_after_final_free",
+                f"{prefix}.valid",
+            }
+        )
+        self.assertEqual(set(expected), expected_keys)
+        self.assertEqual(len(expected), 43)
+        self.assertEqual(set(expected.values()), {1})
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
+
     def test_remote_free_scopes_record_both_bounded_native_differentials(self) -> None:
         remote = next(
             unit for unit in self.contract["units"] if unit["id"] == "local-and-remote-free"

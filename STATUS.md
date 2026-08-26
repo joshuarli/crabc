@@ -844,6 +844,19 @@ joined-remote nonfull cases reject before detach; a collection failure retains
 the drain. This does not expose ordinary dynamic allocation or a general
 owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_nonfull_medium_pages_distinct_bins` separately
+admits exactly two initially nonfull `MemoryKind::Arena` `PageKind::Medium`
+pages in distinct ordinary non-`BIN_FULL` bins. The source image is exactly
+`allow_page_abandon == true` and `page_full_retain == 2`; each member has one
+live client, `reserved > 1`, zero retirement countdown, a canonical eight-slice
+span, a clear matching dynamic map/count capability, and an owner-only empty
+remote-free word. Source force -> false collection -> queue/count detach ->
+dynamic map/count publication -> unown creates a route with sealed witnesses,
+not a raw page list. Its two sequential terminal frees release one member and
+then return the drain. Full, direct-small, same-bin, retired, nonterminal,
+adoption, reclaim, requeue, allocation-scan, producer, and concurrent cases
+remain outside this private owner-exit model.
+
 `DynamicThreadExitDrain::abandon_full_medium` separately admits one sole full
 `MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1` and
 `used == reserved`. It preserves source force -> false collection ->
@@ -967,6 +980,17 @@ corresponding bounded dynamic aggregate owner-exit route. This is private
 native x86-64 engine evidence only and does not establish general lifecycle,
 routing, concurrency, abandonment/adoption, public x86 support, backend
 promotion, libc integration, or AArch64 evidence.
+
+The native x86-only track also has a separate 43-field dynamic nonfull
+regular-pages distinct-bin aggregate differential. Its pinned-C probe uses a
+real worker pthread to establish exactly two initially nonfull arena medium
+pages in distinct ordinary bins, runs real `mi_thread_done()`, and joins before
+the consumer frees either page. Rust exercises only the matching private typed
+dynamic owner-exit model; it does not claim a Rust pthread/TLS callback or
+general process/pthread/TLS lifecycle integration. This remains private native
+x86-64 engine evidence only and does not establish public `mi_*` behavior,
+runtime integration, public x86 support, backend promotion, or AArch64
+evidence.
 
 The native x86-only track also has a separate 32-field dynamic full direct-small
 one-remote force-collect-to-mapped differential. A pinned-C worker fills one

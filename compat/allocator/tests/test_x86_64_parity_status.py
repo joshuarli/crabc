@@ -38,6 +38,10 @@ FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-non-direct-small-homogeneous-aggregate-evidence-v3.5.0.json"
 )
+DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -197,6 +201,19 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-dynamic-full-non-direct-small-homogeneous-aggregate",
         )
 
+    def test_dynamic_nonfull_regular_pages_distinct_bin_aggregate_schema_profile_is_exact(
+        self,
+    ) -> None:
+        schema = json.loads(
+            DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA.read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -239,6 +256,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-large-homogeneous-aggregate-differential",
                 "native-dynamic-full-medium-homogeneous-aggregate-differential",
                 "native-dynamic-full-non-direct-small-homogeneous-aggregate-differential",
+                "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
@@ -574,6 +592,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-dynamic-full-non-direct-small-homogeneous-aggregate-differential"]["report"],
             "compat/reports/allocator/x86_64/dynamic-full-non-direct-small-homogeneous-aggregate.json",
+        )
+        self.assertEqual(
+            gates[
+                "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential"
+            ]["command"],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
+        )
+        self.assertEqual(
+            gates[
+                "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential"
+            ]["report"],
+            "compat/reports/allocator/x86_64/"
+            "dynamic-nonfull-regular-pages-distinct-bin-aggregate.json",
         )
         self.assertEqual(
             gates["native-dynamic-os-aligned-singleton-owner-exit-differential"]["command"],
@@ -1247,6 +1279,26 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_full_non_direct_small_aggregate)
+        dynamic_nonfull_regular_pages_distinct_bin_aggregate = gates[
+            "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential"
+        ]["claim"]
+        for fragment in (
+            "43 address-independent values",
+            "bounded private dynamic nonfull regular-pages distinct-bin aggregate",
+            "real worker pthread",
+            "exactly two selected live nonfull regular arena pages in distinct bins",
+            "real mi_thread_done()",
+            "pthread_join()s before any free",
+            "sequential client-free-only",
+            "private typed dynamic owner-exit model",
+            "does not claim a literal Rust pthread/TLS callback",
+            "general process/pthread/TLS lifecycle integration",
+            "allocation-time scanning",
+            "reclaim",
+            "requeue",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_nonfull_regular_pages_distinct_bin_aggregate)
         dynamic_os_aligned_singleton = gates[
             "native-dynamic-os-aligned-singleton-owner-exit-differential"
         ]["claim"]

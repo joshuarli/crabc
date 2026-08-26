@@ -6086,9 +6086,9 @@ mod tests {
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
-    use crate::types::{
-        BIN_BLOCK_SIZES, EMPTY_PAGE, MemoryKind, PageKind, THREAD_ID_ABANDONED_MAPPED,
-    };
+    use crate::types::{BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED_MAPPED};
+    #[cfg(target_arch = "x86_64")]
+    use crate::types::{MemoryKind, PageKind};
     use crabc_core::Errno;
     use std::thread;
 
@@ -9615,6 +9615,8 @@ mod tests {
         })
         .join()
         .expect("one-block large refusal fixture remains current-thread local");
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_64_mapped_post_exit_trace_matches_pinned_c_protocol() {

@@ -2666,6 +2666,17 @@ impl Page {
         thread_id == expected_thread.get()
     }
 
+    /// Returns whether the remote-free atomic is in the exact live-owner,
+    /// empty-list state used by a sealed owner-exit preflight.
+    ///
+    /// This is an observation only: it neither claims the source owner bit nor
+    /// detaches a remote list. The caller must keep the page metadata live and
+    /// exclude a concurrent producer for the complete transition that follows.
+    #[inline]
+    pub(crate) fn remote_free_head_is_owner_only(&self) -> bool {
+        self.xthread_free.load(Ordering::Acquire) == 1
+    }
+
     /// Projects the raw owner fields used after remote detach by the
     /// false-force local half of `_mi_page_free_collect`.
     ///

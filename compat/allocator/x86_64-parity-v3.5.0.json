@@ -321,6 +321,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 43 address-independent values for one bounded private dynamic nonfull regular-pages distinct-bin aggregate after owner exit. The pinned-C probe uses a real worker pthread, establishes exactly two selected live nonfull regular arena pages in distinct bins, calls real mi_thread_done(), and the consumer pthread_join()s before any free. Its tail is sequential client-free-only. Rust exercises only the matching private typed dynamic owner-exit model; it does not claim a literal Rust pthread/TLS callback or general process/pthread/TLS lifecycle integration. This remains private native x86-64 engine evidence only: it does not establish general routing, concurrency, abandonment/adoption, allocation-time scanning, reclaim, requeue, public mi_* behavior or runtime, public x86 support, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
+      "id": "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/dynamic-nonfull-regular-pages-distinct-bin-aggregate.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 29 address-independent values from a real pinned-C worker pthread that fills one sole full BIN_FULL medium arena page, publishes exactly one remote mi_free before real mi_thread_done, and joins before the consumer's sequential frees. Force collection makes the page nonfull and mapped-abandoned while retaining its PageMap, ordinary arena-page bitmap, and dynamic abandoned bitmap/count; the trace records request 10248, 12288-byte blocks, capacity/reserved 42, eight slices, used 41, and terminal mapped, PageMap, arena bitmap, dynamic bitmap/count, and slice release. Rust exercises only the bounded dynamic full-medium one-remote force-collect-to-mapped route. This is private native x86 engine evidence only; it does not establish general lifecycle, routing, concurrent collection, abandonment/adoption, public mi_* behavior or runtime, public x86 support, libc integration, backend promotion, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-dynamic-full-medium-one-remote-force-collect-to-mapped",
       "id": "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
