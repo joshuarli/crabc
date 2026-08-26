@@ -44,6 +44,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh priority-reference
+./scripts/dev-x86_64.sh rlimit-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
@@ -249,6 +250,14 @@ non-negative `[1, 40]` raw success encoding, and missing-process `ESRCH`.
 It establishes only the typed Rust read-only `getpriority` boundary, not
 priority mutation or C process support.
 
+`rlimit-reference` executes a pinned-musl x86 read-only resource-limit
+lifecycle. It pins the 16-byte, align-8 `rlimit`/`rlimit64` record
+(current/maximum offsets zero and eight), `prlimit64=302`,
+`RLIM_INFINITY=UINT64_MAX`, the complete selectors zero through 15, repeated
+and explicit-self reads, and invalid-selector/missing-target errors. It is
+private evidence for one record-owning x86 vertical slice only; it does not
+select resource-limit mutation, C process APIs, or a general x86 facade.
+
 `fstat-reference` records the pinned-musl x86 144-byte `fstat` record and
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
 not complete the broader filesystem path-core capability.
@@ -301,7 +310,8 @@ establish pthread, TLS, or C ABI parity.
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
-`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_scheduler_priority_bounds`,
+`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
+`x86_64_scheduler_priority_bounds`,
 `x86_64_sleep`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
 `x86_64_timerfd`, and `x86_64_pselect` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
@@ -334,13 +344,14 @@ readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves only a
 typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, owned
-nonblocking pidfds, read-only `getpriority`, conflicting-lock `F_GETLK` records,
-and scheduler-priority bounds; the system and thread regressions prove the named
-bounded kernel observations. It verifies the explicitly admitted Rust subset
-only; it does not make broader pselect/select semantics, epoll signal-mask
+nonblocking pidfds, read-only `getpriority`, private read-only resource-limit
+queries, conflicting-lock `F_GETLK` records, and scheduler-priority bounds;
+the system and thread regressions prove the named bounded kernel observations.
+It verifies the explicitly admitted Rust subset only; it does not make broader
+pselect/select semantics, epoll signal-mask
 variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,
-signalfd, broader filesystem path-core behavior, global locking policy, wider
-mapping policy, other
+signalfd, resource-limit mutation, broader filesystem path-core behavior,
+global locking policy, wider mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.
 

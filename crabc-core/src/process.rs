@@ -124,7 +124,8 @@ pub fn pidfd_open_raw(pid: i32, flags: u32) -> Result<RawFd> {
     decode_i32(unsafe { syscall2(SYS_PIDFD_OPEN, pid as usize, flags as usize) })
 }
 
-/// The Linux/AArch64 `struct rlimit64` returned by `prlimit64`.
+/// The Linux `struct rlimit64` returned by `prlimit64` on the admitted
+/// 64-bit targets.
 ///
 /// This is the exact two-word kernel ABI record. It remains separate from
 /// the safe facade's infinity-aware `Rlimit` mapping.
@@ -136,6 +137,11 @@ pub struct KernelRlimit64 {
     /// Hard/maximum limit, or Linux `RLIM64_INFINITY`.
     pub rlim_max: u64,
 }
+
+const _: () = assert!(core::mem::size_of::<KernelRlimit64>() == 16);
+const _: () = assert!(core::mem::align_of::<KernelRlimit64>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelRlimit64, rlim_cur) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelRlimit64, rlim_max) == 8);
 
 /// Reads one target process's resource limit through Linux `prlimit64`
 /// without libc or TLS `errno`.
@@ -178,7 +184,7 @@ pub fn getrlimit_raw(resource: u32) -> Result<KernelRlimit64> {
 #[inline]
 pub fn setrlimit_raw(resource: u32, limit: &KernelRlimit64) -> Result<()> {
     // SAFETY: `limit` remains readable for this syscall and is an exact
-    // Linux/AArch64 `struct rlimit64` record.
+    // Linux `struct rlimit64` record on the admitted 64-bit targets.
     decode(unsafe {
         syscall4(
             SYS_PRLIMIT64,

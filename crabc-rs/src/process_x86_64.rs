@@ -2,9 +2,9 @@
 //!
 //! This module intentionally admits only scalar identity queries, the
 //! kernel's three-word real/effective/saved credential observations, pidfd
-//! creation, read-only scheduling-priority observations and bounds, and the
-//! read-only typed `fcntl(F_GETLK)` record-lock query. The larger process
-//! facade remains AArch64-only until
+//! creation, read-only resource-limit observations, read-only scheduling-
+//! priority observations and bounds, and the read-only typed `fcntl(F_GETLK)`
+//! record-lock query. The larger process facade remains AArch64-only until
 //! each of its target-sized records and state transitions has an independent
 //! x86-64 contract.
 
@@ -23,6 +23,79 @@ pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
 pub use crate::signal::Pid;
+
+/// A Linux resource whose current and maximum limits can be queried.
+///
+/// This closed vocabulary matches the `RLIMIT_*` selectors in the pinned
+/// Linux/musl x86-64 headers. There is no raw selector constructor, so an
+/// unknown or future resource number cannot cross this facade boundary.
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum Resource {
+    /// `RLIMIT_CPU`.
+    Cpu = 0,
+    /// `RLIMIT_FSIZE`.
+    Fsize = 1,
+    /// `RLIMIT_DATA`.
+    Data = 2,
+    /// `RLIMIT_STACK`.
+    Stack = 3,
+    /// `RLIMIT_CORE`.
+    Core = 4,
+    /// `RLIMIT_RSS`.
+    Rss = 5,
+    /// `RLIMIT_NPROC`.
+    Nproc = 6,
+    /// `RLIMIT_NOFILE`.
+    Nofile = 7,
+    /// `RLIMIT_MEMLOCK`.
+    Memlock = 8,
+    /// `RLIMIT_AS`.
+    As = 9,
+    /// `RLIMIT_LOCKS`.
+    Locks = 10,
+    /// `RLIMIT_SIGPENDING`.
+    Sigpending = 11,
+    /// `RLIMIT_MSGQUEUE`.
+    Msgqueue = 12,
+    /// `RLIMIT_NICE`.
+    Nice = 13,
+    /// `RLIMIT_RTPRIO`.
+    Rtprio = 14,
+    /// `RLIMIT_RTTIME`.
+    Rttime = 15,
+}
+
+impl Resource {
+    /// Returns the exact Linux resource selector used by `prlimit64`.
+    #[inline]
+    pub const fn as_raw(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Current and maximum values for one Linux process resource.
+///
+/// Linux's `RLIM_INFINITY` is represented as `None`; every finite kernel
+/// value is preserved exactly. This type is returned only by read-only
+/// queries in the staged x86-64 facade.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Rlimit {
+    /// Soft/current limit. `None` means unlimited.
+    pub current: Option<u64>,
+    /// Hard/maximum limit. `None` means unlimited.
+    pub maximum: Option<u64>,
+}
+
+impl Rlimit {
+    #[inline]
+    fn from_kernel(limit: crabc_core::process::KernelRlimit64) -> Self {
+        Self {
+            current: (limit.rlim_cur != u64::MAX).then_some(limit.rlim_cur),
+            maximum: (limit.rlim_max != u64::MAX).then_some(limit.rlim_max),
+        }
+    }
+}
 
 bitflags! {
     /// Flags accepted by Linux `pidfd_open`.
@@ -405,6 +478,30 @@ pub fn getpid() -> Pid {
     unsafe { Pid::from_raw_unchecked(crabc_core::process::getpid()) }
 }
 
+/// Reads the calling process's current and maximum resource limits through
+/// Linux `prlimit64` without using libc, a public C ABI, or TLS `errno`.
+///
+/// This operation is strictly read-only: it selects PID zero, passes a null
+/// new-limit pointer, and preserves the complete initialized `rlimit64`
+/// result. Linux's `RLIM_INFINITY` is represented as `None` in the returned
+/// [`Rlimit`].
+#[inline]
+pub fn getrlimit(resource: Resource) -> Result<Rlimit> {
+    crabc_core::process::getrlimit_raw(resource.as_raw()).map(Rlimit::from_kernel)
+}
+
+/// Reads a target process's resource limits through Linux `prlimit64` without
+/// using libc, a public C ABI, or TLS `errno`.
+///
+/// `None` selects the calling process; `Some(pid)` selects that Linux process.
+/// This query preserves target-lifetime, permission, and invalid-target
+/// errors as ordinary [`crate::Errno`] values and performs no mutation.
+#[inline]
+pub fn getrlimit_for(pid: Option<Pid>, resource: Resource) -> Result<Rlimit> {
+    let pid = pid.map_or(0, Pid::as_raw_pid);
+    crabc_core::process::getrlimit_for_raw(pid, resource.as_raw()).map(Rlimit::from_kernel)
+}
+
 /// Returns the caller's parent process ID, if one is visible in this PID
 /// namespace.
 #[inline]
@@ -581,10 +678,14 @@ const _: () = assert!(core::mem::size_of::<Gid>() == 4);
 const _: () = assert!(core::mem::align_of::<Gid>() == 4);
 const _: () = assert!(core::mem::size_of::<Pid>() == 4);
 const _: () = assert!(core::mem::align_of::<Pid>() == 4);
+const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRlimit64>() == 16);
+const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRlimit64>() == 8);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRlimit64, rlim_cur) == 0);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRlimit64, rlim_max) == 8);
 
 #[cfg(test)]
 mod tests {
-    use super::{Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority};
+    use super::{Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority, Resource, Rlimit};
 
     #[test]
     fn x86_64_flock_conversion_preserves_a_conflicting_lock_record() {
@@ -618,5 +719,25 @@ mod tests {
         assert_eq!(Priority::from_kernel_encoded(40).map(Priority::as_raw), Some(-20));
         assert_eq!(Priority::from_kernel_encoded(0), None);
         assert_eq!(Priority::from_kernel_encoded(41), None);
+    }
+
+    #[test]
+    fn x86_64_rlimit_maps_kernel_infinity_without_loss() {
+        let finite = Rlimit::from_kernel(crabc_core::process::KernelRlimit64 {
+            rlim_cur: 7,
+            rlim_max: 11,
+        });
+        assert_eq!(finite.current, Some(7));
+        assert_eq!(finite.maximum, Some(11));
+
+        let unlimited = Rlimit::from_kernel(crabc_core::process::KernelRlimit64 {
+            rlim_cur: u64::MAX,
+            rlim_max: u64::MAX,
+        });
+        assert_eq!(unlimited.current, None);
+        assert_eq!(unlimited.maximum, None);
+
+        assert_eq!(Resource::Nofile.as_raw(), 7);
+        assert_eq!(Resource::Rttime.as_raw(), 15);
     }
 }
