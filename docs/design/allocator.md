@@ -1028,6 +1028,26 @@ slices. It cannot reclaim, adopt, requeue, scan, retain a general multi-free
 route, or cover another page, source class, producer, concurrent free, or
 owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_mapped_medium_pair` is a separate bounded
+post-TLS aggregate, not a generic two-page extension of that handoff. It
+requires the complete source image to contain exactly two nonfull
+`MemoryKind::Arena` `PageKind::Medium` pages in distinct regular bins: one
+sole queue member has `reserved > 2` and `used == 2`; the other has
+`reserved > 1` and `used == 1`. Every direct entry and every other queue must
+be empty. Preflight proves both exact arena spans and dynamic bitmap/count
+capabilities before source bin-order force -> false collection -> regular
+queue removal -> page-count decrement -> non-direct no-op cache update ->
+mapped identity/bit/count/unown. Its
+`DynamicThreadExitMappedMediumPairRoute` retains only the drain plus sealed
+remaining-page/free counts. Each later canonical free re-resolves its PageMap
+member and acquires that page's low owner bit before its memory/size chooses
+the matching dynamic bitmap/count pair; `UnownedMapped` retains the route,
+while `Empty` releases only that queue-detached member through PageMap ->
+dynamic ordinary bit -> metadata -> arena slices. The final release returns
+the empty drain. It retains no raw page, bin, bitmap, or client list and adds
+no scans, reclaim/adoption/requeue, allocation-time, producer, concurrent, or
+general owner-exit authority.
+
 `DynamicThreadExitDrain::abandon_mapped_two_block_large` is a separate
 post-TLS dynamic handoff, not a widened medium or small token. It admits only
 one sole nonfull `MemoryKind::Arena` `PageKind::Large` page with

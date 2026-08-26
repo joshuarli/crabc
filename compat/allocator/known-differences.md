@@ -1183,6 +1183,22 @@ aggregate-registry adoption remain absent.
   One/three live blocks, another page, every other source class, reclaim,
   adoption, requeue, scans, producer/concurrent routing, and a general
   multi-free owner-exit traversal remain absent.
+  `DynamicThreadExitDrain::abandon_mapped_medium_pair` is a separate bounded
+  post-TLS aggregate, not a generic multi-page registry: it accepts exactly
+  two nonfull `MemoryKind::Arena` `PageKind::Medium` pages in distinct regular
+  bins, one sole member with `reserved > 2`, `used == 2` and one with
+  `reserved > 1`, `used == 1`, while every direct entry and every other queue
+  is empty. Complete preflight proves both arena spans, dynamic bitmap/count
+  capabilities, and the total three live blocks before source bin-order force
+  -> false collection -> queue removal -> page-count decrement -> no-op
+  direct update -> mapped identity/bit/count/unown. Its route stores only the
+  drain and sealed page/free counts: every exact canonical free re-resolves a
+  PageMap member and claims its low owner bit before choosing the matching
+  dynamic map. `UnownedMapped` retains that member; `Empty` clears only its
+  pair and releases only its PageMap -> ordinary-bit -> metadata -> slice
+  span, returning the drain only after the final member. It adds no raw page,
+  bin, map, or client registry; no scan, reclaim/adoption/requeue,
+  allocation-time, producer, concurrent, or general owner-exit authority.
   Its first dynamic arena page first proves the registry-published arena's
   non-null subprocess identity equals the attachment's selected main
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
@@ -1402,7 +1418,15 @@ aggregate-registry adoption remain absent.
   prove the two-free `UnownedMapped` then `Empty` state transition, dynamic
   bitmap/count preservation then cleanup, wholly pre-detach live-count and
   sole-page refusals, and retained post-TLS collection poison. The distinct
-  two-block large
+  mapped-medium-pair
+  `dynamic_thread_exit_mapped_medium_pair_route_releases_distinct_bin_pages_in_source_order`,
+  `dynamic_thread_exit_mapped_medium_pair_route_rejects_a_non_pair_before_detach`,
+  and `dynamic_thread_exit_mapped_medium_pair_route_retains_force_collection_failure`
+  prove the exact distinct-bin `{2, 1}` source image, bin-order mapped
+  publication, PageMap-selected `StillLive -> ReleasedPage -> Released`
+  lifecycle, PageMap/bitmap/count cleanup one member at a time, wholly
+  pre-detach non-pair refusal, and retained force-collection poison. The
+  distinct two-block large
   `dynamic_thread_exit_mapped_two_block_large_handoff_keeps_first_free_mapped_then_releases_complete_span`,
   `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_one_live_block_before_detach`,
   `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_three_live_blocks_before_detach`,

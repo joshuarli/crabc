@@ -203,6 +203,24 @@ arena slices. One or three live blocks, another page, any other source class,
 reclaim/adoption/requeue/scanning, producers, concurrency, and general owner
 exit remain excluded.
 
+`DynamicThreadExitDrain::abandon_mapped_medium_pair` is a separate bounded
+post-TLS aggregate, not a generalized multi-page route. It admits exactly two
+nonfull `MemoryKind::Arena` `PageKind::Medium` pages in distinct regular bins:
+one sole member with `reserved > 2`, `used == 2`, and one sole member with
+`reserved > 1`, `used == 1`; every direct entry and every other queue must be
+empty. Complete preflight proves both arena spans, dynamic bitmap/count
+capabilities, and the total three live blocks before source bin-order force ->
+false collection -> queue removal -> page-count decrement -> non-direct no-op
+cache update -> mapped identity/bit/count/unown. Its
+`DynamicThreadExitMappedMediumPairRoute` stores only the drain and sealed
+remaining page/free counts. Every exact client free re-resolves its PageMap
+member and claims its low owner bit before selecting that member's dynamic map:
+`UnownedMapped` retains the route, while `Empty` clears and releases only that
+member, returning the empty drain only after the final release. It retains no
+raw member pointer, bin/map cache, or client list and adds no scan,
+reclaim/adoption/requeue, allocation-time, producer, concurrent, or general
+owner-exit authority.
+
 `DynamicThreadExitDrain::abandon_full_medium` is a separate disjoint dynamic
 owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` medium
 page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct
@@ -843,17 +861,21 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current pinned Linux/AArch64 container
-`cargo test -p crabc-mimalloc --lib` run passes all 553 tests. `./scripts/dev.sh test -p crabc-mimalloc
+`cargo test -p crabc-mimalloc --lib` run passes all 556 tests, including
+`dynamic_thread_exit_mapped_medium_pair_route_releases_distinct_bin_pages_in_source_order`,
+`dynamic_thread_exit_mapped_medium_pair_route_rejects_a_non_pair_before_detach`,
+and `dynamic_thread_exit_mapped_medium_pair_route_retains_force_collection_failure`.
+`./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 119 items and 123
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 120 items and 124
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small or mapped-two-block-medium/large/non-direct-small/direct-small cases, the later-main
+dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small, mapped-medium-pair, or mapped-two-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
 The two-block dynamic normal classes are deliberately separate: medium, large,
@@ -899,10 +921,15 @@ page-area-commit extension. The defensive unsupported classifier is only for
 malformed or out-of-profile metadata. The later-main and dynamic homogeneous
 full direct-small aggregates now each seal their exact rounded direct-cache
 image, advance their queue head before each count detach, and use free.c's
-partial collector through the source accounting lag. The next local frontier
-is a different aggregate-registry policy and complete process and real
-pthread/TLS lifecycle
-integration—not a
+partial collector through the source accounting lag.
+`DynamicThreadExitDrain::abandon_mapped_medium_pair` now proves the separate
+distinct-bin `{2, 1}` medium aggregate boundary: after complete preflight, it
+walks source bin order and retains only the drain plus page/free counts; each
+later client free re-selects its map through PageMap after claiming that
+member's low owner bit, yielding `StillLive`, `ReleasedPage`, then `Released`
+without retaining a raw member registry. The next local frontier is real
+process and real pthread/TLS lifecycle integration, after a new
+source/lifecycle audit—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later
 page-owner slices.

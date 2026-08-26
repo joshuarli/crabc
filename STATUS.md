@@ -731,6 +731,22 @@ span. One or three live blocks, another page, other source classes, reclaim,
 adoption, requeue, scanning, producers, concurrency, and general owner exit
 remain excluded.
 
+`DynamicThreadExitDrain::abandon_mapped_medium_pair` now records one separate
+bounded post-TLS aggregate: exactly two nonfull `MemoryKind::Arena`
+`PageKind::Medium` pages in distinct regular bins, one with `reserved > 2`,
+`used == 2` and one with `reserved > 1`, `used == 1`. Preflight proves both
+sole queue members, their arena spans and dynamic bitmap/count capabilities,
+the total three live blocks, an empty direct image, and no other queue/page
+before source bin-order force -> false collection -> queue removal ->
+page-count decrement -> non-direct no-op update -> mapped publication. The
+returned `DynamicThreadExitMappedMediumPairRoute` keeps only the drain plus
+remaining page/free counts; every client free re-resolves PageMap membership
+and acquires the source low owner bit before selecting its dynamic map. An
+`UnownedMapped` result retains the route, while each `Empty` result clears its
+exact pair and releases only that member; the final release returns the empty
+drain. It adds no raw member registry, scan, reclaim/adoption/requeue,
+allocation-time, producer, concurrent, or general owner-exit routing.
+
 The first fresh page in that private non-abandoning dynamic session now owns
 one exact source-shaped heap-local `mi_arena_pages_t` image. Creation first
 requires the registry-published arena's non-null `Arena::subprocess` to equal

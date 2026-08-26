@@ -1835,6 +1835,10 @@ mod tests {
         DynamicThreadExitMappedTwoBlockMediumAbandonFailure,
         DynamicThreadExitMappedTwoBlockMediumFreeResult,
         DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure,
+        DynamicThreadExitMappedMediumPairAbandonError,
+        DynamicThreadExitMappedMediumPairAbandonFailure,
+        DynamicThreadExitMappedMediumPairFreeResult,
+        DynamicThreadExitMappedMediumPairRemoteFreeFailure,
         DynamicThreadExitMappedTwoBlockLargeAbandonFailure,
         DynamicThreadExitMappedTwoBlockLargeAbandonError,
         DynamicThreadExitMappedTwoBlockLargeFreeResult,
@@ -6191,6 +6195,365 @@ mod tests {
             assert!(drain.finish());
             assert!(unsafe { page_map.checked_lookup(first.as_ptr()) }.is_null());
             DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_medium_pair_route_releases_distinct_bin_pages_in_source_order() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first_request = SMALL_MAX_OBJ_SIZE + 1;
+            let first = allocator
+                .allocate(first_request, false)
+                .expect("the fixture creates the first mapped-medium-pair block");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first medium page remains PageMap-published");
+            let second = allocator
+                .allocate(first_request, false)
+                .expect("the fixture creates the second first-bin medium block");
+            assert_eq!(
+                unsafe { allocator.page_for_block(second) },
+                first_page.as_ptr(),
+                "the two-live source member starts from one medium page"
+            );
+
+            let second_request = MEDIUM_MAX_OBJ_SIZE / 2;
+            let third = allocator
+                .allocate(second_request, false)
+                .expect("the fixture creates the one-live second-bin medium block");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(third) })
+                .expect("the second medium page remains PageMap-published");
+            assert_ne!(
+                first_page, second_page,
+                "the bounded pair keeps two distinct medium pages"
+            );
+
+            let (first_memory, first_bin) = {
+                // SAFETY: both first-bin allocations are live and its page
+                // is still the allocator's active regular queue member.
+                let page = unsafe { first_page.as_ref() };
+                assert_eq!(page.memid().kind(), MemoryKind::Arena);
+                assert_eq!(
+                    crate::size_class::page_kind_for_block_size(page.block_size()),
+                    Some(crate::types::PageKind::Medium)
+                );
+                assert!(page.reserved() > 2);
+                assert_eq!(page.used(), 2);
+                assert!(!crate::types::page_queue::page_is_in_full(page));
+                (
+                    page.memid(),
+                    crate::size_class::bin(page.block_size())
+                        .expect("the first medium member has one source bin"),
+                )
+            };
+            let (second_memory, second_bin) = {
+                // SAFETY: the second-bin allocation is live and its page is
+                // still the allocator's active regular queue member.
+                let page = unsafe { second_page.as_ref() };
+                assert_eq!(page.memid().kind(), MemoryKind::Arena);
+                assert_eq!(
+                    crate::size_class::page_kind_for_block_size(page.block_size()),
+                    Some(crate::types::PageKind::Medium)
+                );
+                assert!(page.reserved() > 1);
+                assert_eq!(page.used(), 1);
+                assert!(!crate::types::page_queue::page_is_in_full(page));
+                (
+                    page.memid(),
+                    crate::size_class::bin(page.block_size())
+                        .expect("the second medium member has one source bin"),
+                )
+            };
+            assert!(
+                first_bin < second_bin,
+                "the fixture places the two members in the source bin traversal order"
+            );
+            assert_eq!(allocator.queue_count(first_bin), Some(1));
+            assert_eq!(allocator.queue_count(second_bin), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+
+            // SAFETY: the drain owns the two nonfull arena-medium source
+            // pages, their exact {2, 1} live allocations, PageMap, and the
+            // post-TLS dynamic arena image through the returned route.
+            let route = match unsafe { drain.abandon_mapped_medium_pair() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitMappedMediumPairAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedMediumPairAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the distinct-bin medium pair enters its dynamic post-TLS route: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(third) }, second_page.as_ptr());
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(1));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_set(second_bin, second_memory));
+
+            // SAFETY: `first` is the route's exact first-bin allocation. Its
+            // source failed-reclaim tail leaves one block live and preserves
+            // both mapped-abandoned identities.
+            let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                Ok(DynamicThreadExitMappedMediumPairFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the first pair free leaves both source pages live"),
+                Err(DynamicThreadExitMappedMediumPairRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedMediumPairRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first distinct-bin medium free remains in the pair route: {error:?}");
+                }
+            };
+            assert_eq!(unsafe { route.test_page_for_block(second) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(third) }, second_page.as_ptr());
+            assert_eq!(unsafe { first_page.as_ref().used() }, 1);
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(1));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_set(second_bin, second_memory));
+
+            // SAFETY: `second` is the exact last first-bin allocation. Its
+            // terminal source tail releases only that queue-detached arena
+            // page, leaving the second source member PageMap-routable.
+            let route = match unsafe { route.remote_free_after_thread_exit(second) } {
+                Ok(DynamicThreadExitMappedMediumPairFreeResult::ReleasedPage(route)) => route,
+                Ok(_) => panic!("the second pair free releases exactly the first source page"),
+                Err(DynamicThreadExitMappedMediumPairRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedMediumPairRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first page releases without disturbing the second pair member: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert!(unsafe { route.test_page_for_block(first) }.is_null());
+            assert!(unsafe { route.test_page_for_block(second) }.is_null());
+            assert_eq!(unsafe { route.test_page_for_block(third) }, second_page.as_ptr());
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_set(second_bin, second_memory));
+            assert!(route.test_dynamic_arena_page_is_clear(first_memory));
+
+            // SAFETY: `third` is the route's final exact live block, so its
+            // source tail clears the remaining bitmap/count before final
+            // PageMap and arena-span release.
+            let drain = match unsafe { route.remote_free_after_thread_exit(third) } {
+                Ok(DynamicThreadExitMappedMediumPairFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitMappedMediumPairFreeResult::StillLive(route))
+                | Ok(DynamicThreadExitMappedMediumPairFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final pair free releases the complete dynamic route");
+                }
+                Err(DynamicThreadExitMappedMediumPairRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedMediumPairRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the final distinct-bin medium free releases its remaining arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(first) }.is_null());
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert!(unsafe { drain.test_page_for_block(third) }.is_null());
+            assert_eq!(drain.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert_eq!(drain.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(first_memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(drain.finish());
+            assert!(unsafe { page_map.checked_lookup(first.as_ptr()) }.is_null());
+            assert!(unsafe { page_map.checked_lookup(third.as_ptr()) }.is_null());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_medium_pair_route_rejects_a_non_pair_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates the first non-pair medium block");
+            let page = unsafe { allocator.page_for_block(first) };
+            let second = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates the second non-pair medium block");
+            assert_eq!(
+                unsafe { allocator.page_for_block(second) },
+                page,
+                "the rejected source image has one two-live medium page"
+            );
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the two-live medium page has one source bin");
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: one queue-linked medium page cannot satisfy the exact
+            // `{2, 1}` distinct-bin aggregate preflight. The rejection must
+            // happen before source collection, queue detach, or publication.
+            let drain = match unsafe { drain.abandon_mapped_medium_pair() } {
+                Err(DynamicThreadExitMappedMediumPairAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitMappedMediumPairAbandonError::NotMappedMediumPair,
+                }) => drain,
+                Err(DynamicThreadExitMappedMediumPairAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedMediumPairAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the one-page aggregate refusal is wholly pre-detach: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("one live source page must not enter the medium-pair route");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page);
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, page);
+            assert_eq!(unsafe { (*page).used() }, 2);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_medium_pair_route_retains_force_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates the first pair member block");
+            let first_page = unsafe { allocator.page_for_block(first) };
+            let second = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates the second first-bin pair block");
+            assert_eq!(unsafe { allocator.page_for_block(second) }, first_page);
+            let third = allocator
+                .allocate(MEDIUM_MAX_OBJ_SIZE / 2, false)
+                .expect("the fixture creates the second-bin pair member block");
+            let second_page = unsafe { allocator.page_for_block(third) };
+            assert_ne!(first_page, second_page);
+            let first_bin = crate::size_class::bin(unsafe { (*first_page).block_size() })
+                .expect("the first pair member has one source bin");
+            let second_bin = crate::size_class::bin(unsafe { (*second_page).block_size() })
+                .expect("the second pair member has one source bin");
+            assert!(first_bin < second_bin);
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the exact pair remains queue-linked. The one-shot seam
+            // fails the first source force pass before queue detachment and
+            // retains the poisoned post-TLS drain as the only owner.
+            let drain = match unsafe { drain.abandon_mapped_medium_pair() } {
+                Err(DynamicThreadExitMappedMediumPairAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitMappedMediumPairAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitMappedMediumPairAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedMediumPairAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the force-collection failure retains the pair drain: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("a force-collection failure cannot enter the medium-pair route");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page);
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, first_page);
+            assert_eq!(unsafe { drain.test_page_for_block(third) }, second_page);
+            assert_eq!(unsafe { (*first_page).used() }, 2);
+            assert_eq!(unsafe { (*second_page).used() }, 1);
+            assert_eq!(drain.test_page_count(), 2);
+            assert_eq!(drain.test_queue_count(first_bin), Some(1));
+            assert_eq!(drain.test_queue_count(second_bin), Some(1));
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
         });
     }
 
