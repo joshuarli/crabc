@@ -984,6 +984,24 @@ aggregate-registry adoption remain absent.
   mixed-size/class, non-medium, OS-backed, existing queue/direct,
   allocation-time, reclaim/adoption/requeue, scan, producer, or concurrent case
   remains absent, while a collection failure retains the drain.
+  `DynamicThreadExitDrain::abandon_full_large_pages` is a third separate
+  sequential dynamic aggregate, not a general `BIN_FULL` traversal: it
+  requires two or more full `MemoryKind::Arena` `PageKind::Large` members with
+  one rounded block size and regular bin, `reserved > 1`, `used == reserved`,
+  zero retirement countdown, empty local free lists, the matching dynamic
+  bitmap/count capability for every member, every other queue/direct entry
+  empty, and every member's exact 64-slice arena/PageMap span. It force- then
+  false-collects and detaches each member before unmapped abandonment. The
+  returned `DynamicThreadExitFullLargePagesRoute` retains the original drain
+  rather than raw member pointers or per-member mapped state; every sequential
+  canonical free re-resolves PageMap, uses the member's abandoned identity to
+  select its unmapped or mapped full-large failed-reclaim tail, and releases
+  only that member through PageMap -> dynamic ordinary bit -> metadata -> its
+  complete 64-slice arena span. The final free returns an empty drain for
+  existing teardown. A sole, mixed-size/class, non-large, OS-backed,
+  malformed-span, existing queue/direct, allocation-time,
+  reclaim/adoption/requeue, scan, producer, or concurrent case remains absent,
+  while a collection failure retains the drain.
   `DynamicThreadExitDrain::abandon_full_medium` is a separate sequential
   dynamic owner-exit endpoint for the drain's sole full `MemoryKind::Arena`
   medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no
@@ -1104,8 +1122,9 @@ aggregate-registry adoption remain absent.
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
-  owners are the post-TLS arena/OS singleton, homogeneous full-singleton and
-  full-medium aggregates, sole full-medium, full-large, full-non-direct-small, and
+  owners are the post-TLS arena/OS singleton, homogeneous full-singleton,
+  full-medium, and full-large aggregates, sole full-medium, full-large,
+  full-non-direct-small, and
   full-direct-small handoffs above and the later-main full-medium,
   full-large, and full-non-direct-small routes;
   none routes
@@ -1165,6 +1184,15 @@ aggregate-registry adoption remain absent.
   unmapped-to-mapped reabandonment and PageMap/ordinary-bit/metadata/slice
   release for each member, wholly pre-mutation sole/mixed-class refusal, and
   retained dynamic-drain collection failure.
+  `dynamic_thread_exit_full_large_pages_route_reabandons_each_same_bin_page_then_releases`,
+  `dynamic_thread_exit_full_large_pages_route_rejects_a_sole_full_large_before_mutation`,
+  `dynamic_thread_exit_full_large_pages_route_rejects_mixed_full_classes_before_mutation`,
+  and
+  `dynamic_thread_exit_full_large_pages_route_retains_a_collection_failure`
+  prove complete same-bin large aggregate preflight, independent
+  unmapped-to-mapped reabandonment and complete 64-slice
+  PageMap/ordinary-bit/metadata release for each member, wholly pre-mutation
+  sole/mixed-class refusal, and retained dynamic-drain collection failure.
   The dynamic
   `dynamic_thread_exit_os_aligned_singleton_handoff_releases_after_its_final_free`,
   `dynamic_thread_exit_os_aligned_singleton_handoff_rejects_unmapped_pointer_before_detach`,

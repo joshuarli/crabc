@@ -780,6 +780,27 @@ preexisting queue/direct state, allocation-time, reclaim/adoption/requeue,
 scan, producer, and concurrent cases reject before detach; a collection fault
 retains the drain.
 
+`DynamicThreadExitDrain::abandon_full_large_pages` is a third, separately
+typed post-TLS dynamic aggregate boundary. It admits exactly two or more full
+`MemoryKind::Arena` `PageKind::Large` members in `BIN_FULL`, with one rounded
+block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
+countdowns, empty local free lists, the exact dynamic bitmap/count capability
+for every member, every other queue/direct entry empty, and every member's
+exact 64-slice arena/PageMap span. It preserves source force -> false
+collection -> full-queue removal -> page-count decrement -> unmapped
+abandonment for every member. The returned
+`DynamicThreadExitFullLargePagesRoute` stores no raw former-Theap member
+pointer or per-member mapped state: each sequential canonical free re-resolves
+PageMap, claims its member's source abandoned identity, selects the unmapped or
+mapped full-large failed-reclaim tail, and publishes that member's dynamic
+bitmap/count pair only after its own mostly-used boundary. A terminal free
+releases only that member through PageMap -> dynamic ordinary bit -> metadata
+-> its complete 64-slice arena span; the final member returns the empty drain
+for existing root/list/key teardown. Sole, mixed-size/class, non-large,
+OS-backed, malformed-span, preexisting queue/direct state, allocation-time,
+reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
+detach; a collection fault retains the drain.
+
 `DynamicThreadExitDrain::abandon_full_medium` is a separate source-unmapped
 dynamic handoff. It accepts only the drain's sole full `MemoryKind::Arena`
 medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no
@@ -979,7 +1000,7 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs, homogeneous full-singleton/full-medium
+OS-aligned singleton handoffs, homogeneous full-singleton/full-medium/full-large
 aggregates, and the separate dynamic sole full-medium, full-large,
 full-non-direct-small, and full-direct-small handoffs above; all other
 initially-unmapped pages retain the raw terminal decision for a later
