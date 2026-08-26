@@ -43,6 +43,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
   time-observation-reference  verify pinned-musl x86 realtime observation behavior
   relative-sleep-reference  verify pinned-musl x86 nanosleep behavior
+  timerfd-reference  verify pinned-musl x86 timerfd ABI and lifecycle
   poll-reference  verify pinned-musl x86 poll ABI and behavior reference
   ppoll-reference  verify pinned-musl x86 ppoll/pause signal-mask behavior
   epoll-reference  verify pinned-musl x86 packed epoll ABI and behavior
@@ -89,7 +90,7 @@ boundaries used by the typed Rust facade.
 `fs-advice-reference` establishes only the typed Rust file-access advice and
 readahead boundary; it does not select a C filesystem API.
 `rand-reference`, `time-abi-reference`, `time-observation-reference`,
-`relative-sleep-reference`, `poll-reference`, `ppoll-reference`, and
+`relative-sleep-reference`, `timerfd-reference`, `poll-reference`, `ppoll-reference`, and
 `epoll-reference`,
 `process-identity-reference`, `process-session-reference`,
 `pidfd-open-reference`, `fcntl-getlk-reference`,
@@ -98,6 +99,9 @@ readahead boundary; it does not select a C filesystem API.
 pinned-musl kernel boundaries for separately admitted Rust slices.
 `epoll-reference` proves only the x86 packed epoll record and the focused
 private readiness lifecycle; it does not promote the broader record-owning
+facade family.
+`timerfd-reference` proves only the x86 `itimerspec` record and focused
+timer-descriptor lifecycle; it does not promote the broader record-owning
 facade family.
 `priority-reference` establishes only the typed Rust read-only getpriority
 boundary; it does not select scheduling mutation or a C process API.
@@ -297,6 +301,10 @@ run_relative_sleep_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_relative_sleep_reference.sh
 }
 
+run_timerfd_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_timerfd_reference.sh
+}
+
 run_poll_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_poll_reference.sh
 }
@@ -388,7 +396,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|timerfd-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -522,6 +530,11 @@ case "$command" in
         ensure_image
         run_relative_sleep_reference
         ;;
+    timerfd-reference)
+        [ "$#" -eq 0 ] || fail "timerfd-reference takes no arguments"
+        ensure_image
+        run_timerfd_reference
+        ;;
     poll-reference)
         [ "$#" -eq 0 ] || fail "poll-reference takes no arguments"
         ensure_image
@@ -592,7 +605,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd \
             -- --test-threads=1
         ;;
     libc-syscall)

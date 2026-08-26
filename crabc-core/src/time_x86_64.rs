@@ -1,14 +1,17 @@
 //! Bounded Linux/x86-64 clock and relative-sleep operations.
 //!
-//! This module owns only the x86-64 `timespec` wire record, clock query
-//! boundaries, and the direct relative `nanosleep` syscall. Timers, clock
-//! mutation, process-owned time state, and the C ABI remain outside this
-//! staged slice.
+//! This module owns the x86-64 `timespec` and `itimerspec` wire records,
+//! clock query boundaries, timerfd operations, and the direct relative
+//! `nanosleep` syscall. Clock mutation, process-owned time state, and the C
+//! ABI remain outside this staged slice.
 
 use core::mem::MaybeUninit;
 
-use crate::syscall::{decode, syscall2, SYS_CLOCK_GETRES, SYS_NANOSLEEP};
-use crate::Result;
+use crate::syscall::{
+    decode, syscall2, syscall4, SYS_CLOCK_GETRES, SYS_NANOSLEEP,
+    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+};
+use crate::{RawFd, Result};
 
 /// Linux/x86-64 `struct timespec` as written by the kernel.
 #[repr(C)]
@@ -22,6 +25,25 @@ pub struct KernelTimespec {
 
 const _: () = assert!(core::mem::size_of::<KernelTimespec>() == 16);
 const _: () = assert!(core::mem::align_of::<KernelTimespec>() == 8);
+
+/// Linux/x86-64 `struct itimerspec` used by the timerfd syscalls.
+///
+/// Both nested records are the exact 16-byte x86-64 kernel timespec layout;
+/// this is a syscall wire type and is intentionally distinct from any public
+/// Rust duration or C ABI representation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct KernelItimerspec {
+    /// Time between expirations, or zero for a one-shot timer.
+    pub it_interval: KernelTimespec,
+    /// Initial or absolute expiration, or zero when disarmed.
+    pub it_value: KernelTimespec,
+}
+
+const _: () = assert!(core::mem::size_of::<KernelItimerspec>() == 32);
+const _: () = assert!(core::mem::align_of::<KernelItimerspec>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelItimerspec, it_interval) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelItimerspec, it_value) == 16);
 
 /// Sleeps for a relative Linux/x86-64 timespec without using libc or TLS
 /// `errno`.
@@ -63,6 +85,69 @@ pub unsafe fn clock_gettime_raw(clock_id: i32, timespec: *mut u8) -> Result<()> 
     // SAFETY: The caller owns the exact output-pointer contract documented
     // above; the shared dispatcher performs the target syscall/vDSO call.
     unsafe { decode(crate::vdso::clock_gettime_status(clock_id, timespec) as isize) }.map(|_| ())
+}
+
+/// Creates a Linux/x86-64 timerfd descriptor without using libc or TLS
+/// `errno`.
+#[inline]
+pub fn timerfd_create(clock_id: i32, flags: u32) -> Result<RawFd> {
+    // SAFETY: Linux validates the clock identifier and descriptor flags; no
+    // user memory is accessed by this operation.
+    decode(unsafe { syscall2(SYS_TIMERFD_CREATE, clock_id as usize, flags as usize) })
+        .map(|fd| fd as RawFd)
+}
+
+/// Arms or disarms a Linux/x86-64 timerfd descriptor without using libc or
+/// TLS `errno`.
+///
+/// # Safety
+///
+/// `new_value` must be non-null and point to readable, initialized
+/// [`KernelItimerspec`] storage for the duration of the syscall. `old_value`
+/// must be null or point to writable storage for one [`KernelItimerspec`]; if
+/// non-null, Linux initializes that record on success. The descriptor must
+/// be a timerfd owned by the caller, and `flags` must contain only the Linux
+/// timerfd settime flags.
+#[inline]
+pub unsafe fn timerfd_settime_raw(
+    fd: RawFd,
+    flags: u32,
+    new_value: *const KernelItimerspec,
+    old_value: *mut KernelItimerspec,
+) -> Result<()> {
+    // SAFETY: The caller owns both typed pointer contracts documented above;
+    // Linux validates the descriptor and timer flags.
+    decode(unsafe {
+        syscall4(
+            SYS_TIMERFD_SETTIME,
+            fd as usize,
+            flags as usize,
+            new_value as usize,
+            old_value as usize,
+        )
+    })
+    .map(|_| ())
+}
+
+/// Reads a Linux/x86-64 timerfd descriptor's current setting without using
+/// libc or TLS `errno`.
+///
+/// # Safety
+///
+/// `current_value` must be non-null and point to writable storage for one
+/// [`KernelItimerspec`] for the duration of the syscall. Linux initializes the
+/// complete record on success, and `fd` must be a timerfd owned by the caller.
+#[inline]
+pub unsafe fn timerfd_gettime_raw(
+    fd: RawFd,
+    current_value: *mut KernelItimerspec,
+) -> Result<()> {
+    // SAFETY: The caller owns the typed output-pointer contract documented
+    // above; Linux validates the descriptor.
+    decode(unsafe {
+        syscall2(SYS_TIMERFD_GETTIME, fd as usize, current_value as usize)
+    })
+    .map(|_| ())
 }
 
 /// Reads the resolution of one x86-64 Linux clock through the direct syscall.

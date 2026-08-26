@@ -1,18 +1,20 @@
-//! Bounded native Linux/x86-64 clock queries and relative sleep.
+//! Bounded native Linux/x86-64 clock queries, relative sleep, and timerfds.
 //!
 //! This staged facade admits only validated realtime, monotonic,
 //! monotonic-raw, and process-CPU observations, typed realtime milliseconds,
 //! and a typed relative `nanosleep` outcome. Interrupted sleeps preserve the
 //! kernel's remainder instead of retrying or hiding `EINTR`. It intentionally
-//! does not expose AArch64 calendar, timer, timezone, or clock-mutation APIs,
-//! nor a C sleep ABI, until their x86-64 records and behavior have independent
-//! evidence.
+//! does not expose AArch64 calendar, POSIX-timer, timezone, or clock-mutation
+//! APIs, nor a C sleep ABI, until their x86-64 records and behavior have
+//! independent evidence. The timerfd slice is a direct descriptor boundary;
+//! it does not select a C time API or promote x86-64 platform support.
 
 use core::convert::TryFrom;
 use core::mem::MaybeUninit;
 use core::time::Duration;
-use crabc_core::time::KernelTimespec;
-use crate::{Errno, Result};
+use bitflags::bitflags;
+use crabc_core::time::{KernelItimerspec, KernelTimespec};
+use crate::{AsFd, Errno, OwnedFd, Result};
 
 /// Nanoseconds in one second.
 ///
@@ -252,4 +254,162 @@ pub fn process_cpu_time() -> Duration {
         panic!("Linux process CPU clock returned an invalid timespec");
     }
     Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
+}
+
+bitflags! {
+    /// Flags accepted by Linux `timerfd_create`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct TimerfdFlags: u32 {
+        /// `TFD_NONBLOCK`.
+        const NONBLOCK = 0x0000_0800;
+        /// `TFD_CLOEXEC`.
+        const CLOEXEC = 0x0008_0000;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by Linux `timerfd_settime`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct TimerfdTimerFlags: u32 {
+        /// `TFD_TIMER_ABSTIME`.
+        const ABSTIME = 0x0000_0001;
+        /// `TFD_TIMER_CANCEL_ON_SET`.
+        const CANCEL_ON_SET = 0x0000_0002;
+    }
+}
+
+/// Clocks admitted by the Linux/x86-64 timerfd descriptor slice.
+///
+/// `CLOCK_REALTIME` and `CLOCK_MONOTONIC` cover ordinary wall-clock and
+/// monotonic descriptor timers. Wake-alarm and boot-time timer policies remain
+/// deferred because they carry separate suspend and capability behavior.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum TimerfdClockId {
+    /// `CLOCK_REALTIME`.
+    Realtime = 0,
+    /// `CLOCK_MONOTONIC`.
+    Monotonic = 1,
+}
+
+/// Linux/x86-64 `struct itimerspec` used by timerfd operations.
+///
+/// Both fields are direct Linux `timespec` records. Input values must have a
+/// non-negative seconds field and a nanosecond field in `0..1_000_000_000`;
+/// [`timerfd_settime`] rejects malformed records before the kernel boundary.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Itimerspec {
+    /// Interval between expirations, or zero for a one-shot timer.
+    pub it_interval: Timespec,
+    /// Initial or absolute expiration, or zero to disarm the timer.
+    pub it_value: Timespec,
+}
+
+const _: () = assert!(core::mem::size_of::<Itimerspec>() == 32);
+const _: () = assert!(core::mem::align_of::<Itimerspec>() == 8);
+const _: () = assert!(core::mem::offset_of!(Itimerspec, it_interval) == 0);
+const _: () = assert!(core::mem::offset_of!(Itimerspec, it_value) == 16);
+
+impl Default for Itimerspec {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            it_interval: Timespec { tv_sec: 0, tv_nsec: 0 },
+            it_value: Timespec { tv_sec: 0, tv_nsec: 0 },
+        }
+    }
+}
+
+/// Creates a Linux/x86-64 timer descriptor.
+#[inline]
+pub fn timerfd_create(clock_id: TimerfdClockId, flags: TimerfdFlags) -> Result<OwnedFd> {
+    let fd = crabc_core::time::timerfd_create(clock_id as i32, flags.bits())?;
+    // SAFETY: successful `timerfd_create` returns one fresh, non-negative,
+    // uniquely owned Linux descriptor.
+    unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
+}
+
+/// Arms or disarms a Linux/x86-64 timer descriptor and returns its previous
+/// setting.
+///
+/// The interval and initial value have the exact kernel `itimerspec` shape.
+/// A zero initial value disarms the descriptor. `ABSTIME` changes the initial
+/// value from a relative duration to an absolute value in the selected clock.
+/// Linux validates timerfd flag combinations directly.
+#[inline]
+pub fn timerfd_settime<Fd: AsFd>(
+    fd: Fd,
+    flags: TimerfdTimerFlags,
+    new_value: &Itimerspec,
+) -> Result<Itimerspec> {
+    let new_value = itimerspec_to_kernel(*new_value)?;
+    let fd = fd.as_fd();
+    let mut old_value = MaybeUninit::<KernelItimerspec>::uninit();
+    // SAFETY: `new_value` is an initialized exact x86-64 kernel record,
+    // `old_value` is writable exact storage, and the descriptor borrow remains
+    // open for the complete direct syscall.
+    unsafe {
+        crabc_core::time::timerfd_settime_raw(
+            fd.as_raw_fd(),
+            flags.bits(),
+            &new_value,
+            old_value.as_mut_ptr(),
+        )?;
+        itimerspec_from_kernel(old_value.assume_init())
+    }
+}
+
+/// Reads a Linux/x86-64 timer descriptor's current setting.
+#[inline]
+pub fn timerfd_gettime<Fd: AsFd>(fd: Fd) -> Result<Itimerspec> {
+    let fd = fd.as_fd();
+    let mut value = MaybeUninit::<KernelItimerspec>::uninit();
+    // SAFETY: `value` is exact writable x86-64 kernel storage and the
+    // descriptor borrow remains open while Linux initializes the record.
+    unsafe {
+        crabc_core::time::timerfd_gettime_raw(fd.as_raw_fd(), value.as_mut_ptr())?;
+        itimerspec_from_kernel(value.assume_init())
+    }
+}
+
+#[inline]
+fn itimerspec_to_kernel(value: Itimerspec) -> Result<KernelItimerspec> {
+    Ok(KernelItimerspec {
+        it_interval: timer_timespec_to_kernel(value.it_interval)?,
+        it_value: timer_timespec_to_kernel(value.it_value)?,
+    })
+}
+
+#[inline]
+fn timer_timespec_to_kernel(value: Timespec) -> Result<KernelTimespec> {
+    if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+        return Err(Errno::INVAL);
+    }
+    Ok(KernelTimespec {
+        tv_sec: value.tv_sec,
+        tv_nsec: value.tv_nsec,
+    })
+}
+
+#[inline]
+fn itimerspec_from_kernel(value: KernelItimerspec) -> Result<Itimerspec> {
+    Ok(Itimerspec {
+        it_interval: timer_timespec_from_kernel(value.it_interval)?,
+        it_value: timer_timespec_from_kernel(value.it_value)?,
+    })
+}
+
+#[inline]
+fn timer_timespec_from_kernel(value: KernelTimespec) -> Result<Timespec> {
+    if value.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
+        return Err(Errno::RANGE);
+    }
+    Ok(Timespec {
+        tv_sec: value.tv_sec,
+        tv_nsec: value.tv_nsec,
+    })
 }

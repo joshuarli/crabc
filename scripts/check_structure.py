@@ -50,7 +50,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
 # three record-independent task observations, and `time_x86_64.rs` owns the
-# separately proved clock-query and relative-sleep seams. No other facade
+# separately proved clock-query, relative-sleep, and privately evidenced
+# timerfd seams. No other facade
 # source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),

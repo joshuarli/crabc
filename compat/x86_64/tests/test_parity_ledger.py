@@ -102,11 +102,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn(
             "compat/x86_64/run_x86_epoll_reference.sh", remaining["source_owners"]
         )
+        self.assertIn(
+            "crabc-rs/tests/x86_64_timerfd.rs", remaining["source_owners"]
+        )
+        self.assertIn(
+            "compat/x86_64/run_x86_timerfd_reference.sh", remaining["source_owners"]
+        )
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh epoll-reference",
         )
         self.assertEqual(remaining["native_evidence"][0]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][1]["command"],
+            "./scripts/dev-x86_64.sh timerfd-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][1]["state"], "required")
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])

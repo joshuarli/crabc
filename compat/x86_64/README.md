@@ -33,6 +33,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh time-observation-reference
 ./scripts/dev-x86_64.sh relative-sleep-reference
+./scripts/dev-x86_64.sh timerfd-reference
 ./scripts/dev-x86_64.sh poll-reference
 ./scripts/dev-x86_64.sh ppoll-reference
 ./scripts/dev-x86_64.sh epoll-reference
@@ -184,6 +185,14 @@ zero-duration completion, invalid-request `EINVAL`, and signal-interrupted
 positive remainder behavior. It establishes only the typed Rust relative-sleep
 boundary, not a C sleep ABI.
 
+`timerfd-reference` executes a pinned-musl x86 timer-descriptor lifecycle. It
+pins the 32-byte, align-8 `itimerspec` layout (interval/value offsets zero and
+16), timerfd syscall numbers and flags, close-on-exec/nonblocking creation,
+arm/read/disarm behavior, exact eight-byte expiration reads, and representative
+invalid cases. It is private evidence for the bounded x86 timerfd vertical
+slice only; it does not make broader timer policy, C time APIs, or a general
+x86 facade selectable.
+
 `poll-reference` executes a pinned-musl x86 pipe fixture through `poll(2)` to
 pin empty, readable, and hangup states used by the bounded typed Rust poll
 facade. It does not compile a project C header or select a C ABI artifact.
@@ -284,7 +293,8 @@ establish pthread, TLS, or C ABI parity.
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_scheduler_priority_bounds`,
-`x86_64_sleep`, `x86_64_system`, `x86_64_thread`, and `x86_64_time` tests. The
+`x86_64_sleep`, `x86_64_system`, `x86_64_thread`, `x86_64_time`, and
+`x86_64_timerfd` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
 positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
 sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
@@ -306,15 +316,19 @@ retention, and timeout-range rejection. The packed epoll regression proves the
 x86 12-byte event record, close-on-exec creation, legacy-size validation, empty
 and pipe readiness, caller token preservation, modification, deletion, and
 initialized-prefix handling. It remains a privately evidenced record-owning
-slice. The filesystem regression proves only a
+slice. The timerfd regression proves the x86 32-byte timer record,
+close-on-exec/nonblocking creation, relative and absolute arming, epoll
+readiness, exact expiration reads, disarming, and invalid record/flag/descriptor
+handling. It remains a privately evidenced record-owning slice. The filesystem regression proves only a
 typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, owned
 nonblocking pidfds, read-only `getpriority`, conflicting-lock `F_GETLK` records,
 and scheduler-priority bounds; the system and thread regressions prove the named
 bounded kernel observations. It verifies the explicitly admitted Rust subset
 only; it does not make pselect, epoll signal-mask variants or the broader
-epoll family, signalfd, broader filesystem path-core behavior, global locking
-policy, wider mapping policy, other
+epoll family, timerfd clock/policy variants beyond the named descriptor slice,
+signalfd, broader filesystem path-core behavior, global locking policy, wider
+mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.
 
