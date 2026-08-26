@@ -63,16 +63,19 @@ page-state repair, and it does not claim general fork recovery.
 `process_page_map.rs` owns the separate process-static source-page-map
 publication boundary. It freezes one `MemoryConfig` and selected
 `MainSubprocess`, initializes a `PageMap` in its final slot, then
-Release-publishes the header root. `process_arena.rs` is its deliberately
-separate `mi_manage_os_memory_ex2` sidecar: it accepts one caller-selected,
-single-arena `Mapping`, binds an `ArenaRegistry` to that exact map/root/main
-identity before publication, and retains the mapping and in-place arena image
-for process lifetime. For a reserved map, it first places the `Mapping` in its
-final sidecar slot, then gives the in-place arena a stable callback to commit
-metadata and later selected/page-metadata ranges through that exact owner; the
-frozen Linux decommit callback reports no recommit requirement. A metadata
-commit failure takes the exact map back before publication, with an empty
-registry and COLD sidecar but the selected pair still bound for retry.
+Release-publishes the header root. `process_arena.rs` retains the lower
+`mi_manage_os_memory_ex2` sidecar for one caller-supplied external mapping and
+adds one explicit regular `mi_reserve_os_memory_ex2` entry. The latter accepts
+only a caller-selected nonzero request that rounds to exactly one complete
+arena, maps ordinary reserved or committed memory, records `MemoryKind::Os`,
+and binds the same map/root/main identity before publication. An unpublished
+metadata failure unmaps that exact regular map before returning a COLD retry
+state; a failed unmap retains the mapping terminally. The external entry still
+returns an unpublished rejected mapping to its caller. For either reserved
+map, the final sidecar slot gives the in-place arena a stable callback to
+commit metadata and later selected/page-metadata ranges through that exact
+owner; frozen Linux decommit reports no recommit requirement. This is not
+automatic reservation, large-page/exclusive/NUMA policy, or fresh-page routing.
 `ProcessPageArenaLease` validates that immutable tuple
 before either `main_static_page.rs` or `main_heap_page.rs` may borrow its
 selected source Theap. Each private owner holds the map's nonrecursive
@@ -84,8 +87,8 @@ map/arena and every caller-managed test map. The bounded process coordinator
 now invokes the global map stage in source order, but this map/arena subsystem
 still has no automatic reserve policy, C `mi_page_map_empty` pre-root, general
 concurrent page consumer, owner-exit traversal, or process shutdown. A rejected
-unpublished mapping returns to its caller; a failed map reservation or dropped
-unfinished lifecycle is terminal rather than exposing a null or fresh root.
+unpublished external mapping returns to its caller; a failed regular-map release
+or dropped unfinished lifecycle is terminal rather than exposing a null or fresh root.
 This callback is not a fresh-page policy. The paired lease has only one
 range-checked direct page-area commitment operation for an already-selected
 `mi_page_extend_free` transition; page-on-demand selection,

@@ -19,7 +19,8 @@
 // `src/arena.c:2238-2409` (default delayed arena purge scheduling and forced
 // collection), and
 // `src/arena.c:1676-1917` (in-place arena initialization, metadata
-// reservation, external-region alignment, and 16-GiB splitting).
+// reservation, external/regular-OS provenance, region alignment, and 16-GiB
+// splitting).
 // This substrate deliberately stops before arena iteration/search across the
 // registry-wide arena search, fresh page routing beyond the one bounded
 // heap-local `arena_pages` owner and its exact mapped-regular handoff,
@@ -979,7 +980,7 @@ impl ManagedExternalRegion {
     pub(crate) const fn is_complete(self) -> bool { self.total_size == self.managed_size }
 }
 
-/// Registers an external region as one or more in-place arenas.
+/// Registers an externally supplied region as one or more in-place arenas.
 ///
 /// The first arena retains the external memory ID and total ownership size;
 /// later 16-GiB sub-arenas retain `MemoryKind::None` and point to the first.
@@ -1005,19 +1006,94 @@ pub(crate) unsafe fn manage_external_in_place(
     exclusive: bool,
     commit_hook: Option<CommitHook>,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
-    let plan = ExternalArenaPlan::from_address(start as usize, size)
-        .ok_or(ManageArenaError::InvalidRegion)?;
-    let aligned_start = unsafe { start.add(plan.prefix_bytes()) };
-    let mut parent = null_mut();
-    let mut parent_id = ArenaId::none();
-    let mut managed_size = 0usize;
-    let mut memory = MemoryId::external(
+    let memory = MemoryId::external(
         start,
         size,
         initially_committed,
         is_pinned,
         initially_zero,
     );
+    unsafe {
+        manage_in_place(
+            registry,
+            start,
+            size,
+            page_size,
+            initially_committed,
+            numa_node,
+            exclusive,
+            commit_hook,
+            memory,
+        )
+    }
+}
+
+/// Registers one regular OS mapping as one or more in-place arenas.
+///
+/// This is the `mi_reserve_os_memory_ex2` memory-ID branch after its regular
+/// aligned map has succeeded. It deliberately records `MemoryKind::Os`, never
+/// a large-page or externally supplied backing kind; reservation policy stays
+/// with the caller which owns that map's later release decision.
+///
+/// # Safety
+///
+/// `start..start + size` must remain the exact live regular OS mapping for the
+/// registry lifetime. The commitment and zero observations must describe that
+/// map accurately. When it starts reserved, `commit_hook` must make every
+/// requested metadata prefix writable before returning true. No other thread
+/// may access the region until this function returns.
+pub(crate) unsafe fn manage_os_in_place(
+    registry: &ArenaRegistry,
+    start: *mut u8,
+    size: usize,
+    page_size: PageSize,
+    initially_committed: bool,
+    initially_zero: bool,
+    numa_node: i32,
+    exclusive: bool,
+    commit_hook: Option<CommitHook>,
+) -> Result<ManagedExternalRegion, ManageArenaError> {
+    let memory = MemoryId::os(start, size, initially_committed, initially_zero, false);
+    unsafe {
+        manage_in_place(
+            registry,
+            start,
+            size,
+            page_size,
+            initially_committed,
+            numa_node,
+            exclusive,
+            commit_hook,
+            memory,
+        )
+    }
+}
+
+/// Common source management loop after the caller selected the backing
+/// provenance. The two public entry points above keep `MI_MEM_EXTERNAL` and
+/// regular `MI_MEM_OS` distinct while preserving the same source arena setup.
+///
+/// # Safety
+///
+/// The caller upholds the backing range and commitment contract documented by
+/// its public entry point. `memory` must describe that same complete range.
+unsafe fn manage_in_place(
+    registry: &ArenaRegistry,
+    start: *mut u8,
+    size: usize,
+    page_size: PageSize,
+    initially_committed: bool,
+    numa_node: i32,
+    exclusive: bool,
+    commit_hook: Option<CommitHook>,
+    mut memory: MemoryId,
+) -> Result<ManagedExternalRegion, ManageArenaError> {
+    let plan = ExternalArenaPlan::from_address(start as usize, size)
+        .ok_or(ManageArenaError::InvalidRegion)?;
+    let aligned_start = unsafe { start.add(plan.prefix_bytes()) };
+    let mut parent = null_mut();
+    let mut parent_id = ArenaId::none();
+    let mut managed_size = 0usize;
 
     for index in 0..plan.arena_count() {
         let split = plan.split(index).ok_or(ManageArenaError::InvalidRegion)?;

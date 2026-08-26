@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 126,
-    "item_count": 122,
+    "implemented": 127,
+    "item_count": 123,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 126
+    "unit_verified": 127
   },
-  "port_map_sha256": "d6ea598f15bad1951061581fa8cdb7aa3d6f340c9e7078e7c09e6b716081d145",
+  "port_map_sha256": "6a67de392ea02a5ef800b04b82da3beba05c1be2c29d49853a048fea2c95ae35",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -171,6 +171,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:mi-manage-os-memory-ex2-process-shared-one-arena": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:mi-reserve-os-memory-ex2-process-owned-one-arena": [
       "implemented",
       "unit_verified"
     ],

@@ -6,8 +6,9 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/page.c:574-644`
 // (`mi_page_extend_free`'s direct `_mi_os_commit`), and
-// `src/arena.c:1573-1611,1676-1791,1794-1871` (`mi_arenas_add`,
-// `mi_arena_initialize`, and `mi_manage_os_memory_ex2`). The later automatic
+// `src/arena.c:1573-1611,1676-1791,1794-1912` (`mi_arenas_add`,
+// `mi_arena_initialize`, `mi_manage_os_memory_ex2`, and the bounded
+// `mi_reserve_os_memory_ex2` regular-map path). The later automatic
 // arena-reserve policy in
 // `src/arena.c:341-406,525-569` remains intentionally absent: it needs the
 // source option and fresh-page routing owners rather than a fixed substitute.
@@ -19,11 +20,16 @@
 //! `mi_manage_os_memory_ex2` boundary: it binds one caller-selected, already
 //! mapped single arena to that exact map root and main-subprocess identity,
 //! then retains the mapping, registry slot, and in-place metadata for process
-//! lifetime. It deliberately does not reserve a mapping itself or expose a
-//! general page engine. `ProcessPageArenaLease` can instead prove this exact
-//! pairing for the separately bounded ticket-zero static page owner; that
-//! owner alone attaches the main Heap, registers pages, and retains a scoped
-//! producer lifetime.
+//! lifetime. Its explicit [`ProcessSharedArenaStorage::reserve_one_os_arena`]
+//! entry additionally ports one caller-selected regular
+//! `mi_reserve_os_memory_ex2` map: exactly one complete arena, ordinary
+//! reserved or committed mapping access, and source-shaped unmap after an
+//! unpublished manage failure. It deliberately does not choose automatic
+//! reservation policy, huge pages, exclusive/NUMA configuration, multiple
+//! sub-arenas, or general fresh-page routing. `ProcessPageArenaLease` can
+//! instead prove this exact pairing for the separately bounded ticket-zero
+//! static page owner; that owner alone attaches the main Heap, registers
+//! pages, and retains a scoped producer lifetime.
 //!
 //! A reserved selected mapping enters this sidecar's final slot before
 //! `manage_external_in_place` initializes metadata. The retained arena callback
@@ -37,12 +43,12 @@
 //! commit's `_mi_page_abandon` transition; the bounded page lifecycle does so
 //! after this capability returns an error.
 //!
-//! On a pre-publication rejection, the caller receives its [`Mapping`] back
-//! through [`ProcessSharedArenaInstallFailure`]. That is deliberate: this is
-//! the lower `mi_manage_os_memory_ex2` layer, whose source caller owns the
-//! backing-release decision. A later `mi_reserve_os_memory_ex2` port can make
-//! the source's map-then-unmap-on-manage-failure policy explicit without
-//! burying it in this sidecar.
+//! On a pre-publication rejection from the lower external-manage entry, the
+//! caller receives its [`Mapping`] back through
+//! [`ProcessSharedArenaInstallFailure`]. The explicit regular-OS reservation
+//! owns the contrasting source decision itself: it unmaps an unpublished
+//! failed map before making the sidecar cold again, or retains the map and
+//! terminal error when that release fails.
 
 #[cfg(test)]
 extern crate std;
@@ -57,10 +63,12 @@ use crabc_core::Errno;
 
 use crate::arena::{
     ArenaRegistry, ArenaView, CommitHook, ExternalArenaPlan, ManageArenaError,
-    ManagedExternalRegion, manage_external_in_place,
+    ManagedExternalRegion, manage_external_in_place, manage_os_in_place,
 };
+use crate::config::{ARENA_ALIGNMENT, ARENA_SLICE_SIZE, MAX_ALLOC_SIZE};
+use crate::invariants;
 use crate::lock::PrivateLock;
-use crate::os::{Mapping, MemoryConfig};
+use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::page_map::PageMapHeader;
 use crate::process_page_map::{
     ProcessPageMapError, ProcessPageMapLease, ProcessPageMapMutationLease,
@@ -75,7 +83,7 @@ const RETAINED: u8 = 3;
 const PAIR_UNSET: u8 = 0;
 const PAIR_SET: u8 = 1;
 
-/// Process-static sidecar for one source-managed external arena.
+/// Process-static sidecar for one source-managed arena backing.
 ///
 /// `MainSubprocess` currently models only the bounded thread/static-TLD
 /// fields needed by prior slices. Keeping its arena-registry group here
@@ -179,10 +187,10 @@ impl ProcessSharedArenaStorage {
                 // observable while `manage_external_in_place` invokes the
                 // callback synchronously under this same lock.
                 self.state.store(INITIALIZING, Ordering::Release);
-                self.install_cold(candidate, mapping)
+                self.install_cold(candidate, mapping, ManagedArenaBacking::External)
             }
             READY => ProcessSharedArenaInstallAttempt::Returned {
-                error: if self.pair_matches(candidate) {
+                error: if self.pair_matches(candidate.pair) {
                     ProcessSharedArenaError::AlreadyInstalled
                 } else {
                     ProcessSharedArenaError::PairMismatch
@@ -222,10 +230,176 @@ impl ProcessSharedArenaStorage {
         }
     }
 
+    /// Reserves and publishes one caller-selected regular OS arena.
+    ///
+    /// This is the deliberately narrow `mi_reserve_os_memory_ex2` slice. The
+    /// request is rounded only to source slice alignment and must then name
+    /// exactly one complete arena; this boundary does not silently retain a
+    /// tail, choose a multi-arena reservation, or infer any automatic policy.
+    /// It uses the pinned normal mapping path only: `access` selects the
+    /// source `commit` input, while huge pages, exclusive ownership, NUMA
+    /// policy, and general allocation routing remain outside this capability.
+    ///
+    /// An unpublished metadata failure owns the source's matching release
+    /// decision: it unmaps the exact regular mapping before returning a
+    /// retryable rejection. If that unmap fails, the final mapping slot and a
+    /// terminal retained result preserve the only live ownership proof.
+    pub(crate) fn reserve_one_os_arena(
+        &'static self,
+        page_map: ProcessPageMapLease,
+        requested_size: usize,
+        access: MapAccess,
+    ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaReserveFailure> {
+        let length = one_regular_os_arena_length(requested_size)
+            .map_err(ProcessSharedArenaReserveFailure::rejected)?;
+        let pair = ProcessArenaPair::from_page_map(page_map)
+            .map_err(|error| ProcessSharedArenaReserveFailure::rejected(
+                ProcessSharedArenaReserveError::PageMap(error),
+            ))?;
+        let guard = self
+            .initialization_lock
+            .lock()
+            .map_err(|error| ProcessSharedArenaReserveFailure::rejected(
+                ProcessSharedArenaReserveError::Lock(error),
+            ))?;
+
+        let attempt = match self.state.load(Ordering::Acquire) {
+            READY => {
+                if self.pair_matches(pair) {
+                    ProcessSharedArenaReservationAttempt::Rejected(
+                        ProcessSharedArenaReserveError::AlreadyInstalled,
+                    )
+                } else {
+                    ProcessSharedArenaReservationAttempt::Rejected(
+                        ProcessSharedArenaReserveError::PairMismatch,
+                    )
+                }
+            }
+            COLD if self.pair_state.load(Ordering::Acquire) == PAIR_SET
+                && !self.pair_matches(pair) =>
+            {
+                ProcessSharedArenaReservationAttempt::Rejected(
+                    ProcessSharedArenaReserveError::PairMismatch,
+                )
+            }
+            COLD => self.reserve_cold_regular_os_arena(pair, length, access),
+            INITIALIZING | RETAINED | _ => ProcessSharedArenaReservationAttempt::Retained(
+                ProcessSharedArenaReserveError::Retained,
+            ),
+        };
+        let unlock = guard.unlock();
+
+        match (attempt, unlock) {
+            (ProcessSharedArenaReservationAttempt::Ready(lease), Ok(())) => Ok(lease),
+            (ProcessSharedArenaReservationAttempt::Ready(_), Err(error)) => {
+                // The arena and its stable mapping callback were already
+                // published before the wake failure. Preserve the only sound
+                // terminal ownership state rather than offering a retry.
+                self.state.store(RETAINED, Ordering::Release);
+                Err(ProcessSharedArenaReserveFailure::retained(
+                    ProcessSharedArenaReserveError::Lock(error),
+                ))
+            }
+            (ProcessSharedArenaReservationAttempt::Rejected(error), Err(_))
+            | (ProcessSharedArenaReservationAttempt::Rejected(error), Ok(())) => {
+                // The source reservation/setup outcome takes precedence over
+                // an unrelated post-Release private-futex wake failure.
+                Err(ProcessSharedArenaReserveFailure::rejected(error))
+            }
+            (ProcessSharedArenaReservationAttempt::Retained(error), _) => {
+                Err(ProcessSharedArenaReserveFailure::retained(error))
+            }
+        }
+    }
+
+    fn reserve_cold_regular_os_arena(
+        &'static self,
+        pair: ProcessArenaPair,
+        length: usize,
+        access: MapAccess,
+    ) -> ProcessSharedArenaReservationAttempt {
+        // `INITIALIZING` reserves this final mapping slot before the source
+        // map call. No retry can observe COLD until either unpublished setup
+        // released its map or a terminal retained owner records it.
+        self.state.store(INITIALIZING, Ordering::Release);
+        let mapping = match Mapping::map_aligned_for_allocator(
+            pair.config,
+            length,
+            ARENA_ALIGNMENT,
+            access,
+        ) {
+            Ok(mapping) => mapping,
+            Err(error) => {
+                self.state.store(COLD, Ordering::Release);
+                return ProcessSharedArenaReservationAttempt::Rejected(
+                    ProcessSharedArenaReserveError::Mapping(error),
+                );
+            }
+        };
+        let candidate = match ProcessArenaCandidate::from_pair_and_mapping(pair, &mapping) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                self.state.store(COLD, Ordering::Release);
+                return self.release_unpublished_os_reservation(mapping, error);
+            }
+        };
+
+        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs) {
+            ProcessSharedArenaInstallAttempt::Ready(lease) => {
+                ProcessSharedArenaReservationAttempt::Ready(lease)
+            }
+            ProcessSharedArenaInstallAttempt::Retained(error) => {
+                ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::Manage(error),
+                )
+            }
+            ProcessSharedArenaInstallAttempt::Returned { error, mapping } => {
+                self.release_unpublished_os_reservation(mapping, error)
+            }
+        }
+    }
+
+    fn release_unpublished_os_reservation(
+        &'static self,
+        mut mapping: Mapping,
+        manage: ProcessSharedArenaError,
+    ) -> ProcessSharedArenaReservationAttempt {
+        match mapping.unmap() {
+            Ok(()) => match self.state.load(Ordering::Acquire) {
+                COLD => ProcessSharedArenaReservationAttempt::Rejected(
+                    ProcessSharedArenaReserveError::Manage(manage),
+                ),
+                RETAINED => ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::Manage(manage),
+                ),
+                _ => {
+                    // An unpublished mapping is gone, but an unexpected state
+                    // cannot be made retryable without a stronger teardown
+                    // proof for the shared registry/pair fields.
+                    self.state.store(RETAINED, Ordering::Release);
+                    ProcessSharedArenaReservationAttempt::Retained(
+                        ProcessSharedArenaReserveError::Manage(manage),
+                    )
+                }
+            },
+            Err(unmap) => {
+                // SAFETY: this exact mapping is still live after failed
+                // `munmap`; the initialization lock is held, and no prior
+                // successful publication can own this final slot.
+                unsafe { self.write_retained_mapping(mapping) };
+                self.state.store(RETAINED, Ordering::Release);
+                ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::Release { manage, unmap },
+                )
+            }
+        }
+    }
+
     fn install_cold(
         &'static self,
         candidate: ProcessArenaCandidate,
         mapping: Mapping,
+        backing: ManagedArenaBacking,
     ) -> ProcessSharedArenaInstallAttempt {
         if let Err(error) = self.bind_or_match_pair(candidate) {
             // A foreign candidate has not changed this process sidecar and
@@ -262,20 +436,34 @@ impl ProcessSharedArenaStorage {
         // aligned single arena using the same page size as the selected map.
         // The final mapping slot is initialized for the stable hook before
         // this call, and the initialization lock excludes every registry
-        // reader/writer until `manage_external_in_place` fully publishes it.
+        // reader/writer until the selected source-shaped manager fully
+        // publishes it.
         let managed = unsafe {
-            manage_external_in_place(
-                &self.registry,
-                candidate.base,
-                candidate.length,
-                candidate.config.page_size(),
-                initially_committed,
-                false,
-                initially_zero,
-                -1,
-                false,
-                Some(commit_hook),
-            )
+            match backing {
+                ManagedArenaBacking::External => manage_external_in_place(
+                    &self.registry,
+                    candidate.base,
+                    candidate.length,
+                    candidate.pair.config.page_size(),
+                    initially_committed,
+                    false,
+                    initially_zero,
+                    -1,
+                    false,
+                    Some(commit_hook),
+                ),
+                ManagedArenaBacking::RegularOs => manage_os_in_place(
+                    &self.registry,
+                    candidate.base,
+                    candidate.length,
+                    candidate.pair.config.page_size(),
+                    initially_committed,
+                    initially_zero,
+                    -1,
+                    false,
+                    Some(commit_hook),
+                ),
+            }
         };
         let managed = match managed {
             Ok(managed) => managed,
@@ -305,7 +493,7 @@ impl ProcessSharedArenaStorage {
             );
         }
 
-        // SAFETY: `manage_external_in_place` has fully initialized and
+        // SAFETY: the selected in-place manager has fully initialized and
         // Release-published the sole arena. Its stable mapping callback is
         // already in the final slot; write the paired managed region before
         // READY publication.
@@ -326,6 +514,20 @@ impl ProcessSharedArenaStorage {
         unsafe { (*self.mapping.get()).write(mapping) };
     }
 
+    /// Retains the one still-live mapping after a source reservation could not
+    /// release an unpublished setup failure.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds `initialization_lock`, knows that no successful arena
+    /// publication owns this slot, and has either not initialized it or has
+    /// already recovered it with [`Self::take_initializing_mapping`]. The
+    /// mapping must still be live because its explicit `unmap` just failed.
+    #[inline]
+    unsafe fn write_retained_mapping(&self, mapping: Mapping) {
+        unsafe { (*self.mapping.get()).write(mapping) };
+    }
+
     /// Recovers the caller's mapping after first-arena initialization fails
     /// before registry publication.
     ///
@@ -338,7 +540,7 @@ impl ProcessSharedArenaStorage {
         unsafe { (*self.mapping.get()).assume_init_read() }
     }
 
-    /// Borrows the stable mapping that owns an external arena commit hook.
+    /// Borrows the stable mapping that owns an arena commit hook.
     ///
     /// # Safety
     ///
@@ -356,7 +558,7 @@ impl ProcessSharedArenaStorage {
         candidate: ProcessArenaCandidate,
     ) -> Result<(), ProcessSharedArenaError> {
         if self.pair_state.load(Ordering::Acquire) == PAIR_SET {
-            return if self.pair_matches(candidate) {
+            return if self.pair_matches(candidate.pair) {
                 Ok(())
             } else {
                 Err(ProcessSharedArenaError::PairMismatch)
@@ -368,32 +570,32 @@ impl ProcessSharedArenaStorage {
         // identity remains live for every future registry lookup.
         if !unsafe {
             self.registry
-                .bind_subprocess_before_publication(candidate.subprocess.as_ptr())
+                .bind_subprocess_before_publication(candidate.pair.subprocess.as_ptr())
         } {
             return Err(ProcessSharedArenaError::RegistryBinding);
         }
         // SAFETY: pair_state is still unset under the initialization lock, so
         // no reader can observe these final fields until its Release publish.
-        unsafe { (*self.config.get()).write(candidate.config) };
+        unsafe { (*self.config.get()).write(candidate.pair.config) };
         self.subprocess
-            .store(candidate.subprocess.as_ptr(), Ordering::Release);
+            .store(candidate.pair.subprocess.as_ptr(), Ordering::Release);
         self.page_map_root
-            .store(candidate.root.as_ptr(), Ordering::Release);
+            .store(candidate.pair.root.as_ptr(), Ordering::Release);
         self.pair_state.store(PAIR_SET, Ordering::Release);
         Ok(())
     }
 
     #[inline]
-    fn pair_matches(&self, candidate: ProcessArenaCandidate) -> bool {
+    fn pair_matches(&self, pair: ProcessArenaPair) -> bool {
         self.pair_state.load(Ordering::Acquire) == PAIR_SET
-            && self.config() == candidate.config
+            && self.config() == pair.config
             && core::ptr::eq(
                 self.subprocess.load(Ordering::Acquire),
-                candidate.subprocess.as_ptr(),
+                pair.subprocess.as_ptr(),
             )
             && core::ptr::eq(
                 self.page_map_root.load(Ordering::Acquire),
-                candidate.root.as_ptr(),
+                pair.root.as_ptr(),
             )
     }
 
@@ -419,7 +621,7 @@ impl ProcessSharedArenaStorage {
 }
 
 /// Commits or purges a range through the exact mapping retained by the
-/// process-owned external arena.
+/// process-owned arena.
 ///
 /// This is the source `mi_manage_os_memory_ex2` callback boundary, not an
 /// arena-reservation policy: the storage owns the selected map before this
@@ -801,11 +1003,94 @@ enum ProcessSharedArenaInstallAttempt {
     Retained(ProcessSharedArenaError),
 }
 
+/// A source-shaped explicit OS-reservation failure.
+///
+/// `Rejected` has released every unpublished mapping and leaves the selected
+/// sidecar retryable when its state is COLD. `Retained` records that an arena,
+/// registry, or failed-release mapping remains process-owned and no retry may
+/// assume a fresh reservation boundary.
+#[must_use = "an OS-reservation failure records retryable or terminal mapping ownership"]
+pub(crate) enum ProcessSharedArenaReserveFailure {
+    Rejected {
+        error: ProcessSharedArenaReserveError,
+    },
+    Retained {
+        error: ProcessSharedArenaReserveError,
+    },
+}
+
+impl ProcessSharedArenaReserveFailure {
+    #[inline]
+    fn rejected(error: ProcessSharedArenaReserveError) -> Self {
+        Self::Rejected { error }
+    }
+
+    #[inline]
+    fn retained(error: ProcessSharedArenaReserveError) -> Self {
+        Self::Retained { error }
+    }
+
+}
+
+/// One concrete regular-OS reservation result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessSharedArenaReserveError {
+    /// The source request was zero before slice rounding.
+    InvalidRequest,
+    /// The source request exceeded its maximum representable allocation size.
+    RequestTooLarge,
+    /// Slice rounding overflowed before any map was attempted.
+    SizeOverflow,
+    /// The rounded request would not become exactly one complete arena.
+    InvalidOneArena,
+    PageMap(ProcessPageMapError),
+    Mapping(Errno),
+    PairMismatch,
+    AlreadyInstalled,
+    /// In-place source management failed after the new regular map existed.
+    Manage(ProcessSharedArenaError),
+    /// Source management failed and the matching regular-map release failed.
+    Release {
+        manage: ProcessSharedArenaError,
+        unmap: Errno,
+    },
+    Lock(Errno),
+    Retained,
+}
+
+enum ProcessSharedArenaReservationAttempt {
+    Ready(ProcessSharedArenaLease),
+    Rejected(ProcessSharedArenaReserveError),
+    Retained(ProcessSharedArenaReserveError),
+}
+
 #[derive(Clone, Copy)]
-struct ProcessArenaCandidate {
+enum ManagedArenaBacking {
+    External,
+    RegularOs,
+}
+
+/// Immutable process-image identity selected before mapping a new arena.
+#[derive(Clone, Copy)]
+struct ProcessArenaPair {
     root: NonNull<PageMapHeader>,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
+}
+
+impl ProcessArenaPair {
+    fn from_page_map(page_map: ProcessPageMapLease) -> Result<Self, ProcessPageMapError> {
+        Ok(Self {
+            root: page_map.root()?,
+            config: page_map.memory_config()?,
+            subprocess: page_map.subprocess()?,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProcessArenaCandidate {
+    pair: ProcessArenaPair,
     base: *mut u8,
     length: usize,
 }
@@ -815,14 +1100,16 @@ impl ProcessArenaCandidate {
         page_map: ProcessPageMapLease,
         mapping: &Mapping,
     ) -> Result<Self, ProcessSharedArenaError> {
-        let root = page_map.root().map_err(ProcessSharedArenaError::PageMap)?;
-        let config = page_map
-            .memory_config()
+        let pair = ProcessArenaPair::from_page_map(page_map)
             .map_err(ProcessSharedArenaError::PageMap)?;
-        let subprocess = page_map
-            .subprocess()
-            .map_err(ProcessSharedArenaError::PageMap)?;
-        if mapping.page_size() != config.page_size() {
+        Self::from_pair_and_mapping(pair, mapping)
+    }
+
+    fn from_pair_and_mapping(
+        pair: ProcessArenaPair,
+        mapping: &Mapping,
+    ) -> Result<Self, ProcessSharedArenaError> {
+        if mapping.page_size() != pair.config.page_size() {
             return Err(ProcessSharedArenaError::MappingPageSizeMismatch);
         }
         let base = mapping.base().map_err(ProcessSharedArenaError::Mapping)?;
@@ -834,13 +1121,30 @@ impl ProcessArenaCandidate {
             return Err(ProcessSharedArenaError::InvalidOneArena);
         }
         Ok(Self {
-            root,
-            config,
-            subprocess,
+            pair,
             base,
             length,
         })
     }
+}
+
+fn one_regular_os_arena_length(
+    requested_size: usize,
+) -> Result<usize, ProcessSharedArenaReserveError> {
+    if requested_size == 0 {
+        return Err(ProcessSharedArenaReserveError::InvalidRequest);
+    }
+    if requested_size > MAX_ALLOC_SIZE {
+        return Err(ProcessSharedArenaReserveError::RequestTooLarge);
+    }
+    let length = invariants::align_up(requested_size, ARENA_SLICE_SIZE)
+        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
+    let plan = ExternalArenaPlan::from_address(ARENA_ALIGNMENT, length)
+        .ok_or(ProcessSharedArenaReserveError::InvalidOneArena)?;
+    if plan.prefix_bytes() != 0 || plan.total_size() != length || plan.arena_count() != 1 {
+        return Err(ProcessSharedArenaReserveError::InvalidOneArena);
+    }
+    Ok(length)
 }
 
 static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStorage::new();
@@ -880,6 +1184,166 @@ mod tests {
             MapAccess::Committed,
         )
         .expect("map one source-sized arena backing")
+    }
+
+    #[test]
+    fn explicit_os_reservation_publishes_one_os_arena_for_reserved_and_committed_requests() {
+        for access in [MapAccess::Reserved, MapAccess::Committed] {
+            let _fault = fault::install(fault::Plan::disabled());
+            let config = memory_config();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = initialized_map(config, subprocess);
+            let storage = ProcessSharedArenaStorage::test_static_owner();
+
+            let lease = match storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, access) {
+                Ok(lease) => lease,
+                Err(_) => panic!("one caller-selected regular OS arena reserves and publishes"),
+            };
+            let arena = lease.arena().expect("the reserved OS arena remains published");
+            assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
+            assert_eq!(arena.arena().memid.initially_committed(), access == MapAccess::Committed);
+            assert!(arena.arena().memid.initially_zero());
+            assert_eq!(lease.registry_count().unwrap(), 1);
+            assert_eq!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) },
+                core::ptr::null_mut(),
+                "reservation publishes no page before a typed page owner begins"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_os_reservation_rejects_invalid_or_second_requests_before_mapping() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, 0, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Rejected {
+                error: ProcessSharedArenaReserveError::InvalidRequest,
+            })
+        ));
+        assert_eq!(fault.observed(), 0, "an invalid request never reaches mmap");
+        assert!(storage.test_is_cold());
+
+        assert!(matches!(
+            storage.reserve_one_os_arena(
+                page_map,
+                ARENA_MIN_SIZE + ARENA_SLICE_SIZE,
+                MapAccess::Reserved,
+            ),
+            Err(ProcessSharedArenaReserveFailure::Rejected {
+                error: ProcessSharedArenaReserveError::InvalidOneArena,
+            })
+        ));
+        assert_eq!(
+            fault.observed(),
+            0,
+            "a rounded request with an unmanaged tail never reaches mmap"
+        );
+        assert!(storage.test_is_cold());
+
+        fault.set(fault::Plan::disabled());
+        let selected = match storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Committed) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the selected OS reservation publishes"),
+        };
+        let root = selected.root().unwrap();
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Committed),
+            Err(ProcessSharedArenaReserveFailure::Rejected {
+                error: ProcessSharedArenaReserveError::AlreadyInstalled,
+            })
+        ));
+        assert_eq!(fault.observed(), 0, "a repeated reservation cannot create a second mapping");
+
+        fault.set(fault::Plan::disabled());
+        let foreign_map = initialized_map(config, MainSubprocess::test_static_owner());
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            storage.reserve_one_os_arena(foreign_map, ARENA_MIN_SIZE, MapAccess::Committed),
+            Err(ProcessSharedArenaReserveFailure::Rejected {
+                error: ProcessSharedArenaReserveError::PairMismatch,
+            })
+        ));
+        assert_eq!(fault.observed(), 0, "a foreign root rejects before mapping");
+        assert_eq!(selected.root().unwrap(), root);
+        assert_eq!(selected.registry_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn explicit_os_reservation_unmaps_a_failed_metadata_setup_and_allows_the_selected_retry() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let root = page_map.root().unwrap();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Commit,
+            1,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Rejected {
+                error: ProcessSharedArenaReserveError::Manage(
+                    ProcessSharedArenaError::Arena(ManageArenaError::CommitFailed),
+                ),
+            })
+        ));
+        assert!(storage.test_is_cold());
+        assert_eq!(storage.registry.count(), 0);
+        assert_eq!(page_map.root().unwrap(), root);
+
+        fault.set(fault::Plan::disabled());
+        let lease = match storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the selected source pair retries after successful unmap"),
+        };
+        assert_eq!(lease.root().unwrap(), root);
+        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.arena().unwrap().arena().memid.kind(), crate::types::MemoryKind::Os);
+    }
+
+    #[test]
+    fn explicit_os_reservation_retains_the_mapping_when_failed_setup_cannot_unmap() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit,
+            1,
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Release {
+                    manage: ProcessSharedArenaError::Arena(ManageArenaError::CommitFailed),
+                    unmap: Errno::NOMEM,
+                },
+            })
+        ));
+        assert_eq!(storage.test_state(), RETAINED);
+        assert_eq!(storage.registry.count(), 0);
+
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(
+            storage.reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Retained,
+            })
+        ));
+        assert_eq!(fault.observed(), 0, "the retained reservation never loses its mapping to a retry");
     }
 
     fn take_returned_mapping(

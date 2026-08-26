@@ -227,6 +227,67 @@ mod tests {
     }
 
     #[test]
+    fn reserved_os_arena_reservation_drives_one_static_page_lifecycle() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = ProcessPageMapStorage::test_static_owner()
+                .initialize(config, subprocess)
+                .expect("the isolated process map initializes before reservation");
+            let process_arena = match ProcessSharedArenaStorage::test_static_owner()
+                .reserve_one_os_arena(page_map, ARENA_MIN_SIZE, MapAccess::Reserved)
+            {
+                Ok(arena) => arena,
+                Err(_) => panic!("the explicit reserved OS arena publishes"),
+            };
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved OS arena and map form one process image");
+            let arena = process_arena.arena().expect("the OS arena remains published");
+            assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
+            assert!(!arena.arena().memid.initially_committed());
+
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("the ticket-zero owner attaches before the OS-backed page lifecycle");
+            let mut allocator = MainStaticProcessPageAllocator::begin(&mut owner, pair)
+                .expect("the matched OS arena admits the static page engine");
+            let block = allocator
+                .allocate(37, false)
+                .expect("a static page commits and allocates from the reserved OS arena");
+            let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                .expect("the block is PageMap-published");
+            let memory = unsafe { page.as_ref().memid() };
+            let slice = memory
+                .arena_memory()
+                .expect("the static page remains in the reserved OS arena")
+                .slice_index as usize;
+            assert_eq!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) },
+                page.as_ptr(),
+                "the OS-backed static page publishes exactly one map member"
+            );
+            assert_eq!(unsafe { arena.pages() }.unwrap().is_set_range(slice, 1), Some(true));
+
+            // SAFETY: `block` is the one exact live allocation returned by
+            // this static page engine.
+            unsafe { allocator.free(block) }.expect("the OS-backed static block frees");
+            match allocator.finish() {
+                Ok(()) => {}
+                Err(_) => panic!("all-free release closes the page lifecycle"),
+            }
+            assert!(unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) }.is_null());
+            assert_eq!(unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1), Some(true));
+            owner
+                .teardown()
+                .expect("the empty OS-backed static owner tears down cleanly");
+        })
+        .join()
+        .expect("reserved OS arena lifecycle remains current-thread local");
+    }
+
+    #[test]
     fn main_static_page_allocator_binds_the_in_place_main_arena_bitmap_before_page_map_publication() {
         thread::spawn(|| {
             let config = memory_config();

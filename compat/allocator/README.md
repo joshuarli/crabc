@@ -53,16 +53,18 @@ lease exposes only immutable map/configuration/subprocess witnesses.
 initialization/publication boundary. It freezes one `MemoryConfig` and selected
 `MainSubprocess`, initializes the map in its final slot, and Release-publishes
 the root; it is distinct from metadata's private map and all caller-managed
-maps. `process_arena.rs` separately ports the lower
-`mi_manage_os_memory_ex2` ownership edge for one caller-selected complete
-arena mapping: it binds a process registry to that exact map/main identity,
-retains the mapping only after in-place arena publication, and returns an
-unpublished rejected mapping to its caller. A reserved mapping first enters
-the final sidecar slot so a stable arena callback commits metadata and later
-selected/page-metadata ranges through that exact owner; default Linux decommit
-reports no recommit requirement. A metadata-commit failure returns the exact
-mapping with an empty registry and a cold retry state. This is only a lower
-external-map boundary, not page-on-demand policy. `ProcessPageArenaLease` has
+maps. `process_arena.rs` retains the lower `mi_manage_os_memory_ex2` ownership
+edge for a caller-selected external mapping and adds one explicit regular
+`mi_reserve_os_memory_ex2` entry. The latter accepts only a nonzero request
+that rounds to exactly one complete arena, maps ordinary reserved or committed
+memory, and records `MemoryKind::Os`. An unpublished metadata failure unmaps
+that exact regular mapping before returning a cold retry state; a failed unmap
+retains it terminally. The external entry still returns its unpublished
+rejected mapping to the caller. A reserved map first enters the final sidecar
+slot so a stable arena callback commits metadata and later selected/page-
+metadata ranges through that exact owner; default Linux decommit reports no
+recommit requirement. This is not automatic reservation, large-page/
+exclusive/NUMA policy, or page-on-demand routing. `ProcessPageArenaLease` has
 one range-checked direct page-area commitment operation for an already-selected
 source extension, but it does not maintain `slice_pcommitted` or own the
 failed-commit page-reabandon branch. It then proves

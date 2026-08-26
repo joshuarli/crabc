@@ -2,6 +2,34 @@ The crucial framing is: **do not design a new allocator**. Produce a provenance-
 
 ## Handoff — 2026-08-26
 
+### Current checkpoint — explicit regular OS one-arena reservation
+
+This checkpoint is complete. `ProcessSharedArenaStorage::reserve_one_os_arena`
+ports the bounded regular-map portion of `src/arena.c:1885-1912`
+(`mi_reserve_os_memory_ex2`) over the existing process PageMap/arena pair. A
+caller selects only a nonzero request that rounds to exactly one complete
+arena and whether that regular mapping starts reserved or committed. The
+boundary rejects a trailing unmanaged tail, a second reservation, or a foreign
+process pair before mapping; it does not choose automatic reservation policy,
+large pages, exclusive/NUMA policy, multiple sub-arenas, allocation routing,
+or shutdown.
+
+`arena::manage_os_in_place` records the resulting parent arena as
+`MemoryKind::Os`, distinct from the existing caller-supplied external-map
+entry. A pre-publication metadata failure unmaps the exact new mapping before
+the sidecar returns to COLD and permits the same pair to retry. If that unmap
+fails, the sidecar retains the exact mapping and becomes terminal rather than
+allowing a second reservation to obscure its ownership. The static
+`MainStaticProcessPageAllocator` regression proves that a reserved OS arena
+can commit metadata, publish one page, and complete its normal page-map,
+bitmap, metadata, and slice-release lifecycle.
+
+Native Linux/AArch64 focused reservation tests and the complete
+`crabc-mimalloc` library suite passed (565 tests). The allocator ledger and
+ratchet must remain synchronized with this checkpoint. The next slice should
+remain a separately source-shaped owner or lifecycle boundary; do not broaden
+this explicit reservation entry into automatic routing or a registry scan.
+
 ### Previous checkpoint — private no-page process/pthread runtime lifecycle
 
 This checkpoint is complete on top of the bounded owners below. The hidden
@@ -406,20 +434,23 @@ separate, deliberately lower-level shared-arena sidecar.
 `process_page_map.rs` source-maps `mi_page_map_init_once` /
 `_mi_page_map_init`, freezes one `MemoryConfig` and `MainSubprocess`, constructs
 a `PageMap` in its final process-static slot, and Release-publishes a stable
-root exactly once. `process_arena.rs` source-maps the caller-selected
-`mi_manage_os_memory_ex2` edge for one complete mapping: it binds an
-`ArenaRegistry` to that exact root/configuration/main identity before
-in-place publication. A reserved mapping first moves into the sidecar's final
-slot, whose stable callback commits source metadata and later selected arena
-ranges through that same `Mapping`; its frozen Linux decommit reports that
-reuse needs no recommit. An injected metadata-commit failure recovers the
-exact unpublished mapping, leaves the registry empty and the sidecar cold, and
-keeps the selected map/subprocess pair available for a matching retry. This is
-still only the lower external-map boundary: it does not select page-on-demand
-policy or maintain `slice_pcommitted`. Its paired lease now has one narrow,
-range-checked direct page-area commit operation for the already-selected
-`mi_page_extend_free` transition; the page lifecycle, not the sidecar, owns
-the resulting count publication and failed-commit `_mi_page_abandon` tail.
+root exactly once. `process_arena.rs` retains the caller-selected
+`mi_manage_os_memory_ex2` edge for one complete external mapping and adds one
+explicit regular `mi_reserve_os_memory_ex2` entry. It binds an `ArenaRegistry`
+to that exact root/configuration/main identity before in-place publication.
+The regular entry accepts only one complete slice-rounded arena and normal
+reserved or committed mapping access, records `MemoryKind::Os`, and unmaps an
+unpublished metadata failure before making the sidecar cold for a matching
+retry; a failed unmap retains the map terminally. A reserved mapping first
+moves into the sidecar's final slot, whose stable callback commits source
+metadata and later selected arena ranges through that same `Mapping`; its
+frozen Linux decommit reports that reuse needs no recommit. This remains
+outside automatic reservation, large-page/exclusive/NUMA policy,
+page-on-demand policy, and `slice_pcommitted`. Its paired lease now has one
+narrow, range-checked direct page-area commit operation for the already-
+selected `mi_page_extend_free` transition; the page lifecycle, not the
+sidecar, owns the resulting count publication and failed-commit
+`_mi_page_abandon` tail.
 `ProcessPageArenaLease` proves that exact tuple for `main_static_page.rs`'s one
 bounded page-bearing owner.
 `MainStaticProcessPageAllocator` borrows only the live ticket-zero attachment,

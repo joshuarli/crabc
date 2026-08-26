@@ -278,8 +278,9 @@ result may refine it only when it can prove retained ownership.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 
-- **Upstream/Rust:** `src/arena.c:1573-1611,1676-1791,1794-1871`, especially
-  `mi_arenas_add`, `mi_arena_initialize`, and `mi_manage_os_memory_ex2`;
+- **Upstream/Rust:** `src/arena.c:1573-1611,1676-1791,1794-1912`, especially
+  `mi_arenas_add`, `mi_arena_initialize`, `mi_manage_os_memory_ex2`, and the
+  bounded regular-map part of `mi_reserve_os_memory_ex2`;
   represented by `process_arena::ProcessSharedArenaStorage` and
   `process_owned_mapping_commit` / `ProcessPageArenaLease` over the existing
   `ArenaRegistry`, `ManagedExternalRegion`, `Mapping`, and
@@ -287,25 +288,24 @@ result may refine it only when it can prove retained ownership.
 - **Category:** private incomplete process-arena ownership only. It has no C
   ABI surface or valid allocation-trace differential entry.
 - **Difference:** C may manage arbitrary external spans (including split
-  sub-arenas) and its later reserve path chooses mappings through live option
-  policy. Rust currently admits exactly one caller-selected, complete aligned
-  mapping whose page size/configuration/main-subprocess identity match the
-  already Release-published process page map. A pre-publication rejection
-  returns that `Mapping` to the caller instead of silently unmapping it,
-  because this is the lower `mi_manage_os_memory_ex2` boundary and no Rust
-  `mi_reserve_os_memory_ex2` policy owner exists yet. Once published, the map
-  and in-place arena are process-lived. A reserved mapping enters its final
-  sidecar slot before in-place initialization, so its retained callback can
-  commit metadata and later selected/page-metadata ranges through the exact
-  `Mapping`; it conservatively reports nonzero and the frozen Linux decommit
-  path reports no recommit requirement. An injected metadata-commit failure
-  returns that exact mapping with an empty registry and COLD sidecar, while the
-  selected map/subprocess pair remains available for a matching retry. This is
-  not source page-on-demand allocation policy: its typed pair can make one
-  range-checked direct page-area commit for an already-selected extension, but
-  does not select on-demand commitment, maintain `slice_pcommitted`, or perform
-  failed-commit `_mi_page_abandon` reabandonment. The typed pair may now be
-  consumed by
+  sub-arenas) and chooses reservations through live option policy. Rust admits
+  exactly one caller-selected, complete aligned external mapping and one
+  explicit caller-selected regular OS reservation whose slice-rounded request
+  is exactly one complete arena. The regular path accepts only reserved or
+  committed normal mappings, records `MemoryKind::Os`, and unmaps an
+  unpublished metadata failure before returning COLD; a failed unmap instead
+  retains the exact mapping terminally. The external path still returns a
+  pre-publication rejected `Mapping` to its caller because it remains the lower
+  `mi_manage_os_memory_ex2` boundary. Once published, either map and its
+  in-place arena are process-lived. A reserved mapping enters its final sidecar
+  slot before in-place initialization, so its retained callback can commit
+  metadata and later selected/page-metadata ranges through the exact `Mapping`;
+  it conservatively reports nonzero and the frozen Linux decommit path reports
+  no recommit requirement. This is not source page-on-demand allocation policy:
+  its typed pair can make one range-checked direct page-area commit for an
+  already-selected extension, but does not select on-demand commitment,
+  maintain `slice_pcommitted`, or perform failed-commit `_mi_page_abandon`
+  reabandonment. The typed pair may now be consumed by
   separately recorded ticket-zero or one sequential later-thread page owners:
   each installs this arena's embedded `pages_main`, registers/releases ordinary
   pages, and retains a joined scoped producer. That does not create general
@@ -328,15 +328,24 @@ result may refine it only when it can prove retained ownership.
   complete-slice commitment bit.
   `foreign_map_or_subprocess_rejects_before_mapping_or_registry_mutation`
   proves a ready owner cannot accept a foreign process map.
+  `explicit_os_reservation_publishes_one_os_arena_for_reserved_and_committed_requests`,
+  `explicit_os_reservation_rejects_invalid_or_second_requests_before_mapping`,
+  `explicit_os_reservation_unmaps_a_failed_metadata_setup_and_allows_the_selected_retry`,
+  and `explicit_os_reservation_retains_the_mapping_when_failed_setup_cannot_unmap`
+  prove the bounded regular-map provenance, pre-map refusals, source-shaped
+  release/retry, and terminal failed-release ownership.
+  `main_static_page::tests::reserved_os_arena_reservation_drives_one_static_page_lifecycle`
+  proves that reserved regular mapping reaches one normal static page lifecycle.
   `main_static_page::tests::main_static_page_allocator_binds_the_in_place_main_arena_bitmap_before_page_map_publication`
   proves the paired static owner uses the arena's actual embedded bitmap and
   returns its slice after map removal; the later-thread page-engine regression
   proves the same bitmap is selected by the shared main Heap.
-- **Decision/removal:** accepted until a source-shaped reserve policy and
+- **Decision/removal:** accepted until automatic source reservation policy and
   general page-bearing fresh-allocation/owner-exit protocol can connect this
   exact arena to multiple source owners and shutdown quiescence. It does not
-  authorize eager startup reservation, a fixed reserve size, generic arena
-  management, raw page-map access, or process teardown.
+  authorize eager startup reservation, a fixed reserve size, large-page or
+  NUMA policy, generic arena management, raw page-map access, or process
+  teardown.
 
 ### `CRABC-MI-STATIC-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted bounded page-owner slice
 

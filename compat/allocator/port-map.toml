@@ -1512,8 +1512,23 @@ name = "mi-manage-os-memory-ex2-process-shared-one-arena"
 source_region = "mi_arenas_add, mi_arena_initialize, mi_manage_os_memory_ex2 single-arena publication, the retained external commit/decommit callback boundary, and src/page.c:574-644 mi_page_extend_free's direct _mi_os_commit"
 rust_module = "crabc_mimalloc::process_arena, crabc_mimalloc::arena, and crabc_mimalloc::os"
 rust_item = "ProcessSharedArenaStorage::install_one_owned_external_arena, process_owned_mapping_commit, ProcessSharedArenaLease::commit_page_area, and ProcessPageArenaLease::commit_page_area"
-intentional_difference = "This is only the lower caller-selected mi_manage_os_memory_ex2 edge for one complete aligned mapping paired with the existing process PageMap root. A reserved Mapping enters its final sidecar slot before in-place initialization, so the retained callback commits metadata and later selected/page-metadata ranges through that exact mapping; frozen Linux decommit reports no recommit requirement. An injected metadata-commit failure returns the exact Mapping with an empty registry and COLD sidecar, while the selected pair remains retry-bound. Its typed pair additionally admits one range-checked direct page-area commit for an already-selected source mi_page_extend_free transition; it neither selects source page-on-demand policy nor maintains slice_pcommitted or owns failed-commit _mi_page_abandon reabandonment. Ticket-zero or sequential later-thread page owners remain separately recorded; automatic mi_arena_reserve policy, multiple/sub-arenas, concurrent/general page routing, and destruction remain absent. A pre-publication rejected Mapping returns to its caller because the absent reserve-policy layer owns any unmap decision."
+intentional_difference = "This is only the lower caller-selected mi_manage_os_memory_ex2 edge for one complete aligned external mapping paired with the existing process PageMap root. A reserved Mapping enters its final sidecar slot before in-place initialization, so the retained callback commits metadata and later selected/page-metadata ranges through that exact mapping; frozen Linux decommit reports no recommit requirement. An injected metadata-commit failure returns the exact Mapping with an empty registry and COLD sidecar, while the selected pair remains retry-bound. Its typed pair additionally admits one range-checked direct page-area commit for an already-selected source mi_page_extend_free transition; it neither selects source page-on-demand policy nor maintains slice_pcommitted or owns failed-commit _mi_page_abandon reabandonment. Ticket-zero or sequential later-thread page owners remain separately recorded; automatic mi_arena_reserve policy, multiple/sub-arenas, concurrent/general page routing, and destruction remain absent. A pre-publication rejected external Mapping returns to its caller; the separately recorded regular OS reservation owns its own source-shaped unmap decision."
 tests = ["crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/main_heap_page.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/arena.c"
+name = "mi-reserve-os-memory-ex2-process-owned-one-arena"
+source_region = "src/arena.c:1885-1912 mi_reserve_os_memory_ex2 regular aligned map, one in-place manage call, and source map release after unpublished manage failure"
+rust_module = "crabc_mimalloc::process_arena, crabc_mimalloc::arena, and crabc_mimalloc::os"
+rust_item = "ProcessSharedArenaStorage::reserve_one_os_arena, arena::manage_os_in_place, ProcessSharedArenaReserveFailure, and ProcessPageArenaLease"
+intentional_difference = "This explicit caller-selected entry accepts only a nonzero request which slice-rounds to exactly one complete arena and only normal reserved or committed Mapping access. It creates MemoryKind::Os provenance, binds the existing process PageMap/root/configuration/subprocess tuple before publication, and unmaps an unpublished metadata failure before returning a retryable COLD result; a failed unmap retains the exact Mapping terminally. It intentionally omits automatic mi_arena_reserve policy, allow_large, exclusive/NUMA selection, multiple/sub-arenas, general fresh-page routing, page-on-demand policy, registry search, destruction, and shutdown. The lower external mapping entry remains separate."
+tests = ["crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/process_page_map.rs"]
 exported = false
 implemented = true
 unit_verified = true

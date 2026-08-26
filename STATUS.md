@@ -439,18 +439,21 @@ abandonment, later-free/reclaim, concurrent routing, or a `pthread` lifecycle.
 `process_page_map.rs` owns the global source-page-map prerequisite. It freezes
 one `MemoryConfig` and selected main subprocess, initializes a `PageMap` in
 its final static slot, and Release-publishes its root exactly once.
-`process_arena.rs` separately admits one caller-selected, complete in-place
-arena mapping only after binding its registry to that same
-map/root/configuration/subprocess tuple; it retains the published mapping for
-process lifetime and returns an unpublished rejected mapping to its caller. A
-reserved mapping first enters that final owner slot, so the retained arena
-callback commits metadata and later selected ranges through the exact same
-`Mapping`; frozen Linux decommit reports no recommit requirement. An injected
-metadata-commit failure returns the exact map with the registry empty and the
-sidecar cold. This establishes the external-map ownership prerequisite and one
-narrow paired direct page-area commit operation; it does not enable
-page-on-demand policy or itself maintain `slice_pcommitted` or page
-reabandonment.
+`process_arena.rs` retains one caller-selected, complete external in-place
+arena mapping and adds one explicit caller-selected regular OS reservation
+after binding either form to that same map/root/configuration/subprocess tuple.
+The regular entry accepts only a nonzero request that rounds to exactly one
+complete arena and normal reserved or committed mapping access; it records
+`MemoryKind::Os`. An unpublished metadata failure unmaps that exact regular
+map before leaving the sidecar cold for a matching retry, while a failed unmap
+retains the mapping terminally. The external entry continues to return an
+unpublished rejected map to its caller. A reserved map first enters the final
+owner slot, so the retained arena callback commits metadata and later selected
+ranges through the exact same `Mapping`; frozen Linux decommit reports no
+recommit requirement. This establishes the external-map ownership prerequisite
+and one narrow paired direct page-area commit operation; it does not enable
+automatic reservation, large-page/exclusive/NUMA policy, page-on-demand policy,
+or itself maintain `slice_pcommitted` or page reabandonment.
 `ProcessPageArenaLease` proves that exact tuple before `main_static_page.rs`
 or `main_heap_page.rs` may bind an already selected source Theap to it. The
 private ticket-zero and later-thread engines each hold the only process-map
