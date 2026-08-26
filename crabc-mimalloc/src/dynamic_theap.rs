@@ -3748,6 +3748,406 @@ mod tests {
         .expect("the cross-thread dynamic route fixture remains isolated");
     }
 
+    /// Native x86-64 differential trace for the bounded detached dynamic
+    /// arena-singleton route. The emitted facts are deliberately limited to
+    /// the shared source/page-map/arena terminal state; this test does not
+    /// claim pthread destructor or general thread-exit equivalence.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_dynamic_arena_singleton_post_exit_trace_matches_pinned_c() {
+        std::println!("CRABC_MI_DYNAMIC_ARENA_SINGLETON_POST_EXIT_TRACE_BEGIN");
+
+        let result = thread::spawn(|| {
+            let mut page_map = PageMap::initialize(memory_config(), 0, true)
+                .expect("the cross-thread trace fixture initializes one page map");
+
+            let (
+                block_address,
+                slice_start_address,
+                slice_index,
+                slice_count,
+                page_map_slice_count,
+                _span_size,
+                arena_address,
+                source_thread_teardown_completed,
+                source_thread_joined_before_free,
+                source_is_torn_down,
+                source_unmapped_after_thread_done,
+                source_unowned_after_thread_done,
+                source_queue_detached_after_thread_done,
+                source_used_after_thread_done,
+                page_map_registered_before_free,
+                page_map_all_slices_registered_before_free,
+                arena_page_bitmap_set_before_free,
+                terminal_free_completed,
+                request_size,
+                block_size,
+                capacity,
+                reserved,
+                region,
+                arena_registry,
+            ) = thread::scope(|scope| {
+                let source = scope.spawn(|| {
+                    let (subprocess, metadata, key_registry) = fixture();
+                    consume_static_ticket(subprocess, metadata);
+                    let mut owner = match unsafe {
+                        DynamicTheapAttachment::begin_non_abandoning_with_components(
+                            memory_config(),
+                            pinned_empty_heap(),
+                            subprocess,
+                            metadata,
+                            key_registry,
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(DynamicTheapBeginError::Rejected(error)) => {
+                            panic!("the dynamic trace source attachment succeeds: {error:?}")
+                        }
+                        Err(DynamicTheapBeginError::Retained { error, .. }) => {
+                            panic!("the dynamic trace source attachment is not terminal: {error:?}")
+                        }
+                    };
+                    let mut region = DynamicArenaRegion::zeroed();
+                    let arena_registry = ArenaRegistry::new(null_mut());
+                    assert!(unsafe {
+                        arena_registry.bind_subprocess_before_publication(subprocess.as_ptr())
+                    });
+                    let managed = unsafe {
+                        manage_external_in_place(
+                            &arena_registry,
+                            region.as_ptr(),
+                            ARENA_MIN_SIZE,
+                            PageSize::new(4096).expect("pinned page size"),
+                            true,
+                            true,
+                            true,
+                            -1,
+                            false,
+                            None,
+                        )
+                    }
+                    .expect("the trace source registers its external arena");
+                    let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+                        .expect("the registered arena has a trace source view");
+                    let arena_address = managed.arena_id().as_ptr().expose_provenance();
+                    let session = owner
+                        .page_session()
+                        .expect("the trace source admits one page session");
+                    let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                        session,
+                        arena,
+                        ArenaId::none(),
+                        &mut page_map,
+                    );
+                    let request_size = LARGE_MAX_OBJ_SIZE + 1;
+                    let block = allocator
+                        .allocate(request_size, false)
+                        .expect("the trace source allocates one arena singleton");
+                    let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                        .expect("the trace singleton remains PageMap-published");
+                    let arena = unsafe {
+                        ArenaView::from_ptr(core::ptr::with_exposed_provenance_mut(arena_address))
+                    }
+                    .expect("the trace source arena remains registered while it allocates");
+                    let page_ref = unsafe { page.as_ref() };
+                    let memory = page_ref.memid();
+                    let arena_memory = memory
+                        .arena_memory()
+                        .expect("the trace route uses an arena singleton");
+                    let slice_index = arena_memory.slice_index as usize;
+                    let slice_count = arena_memory.slice_count as usize;
+                    let block_size = page_ref.block_size();
+                    let capacity = page_ref.capacity() as usize;
+                    let reserved = page_ref.reserved() as usize;
+                    let slice_start = arena
+                        .slice_start(slice_index)
+                        .expect("the trace singleton has an arena slice start");
+                    let page_start = unsafe { page_ref.start() };
+                    let page_start_offset = page_start
+                        .addr()
+                        .checked_sub(slice_start.addr())
+                        .expect("the trace page starts within its arena slice");
+                    let page_map_slice_count = crate::page::page_map_slice_count(
+                        block_size,
+                        page_ref.reserved(),
+                        page_start_offset,
+                    )
+                    .expect("the trace singleton has a PageMap span");
+                    assert_eq!(capacity, 1);
+                    assert_eq!(reserved, 1);
+                    assert_eq!(page_ref.used(), 1);
+                    assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+                    let drain = match allocator.begin_thread_exit_drain() {
+                        Ok(drain) => drain,
+                        Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                            core::mem::forget(engine);
+                            panic!("the trace source enters its page drain: {error:?}");
+                        }
+                    };
+                    let source_regular_tls_cleared =
+                        drain.test_dynamic_regular_slot_is_clear();
+                    let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                        Ok(handoff) => handoff,
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            panic!("the trace singleton enters the source handoff");
+                        }
+                    };
+
+                    // `abandon_full_singleton` succeeds only through the
+                    // pinned unmappable/unowned source transition. Capture
+                    // those ordinary page facts before route conversion.
+                    let source_unmapped_after_thread_done = unsafe {
+                        page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED
+                    };
+                    let source_unowned_after_thread_done = unsafe {
+                        page.as_ref().remote_free_test_head() & !1 == 0
+                    };
+                    let source_queue_detached_after_thread_done = unsafe {
+                        !crate::types::page_queue::page_is_in_full(page.as_ref())
+                            && page.as_ref().is_queue_detached()
+                            && page.as_ref().remote_free_test_head() & !1 == 0
+                    };
+                    let source_used_after_thread_done = unsafe { page.as_ref().used() };
+                    let route = match handoff.into_post_exit_arena_route() {
+                        Ok(route) => route,
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            panic!("the trace source tears down before route transfer");
+                        }
+                    };
+                    let source_is_torn_down = owner.state == DynamicAttachmentState::TornDown
+                        && owner.heap.is_none()
+                        && owner.binding.is_none()
+                        && owner.backing.is_none()
+                        && owner.tld.is_none()
+                        && owner.theap.is_none()
+                        && owner.arena_pages.is_none()
+                        && owner.terminal_os_release.is_none()
+                        && !owner.cached_root_bound
+                        && dynamic_backing_peek().is_none();
+                    assert!(source_is_torn_down);
+                    let source_thread_teardown_completed =
+                        source_regular_tls_cleared && source_is_torn_down;
+                    (
+                        route,
+                        block.as_ptr().expose_provenance(),
+                        slice_start.expose_provenance(),
+                        slice_index,
+                        slice_count,
+                        page_map_slice_count,
+                        slice_count * ARENA_SLICE_SIZE,
+                        arena_address,
+                        source_thread_teardown_completed,
+                        source_unmapped_after_thread_done,
+                        source_unowned_after_thread_done,
+                        source_queue_detached_after_thread_done,
+                        source_used_after_thread_done,
+                        request_size,
+                        block_size,
+                        capacity,
+                        reserved,
+                        source_is_torn_down,
+                        region,
+                        arena_registry,
+                    )
+                });
+
+                let (
+                    route,
+                    block_address,
+                    slice_start_address,
+                    slice_index,
+                    slice_count,
+                    page_map_slice_count,
+                    span_size,
+                    arena_address,
+                    source_thread_teardown_completed,
+                    source_unmapped_after_thread_done,
+                    source_unowned_after_thread_done,
+                    source_queue_detached_after_thread_done,
+                    source_used_after_thread_done,
+                    request_size,
+                    block_size,
+                    capacity,
+                    reserved,
+                    source_is_torn_down,
+                    region,
+                    arena_registry,
+                ) = source.join().expect("the trace source joins before receiver free");
+                let block: NonNull<u8> =
+                    NonNull::new(core::ptr::with_exposed_provenance_mut(block_address))
+                    .expect("the trace block remains non-null after source join");
+                let page_map_entry_before_free =
+                    unsafe { route.test_page_map_entry(block.as_ptr()) };
+                let page_map_registered_before_free = !page_map_entry_before_free.is_null();
+                let slice_start: *mut u8 =
+                    core::ptr::with_exposed_provenance_mut(slice_start_address);
+                let route_span_before_free = unsafe { route.test_arena_span() };
+                let page_map_all_slices_registered_before_free = route_span_before_free
+                    .is_some_and(|(_, size)| {
+                        size == span_size
+                            && page_map_slice_count == slice_count
+                            && (0..slice_count).all(|index| {
+                                // SAFETY: the joined source and the route's
+                                // consuming receiver have the whole PageMap
+                                // exclusion required for these witnesses.
+                                (unsafe {
+                                    route.test_page_map_entry(
+                                        slice_start
+                                            .wrapping_add(index * ARENA_SLICE_SIZE),
+                                    )
+                                }) == page_map_entry_before_free
+                            })
+                    });
+                let arena_page_bitmap_set_before_free =
+                    unsafe { route.test_dynamic_arena_page_is_set() };
+                let source_thread_joined_before_free = true;
+                assert!(source_thread_teardown_completed);
+                assert!(source_is_torn_down);
+                assert!(page_map_registered_before_free);
+                assert!(page_map_all_slices_registered_before_free);
+                assert!(arena_page_bitmap_set_before_free);
+
+                let terminal_free_completed = match unsafe {
+                    route.remote_free_after_thread_exit(block)
+                } {
+                    Ok(()) => true,
+                    Err(failure) => {
+                        core::mem::forget(failure);
+                        false
+                    }
+                };
+                (
+                    block_address,
+                    slice_start_address,
+                    slice_index,
+                    slice_count,
+                    page_map_slice_count,
+                    span_size,
+                    arena_address,
+                    source_thread_teardown_completed,
+                    source_thread_joined_before_free,
+                    source_is_torn_down,
+                    source_unmapped_after_thread_done,
+                    source_unowned_after_thread_done,
+                    source_queue_detached_after_thread_done,
+                    source_used_after_thread_done,
+                    page_map_registered_before_free,
+                    page_map_all_slices_registered_before_free,
+                    arena_page_bitmap_set_before_free,
+                    terminal_free_completed,
+                    request_size,
+                    block_size,
+                    capacity,
+                    reserved,
+                    region,
+                    arena_registry,
+                )
+            });
+
+            let block: NonNull<u8> =
+                NonNull::new(core::ptr::with_exposed_provenance_mut(block_address))
+                    .expect("the trace block remains non-null for terminal witnesses");
+            let slice_start: *mut u8 =
+                core::ptr::with_exposed_provenance_mut(slice_start_address);
+            let page_map_clear_after_terminal_free = (0..page_map_slice_count).all(|index| {
+                // SAFETY: the scoped source and receiver have joined and
+                // consumed the route; this fixture owns the whole map.
+                unsafe {
+                    page_map
+                        .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+                }
+                .is_null()
+            });
+            let page_map_span_clear_after_terminal_free = (0..slice_count).all(|index| {
+                // SAFETY: same joined, sole-PageMap ownership as above.
+                unsafe {
+                    page_map
+                        .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+                }
+                .is_null()
+            });
+            let arena_page_bitmap_clear_after_terminal_free;
+            let arena_slice_released_after_terminal_free;
+            {
+                // SAFETY: the registered arena remains owned by this fixture
+                // through `region`/`arena_registry` until after observation.
+                let arena = unsafe {
+                    ArenaView::from_ptr(core::ptr::with_exposed_provenance_mut(arena_address))
+                }
+                .expect("the trace parent retains its registered arena");
+                arena_page_bitmap_clear_after_terminal_free = unsafe {
+                    arena
+                        .pages()
+                        .expect("the trace arena has its ordinary page bitmap")
+                        .is_clear_range(slice_index, 1)
+                        == Some(true)
+                };
+                arena_slice_released_after_terminal_free = unsafe {
+                    arena
+                        .slices_free()
+                        .and_then(|slices| slices.is_set_range(slice_index, slice_count))
+                        == Some(true)
+                };
+            }
+            let terminal_cleanup = terminal_free_completed
+                && page_map_clear_after_terminal_free
+                && page_map_span_clear_after_terminal_free
+                && arena_page_bitmap_clear_after_terminal_free
+                && arena_slice_released_after_terminal_free;
+            let valid = request_size == LARGE_MAX_OBJ_SIZE + 1
+                && block_size > LARGE_MAX_OBJ_SIZE
+                && capacity == 1
+                && reserved == 1
+                && page_map_slice_count == slice_count
+                && source_thread_teardown_completed
+                && source_thread_joined_before_free
+                && source_is_torn_down
+                && source_unmapped_after_thread_done
+                && source_unowned_after_thread_done
+                && source_queue_detached_after_thread_done
+                && source_used_after_thread_done == 1
+                && page_map_registered_before_free
+                && page_map_all_slices_registered_before_free
+                && arena_page_bitmap_set_before_free
+                && terminal_cleanup;
+
+            std::println!("trace.dynamic_arena_singleton_post_exit.request_size={request_size}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.block_size={block_size}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.capacity={capacity}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.reserved={reserved}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.slice_count={slice_count}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.page_map_slice_count_before_free={page_map_slice_count}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.source_thread_teardown_completed={}", source_thread_teardown_completed as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.source_thread_joined_before_free={}", source_thread_joined_before_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.source_unmapped_after_thread_done={}", source_unmapped_after_thread_done as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.source_unowned_after_thread_done={}", source_unowned_after_thread_done as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.source_queue_detached_after_thread_done={}", source_queue_detached_after_thread_done as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.source_used_after_thread_done={source_used_after_thread_done}");
+            std::println!("trace.dynamic_arena_singleton_post_exit.page_map_registered_before_free={}", page_map_registered_before_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.page_map_all_slices_registered_before_free={}", page_map_all_slices_registered_before_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.arena_page_bitmap_set_before_free={}", arena_page_bitmap_set_before_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.terminal_free_completed={}", terminal_free_completed as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.page_map_clear_after_terminal_free={}", page_map_clear_after_terminal_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.arena_page_bitmap_clear_after_terminal_free={}", arena_page_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.arena_slice_released_after_terminal_free={}", arena_slice_released_after_terminal_free as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.terminal_cleanup={}", terminal_cleanup as u8);
+            std::println!("trace.dynamic_arena_singleton_post_exit.valid={}", valid as u8);
+            std::println!("CRABC_MI_DYNAMIC_ARENA_SINGLETON_POST_EXIT_TRACE_END");
+            assert!(valid, "dynamic arena singleton post-exit trace diverged from pinned C");
+
+            // Keep the arena allocation alive until every terminal witness
+            // above has been read, then destroy the fixture-owned map.
+            let _ = (region, arena_registry, block);
+            unsafe { page_map.destroy() }.expect("the trace leaves no PageMap entries");
+        });
+        result
+            .join()
+            .expect("the native dynamic arena singleton trace remains isolated");
+    }
+
     fn run_dynamic_full_singleton_homogeneous_aggregate_trace(emit_trace: bool) {
         with_non_abandoning_dynamic_page_fixture(move |owner, arena, page_map| {
             let session = owner

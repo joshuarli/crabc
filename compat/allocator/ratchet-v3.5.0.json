@@ -7,7 +7,7 @@
   "configuration_profile_count": 5,
   "format": 1,
   "port_map_counts": {
-    "differential_verified": 14,
+    "differential_verified": 15,
     "exported": 2,
     "implemented": 138,
     "item_count": 134,
@@ -16,7 +16,7 @@
     "unit_count": 34,
     "unit_verified": 138
   },
-  "port_map_sha256": "88f02b20f6f157a2611db37d94bc1fb14f060898924502ebc0aa22df6d194cac",
+  "port_map_sha256": "e8643611986267c37db30f6f35b3d213d53a10fa0be0bcfa8b55dde11b494595",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -557,7 +557,8 @@
     ],
     "item:src/theap.c:private-current-thread-regular-key-dynamic-theap-attachment": [
       "implemented",
-      "unit_verified"
+      "unit_verified",
+      "differential_verified"
     ],
     "item:src/threadlocal.c:aarch64-versioned-key-and-caller-owned-slot-substrate": [
       "implemented",

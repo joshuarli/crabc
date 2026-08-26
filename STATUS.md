@@ -144,6 +144,16 @@ count/bitmap transitions `2 -> 2 -> 1 -> 0`. A's first free returns
 `ReleasedAll`. This remains narrow private native x86 engine evidence, not
 general teardown, routing or concurrency, public `mi_*` behavior or runtime,
 libc integration, backend promotion, public x86 support, or AArch64 evidence.
+A separate 21-value native x86-only pinned-C/Rust differential now covers one
+full arena singleton post-exit route: request 524289, 589824-byte block size,
+capacity/reserved 1, nine arena slices, real C `mi_thread_done()` and
+join-before-terminal-consumer-free ordering, source unmapped/unowned/detached
+state, all-nine-slice PageMap and ordinary arena-bitmap preconditions, and
+terminal PageMap/bitmap/slice cleanup. Rust observes a scoped test worker and
+join while comparing only matching common typed private owner-exit facts,
+distinct from the Rust-only route. It does not establish crabc pthread/TLS
+callback parity, general lifecycle/routing/concurrency, public x86/crabc
+API/runtime, backend promotion, or AArch64 evidence.
 These bounded results do not claim general routing or concurrent collection,
 general behavior or Rust implementation parity, a Rust full-medium route, general
 abandonment/adoption, cross-thread reclaim, general thread teardown, CMake

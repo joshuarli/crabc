@@ -377,6 +377,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 21 address-independent values for one real pinned-C worker that allocates one full arena singleton from request 524289 (589824-byte block size, capacity/reserved 1, nine arena slices), runs real mi_thread_done(), and joins before the sole terminal consumer mi_free. The trace proves source teardown and join ordering, unmapped/unowned/detached state, all-nine-slice PageMap registration and ordinary arena-page bitmap state before free, then PageMap clear, arena bitmap clear, slice release, and terminal cleanup. Rust observes a scoped test worker and join while comparing only the matching common typed private owner-exit facts. This is a bounded private native pinned-C/Rust differential distinct from the Rust-only route; it does not establish crabc pthread/TLS callback parity, general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend promotion, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-dynamic-arena-singleton-post-exit",
+      "id": "native-dynamic-arena-singleton-post-exit-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/dynamic-arena-singleton-post-exit.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
       "command": "./compat/allocator/run-x86_64.sh allocator-fault",
       "id": "native-bounded-fault-injection",
@@ -468,7 +476,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, one 38-field same-Theap full direct-small regular-bin retire/force-release differential, one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route, one 18-value same-origin allocation-time mapped-adoption differential, one 32-value same-Theap direct-small allocation-time adoption differential, one 37-field pinned-C automatic pthread-destructor probe whose worker returns naturally without explicit mi_thread_done, and one 46-field pinned-C cancellation-triggered automatic pthread-destructor probe that reaches only explicit pthread_testcancel are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, Rust/private-runtime lifecycle integration, general cancellation or pthread destructor ordering, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Nine bounded private Rust lifecycle/concurrency lanes (13 tests, including five finite Loom models and one source-torn-down dynamic arena-singleton owner moved to a joined receiver), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, one 38-field same-Theap full direct-small regular-bin retire/force-release differential, one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route, one 18-value same-origin allocation-time mapped-adoption differential, one 32-value same-Theap direct-small allocation-time adoption differential, one 37-field pinned-C automatic pthread-destructor probe whose worker returns naturally without explicit mi_thread_done, and one 46-field pinned-C cancellation-triggered automatic pthread-destructor probe that reaches only explicit pthread_testcancel are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, Rust/private-runtime lifecycle integration, general cancellation or pthread destructor ordering, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

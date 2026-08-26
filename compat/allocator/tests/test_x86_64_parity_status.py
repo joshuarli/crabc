@@ -52,6 +52,10 @@ AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA = (
 CANCELLATION_PTHREAD_DESTRUCTOR_SCHEMA = (
     ROOT / "compat/allocator/x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json"
 )
+DYNAMIC_ARENA_SINGLETON_POST_EXIT_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -247,6 +251,42 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-c-cancel-testcancel-automatic-pthread-destructor",
         )
 
+    def test_dynamic_arena_singleton_post_exit_schema_facts_are_exact(self) -> None:
+        schema = json.loads(
+            DYNAMIC_ARENA_SINGLETON_POST_EXIT_SCHEMA.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-dynamic-arena-singleton-post-exit",
+        )
+        self.assertEqual(
+            set(schema["trace"]["expected_values"]),
+            {
+                "trace.dynamic_arena_singleton_post_exit.request_size",
+                "trace.dynamic_arena_singleton_post_exit.block_size",
+                "trace.dynamic_arena_singleton_post_exit.capacity",
+                "trace.dynamic_arena_singleton_post_exit.reserved",
+                "trace.dynamic_arena_singleton_post_exit.slice_count",
+                "trace.dynamic_arena_singleton_post_exit.page_map_slice_count_before_free",
+                "trace.dynamic_arena_singleton_post_exit.source_thread_teardown_completed",
+                "trace.dynamic_arena_singleton_post_exit.source_thread_joined_before_free",
+                "trace.dynamic_arena_singleton_post_exit.source_unmapped_after_thread_done",
+                "trace.dynamic_arena_singleton_post_exit.source_unowned_after_thread_done",
+                "trace.dynamic_arena_singleton_post_exit.source_queue_detached_after_thread_done",
+                "trace.dynamic_arena_singleton_post_exit.source_used_after_thread_done",
+                "trace.dynamic_arena_singleton_post_exit.page_map_registered_before_free",
+                "trace.dynamic_arena_singleton_post_exit.page_map_all_slices_registered_before_free",
+                "trace.dynamic_arena_singleton_post_exit.arena_page_bitmap_set_before_free",
+                "trace.dynamic_arena_singleton_post_exit.terminal_free_completed",
+                "trace.dynamic_arena_singleton_post_exit.page_map_clear_after_terminal_free",
+                "trace.dynamic_arena_singleton_post_exit.arena_page_bitmap_clear_after_terminal_free",
+                "trace.dynamic_arena_singleton_post_exit.arena_slice_released_after_terminal_free",
+                "trace.dynamic_arena_singleton_post_exit.terminal_cleanup",
+                "trace.dynamic_arena_singleton_post_exit.valid",
+            },
+        )
+        self.assertEqual(len(schema["trace"]["expected_values"]), 21)
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -294,6 +334,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-non-direct-small-homogeneous-aggregate-differential",
                 "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
+                "native-dynamic-arena-singleton-post-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -675,6 +716,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-dynamic-os-aligned-singleton-owner-exit-differential"]["report"],
             "compat/reports/allocator/x86_64/dynamic-os-aligned-singleton.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-arena-singleton-post-exit-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-dynamic-arena-singleton-post-exit",
+        )
+        self.assertEqual(
+            gates["native-dynamic-arena-singleton-post-exit-differential"]["report"],
+            "compat/reports/allocator/x86_64/dynamic-arena-singleton-post-exit.json",
         )
         self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
@@ -1435,6 +1484,36 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_os_aligned_singleton)
+        dynamic_arena_singleton = gates[
+            "native-dynamic-arena-singleton-post-exit-differential"
+        ]["claim"]
+        for fragment in (
+            "21 address-independent values",
+            "request 524289",
+            "589824-byte block size",
+            "capacity/reserved 1",
+            "nine arena slices",
+            "real pinned-C worker",
+            "real mi_thread_done()",
+            "joins before the sole terminal consumer mi_free",
+            "source teardown and join ordering",
+            "unmapped/unowned/detached state",
+            "all-nine-slice PageMap registration",
+            "ordinary arena-page bitmap state",
+            "PageMap clear",
+            "arena bitmap clear",
+            "slice release",
+            "terminal cleanup",
+            "matching common typed private owner-exit facts",
+            "scoped test worker and join",
+            "crabc pthread/TLS callback parity",
+            "bounded private native pinned-C/Rust differential distinct from the Rust-only route",
+            "general lifecycle/routing/concurrency",
+            "public x86/crabc API/runtime",
+            "backend promotion",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_arena_singleton)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
@@ -1473,7 +1552,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertTrue(all(lane["state"] == "not_covered" for lane in lanes.values()))
         self.assertIn("Bounded native private-adapter", lanes["performance-qualification"]["reason"])
         self.assertIn("no whole-engine", lanes["performance-qualification"]["reason"])
-        self.assertIn("Eight bounded private Rust lifecycle/concurrency lanes", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("Nine bounded private Rust lifecycle/concurrency lanes", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("13 tests, including five finite Loom models", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("source-torn-down dynamic arena-singleton owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("five bounded crate-private fault-injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("25-field native C/Rust quiescent live-owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("28-field real small direct-page", lanes["general-thread-lifecycle-and-stress"]["reason"])

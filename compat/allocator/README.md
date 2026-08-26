@@ -1487,6 +1487,27 @@ concurrent collection, abandonment/adoption, public API/runtime, backend
 promotion, public x86 support, or AArch64 evidence. Its report is
 `compat/reports/allocator/x86_64/dynamic-os-aligned-singleton.json`.
 
+A separate dynamic arena-singleton post-exit differential is available on
+native x86-64:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-dynamic-arena-singleton-post-exit
+```
+
+This private 21-value pinned-C/Rust differential's C oracle uses one real
+worker to allocate a full arena singleton from request 524289 (589824-byte
+block size, capacity/reserved 1, nine arena slices), run real
+`mi_thread_done()`, and join before the sole terminal consumer `mi_free`. It
+records source teardown/join,
+unmapped/unowned/detached state, all-nine-slice PageMap registration and
+ordinary arena-page bitmap state, then PageMap/bitmap clear, slice release,
+and terminal cleanup. Rust observes a scoped test worker and join while
+comparing only the matching common typed private owner-exit facts; this is
+distinct from the Rust-only route and does not establish crabc pthread/TLS
+callback parity. It does not establish general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend
+promotion, or AArch64 evidence. Its report is
+`compat/reports/allocator/x86_64/dynamic-arena-singleton-post-exit.json`.
+
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
 
@@ -1771,7 +1792,8 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_aggregate_still_live_evidence.py` and `x86_64-aggregate-still-live-evidence-v3.5.0.json` | Native x86-64-only private 46-field pinned-C/Rust differential for two distinct clients on one nonfull medium page A and a one-client distinct-bin medium page B: the worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before every free, A's first free is `StillLive` and preserves A/B/the route, B's free is `ReleasedPage` and terminally releases only B, and A's second free is `ReleasedAll` and completes the route. It is dispatched by `allocator-aggregate-still-live`; it does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_aggregate_same_bin_still_live_evidence.py` and `x86_64-aggregate-same-bin-still-live-evidence-v3.5.0.json` | Native x86-64-only private 53-field pinned-C/Rust differential for two distinct clients on one nonfull medium page A plus a one-client medium page B in the same bin: the worker fills A, creates B, locally restores A to two clients, runs `mi_thread_done()`, and returns; the consumer calls `pthread_join()` before every free. It records selected same-bin queue count/link/saved-successor traversal and mapped-abandoned count/bitmap transitions `2 -> 2 -> 1 -> 0`; A's first free is `StillLive`, B's is `ReleasedPage`, and A's second free is `ReleasedAll`. It is dispatched by `allocator-aggregate-same-bin-still-live`; it does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_dynamic_os_aligned_singleton_evidence.py` and `x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for a 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and `pthread_join()` precede the sole consumer free; the selected 4096-byte page is semantically full but is an unflagged `MI_BIN_HUGE` member with an empty `MI_BIN_FULL` queue. It records the bounded OS-list/PageMap/mapping terminal tail while Rust uses only a typed private owner-exit handoff. It is dispatched by `allocator-dynamic-os-aligned-singleton`; it does not claim general lifecycle/routing/concurrency, abandonment/adoption, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
+| `x86_64_dynamic_arena_singleton_post_exit_evidence.py` and `x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 21-value pinned-C/Rust differential for one full arena singleton (request 524289, 589824-byte block size, capacity/reserved 1, nine arena slices): a real C worker runs `mi_thread_done()` and joins before the sole terminal consumer `mi_free`; the trace records teardown/join, unmapped/unowned/detached state, all-nine-slice PageMap/arena-bitmap preconditions, and terminal PageMap/bitmap/slice cleanup. Rust observes a scoped test worker and join while comparing only common typed private owner-exit facts, distinct from its Rust-only route. It is dispatched by `allocator-dynamic-arena-singleton-post-exit`; it does not claim pthread/TLS callback parity, general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend promotion, or AArch64 evidence. |
+| `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its nine lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |

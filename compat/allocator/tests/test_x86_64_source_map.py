@@ -1378,6 +1378,109 @@ class X86_64SourceMapTests(unittest.TestCase):
             units["thread-local-heap-lifecycle"]["source_anchor"]["start_line"], 24
         )
 
+    def test_dynamic_arena_singleton_post_exit_lane_scope_and_expected_trace(self) -> None:
+        reviewed_unit_ids = {
+            "arena-lifecycle",
+            "local-and-remote-free",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "process-and-thread-initialization",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_arena_singleton_post_exit_evidence.py",
+            "compat/allocator/x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_arena_singleton_post_exit_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
+                self.assertIn("detached arena singleton", units[unit_id]["difference"])
+                self.assertIn("524289", units[unit_id]["difference"])
+                self.assertIn("589824", units[unit_id]["difference"])
+                self.assertIn("nine slices", units[unit_id]["difference"])
+                self.assertIn("PageMap unregister", units[unit_id]["difference"])
+                self.assertIn("non-x86 targets", units[unit_id]["difference"])
+                self.assertIn(
+                    "the C oracle's real worker calls `mi_thread_done()`",
+                    units[unit_id]["difference"],
+                )
+                self.assertIn("consumer joins it", units[unit_id]["difference"])
+                self.assertIn(
+                    "Rust uses a scoped test worker/join",
+                    units[unit_id]["difference"],
+                )
+                self.assertIn(
+                    "does not establish crabc pthread/TLS callback parity",
+                    units[unit_id]["difference"],
+                )
+
+        schema = json.loads(
+            (
+                ROOT
+                / "compat/allocator/x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["schema"],
+            "crabc-mimalloc-x86_64-dynamic-arena-singleton-post-exit-evidence",
+        )
+        self.assertEqual(schema["target"]["architecture"], "x86_64")
+        self.assertFalse(schema["scope"]["aarch64_status_reused"])
+        self.assertFalse(schema["scope"]["emulation_accepted"])
+        self.assertTrue(schema["scope"]["c_oracle_one_full_arena_singleton_only"])
+        self.assertTrue(
+            schema["scope"]["c_oracle_real_thread_done_join_and_terminal_consumer_free"]
+        )
+        expected = schema["trace"]["expected_values"]
+        prefix = "trace.dynamic_arena_singleton_post_exit."
+        self.assertEqual(
+            expected,
+            {
+                prefix + "request_size": 524289,
+                prefix + "block_size": 589824,
+                prefix + "capacity": 1,
+                prefix + "reserved": 1,
+                prefix + "slice_count": 9,
+                prefix + "page_map_slice_count_before_free": 9,
+                prefix + "source_thread_teardown_completed": 1,
+                prefix + "source_thread_joined_before_free": 1,
+                prefix + "source_unmapped_after_thread_done": 1,
+                prefix + "source_unowned_after_thread_done": 1,
+                prefix + "source_queue_detached_after_thread_done": 1,
+                prefix + "source_used_after_thread_done": 1,
+                prefix + "page_map_registered_before_free": 1,
+                prefix + "page_map_all_slices_registered_before_free": 1,
+                prefix + "arena_page_bitmap_set_before_free": 1,
+                prefix + "terminal_free_completed": 1,
+                prefix + "page_map_clear_after_terminal_free": 1,
+                prefix + "arena_page_bitmap_clear_after_terminal_free": 1,
+                prefix + "arena_slice_released_after_terminal_free": 1,
+                prefix + "terminal_cleanup": 1,
+                prefix + "valid": 1,
+            },
+        )
+
     def test_mapped_allocation_adoption_lane_is_scoped_to_its_four_source_boundaries(
         self,
     ) -> None:
