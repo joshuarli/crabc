@@ -488,6 +488,23 @@ empty drain for existing teardown. Sole, mixed-size, non-singleton, OS-backed,
 allocation-time, reclaim/adoption/requeue, scan, and concurrent cases reject
 before detach; a collection failure retains the drain.
 
+`DynamicThreadExitDrain::abandon_full_medium_pages` separately admits a second
+bounded homogeneous dynamic aggregate: two or more full `MemoryKind::Arena`
+`PageKind::Medium` members in `BIN_FULL`, with one rounded block size and
+regular bin, `reserved > 1`, `used == reserved`, zero retirement countdowns,
+empty local free lists, exact arena spans, the matching dynamic bitmap/count
+capability for every member, and no other queue/direct state. It follows source
+force -> false collection -> full-queue/page-count detach -> unmapped
+abandonment for every member. `DynamicThreadExitFullMediumPagesRoute` retains
+the existing dynamic drain rather than raw member pointers or per-member mapped
+state; each sequential canonical free re-resolves PageMap, selects its
+unmapped or mapped failed-reclaim tail from the member's abandoned identity,
+and releases that member through PageMap -> dynamic ordinary bit -> metadata ->
+arena slices. The final free returns the empty drain for existing teardown.
+Sole, mixed-size/class, non-medium, OS-backed, allocation-time,
+reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
+detach; a collection failure retains the drain.
+
 `DynamicThreadExitDrain::abandon_full_medium` separately admits one sole full
 `MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1` and
 `used == reserved`. It preserves source force -> false collection ->
@@ -631,7 +648,8 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above, the separate dynamic full-medium, full-large,
+singleton and homogeneous full-singleton/full-medium aggregates above, the
+separate dynamic full-medium, full-large,
 full-non-direct-small, and full direct-small handoffs, and the bounded later-main normal full-medium,
 full-large, full non-direct-small, and full direct-small process routes are its lifecycle-integrated raw-release
 callers; other regular or
@@ -661,7 +679,8 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-  dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
+  dynamic owner-exit singleton, homogeneous full-singleton/full-medium aggregates,
+  sole full-medium, full-large, full-non-direct-small, and
   full-direct-small normal unmapped-to-mapped handoffs, four one-joined-remote
   full-medium/full-large/full-non-direct-small/full-direct-small immediate-mapped predecessors, and sole mapped
 medium/large/non-direct-small/direct-small

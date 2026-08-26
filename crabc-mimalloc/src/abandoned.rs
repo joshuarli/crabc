@@ -802,10 +802,12 @@ pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages 
 ///
 /// Unlike the sole full-medium route, the aggregate owns no per-page mutable
 /// unmapped/mapped state. It instead proves all members had the same source
-/// rounded block size and static-main bin before owner exit, then uses the
+/// rounded block size and regular bin before owner exit, then uses the
 /// abandoned identity held after its low-bit claim to choose the exact source
-/// unmapped or mapped tail. This does not generalize to heterogeneous full
-/// queues, direct small pages, allocation-time reclaim, or requeue.
+/// unmapped or mapped tail. Its caller supplies the exact dynamic-Heap or
+/// static-main bitmap/count capability for that bin. This does not generalize
+/// to heterogeneous full queues, direct small pages, allocation-time reclaim,
+/// or requeue.
 ///
 /// # Safety
 ///

@@ -242,7 +242,24 @@ its existing teardown. Sole, heterogeneous, non-singleton, OS-backed,
 allocation-time, reclaim/adoption/requeue, scan, and concurrent cases remain
 outside this route; a collection failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_medium` is a fourth, source-unmapped
+`DynamicThreadExitDrain::abandon_full_medium_pages` is a second bounded dynamic
+aggregate, not a general full-queue traversal. It admits only two or more full
+`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
+block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
+countdowns, empty local free lists, exact arena spans, the matching dynamic
+bitmap/count capability for every member, and every other queue/direct entry
+empty. Source force -> false collection -> full-queue/page-count detach ->
+unmapped abandonment runs for every member. The route retains the dynamic
+drain rather than raw member pointers or per-member mapped state; each
+sequential canonical free re-resolves PageMap, uses the member's abandoned
+identity to select its unmapped or mapped full-medium failed-reclaim tail, and
+releases only that member through PageMap -> dynamic ordinary bit -> metadata
+-> arena slices. The final release returns the empty drain for existing
+teardown. Sole, mixed-size/class, non-medium, OS-backed, allocation-time,
+reclaim/adoption/requeue, scan, producer, and concurrent cases remain outside
+this route; a collection failure retains the drain.
+
+`DynamicThreadExitDrain::abandon_full_medium` is a separate, source-unmapped
 dynamic endpoint. It admits only the sole full `MemoryKind::Arena` medium page
 in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct-cache
 entry. Source force -> false collection -> full-queue/page-count detach leaves
@@ -369,8 +386,10 @@ metadata -> arena slices. The large endpoint validates all 64 PageMap entries
 before that terminal release. It does not reclaim the departed Theap, adopt,
 requeue, scan, or accept multiple pages or frees.
 General cached-root
-switching/reference ownership, abandonment beyond the mapped-regular and
-post-TLS singleton/full-medium/full-large/full-non-direct-small/full-direct-small/mapped-one-block handoffs, pthread/process hooks, complete
+switching/reference ownership, abandonment beyond the mapped-regular,
+post-TLS singleton, homogeneous full-singleton/full-medium aggregate, sole
+full-medium/full-large/full-non-direct-small/full-direct-small, and
+mapped-one-block handoffs, pthread/process hooks, complete
 subprocess layout/lifecycle, and C pthread-mutex layout claims remain absent. A
 first dynamic arena page additionally creates a private
 `DynamicArenaPagesOwner`: after proving the registry-published arena's
@@ -393,7 +412,8 @@ release—and returns the drained engine; an existing owner remains terminal.
 Separately, the source-shaped initially-unmapped failed-reclaim substrate
 selects terminal-empty, reabandonment, or unownership after its expected-head
 CAS/conflict collection. It has raw page-span release authority only through
-the post-TLS arena/OS-singleton, full-medium, full-large, full-non-direct-small, and
+the post-TLS arena/OS-singleton, homogeneous full-singleton/full-medium
+aggregate, sole full-medium, full-large, full-non-direct-small, and
 full-direct-small handoffs above, not as general
 free routing. General
 producer routing, regular/nonempty unmapped lifecycle integration, terminal
@@ -435,7 +455,9 @@ quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
 generic/direct collection, and the joined full-page release/unfull branches.
 Except for these bounded owner-side collection routes, post-TLS arena/OS-
-singleton, full-medium, full-large, full-non-direct-small, and full-direct-small terminal releases, bounded ticket-zero and sequential later
+singleton, homogeneous full-singleton/full-medium aggregate, sole full-medium,
+full-large, full-non-direct-small, and full-direct-small terminal releases,
+bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, full
 medium/full-large/full-non-direct-small/full-direct-small, and sole mapped small-or-medium

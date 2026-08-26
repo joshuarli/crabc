@@ -760,6 +760,26 @@ OS-backed, preexisting queue/direct state, allocation-time, reclaim/adoption/
 requeue, scan, or concurrent case is not this route, and collection ambiguity
 retains the drain.
 
+`DynamicThreadExitDrain::abandon_full_medium_pages` is a second, separately
+typed post-TLS dynamic aggregate boundary. It admits exactly two or more full
+`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
+block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
+countdowns, empty local free lists, exact arena spans, the exact dynamic
+bitmap/count capability for every member, and every other queue/direct entry
+empty. It preserves source force -> false collection -> full-queue removal ->
+page-count decrement -> unmapped abandonment for every member. The returned
+`DynamicThreadExitFullMediumPagesRoute` stores no raw former-Theap member
+pointer or per-member mapped state: each sequential canonical free re-resolves
+PageMap, claims its member's source abandoned identity, selects the unmapped or
+mapped full-medium failed-reclaim tail, and publishes that member's dynamic
+bitmap/count pair only after its own mostly-used boundary. A terminal free
+releases only that member through PageMap -> dynamic ordinary bit -> metadata
+-> arena slices; the final member returns the empty drain for existing
+root/list/key teardown. Sole, mixed-size/class, non-medium, OS-backed,
+preexisting queue/direct state, allocation-time, reclaim/adoption/requeue,
+scan, producer, and concurrent cases reject before detach; a collection fault
+retains the drain.
+
 `DynamicThreadExitDrain::abandon_full_medium` is a separate source-unmapped
 dynamic handoff. It accepts only the drain's sole full `MemoryKind::Arena`
 medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no
@@ -959,7 +979,8 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs and the separate dynamic full-medium, full-large,
+OS-aligned singleton handoffs, homogeneous full-singleton/full-medium
+aggregates, and the separate dynamic sole full-medium, full-large,
 full-non-direct-small, and full-direct-small handoffs above; all other
 initially-unmapped pages retain the raw terminal decision for a later
 lifecycle. A test-only Loom model executes the

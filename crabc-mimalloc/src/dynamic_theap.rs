@@ -40,7 +40,13 @@
 //! Each accepts sequential failed-reclaim frees only, publishing its exact
 //! dynamic bitmap/count pair only after the source mostly-used boundary. The
 //! direct-small partial collector retains its just-published head, so its
-//! transition occurs one free later than the normal classes. Separately, one
+//! transition occurs one free later than the normal classes. Two bounded
+//! homogeneous full aggregates also preserve `MI_ABANDON` traversal only for
+//! two-or-more source members with one sealed class/size/bin image: singleton
+//! members take only raw empty failed-reclaim release, while medium members
+//! re-resolve their own dynamic bitmap/count capability after their later
+//! low-owner claim. Neither keeps a raw page list or adds a general full-queue
+//! policy. Separately, one
 //! full medium or large `BIN_FULL` page, or a full non-direct-small ordinary-
 //! bin page with every direct slot empty, with exactly one joined remote free
 //! becomes nonfull during source force collection and publishes its matching
@@ -1710,6 +1716,10 @@ mod tests {
         DynamicMappedAbandonError, DynamicMappedAbandonFailure,
         DynamicMappedRemoteFreeFailure,
         DynamicTheapAllocator, DynamicThreadExitDrainFailure,
+        DynamicThreadExitFullMediumPagesAbandonError,
+        DynamicThreadExitFullMediumPagesAbandonFailure,
+        DynamicThreadExitFullMediumPagesFreeResult,
+        DynamicThreadExitFullMediumPagesRemoteFreeFailure,
         DynamicThreadExitFullMediumAbandonError,
         DynamicThreadExitFullMediumAbandonFailure,
         DynamicThreadExitFullMediumFreeResult,
@@ -2572,6 +2582,516 @@ mod tests {
             assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
             assert_eq!(unsafe { first_page.as_ref().used() }, 1);
             assert_eq!(unsafe { second_page.as_ref().used() }, 1);
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_pages_route_reabandons_each_same_bin_page_then_releases() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic medium page");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first medium page remains PageMap-published");
+            let capacity = unsafe { first_page.as_ref().reserved() as usize };
+            assert!(
+                capacity >= 16,
+                "the selected medium geometry exposes the source mostly-used prefix"
+            );
+            let mut first_blocks = Vec::with_capacity(capacity);
+            first_blocks.push(first);
+            while first_blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its first dynamic medium page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+                first_blocks.push(block);
+            }
+
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic medium page");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second medium page remains PageMap-published");
+            assert_ne!(
+                first_page, second_page,
+                "the bounded aggregate keeps distinct source medium pages"
+            );
+            let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
+            assert_eq!(second_capacity, capacity);
+            let mut second_blocks = Vec::with_capacity(second_capacity);
+            second_blocks.push(second);
+            while second_blocks.len() < second_capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its second dynamic medium page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
+                second_blocks.push(block);
+            }
+
+            let first_ref = unsafe { first_page.as_ref() };
+            let second_ref = unsafe { second_page.as_ref() };
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(first_ref.block_size()),
+                Some(crate::types::PageKind::Medium)
+            );
+            assert_eq!(first_ref.block_size(), second_ref.block_size());
+            let bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the homogeneous medium pages retain one source bin");
+            let first_memory = first_ref.memid();
+            let second_memory = second_ref.memid();
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the drain retains the complete two-page full queue,
+            // PageMap, dynamic arena image, and every live client allocation.
+            let mut route = match unsafe { drain.abandon_full_medium_pages() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("same-bin full medium pages enter the dynamic aggregate route: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+
+            let unmapped_frees = capacity / 8;
+            assert!(unmapped_frees > 0);
+            for block in first_blocks.iter().copied().take(unmapped_frees) {
+                // SAFETY: each block is still live and belongs to the linear
+                // first aggregate member.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("the mostly-used first medium page remains live"),
+                    Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    }) => {
+                        core::mem::forget(route);
+                        panic!("the mostly-used first medium free remains source-unmapped: {error:?}");
+                    }
+                };
+            }
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+
+            // SAFETY: this exact next free crosses the first member's source
+            // mostly-used threshold and must publish only its bitmap/count.
+            route = match unsafe {
+                route.remote_free_after_thread_exit(first_blocks[unmapped_frees])
+            } {
+                Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the first reabandon boundary leaves live blocks"),
+                Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first medium reabandon boundary succeeds: {error:?}");
+                }
+            };
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+
+            for block in first_blocks
+                .iter()
+                .copied()
+                .skip(unmapped_frees + 1)
+                .take(capacity - unmapped_frees - 2)
+            {
+                // SAFETY: this linear route still owns the selected first-page
+                // client allocation through its mapped failed-reclaim tail.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("a nonfinal mapped first-page free remains live"),
+                    Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    }) => {
+                        core::mem::forget(route);
+                        panic!("a mapped first-page free stays in the aggregate route: {error:?}");
+                    }
+                };
+            }
+            let first_last = *first_blocks.last().expect("the first full page has one final block");
+            // SAFETY: this is the first member's final route-owned allocation.
+            route = match unsafe { route.remote_free_after_thread_exit(first_last) } {
+                Ok(DynamicThreadExitFullMediumPagesFreeResult::ReleasedPage(route)) => route,
+                Ok(_) => panic!("the first final free releases exactly one aggregate member"),
+                Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first final free completes its mapped release: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(unsafe { route.test_page_for_block(first) }.is_null());
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_arena_page_is_clear(first_memory));
+
+            for block in second_blocks.iter().copied().take(unmapped_frees) {
+                // SAFETY: the second page remains independently live and
+                // source-unmapped through its own threshold prefix.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("the mostly-used second medium page remains live"),
+                    Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    }) => {
+                        core::mem::forget(route);
+                        panic!("the mostly-used second medium free remains source-unmapped: {error:?}");
+                    }
+                };
+            }
+            // SAFETY: this exact next free crosses only the second member's
+            // source mostly-used threshold.
+            route = match unsafe {
+                route.remote_free_after_thread_exit(second_blocks[unmapped_frees])
+            } {
+                Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the second reabandon boundary leaves live blocks"),
+                Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the second medium reabandon boundary succeeds: {error:?}");
+                }
+            };
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(bin, second_memory));
+
+            for block in second_blocks
+                .iter()
+                .copied()
+                .skip(unmapped_frees + 1)
+                .take(second_capacity - unmapped_frees - 2)
+            {
+                // SAFETY: this linear route still owns the selected second-page
+                // allocation through its mapped failed-reclaim tail.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("a nonfinal mapped second-page free remains live"),
+                    Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    }) => {
+                        core::mem::forget(route);
+                        panic!("a mapped second-page free stays in the aggregate route: {error:?}");
+                    }
+                };
+            }
+            let second_last = *second_blocks.last().expect("the second full page has one final block");
+            // SAFETY: this is the route's final aggregate-owned allocation.
+            let drain = match unsafe { route.remote_free_after_thread_exit(second_last) } {
+                Ok(DynamicThreadExitFullMediumPagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullMediumPagesFreeResult::StillLive(route))
+                | Ok(DynamicThreadExitFullMediumPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final medium free releases the complete aggregate route");
+                }
+                Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullMediumPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the final medium free releases its dynamic arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|_owner, arena, page_map| {
+            let session = _owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic medium page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the medium page remains PageMap-published before thread exit");
+            let capacity = unsafe { page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(capacity);
+            blocks.push(first);
+            while blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its sole dynamic medium page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+                blocks.push(block);
+            }
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the sole full medium page is deliberately supplied only
+            // to prove aggregate admission rejects before source collection.
+            let drain = match unsafe { drain.abandon_full_medium_pages() } {
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullMediumPagesAbandonError::NotMultiplePages,
+                }) => drain,
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the sole-page proof is pre-collection: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("one full medium page cannot enter the dynamic aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, capacity);
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_pages_route_rejects_mixed_full_classes_before_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|_owner, arena, page_map| {
+            let session = _owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its dynamic medium member");
+            let medium_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the medium member remains PageMap-published");
+            let capacity = unsafe { medium_page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(capacity);
+            blocks.push(first);
+            while blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills its medium member before adding a mixed class");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, medium_page.as_ptr());
+                blocks.push(block);
+            }
+            let singleton = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture adds a full singleton to the mixed source queue");
+            let singleton_page = NonNull::new(unsafe { allocator.page_for_block(singleton) })
+                .expect("the singleton remains PageMap-published");
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the live medium and singleton allocations exist only to
+            // prove mixed `BIN_FULL` classes reject before collection.
+            let drain = match unsafe { drain.abandon_full_medium_pages() } {
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullMediumPagesAbandonError::NotFullMedium,
+                }) => drain,
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the mixed class proof is pre-collection: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("a mixed full queue cannot enter the dynamic medium aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(2));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, medium_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(singleton) }, singleton_page.as_ptr());
+            assert_eq!(unsafe { medium_page.as_ref().used() as usize }, capacity);
+            assert_eq!(unsafe { singleton_page.as_ref().used() }, 1);
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_pages_route_retains_a_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic medium page");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first medium page remains PageMap-published");
+            let capacity = unsafe { first_page.as_ref().reserved() as usize };
+            let mut first_blocks = Vec::with_capacity(capacity);
+            first_blocks.push(first);
+            while first_blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its first dynamic medium page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+                first_blocks.push(block);
+            }
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic medium page");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second medium page remains PageMap-published");
+            let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
+            let mut second_blocks = Vec::with_capacity(second_capacity);
+            second_blocks.push(second);
+            while second_blocks.len() < second_capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its second dynamic medium page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
+                second_blocks.push(block);
+            }
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the injected force collector fails only after complete
+            // aggregate preflight and before any full-queue detachment.
+            let drain = match unsafe { drain.abandon_full_medium_pages() } {
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitFullMediumPagesAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitFullMediumPagesAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the injected aggregate collection failure retains the dynamic drain: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("the injected collection failure cannot create a dynamic medium aggregate route");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(2));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(unsafe { first_page.as_ref().used() as usize }, capacity);
+            assert_eq!(unsafe { second_page.as_ref().used() as usize }, second_capacity);
 
             drop(drain);
             assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
