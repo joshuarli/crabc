@@ -827,6 +827,33 @@ mixed-bin/class, direct-small, `BIN_FULL`, OS-backed, malformed-span,
 allocation-time, reclaim/adoption/requeue, scan, producer, and concurrent cases
 reject before detach; a collection fault retains the drain.
 
+`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a fifth,
+separately typed post-TLS dynamic aggregate boundary. It is exercised only by
+the exact ordinary dynamic `true`/`2` fixture, while the production ordinary
+page-session boundary remains sealed. It admits exactly two or more full
+`MemoryKind::Arena` `PageKind::Small` members in one ordinary source bin, with
+one rounded `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used ==
+reserved`, zero retirement countdowns, empty local free lists, the exact
+dynamic bitmap/count capability and one exact arena slice/PageMap span for
+every member, and the complete rounded `pages_free_direct` range naming the
+ordinary queue head while every other direct entry and queue is empty. It
+preserves source force -> false collection -> ordinary-bin removal ->
+direct-cache refresh before page-count decrement -> unmapped abandonment for
+every member. The returned `DynamicThreadExitFullDirectSmallPagesRoute` stores
+no raw former-Theap member pointer, cached direct image, or per-member mapped
+state: each sequential canonical free re-resolves PageMap, claims its member's
+abandoned identity, selects the partial-collector unmapped or mapped
+failed-reclaim tail, and preserves the just-pushed expected head through the
+source accounting lag. A member remains unmapped through `reserved / 8 + 1`
+frees; the next may publish only that member's dynamic bitmap/count pair. A
+terminal free releases only that member through PageMap -> dynamic ordinary bit
+-> metadata -> one arena slice; the final member returns the empty drain for
+existing root/list/key teardown. Sole, stale/mixed direct-cache, mixed-bin/
+class, non-direct-small, `BIN_FULL`, OS-backed, malformed-span,
+allocation-time, reclaim/adoption/requeue, scan, producer, concurrent, and
+joined-remote nonfull cases reject before detach; a collection fault retains
+the drain.
+
 `DynamicThreadExitDrain::abandon_full_medium` is a separate source-unmapped
 dynamic handoff. It accepts only the drain's sole full `MemoryKind::Arena`
 medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no

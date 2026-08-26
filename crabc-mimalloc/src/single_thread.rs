@@ -524,6 +524,27 @@ pub(crate) struct DynamicThreadExitFullNonDirectSmallPagesRoute<'attach, 'heap, 
     terminal: bool,
 }
 
+/// A bounded source-order aggregate of two-or-more full ordinary-bin
+/// direct-small arena pages retained by a post-TLS dynamic drain.
+///
+/// Every member had one rounded `PageKind::Small` block size at or below
+/// `SMALL_SIZE_MAX`, one ordinary source bin, one exact arena slice, and the
+/// complete source-derived `pages_free_direct` queue-head image while linked
+/// in that bin. Full pages remain source-unmapped at owner exit. The route
+/// deliberately keeps only the dynamic drain plus sealed size/bin/count facts:
+/// every later free re-resolves its PageMap member and obtains that member's
+/// exact dynamic abandoned-map capability. It has no raw page list,
+/// direct-cache image, allocation-time claim/requeue, producer, or
+/// concurrent-free authority.
+#[must_use = "a dynamic full direct-small aggregate route must release every member or remain terminally retained"]
+pub(crate) struct DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map> {
+    drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+    block_size: usize,
+    bin: usize,
+    remaining_pages: usize,
+    terminal: bool,
+}
+
 /// One queue-detached full medium arena page abandoned by a dynamic thread-exit
 /// drain. Normal source abandonment keeps a full regular page unmapped when
 /// `_mi_page_abandon` clears its associated owner; sequential failed-reclaim
@@ -2551,6 +2572,108 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure<
     Terminal {
         route: DynamicThreadExitFullNonDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>,
         error: DynamicThreadExitFullNonDirectSmallPagesRemoteFreeError,
+    },
+}
+
+/// A source-boundary refusal while a post-TLS dynamic drain prepares its
+/// homogeneous full direct-small aggregate traversal. `Rejected` means the
+/// complete ordinary-bin/direct-cache/span preflight left source state
+/// untouched; once force collection begins, the drain remains the only
+/// terminal owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitFullDirectSmallPagesAbandonError {
+    Collection,
+    ForeignPage,
+    NonArena,
+    NotFullDirectSmall,
+    NotMultiplePages,
+    MissingDynamicArenaPages,
+    Queue,
+    RouteCountOverflow,
+    PostDetachState,
+    UnexpectedAbandonOutcome(AbandonResult),
+    Abandon(AbandonError),
+}
+
+/// The retained source drain after one dynamic full direct-small aggregate
+/// owner-exit traversal attempt.
+#[must_use = "a failed dynamic full direct-small aggregate transition retains its draining owner"]
+pub(crate) enum DynamicThreadExitFullDirectSmallPagesAbandonFailure<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    /// Preflight rejected before source collection or queue mutation.
+    Rejected {
+        drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullDirectSmallPagesAbandonError,
+    },
+    /// Source force/false collection, queue removal, direct-cache refresh, or
+    /// unmapped abandonment may have changed the drain, which remains the
+    /// only terminal owner.
+    RetainedDrain {
+        drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullDirectSmallPagesAbandonError,
+    },
+}
+
+/// One result while the dynamic full direct-small aggregate route handles one
+/// canonical client free.
+#[must_use = "a nonterminal dynamic full direct-small aggregate result retains the only route owner"]
+pub(crate) enum DynamicThreadExitFullDirectSmallPagesFreeResult<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    /// The source free changed or released one member while another PageMap
+    /// member remains in the route.
+    StillLive(DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>),
+    /// One member released while another PageMap member remains in the route.
+    ReleasedPage(DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>),
+    /// The final member released, returning the empty dynamic drain for its
+    /// existing source root/list teardown.
+    Released(DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>),
+}
+
+/// A PageMap or source-route reason one dynamic full direct-small
+/// aggregate client free could not complete normally. `Unmapped`,
+/// `InvalidBlock`, and `MissingDynamicArenaPages` are pre-mutation
+/// observations; every other result may have acquired a source low owner bit
+/// or changed map state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitFullDirectSmallPagesRemoteFreeError {
+    Terminal,
+    Unmapped,
+    InvalidBlock,
+    MissingDynamicArenaPages,
+    ConcurrentOwner,
+    Abandon(AbandonError),
+    Release,
+}
+
+/// A retained dynamic full direct-small aggregate route after one client-free
+/// attempt.
+#[must_use = "a failed dynamic full direct-small aggregate free retains its route"]
+pub(crate) enum DynamicThreadExitFullDirectSmallPagesRemoteFreeFailure<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    /// The supplied block was absent from the current PageMap or did not name
+    /// a canonical homogeneous direct-small allocation, so no source low
+    /// owner bit changed.
+    Rejected {
+        route: DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullDirectSmallPagesRemoteFreeError,
+    },
+    /// A source tail may have acquired a low owner bit or completed part of a
+    /// terminal release. Retain the route only as a terminal owner.
+    Terminal {
+        route: DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullDirectSmallPagesRemoteFreeError,
     },
 }
 
@@ -13077,6 +13200,472 @@ impl<'attach, 'heap, 'arena, 'map>
         })
     }
 
+    /// Traverses a bounded homogeneous full ordinary-bin direct-small source
+    /// queue into one sequential post-TLS dynamic route.
+    ///
+    /// `mi_theap_collect_ex(MI_ABANDON)` first performs its retired-page pass,
+    /// then visits ordinary queues before `BIN_FULL`, force-collecting and
+    /// abandoning every still-live member. This boundary preserves that source
+    /// order only when the complete source image is two-or-more same-size,
+    /// same-bin arena small pages at or below `SMALL_SIZE_MAX` with the exact
+    /// rounded direct-cache queue-head image. Every member has no raw route
+    /// cache after its source removal, starts source-unmapped, and a later
+    /// canonical free alone may cross its own partial-collector mostly-used
+    /// boundary to publish the exact dynamic bitmap/count pair before its
+    /// one-slice release.
+    ///
+    /// It does not create a raw member list, retain direct-cache state, scan
+    /// after exit, reclaim/requeue, adopt pages, or grant allocation-time,
+    /// producer, or concurrent-free authority. Non-direct small, `BIN_FULL`,
+    /// mixed-bin/class, OS, and all other owner-exit shapes remain separate.
+    ///
+    /// # Safety
+    ///
+    /// No scoped producer may survive. Every current page must be a full
+    /// arena-backed direct-small member of one rounded source size/bin and
+    /// exact one-slice span, and every client alias must be consumed exactly
+    /// once through the returned linear route or retained terminally. This is
+    /// valid only after the concrete dynamic regular-TLS-slot-clear
+    /// transition.
+    pub(crate) unsafe fn abandon_full_direct_small_pages(
+        mut self,
+    ) -> Result<
+        DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitFullDirectSmallPagesAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |drain, error| {
+            DynamicThreadExitFullDirectSmallPagesAbandonFailure::Rejected { drain, error }
+        };
+        let retained = |drain, error| {
+            DynamicThreadExitFullDirectSmallPagesAbandonFailure::RetainedDrain { drain, error }
+        };
+        if self.engine.is_collection_poisoned() || self.engine.pending_os_release.is_some() {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesAbandonError::Collection,
+            ));
+        }
+
+        // `mi_theap_collect_ex(MI_ABANDON)` performs its retired-page pass
+        // before it visits ordinary queues. The sealed live/full, zero-retire
+        // image makes that preceding source work a no-op; do not broaden this
+        // route into a general retired-page traversal.
+        let expected_page_count = self.engine.session.theap().page_count();
+        if expected_page_count < 2 {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesAbandonError::NotMultiplePages,
+            ));
+        }
+
+        // Prove the complete ordinary source queue image before force
+        // collection or queue mutation. This class can occupy exactly one
+        // regular bin; a full queue, second bin, mixed rounded size, malformed
+        // one-slice arena image, or stale direct-cache image rejects
+        // pre-mutation.
+        let mut observed_page_count = 0usize;
+        let mut expected_queue_bin = None;
+        let mut expected_block_size = None;
+        let mut expected_bin = None;
+        for queue_bin in 0..BIN_COUNT {
+            let Some(queue) = self.engine.session.queue(queue_bin) else {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                ));
+            };
+            if queue.count() == 0 {
+                if !queue.is_empty() {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                    ));
+                }
+                continue;
+            }
+            if queue_bin == BIN_FULL || expected_queue_bin.is_some() {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                ));
+            }
+            if queue.count() < 2 {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::NotMultiplePages,
+                ));
+            }
+            let mut remaining = queue.count();
+            let mut page = queue.first();
+            let mut previous = core::ptr::null_mut();
+            while remaining != 0 {
+                let Some(page_nonnull) = NonNull::new(page) else {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                    ));
+                };
+                // SAFETY: the consuming dynamic drain exclusively owns the
+                // source queue image through this non-mutating preflight.
+                let page_ref = unsafe { page_nonnull.as_ref() };
+                if page_ref.prev() != previous {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                    ));
+                }
+                if !self.engine.owns_page(page_ref)
+                    || page_ref.heap() != self.engine.session.theap().heap()
+                {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::ForeignPage,
+                    ));
+                }
+                let memory = page_ref.memid();
+                if memory.kind() != MemoryKind::Arena {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::NonArena,
+                    ));
+                }
+                let Some(bin) = size_class::bin(page_ref.block_size()) else {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::NotFullDirectSmall,
+                    ));
+                };
+                if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Small)
+                    || page_ref.block_size() > SMALL_SIZE_MAX
+                    || bin != queue_bin
+                    || queue.block_size() != page_ref.block_size()
+                    || bin >= ARENA_BIN_COUNT
+                    || bin == BIN_FULL
+                    || page_ref.reserved() < 16
+                    || page_ref.used() != usize::from(page_ref.reserved())
+                    || page_is_in_full(page_ref)
+                    || page_ref.retire_expire() != 0
+                    || !page_ref.free_list_head().is_null()
+                    || !matches!(
+                        self.engine.release_span(page_nonnull.as_ptr()),
+                        Some(ReleaseSpan::Arena {
+                            memory: span_memory,
+                            slice_start,
+                            ..
+                        }) if span_memory.arena_memory().is_some_and(|arena_memory| {
+                            arena_memory.arena
+                                == core::ptr::from_ref(self.engine.arena.arena()).cast_mut()
+                                && arena_memory.slice_count == 1
+                                && self.engine.arena.slice_start(arena_memory.slice_index as usize)
+                                    == Some(slice_start)
+                        })
+                    )
+                {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::NotFullDirectSmall,
+                    ));
+                }
+                if self
+                    .engine
+                    .session
+                    .mapped_abandoned_page_during_drain(&self.engine.arena, bin, memory)
+                    .is_none()
+                {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::MissingDynamicArenaPages,
+                    ));
+                }
+                match (expected_block_size, expected_bin) {
+                    (None, None) => {
+                        expected_block_size = Some(page_ref.block_size());
+                        expected_bin = Some(bin);
+                    }
+                    (Some(expected_size), Some(expected_bin))
+                        if expected_size == page_ref.block_size() && expected_bin == bin => {}
+                    _ => {
+                        return Err(reject(
+                            self,
+                            DynamicThreadExitFullDirectSmallPagesAbandonError::NotFullDirectSmall,
+                        ));
+                    }
+                }
+                observed_page_count = match observed_page_count.checked_add(1) {
+                    Some(count) => count,
+                    None => {
+                        return Err(reject(
+                            self,
+                            DynamicThreadExitFullDirectSmallPagesAbandonError::RouteCountOverflow,
+                        ));
+                    }
+                };
+                // SAFETY: structural preflight bounds this walk by queue
+                // count and validates the final tail below.
+                page = unsafe { page_nonnull.as_ref().next() };
+                previous = page_nonnull.as_ptr();
+                remaining -= 1;
+            }
+            if !page.is_null() || queue.last() != previous {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                ));
+            }
+            expected_queue_bin = Some(queue_bin);
+        }
+        if observed_page_count != expected_page_count {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+            ));
+        }
+        let (queue_bin, block_size, bin) = match (expected_queue_bin, expected_block_size, expected_bin)
+        {
+            (Some(queue_bin), Some(block_size), Some(bin)) => (queue_bin, block_size, bin),
+            _ => {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::NotMultiplePages,
+                ));
+            }
+        };
+        if self
+            .engine
+            .direct_cache_range_for_small_bin(bin, block_size)
+            .is_none()
+            || !self.engine.direct_cache_matches_source_queue_heads()
+        {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+            ));
+        }
+
+        let mut detached_pages = 0usize;
+        let mut page = match self.engine.session.queue(queue_bin) {
+            Some(queue) => queue.first(),
+            None => {
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                ));
+            }
+        };
+        let mut last_detached = None;
+        while !page.is_null() {
+            let Some(page_nonnull) = NonNull::new(page) else {
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                ));
+            };
+            // Preserve the source successor before any later source failure
+            // can retain the drain with an already-detached predecessor.
+            let next = unsafe { page_nonnull.as_ref().next() };
+
+            if let Err(error) = self.engine.page_free_collect_force(page_nonnull) {
+                self.engine.retain_page_collect_poison(page_nonnull, error, None);
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Collection,
+                ));
+            }
+            let after_force = unsafe { page_nonnull.as_ref() };
+            if after_force.block_size() != block_size
+                || size_class::page_kind_for_block_size(after_force.block_size()) != Some(PageKind::Small)
+                || after_force.block_size() > SMALL_SIZE_MAX
+                || size_class::bin(after_force.block_size()) != Some(bin)
+                || after_force.reserved() < 16
+                || after_force.used() != usize::from(after_force.reserved())
+                || page_is_in_full(after_force)
+                || after_force.retire_expire() != 0
+                || !after_force.free_list_head().is_null()
+                || !matches!(
+                    self.engine.release_span(page_nonnull.as_ptr()),
+                    Some(ReleaseSpan::Arena {
+                        memory: span_memory,
+                        slice_start,
+                        ..
+                    }) if span_memory.arena_memory().is_some_and(|arena_memory| {
+                        arena_memory.arena
+                            == core::ptr::from_ref(self.engine.arena.arena()).cast_mut()
+                            && arena_memory.slice_count == 1
+                            && self.engine.arena.slice_start(arena_memory.slice_index as usize)
+                                == Some(slice_start)
+                    })
+                )
+            {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::NotFullDirectSmall,
+                ));
+            }
+            if let Err(error) = self.engine.page_free_collect_false(page_nonnull) {
+                self.engine.retain_page_collect_poison(page_nonnull, error, None);
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Collection,
+                ));
+            }
+            let after_collect = unsafe { page_nonnull.as_ref() };
+            if after_collect.block_size() != block_size
+                || size_class::page_kind_for_block_size(after_collect.block_size()) != Some(PageKind::Small)
+                || after_collect.block_size() > SMALL_SIZE_MAX
+                || size_class::bin(after_collect.block_size()) != Some(bin)
+                || after_collect.reserved() < 16
+                || after_collect.used() != usize::from(after_collect.reserved())
+                || page_is_in_full(after_collect)
+                || after_collect.retire_expire() != 0
+                || !after_collect.free_list_head().is_null()
+                || !matches!(
+                    self.engine.release_span(page_nonnull.as_ptr()),
+                    Some(ReleaseSpan::Arena {
+                        memory: span_memory,
+                        slice_start,
+                        ..
+                    }) if span_memory.arena_memory().is_some_and(|arena_memory| {
+                        arena_memory.arena
+                            == core::ptr::from_ref(self.engine.arena.arena()).cast_mut()
+                            && arena_memory.slice_count == 1
+                            && self.engine.arena.slice_start(arena_memory.slice_index as usize)
+                                == Some(slice_start)
+                    })
+                )
+            {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::NotFullDirectSmall,
+                ));
+            }
+
+            let queue = match self.engine.session.queue_mut(queue_bin) {
+                Some(queue) => queue as *mut _,
+                None => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                    ));
+                }
+            };
+            // SAFETY: complete preflight proved this member's intrusive links,
+            // and the consuming drain is the source's sole queue mutator.
+            // `mi_theap_queue_first_update` refreshes the exact direct range
+            // before this source owner decrements its page count.
+            unsafe { page_queue_remove_metadata(&mut *queue, page_nonnull.as_ptr()) };
+            self.engine.update_direct_cache(bin);
+            if !self.engine.session.note_page_removed() {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesAbandonError::Queue,
+                ));
+            }
+            // Full pages deliberately bypass dynamic `pages_abandoned` at
+            // source owner exit. A later client free alone may reabandon this
+            // same member after the partial collector crosses its delayed
+            // integer mostly-used predicate.
+            match unsafe { abandoned::abandon_unmappable_after_collect(page_nonnull) } {
+                Ok(AbandonResult::UnownedUnmapped) => {}
+                Ok(outcome) => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::UnexpectedAbandonOutcome(
+                            outcome,
+                        ),
+                    ));
+                }
+                Err(error) => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::Abandon(error),
+                    ));
+                }
+            }
+            detached_pages = match detached_pages.checked_add(1) {
+                Some(count) => count,
+                None => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesAbandonError::RouteCountOverflow,
+                    ));
+                }
+            };
+            last_detached = Some(page_nonnull);
+            page = next;
+        }
+
+        if detached_pages < 2
+            || detached_pages != expected_page_count
+            || self.engine.is_collection_poisoned()
+            || self.engine.pending_os_release.is_some()
+            || self.engine.session.theap().page_count() != 0
+            || (0..BIN_COUNT).any(|queue_bin| {
+                !self
+                    .engine
+                    .session
+                    .queue(queue_bin)
+                    .is_some_and(|queue| queue.is_empty())
+            })
+            || (0..PAGES_DIRECT)
+                .any(|index| self.engine.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()))
+        {
+            if let Some(page) = last_detached {
+                self.engine.retain_page_collect_poison(
+                    page,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+            }
+            return Err(retained(
+                self,
+                DynamicThreadExitFullDirectSmallPagesAbandonError::PostDetachState,
+            ));
+        }
+
+        Ok(DynamicThreadExitFullDirectSmallPagesRoute {
+            drain: self,
+            block_size,
+            bin,
+            remaining_pages: detached_pages,
+            terminal: false,
+        })
+    }
+
     /// Abandons one exact full arena or OS-aligned singleton after the dynamic
     /// regular TLS slot has been cleared for thread exit.
     ///
@@ -17251,6 +17840,264 @@ impl<'attach, 'heap, 'arena, 'map>
     #[inline]
     pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
         self.drain.test_dynamic_arena_page_is_clear(memory)
+    }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>
+{
+    /// Routes one exact client free through the bounded post-TLS dynamic full
+    /// direct-small aggregate.
+    ///
+    /// Each free re-resolves its exact PageMap member and obtains that
+    /// member's dynamic arena bitmap/count capability. The source abandonment
+    /// identity held after the low-owner claim selects the unmapped or mapped
+    /// partial-collector failed-reclaim tail; this route therefore stores
+    /// neither a raw member list nor mutable per-member or direct-cache state.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be an exact once-live canonical allocation in one member
+    /// transferred by [`DynamicThreadExitDrain::abandon_full_direct_small_pages`].
+    /// It must not be freed, transferred, or concurrently used through any
+    /// other route. This consuming API serializes one source failed-reclaim
+    /// decision at a time; it does not make the aggregate allocation-time,
+    /// reclaim/requeue, producer, or concurrent-free capable.
+    pub(crate) unsafe fn remote_free_after_thread_exit(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitFullDirectSmallPagesFreeResult<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitFullDirectSmallPagesRemoteFreeFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |route, error| {
+            DynamicThreadExitFullDirectSmallPagesRemoteFreeFailure::Rejected { route, error }
+        };
+        let terminal = |route, error| {
+            DynamicThreadExitFullDirectSmallPagesRemoteFreeFailure::Terminal { route, error }
+        };
+        if self.terminal {
+            return Err(terminal(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::Terminal,
+            ));
+        }
+        if self.remaining_pages == 0 {
+            self.terminal = true;
+            return Err(terminal(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::Release,
+            ));
+        }
+        // SAFETY: the route retains the sole dynamic PageMap borrower through
+        // this complete lookup, low-owner claim, and possible terminal span
+        // release. It stores no former-Theap member pointer.
+        let page = NonNull::new(unsafe { self.drain.engine.page_map.checked_lookup(block.as_ptr()) });
+        let Some(page) = page else {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::Unmapped,
+            ));
+        };
+        // SAFETY: PageMap registration and the linear route retain this page
+        // metadata through the pre-mutation source-shape validation.
+        let page_ref = unsafe { page.as_ref() };
+        let memory = page_ref.memid();
+        if memory.kind() != MemoryKind::Arena
+            || page_ref.block_size() != self.block_size
+            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Small)
+            || page_ref.block_size() > SMALL_SIZE_MAX
+            || size_class::bin(page_ref.block_size()) != Some(self.bin)
+            || self.bin >= ARENA_BIN_COUNT
+            || self.bin == BIN_FULL
+            || page_ref.reserved() < 16
+            || page_ref.used() == 0
+            || page_ref.used() > usize::from(page_ref.reserved())
+            || page_is_in_full(page_ref)
+            || !page_ref.is_queue_detached()
+            || !matches!(
+                self.drain.engine.release_span(page.as_ptr()),
+                Some(ReleaseSpan::Arena {
+                    memory: span_memory,
+                    slice_start,
+                    ..
+                }) if span_memory.arena_memory().is_some_and(|arena_memory| {
+                    arena_memory.arena
+                        == core::ptr::from_ref(self.drain.engine.arena.arena()).cast_mut()
+                        && arena_memory.slice_count == 1
+                        && self.drain.engine.arena.slice_start(arena_memory.slice_index as usize)
+                            == Some(slice_start)
+                })
+            )
+        {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::InvalidBlock,
+            ));
+        }
+        // Source queue removal refreshed the complete rounded direct-cache
+        // image before it decremented the Theap page count. Once the aggregate
+        // owns no queue member, every direct entry must remain empty; a later
+        // free cannot recreate a cache image for a departed Theap.
+        if (0..PAGES_DIRECT)
+            .any(|index| self.drain.engine.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()))
+        {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::InvalidBlock,
+            ));
+        }
+        let Some(canonical_block) = self.drain.engine.canonical_block_start(page_ref, block) else {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::InvalidBlock,
+            ));
+        };
+        // SAFETY: the sealed aggregate geometry and PageMap member proof hold
+        // through this local preflight, which ends before the atomic source
+        // failed-reclaim tail mutates the low owner bit.
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err() {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::InvalidBlock,
+            ));
+        }
+        let Some(map) = self
+            .drain
+            .engine
+            .session
+            .mapped_abandoned_page_during_drain(&self.drain.engine.arena, self.bin, memory)
+        else {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullDirectSmallPagesRemoteFreeError::MissingDynamicArenaPages,
+            ));
+        };
+
+        // Construction of `DynamicTheapPageDrainSession` cleared the dynamic
+        // regular TLS slot. That is the exact source proof that reclaim fails
+        // before free.c chooses this class's partial failed-reclaim tail. The
+        // helper preserves its just-pushed head through the delayed
+        // mostly-used transition for every aggregate member.
+        match unsafe {
+            abandoned::free_full_direct_small_after_failed_reclaim(
+                page,
+                canonical_block,
+                self.block_size,
+                &map,
+            )
+        } {
+            Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive) => {
+                Ok(DynamicThreadExitFullDirectSmallPagesFreeResult::StillLive(self))
+            }
+            Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty) => {
+                // The helper retains this member's low owner bit through the
+                // source terminal tail. This route alone owns the PageMap ->
+                // dynamic ordinary-bit -> metadata -> one-slice release.
+                if !self
+                    .drain
+                    .engine
+                    .release_queue_detached_abandoned_arena_page(page)
+                {
+                    self.terminal = true;
+                    return Err(terminal(
+                        self,
+                        DynamicThreadExitFullDirectSmallPagesRemoteFreeError::Release,
+                    ));
+                }
+                if self.remaining_pages == 1 {
+                    self.remaining_pages = 0;
+                    Ok(DynamicThreadExitFullDirectSmallPagesFreeResult::Released(
+                        self.drain,
+                    ))
+                } else {
+                    self.remaining_pages -= 1;
+                    Ok(DynamicThreadExitFullDirectSmallPagesFreeResult::ReleasedPage(self))
+                }
+            }
+            Ok(
+                abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner,
+            ) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesRemoteFreeError::ConcurrentOwner,
+                ))
+            }
+            Err(error) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitFullDirectSmallPagesRemoteFreeError::Abandon(error),
+                ))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_remaining_pages(&self) -> usize { self.remaining_pages }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_count(&self) -> usize { self.drain.test_page_count() }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        // SAFETY: the route retains the same exclusive dynamic PageMap owner
+        // as its client-free path; this witness only reads one map entry.
+        unsafe { self.drain.test_page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_abandoned_count(&self, bin: usize) -> Option<usize> {
+        self.drain.test_dynamic_abandoned_count(bin)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_abandoned_page_is_clear(
+        &self,
+        bin: usize,
+        memory: MemoryId,
+    ) -> bool {
+        self.drain.test_dynamic_abandoned_page_is_clear(bin, memory)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_abandoned_page_is_set(
+        &self,
+        bin: usize,
+        memory: MemoryId,
+    ) -> bool {
+        let Some(slice) = memory.arena_memory().map(|arena_memory| arena_memory.slice_index as usize)
+        else {
+            return false;
+        };
+        self.drain
+            .engine
+            .session
+            .mapped_abandoned_page_during_drain(&self.drain.engine.arena, bin, memory)
+            .is_some_and(|map| !crate::abandoned::MappedAbandonedPages::is_clear(&map, slice))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
+        self.drain.test_dynamic_arena_page_is_clear(memory)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.drain.test_direct_page(index)
     }
 }
 
