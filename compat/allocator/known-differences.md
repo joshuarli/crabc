@@ -1412,7 +1412,18 @@ aggregate-registry adoption remain absent.
   prove the normal small collector's two-free `UnownedMapped` then `Empty`
   transition, one-slice dynamic bitmap/count preservation then cleanup,
   pre-detach live-count, sole-page, and direct-small class refusals, and
-  retained post-TLS collection poison. The raw
+  retained post-TLS collection poison. The distinct two-block direct-small
+  `dynamic_thread_exit_mapped_two_block_direct_small_handoff_keeps_partial_head_mapped_then_releases`,
+  `dynamic_thread_exit_mapped_two_block_direct_small_handoff_refuses_stale_direct_cache_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_direct_small_handoff_rejects_one_live_block_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_direct_small_handoff_rejects_three_live_blocks_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_direct_small_handoff_rejects_non_direct_small_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_direct_small_handoff_rejects_another_page_before_detach`,
+  and `dynamic_thread_exit_mapped_two_block_direct_small_handoff_retains_collection_failure`
+  prove the direct partial collector's `used == 2` head lag across the first
+  `UnownedMapped` free, final `Empty` release, direct-range clearing before
+  page-count detach, wholly pre-detach stale-cache/live-count/class/sole-page
+  refusals, and retained post-TLS collection poison. The raw
   `mapped_direct_one_block_owner_exit_free_collects_its_final_head_then_releases`
   and
   `mapped_direct_one_block_owner_exit_free_rejects_small_geometry_without_source_reserve`

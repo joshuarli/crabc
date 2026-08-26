@@ -1044,6 +1044,25 @@ three live blocks, another source member, reclaim/adoption/requeue/scans,
 producers, concurrent routing, and general owner-exit traversal remain out of
 scope.
 
+`DynamicThreadExitDrain::abandon_mapped_two_block_direct_small` is a separate
+post-TLS dynamic handoff, not a widening of the normal small token. It admits
+only one sole nonfull one-slice `MemoryKind::Arena` `PageKind::Small` page with
+`block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == 2`, zero retirement
+countdown, one regular queue member, its complete rounded direct-cache range
+naming that page, and every other direct entry empty. It preserves source force
+-> false collection -> ordinary queue removal -> exact direct-range clear ->
+page-count decrement -> dynamic identity/bit/count/unown. Its private
+first/final-free state deliberately does not model `used` as `2 -> 1`: the
+first exact canonical free returns `UnownedMapped` while the direct partial
+collector leaves its just-published head atomic, so the observed count remains
+two and the dynamic bit/count remains set. Only the final free supplies the
+next head, consumes the retained predecessor plus final head, returns `Empty`,
+clears that pair, and releases PageMap -> dynamic ordinary bit -> metadata ->
+one arena slice. Non-direct-small's normal collector, stale/mixed cache images,
+one or three live blocks, another source member, reclaim/adoption/requeue/
+scans, producers, concurrent routing, and general owner-exit traversal remain
+out of scope.
+
 On the first fresh dynamic arena page, that same session lazily creates one
 private `DynamicArenaPagesOwner`. Before allocating it proves that the
 registry-published arena has a non-null `Arena::subprocess` equal to the
