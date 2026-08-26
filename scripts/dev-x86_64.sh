@@ -170,6 +170,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
+            --test x86_64_eventfd --test x86_64_param --test x86_64_pipe \
             -- --test-threads=1
         ;;
     libc-syscall)

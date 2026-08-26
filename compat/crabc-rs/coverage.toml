@@ -1621,7 +1621,7 @@ shared_impl = ["crabc_core::event::{eventfd_read, eventfd_write}"]
 native_boundary = "direct Linux/AArch64 read/write syscalls over a private exact-size eventfd u64 counter record"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/event.rs", "crabc-rs/src/event.rs", "crabc-rs/tests/eventfd.rs", "crabc-rs/examples/eventfd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/event.rs", "crabc-rs/src/event.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/tests/eventfd.rs", "crabc-rs/examples/eventfd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The typed helpers borrow the descriptor and issue exactly one private eight-byte counter record, preserving Linux's EAGAIN and invalid-all-ones errors without exposing a partial raw buffer or C wrapper boundary."
 
 [[capability]]

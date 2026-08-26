@@ -35,9 +35,17 @@ fourth through sixth x86 syscall registers are behavior-tested without
 selecting `crabc-libc` or a public C ABI.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
-`fenv` and `x86_64_foundation` tests. It verifies the explicitly admitted
-direct Rust subset only; it does not make omitted kernel-record-owning facade
-families selectable or supported on x86-64.
+`fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`, and
+`x86_64_pipe` tests. The eventfd regression proves `NONBLOCK`/`CLOEXEC`,
+counter accumulation and reset, semaphore reads, and Linux's reserved
+all-ones counter error through direct kernel seams. The parameter regression
+proves stable scalar aux-vector observations while retaining the x86 exclusion
+of the pointer-valued `AT_EXECFN` API. The pipe regression proves
+Linux/x86-64's distinct `O_DIRECT` packet-mode bit, packet-tail discard, and
+descriptor `CLOEXEC`. It verifies the explicitly admitted direct Rust subset
+only; it does not make polling, epoll, signalfd, other
+kernel-record-owning facade families, or a general x86-64 facade selectable
+or supported.
 
 `ldso-relocation` compiles and runs only the unintegrated
 `ldso/src/x86_64_relocation.rs` source tests under the pinned native image. It

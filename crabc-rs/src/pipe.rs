@@ -12,6 +12,15 @@ use crate::{AsFd, OwnedFd, Result};
 /// The maximum size of an atomically written pipe record on Linux.
 pub const PIPE_BUF: usize = 4096;
 
+// `O_DIRECT` is an architecture-specific Linux UAPI value even though
+// `pipe2` uses it for the target-independent packet-mode operation. Keep the
+// target distinction at this ABI boundary rather than making the public flag
+// silently select AArch64's value on x86-64.
+#[cfg(target_arch = "aarch64")]
+const PIPE2_O_DIRECT: u32 = 0x0001_0000;
+#[cfg(target_arch = "x86_64")]
+const PIPE2_O_DIRECT: u32 = 0x0000_4000;
+
 bitflags! {
     /// Flags accepted by Linux `pipe2` on the staged 64-bit targets.
     ///
@@ -23,7 +32,7 @@ bitflags! {
         /// `O_NONBLOCK`.
         const NONBLOCK = 0x0000_0800;
         /// `O_DIRECT`, enabling packet-mode pipe semantics.
-        const DIRECT = 0x0001_0000;
+        const DIRECT = PIPE2_O_DIRECT;
         /// `O_CLOEXEC`.
         const CLOEXEC = 0x0008_0000;
         /// Preserve future Linux-defined bits.

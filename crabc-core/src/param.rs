@@ -38,10 +38,7 @@ pub const AT_MINSIGSTKSZ: usize = 51;
 /// owns the policy for converting absence into a default value.
 #[inline]
 pub fn auxv_value(tag: usize) -> Option<usize> {
-    // SAFETY: `PROC_SELF_AUXV` is a static, NUL-terminated path and the
-    // direct open seam does not retain the pointer after returning.
-    let fd =
-        unsafe { crate::fs::openat_raw(crate::AT_FDCWD, PROC_SELF_AUXV.as_ptr(), 0, 0) }.ok()?;
+    let fd = open_auxv()?;
 
     let value = read_auxv_value(fd, tag);
     // The descriptor is private to this query. Linux releases it even when
@@ -51,12 +48,40 @@ pub fn auxv_value(tag: usize) -> Option<usize> {
 }
 
 #[inline]
+fn open_auxv() -> Option<crate::RawFd> {
+    loop {
+        // SAFETY: `PROC_SELF_AUXV` is a static, NUL-terminated path and the
+        // direct open seam does not retain the pointer after returning. This
+        // query never intentionally transfers its private descriptor across
+        // exec, including between this call and the later close.
+        match unsafe {
+            crate::fs::openat_raw(
+                crate::AT_FDCWD,
+                PROC_SELF_AUXV.as_ptr(),
+                crate::io::O_CLOEXEC as i32,
+                0,
+            )
+        } {
+            Ok(fd) => return Some(fd),
+            Err(crate::Errno::INTR) => continue,
+            Err(_) => return None,
+        }
+    }
+}
+
+#[inline]
 fn read_auxv_value(fd: crate::RawFd, requested_tag: usize) -> Option<usize> {
     let mut record = [0u8; AUXV_RECORD_BYTES];
     let mut filled = 0usize;
 
     loop {
-        let count = crate::io::read(fd, &mut record[filled..]).ok()?;
+        let count = loop {
+            match crate::io::read(fd, &mut record[filled..]) {
+                Ok(count) => break count,
+                Err(crate::Errno::INTR) => continue,
+                Err(_) => return None,
+            }
+        };
         if count == 0 {
             return None;
         }

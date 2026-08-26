@@ -39,6 +39,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '-p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation',
             source,
         )
+        self.assertIn('--test x86_64_eventfd', source)
+        self.assertIn('--test x86_64_param', source)
+        self.assertIn('--test x86_64_pipe', source)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_ldso_relocation_tests()', source)
@@ -248,6 +251,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "fenv",
                     "--test",
                     "x86_64_foundation",
+                    "--test",
+                    "x86_64_eventfd",
+                    "--test",
+                    "x86_64_param",
+                    "--test",
+                    "x86_64_pipe",
                     "--",
                     "--test-threads=1",
                 ],

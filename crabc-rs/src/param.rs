@@ -5,9 +5,9 @@ use core::ffi::CStr;
 
 /// Linux's ABI-visible scheduler clock tick rate.
 ///
-/// On the staged Linux targets this `USER_HZ` value is fixed at 100. `page_size` is not
-/// exposed until crabc-rs has an explicit aux-vector initialization boundary:
-/// hard-coding a page size would be wrong for valid target kernel configurations.
+/// On the staged Linux targets this `USER_HZ` value is fixed at 100. The
+/// separately exposed [`page_size`] reads the process auxiliary vector rather
+/// than assuming a target-wide page size.
 #[inline]
 #[must_use]
 pub const fn clock_ticks_per_second() -> u64 {

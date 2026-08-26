@@ -34,11 +34,16 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/vdso.rs"),
 }
 # This facade admission is deliberately narrower than a general x86 target:
-# `lib.rs` exposes only target-record-independent families, while `signal.rs`
-# owns the separately-proved x86 kernel signal records and restorer. No other
-# facade source inherits this exception.
+# `lib.rs` exposes only target-record-independent families, `signal.rs` owns
+# the separately-proved x86 kernel signal records and restorer, the `eventfd`
+# pair isolates the scalar event-counter seam from every polling or
+# event-record layout, and `pipe.rs` owns the proved target-specific O_DIRECT
+# packet-mode constant. No other facade source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
+    Path("crabc-rs/src/event_x86_64.rs"),
+    Path("crabc-rs/src/eventfd.rs"),
     Path("crabc-rs/src/lib.rs"),
+    Path("crabc-rs/src/pipe.rs"),
     Path("crabc-rs/src/signal.rs"),
 }
 # This source-only loader foundation has no `crabc-ldso` integration or public
