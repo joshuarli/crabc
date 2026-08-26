@@ -181,7 +181,10 @@ cancellation finish only after libc cleanup and TSD destructors. The bridge
 itself exposes no C symbol, uses no pthread key, routes no C allocation, and
 leaves `libmimalloc-sys` as the active backend with its existing private key
 outside the 128-key application capacity. The main owner is retained at normal
-exit, and a forked child only disables the bridge rather than attempting lock,
+exit. On libc's direct `fork` path, a private allocation-free gate preserves a
+copied no-page process owner only for the original ticket-zero `TPIDR_EL0`
+image with zero live or retained later bridge owners; that child can attach a
+fresh pthread. Any other child disables the bridge without attempting lock,
 root, page, or general fork repair.
 
 `main_theap.rs` is the sole static-TLD exception. It owns one private,

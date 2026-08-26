@@ -141,5 +141,5 @@ pub unsafe extern "C" fn gettid() -> c_int {
 // on the raw syscall path; fork() in lib.rs deliberately invokes those hooks.
 #[no_mangle]
 pub unsafe extern "C" fn _Fork() -> c_int {
-    syscall_result(sys_fork()) as c_int
+    syscall_result(sys_fork(false)) as c_int
 }

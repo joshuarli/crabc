@@ -898,9 +898,10 @@ aggregate-registry adoption remain absent.
 
 - **Upstream/Rust:** the same source-order no-page initialization and finish
   boundary in `src/init.c:236-282,305-360,377-421,448-481`,
-  `src/theap.c:228-306,414-449`, and `src/threadlocal.c:205-214`, represented
-  by `runtime_lifecycle.rs`, its hidden `__crabc_runtime` Rust-only boundary,
-  and the callers in `libc/src/c_abi.rs`.
+  `src/theap.c:228-306,414-449`, and `src/threadlocal.c:205-214`, plus pinned
+  musl 1.2.6 `src/process/fork.c` as the direct libc fork-order oracle,
+  represented by `runtime_lifecycle.rs`, its hidden `__crabc_runtime`
+  Rust-only boundary, and the callers in `libc/src/c_abi.rs`.
 - **Category:** private production lifecycle control, not allocator routing.
   The bridge itself has no installed C symbol, public Rust API, pthread key,
   or allocation trace differential entry. The active C backend's pre-existing
@@ -912,10 +913,19 @@ aggregate-registry adoption remain absent.
   handshake; a failed attach reaches no user code and makes `pthread_create`
   return `EAGAIN`. Normal return, `pthread_exit`, and cancellation finish only
   after libc cleanup and TSD destructors. The C mimalloc allocation backend is
-  unchanged. Main-thread teardown is deliberately absent, and a forked child
-  only disables the copied bridge without repairing locks, roots, or pages.
+  unchanged. Main-thread teardown is deliberately absent. The direct public
+  fork order is public prepare -> private bridge prepare -> raw fork -> private
+  bridge child/parent -> public child/parent. The allocation-free bridge gate
+  preserves copied state only when the original ticket-zero `TPIDR_EL0` image
+  forks with zero live or retained later bridge owners; that child resets the
+  copied gate and may attach a fresh pthread. An unprepared raw-fork child, a
+  foreign caller, or a child copied from a live/retained bridge owner disables
+  the bridge. No inherited lock, root, list, or page state is repaired.
 - **Evidence:** `crabc-mimalloc/tests/runtime_lifecycle.rs` proves overlapping
-  attach/finish and churn against the retained process owner;
+  attach/finish and churn against the retained process owner, two
+  process-isolated quiescent fork children that each attach and finish a fresh
+  worker, and conservative child disablement with a live bridge owner; its raw
+  `wait4` deadline bounds a broken child path;
   `tests/fixtures/pthread_create_join_tls_regression_test.c` and
   `tests/fixtures/static_pthread_tls_test.c` exercise return, direct
   `pthread_exit`, and TSD-dtor allocation through the dynamic and static
@@ -925,8 +935,10 @@ aggregate-registry adoption remain absent.
 - **Decision/removal:** accepted only while it stays no-page and private. A
   page-bearing runtime path needs its own source-shaped owner, failure and
   fork contract, direct stress evidence, and a separate backend-routing and
-  promotion decision. It does not authorize allocation interposition, a
-  generic callback registry, public lifecycle attachment, or fork recovery.
+  promotion decision. Full child recovery for a live/retained owner also needs
+  its own lock/root/page proof. This does not authorize allocation
+  interposition, a generic callback registry, public lifecycle attachment, or
+  general fork recovery.
 
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 

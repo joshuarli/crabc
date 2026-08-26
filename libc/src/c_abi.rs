@@ -2769,7 +2769,7 @@ unsafe fn sys_utimensat(dirfd: i32, path: *const c_char, times: *const u8, flags
 // ============================================================
 
 #[inline]
-unsafe fn sys_fork() -> i64 {
+unsafe fn sys_fork(runtime_fork_was_prepared: bool) -> i64 {
     // The current slot lives in thread-local storage, so its TID identifies
     // the copied caller slot in a post-fork child without another syscall.
     // A child must discard every other inherited slot before it can use a
@@ -2786,11 +2786,14 @@ unsafe fn sys_fork() -> i64 {
         Err(errno) => -(errno.raw() as i64),
     };
     if result == 0 {
-        // This bounded Rust allocator bridge has no atfork repair yet. Do not
-        // let the child interpret copied parent roots, locks, or main-thread
-        // identity as an active allocator lifecycle; the C backend remains
-        // available and no child attachment is attempted.
-        crabc_mimalloc::__crabc_runtime::after_fork_child();
+        // An unprepared raw fork has no quiescent admission proof. The
+        // explicit token also prevents it from borrowing a concurrent public
+        // fork's copied gate. The bridge therefore preserves only the
+        // prepared gate-marked ticket-zero/no-later-owner child and otherwise
+        // disables copied lifecycle state without touching inherited allocator
+        // roots, locks, or pages; the C backend remains available in either
+        // case.
+        crabc_mimalloc::__crabc_runtime::after_fork_child(runtime_fork_was_prepared);
         reset_thread_registry_after_fork(parent_slot, parent_tid);
     }
     result
@@ -2859,6 +2862,13 @@ pub unsafe extern "C" fn fork() -> c_int {
         &mut old_signal_mask,
         core::mem::size_of::<SigSetT>(),
     ) == 0;
+    // Keep this private allocator admission boundary distinct from the public
+    // atfork registry above. It runs after public prepare handlers and with
+    // their signal boundary held, but before raw fork, so a child can preserve
+    // only a quiescent ticket-zero no-page image. The parent/child transitions
+    // below complete before any public parent/child handler can create another
+    // pthread.
+    crabc_mimalloc::__crabc_runtime::before_fork();
     // Honor RLIMIT_NPROC even when running as root, where the kernel
     // would otherwise bypass the limit. This matches the libc-test
     // expectation that fork fails with EAGAIN when the limit is zero.
@@ -2868,12 +2878,13 @@ pub unsafe extern "C" fn fork() -> c_int {
     let ret = if nproc_limited {
         -EAGAIN as i64
     } else {
-        sys_fork()
+        sys_fork(true)
     };
     let errno_save = if ret < 0 { (-ret) as c_int } else { ERRNO };
     if ret == 0 {
         __fork_handler(1);
     } else {
+        crabc_mimalloc::__crabc_runtime::after_fork_parent();
         __fork_handler(0);
     }
     if signals_blocked {
@@ -2938,7 +2949,7 @@ pub unsafe extern "C" fn getegid() -> c_uint {
 // ponytail: vfork forwards to fork; real vfork optimization not needed for tests
 #[no_mangle]
 pub unsafe extern "C" fn vfork() -> c_int {
-    sys_fork() as c_int
+    sys_fork(false) as c_int
 }
 
 #[no_mangle]
@@ -3116,7 +3127,7 @@ pub unsafe extern "C" fn posix_spawnp(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let child = sys_fork();
+    let child = sys_fork(false);
     if child < 0 {
         ERRNO = EAGAIN;
         return -1;
@@ -13693,7 +13704,7 @@ pub unsafe extern "C" fn popen(cmd: *const c_char, mode: *const c_char) -> *mut 
         sys_close(p[1] as i64);
         return core::ptr::null_mut();
     }
-    let pid = sys_fork();
+    let pid = sys_fork(false);
     if pid < 0 {
         fclose(f);
         sys_close(child_fd as i64);
@@ -18105,7 +18116,7 @@ pub unsafe extern "C" fn tzset() {
 pub unsafe extern "C" fn system(cmd: *const c_char) -> c_int {
     if cmd.is_null() {
         // ponytail: test shell availability via fork+exec
-        let pid = sys_fork();
+        let pid = sys_fork(false);
         if pid == 0 {
             let sh = b"/bin/sh\0".as_ptr() as *const c_char;
             let dash_c = b"-c\0".as_ptr() as *const c_char;
@@ -18151,7 +18162,7 @@ pub unsafe extern "C" fn system(cmd: *const c_char) -> c_int {
     let mut oldmask: SigSetT = 0;
     sys_rt_sigprocmask(SIG_BLOCK, &block_set, &mut oldmask, 8);
 
-    let pid = sys_fork();
+    let pid = sys_fork(false);
 
     if pid == 0 {
         sys_rt_sigaction(SIGINT, &oldint, core::ptr::null_mut(), 8);

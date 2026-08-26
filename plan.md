@@ -12,8 +12,13 @@ real pthread child before its start routine, waits in the parent for an
 attachment result, and returns `EAGAIN` without user-code execution if the
 no-page owner cannot attach. Normal return, `pthread_exit`, and cancellation
 finish only after libc cleanup/TSD destructors. The main owner is retained at
-normal exit; a post-fork child only disables copied state and attempts no lock,
-root, page, or full fork repair. This is not allocation routing: the C
+normal exit. On libc's direct `fork` path, after public prepare handlers and
+before the raw syscall, an allocation-free gate freezes later bridge
+attachment. A child preserves the copied no-page process owner only when the
+original ticket-zero `TPIDR_EL0` image forked with zero live or retained later
+bridge owners; it resets that copied gate and may attach a fresh pthread. Any
+other child—including an unprepared raw-fork child—disables the bridge. No
+lock, root, page, or general fork repair is attempted. This is not allocation routing: the C
 `libmimalloc-sys` backend remains active, no C symbol or public pthread key is
 added, its existing private key stays outside the 128-key application capacity,
 and no page-bearing session enters through this bridge.
@@ -23,10 +28,13 @@ The production TLS contract is target-wide initial-exec in both
 binds the post-LTO named `THREAD_LIFECYCLE` root to its exact TLSIE relocation
 pair; the installed final shared `libc.so` must use TPREL and rejects TLSDESC
 and `__tls_get_addr`. `crabc-mimalloc/tests/runtime_lifecycle.rs` supplies the
-direct overlapping/churn lifecycle regression, while the dynamic and static C
-pthread/TSD fixtures provide the installed-runtime boundary evidence. The next
-lifecycle frontier is page-bearing ownership or a separately proved fork
-repair contract, never a broad callback or premature backend routing.
+direct overlapping/churn lifecycle regression plus two process-isolated
+quiescent-child cycles that each create and finish a fresh pthread; it also
+proves that a child copied from a live bridge owner is conservatively inactive.
+The dynamic and static C pthread/TSD fixtures provide the installed-runtime
+boundary evidence. The next lifecycle frontier is page-bearing ownership or
+general fork repair for live/retained owners, never a broad callback or
+premature backend routing.
 
 The current checkpoint completes the dependency/crypto boundary, dynamic
 Theap-to-page-engine binding, private dynamic arena-pages ownership, and two
@@ -706,12 +714,14 @@ homogeneous full-singleton/full-OS-singleton/full-medium/full-large/full-non-dir
 from its exact mapped-medium consuming handoff), and aggregate regular-pages
 registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
-hooks beyond the completed no-page bridge, fork repair, public libc backend
+hooks beyond the completed no-page bridge, general fork repair for live or
+retained owners, public libc backend
 integration, performance qualification,
 and default promotion remain unfinished. The next safe lifecycle frontier is
-another source-shaped owner-exit page class or a separately proven
-aggregate-registry policy—not a superficial broad abandonment loop or generic
-allocation-time scan. The bounded mapped-medium page-area
+another source-shaped owner-exit page class, a full repair contract for a
+nonquiescent fork child, or a separately proven aggregate-registry policy—not
+a superficial broad abandonment loop or generic allocation-time scan. The
+bounded mapped-medium page-area
 commit/failure-reabandon path is complete only for its real test fixture and
 same-candidate retry; it does not establish source option policy or general
 on-demand allocation.
@@ -956,11 +966,12 @@ distinct-bin `{2, 1}` medium aggregate boundary: after complete preflight, it
 walks source bin order and retains only the drain plus page/free counts; each
 later client free re-selects its map through PageMap after claiming that
 member's low owner bit, yielding `StillLive`, `ReleasedPage`, then `Released`
-without retaining a raw member registry. The completed next local slice is the
-real no-page process/pthread lifecycle bridge recorded at the top of this
-handoff. The next frontier is a source-shaped page-bearing owner or a
-separately proven fork-repair contract—not a generic allocation-time scan,
-broad callback, raw no-page pointer, or premature allocator-backend routing.
+without retaining a raw member registry. The completed no-page process/pthread
+bridge now also preserves a quiescent ticket-zero child through libc's direct
+fork boundary. The next frontier is a source-shaped page-bearing owner or full
+fork repair for a child copied from live/retained owners—not a generic
+allocation-time scan, broad callback, raw no-page pointer, or premature
+allocator-backend routing.
 
 The current upstream baseline should be **mimalloc v3.5.0**, released August 19, 2026, at tag commit `18b08671c9302247bfb682286e6bf3cc1773f801`. Upstream marks v3 as its recommended current design. Pin that exact commit and archive hash; never track `main`. ([GitHub][1])
 

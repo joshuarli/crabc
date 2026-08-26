@@ -47,7 +47,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
             return -1;
         }
     }
-    let ret = sys_fork();
+    let ret = sys_fork(false);
     match ret {
         0 => {}
         -1 => {
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         ERRNO = (-r) as c_int;
         return -1;
     }
-    let ret = sys_fork();
+    let ret = sys_fork(false);
     match ret {
         0 => {}
         -1 => {

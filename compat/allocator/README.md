@@ -164,9 +164,11 @@ no-page path for real pthread workers: process startup retains the ticket-zero
 owner and its main-thread-minted Heap lease before constructors, child attach
 precedes user code and has a parent/child failure handshake, and normal return,
 `pthread_exit`, and cancellation finish after cleanup and TSD destructors. The
-bridge itself has no C ABI, pthread key, allocation routing, main-thread
-teardown, or fork repair; the active C mimalloc backend retains its existing
-private key outside the 128-key application capacity. `main_heap_page.rs`
+bridge itself has no C ABI, pthread key, allocation routing, or main-thread
+teardown. Its direct public-fork gate preserves only a quiescent ticket-zero
+no-page child and otherwise disables the bridge; general fork repair remains
+absent. The active C mimalloc backend retains its existing private key outside
+the 128-key application capacity. `main_heap_page.rs`
 can borrow one current later owner with a matched
 process pair, use the same `pages_main` bitmap, and retain the map lifecycle
 through normal free/release plus one scoped producer before returning to that

@@ -52,9 +52,13 @@ return, `pthread_exit`, and cancellation finish the Rust owner only after libc
 has run cleanup handlers and POSIX TSD destructors. This boundary has no C
 symbol, does not consume a pthread key, does not route `malloc`/`free`, and
 leaves the C mimalloc backend active with its existing private key outside the
-128-key application capacity. The process owner is retained at normal
-exit; a post-fork child only disables this incomplete lifecycle and performs
-no inherited-lock, root, or page-state repair.
+128-key application capacity. The process owner is retained at normal exit. On
+libc's direct `fork` path, after public prepare handlers and before the raw
+syscall, a private allocation-free gate preserves the copied no-page owner only
+when the original ticket-zero `TPIDR_EL0` image has zero live or retained later
+bridge owners. That child resets the copied gate and may attach a fresh pthread;
+any other child disables the bridge. This is not inherited-lock, root, or
+page-state repair, and it does not claim general fork recovery.
 
 `process_page_map.rs` owns the separate process-static source-page-map
 publication boundary. It freezes one `MemoryConfig` and selected
@@ -135,7 +139,7 @@ retry state, and only the external owner may unmap the complete mapping.
 This is bounded engine evidence, not an exported production allocator: the
 crate still has no production public operation, libc integration, integrated
 process/TLS lifecycle, general thread teardown, integrated remote-free routing,
-fork protocol, or backend selection. The present Milestone 5 foundations are intentionally
+general fork protocol, or backend selection. The present Milestone 5 foundations are intentionally
 narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, the
 older lock-serialized caller-storage registry substrate, and one distinct
 allocator-owned process-global regular-key registry, five private compiler-TLS
@@ -1166,8 +1170,9 @@ byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
 General cached-root switching/reference ownership, general remote-free/page
 routing or abandonment integration beyond these bounded handoffs, full
 heap/Theap/arena/subprocess APIs,
-pthread/process hooks, fork repair, process shutdown, and general lock
-destruction remain outside this slice.
+pthread/process hooks, general fork repair beyond the limited no-page
+quiescent-child case, process shutdown, and general lock destruction remain
+outside this slice.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
 classification, publishes the abandoned bitmap/count before releasing

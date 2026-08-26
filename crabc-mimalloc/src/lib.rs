@@ -103,7 +103,8 @@ pub use test_context::{
 pub mod __crabc_runtime {
     pub use crate::runtime_lifecycle::{
         ThreadAttachResult, ThreadFinishResult, after_fork_child,
-        attach_current_thread, finish_current_thread_after_user_destructors,
-        initialize_process, process_is_active,
+        after_fork_parent, attach_current_thread, before_fork,
+        finish_current_thread_after_user_destructors, initialize_process,
+        process_is_active,
     };
 }

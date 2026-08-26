@@ -226,7 +226,7 @@ unsafe fn wordexp_do(s: *const c_char, we: *mut wordexp_t, flags: c_int) -> c_in
         return WRDE_NOSPACE;
     }
 
-    let pid = sys_fork();
+    let pid = sys_fork(false);
     if pid < 0 {
         sys_close(fds[0] as i64);
         sys_close(fds[1] as i64);
