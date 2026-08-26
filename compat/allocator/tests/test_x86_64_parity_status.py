@@ -19,6 +19,9 @@ CONTRACT = ROOT / "compat/allocator/x86_64-parity-v3.5.0.json"
 DIRECT_SMALL_FULL_RETIRE_SCHEMA = (
     ROOT / "compat/allocator/x86_64-direct-small-full-retire-evidence-v3.5.0.json"
 )
+DIRECT_SMALL_ALLOCATION_ADOPTION_SCHEMA = (
+    ROOT / "compat/allocator/x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -133,6 +136,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-direct-small-full-regular-retire-force-release",
         )
 
+    def test_direct_small_allocation_adoption_schema_profile_is_exact(self) -> None:
+        schema = json.loads(
+            DIRECT_SMALL_ALLOCATION_ADOPTION_SCHEMA.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-direct-small-allocation-time-adoption",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -149,6 +161,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-mapped-arena-allocation-time-adoption-differential",
+                "native-direct-small-allocation-time-adoption-differential",
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-ordinary-reserved-medium-on-demand-differential",
                 "native-reserved-small-direct-on-demand-differential",
@@ -234,6 +247,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-mapped-arena-allocation-time-adoption-differential"]["report"],
             "compat/reports/allocator/x86_64/mapped-adoption.json",
+        )
+        self.assertEqual(
+            gates["native-direct-small-allocation-time-adoption-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-direct-small-allocation-adoption",
+        )
+        self.assertEqual(
+            gates["native-direct-small-allocation-time-adoption-differential"]["report"],
+            "compat/reports/allocator/x86_64/direct-small-allocation-adoption.json",
         )
         self.assertEqual(
             gates["native-unmapped-full-medium-reabandon-differential"]["command"],
@@ -609,6 +630,33 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, mapped_adoption)
+        direct_small_adoption = gates[
+            "native-direct-small-allocation-time-adoption-differential"
+        ]["claim"]
+        for fragment in (
+            "32 address-independent values",
+            "same-origin, same-thread/same-Theap nonfull 1024-byte direct-small page",
+            "two live blocks",
+            "_mi_page_abandon",
+            "complete rounded direct-cache range",
+            "PageMap and ordinary arena-bitmap registration",
+            "mi_heap_malloc_small",
+            "claims the exact mapped-abandoned page",
+            "clears its bitmap/count",
+            "restores original Theap association",
+            "regular tail",
+            "restores its full direct-cache range",
+            "third live block",
+            "immediately before its matching third allocation",
+            "generic Rust allocation scan abandoned pages",
+            "direct-small allocation-time same-origin adapter mapping",
+            "not general or cross-thread abandonment/adoption",
+            "remote routing",
+            "lifecycle",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, direct_small_adoption)
         self.assertIn("13 address-independent values", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("initially-unmapped abandonment", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("bounded real full-medium post-Theap-teardown route", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
@@ -864,6 +912,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertIn("13-field unmapped full-medium reabandon", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("18-value same-origin allocation-time mapped-adoption", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn(
+            "32-value same-Theap direct-small allocation-time adoption differential",
+            lanes["general-thread-lifecycle-and-stress"]["reason"],
+        )
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 
         boundary = self.contract["ledger_boundary"]

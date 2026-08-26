@@ -1,0 +1,206 @@
+{
+  "c_probe_sha256": "50b972171e9e42cbb2d3d3e30957074c5a7d645b2b2ebf2f2c6baf21e91b2910",
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "format": 1,
+  "profile": "linux-x86_64-private-direct-small-allocation-time-adoption",
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/dynamic_theap.rs",
+    "target_arch": "x86_64",
+    "test_filter": "dynamic_theap::tests::x86_64_direct_small_allocation_adoption_trace_matches_pinned_c_protocol"
+  },
+  "schema": "crabc-mimalloc-x86_64-direct-small-allocation-adoption-evidence",
+  "scope": {
+    "aarch64_status_reused": false,
+    "allocation_time_same_origin_adoption_only": true,
+    "arena_backed_only": true,
+    "cross_thread_adoption_claimed": false,
+    "direct_small_only": true,
+    "emulation_accepted": false,
+    "general_abandonment_or_adoption_claimed": false,
+    "general_lifecycle_claimed": false,
+    "general_remote_free_routing_claimed": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "rust_test_adapter_adopt_before_third_allocation_only": true,
+    "same_thread_same_theap_only": true,
+    "thread_exit_claimed": false
+  },
+  "source_anchors": [
+    {
+      "end_line": 123,
+      "member": "include/mimalloc.h",
+      "sha256": "254ce29a1c8187dae3f5cccd5f98bbf7f71f448f68cbb5e822dd6f74f291778c",
+      "start_line": 122
+    },
+    {
+      "end_line": 449,
+      "member": "include/mimalloc/types.h",
+      "sha256": "9befd05f3264611334cec9745bbd1de88fe83f01b4a1c7f2b9beadb3e6badb5f",
+      "start_line": 430
+    },
+    {
+      "end_line": 421,
+      "member": "include/mimalloc/prim-tls.h",
+      "sha256": "466e1c5ef5f6fcddae9a518965638676a61bd41b8cbde85a5c0bcba76e2710dd",
+      "start_line": 412
+    },
+    {
+      "end_line": 58,
+      "member": "src/alloc.c",
+      "sha256": "ebecab0a27c74739c146a986504e36e8361dbac617a78071cc97ef8d3e67602a",
+      "start_line": 29
+    },
+    {
+      "end_line": 240,
+      "member": "src/alloc.c",
+      "sha256": "d9e591aba82a335db52a1a97e3a5fe8ba080d1bc29ea2b91960cb07f33306164",
+      "start_line": 204
+    },
+    {
+      "end_line": 775,
+      "member": "src/arena.c",
+      "sha256": "bb3a4ff85331df5b441fab7ad8b957afe7b9493a095e6591a046eeedfa2281e5",
+      "start_line": 725
+    },
+    {
+      "end_line": 1144,
+      "member": "src/arena.c",
+      "sha256": "3ebc454a5a3703d735ed848a6c3fc6e02aef03a8e5c5155b753f32cafe34ac99",
+      "start_line": 1130
+    },
+    {
+      "end_line": 1355,
+      "member": "src/arena.c",
+      "sha256": "d7328658d88aa8c24dabcd1a093e5857b6bc699b03677eb4e8ab3c7d160c6dbb",
+      "start_line": 1304
+    },
+    {
+      "end_line": 515,
+      "member": "src/page-map.c",
+      "sha256": "c752c966d40e6ebd16795295a1a87d3b8a762cdfc4ba752aa3a043df44dfb495",
+      "start_line": 460
+    },
+    {
+      "end_line": 244,
+      "member": "src/page-queue.c",
+      "sha256": "4216ce3f998d0a8c3891e0c89e1feaa34aff407d10e14135e68334ce833d6e6b",
+      "start_line": 204
+    },
+    {
+      "end_line": 333,
+      "member": "src/page-queue.c",
+      "sha256": "bed2746841d68f31300727a5bf7716283abbadc318772183d94c56d654cf59a0",
+      "start_line": 252
+    },
+    {
+      "end_line": 289,
+      "member": "src/page.c",
+      "sha256": "fcf1bbb7f05a126878a5d82df3680532710c9a7e457a628e355a716c75c157d1",
+      "start_line": 277
+    },
+    {
+      "end_line": 303,
+      "member": "src/page.c",
+      "sha256": "d363079d5e484919082b5602cc3757a3e3a357e68594fc040d902232c7458bbf",
+      "start_line": 291
+    },
+    {
+      "end_line": 340,
+      "member": "src/page.c",
+      "sha256": "f4494b356b497a4f2b4a78c58c0da8b70db59769db2cdb25bc667f7d6372ff3d",
+      "start_line": 308
+    },
+    {
+      "end_line": 875,
+      "member": "src/page.c",
+      "sha256": "3c8a1de257b88eb5c17b54da1cca31337fc9555aaca6a1cf167f3f0f4aaa7598",
+      "start_line": 765
+    }
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "trace": {
+    "begin": "CRABC_MI_DIRECT_SMALL_ADOPTION_TRACE_BEGIN",
+    "end": "CRABC_MI_DIRECT_SMALL_ADOPTION_TRACE_END",
+    "expected_values": {
+      "trace.direct_small_adoption.abandoned_bitmap_before_allocation": 1,
+      "trace.direct_small_adoption.abandoned_bitmap_cleared": 1,
+      "trace.direct_small_adoption.abandoned_count_before_allocation": 1,
+      "trace.direct_small_adoption.abandoned_count_cleared": 1,
+      "trace.direct_small_adoption.abandoned_identity_cleared": 1,
+      "trace.direct_small_adoption.allocation_is_same_page": 1,
+      "trace.direct_small_adoption.arena_backed": 1,
+      "trace.direct_small_adoption.block_size": 1024,
+      "trace.direct_small_adoption.direct_range_empty_before_allocation": 1,
+      "trace.direct_small_adoption.direct_range_end": 128,
+      "trace.direct_small_adoption.direct_range_restored": 1,
+      "trace.direct_small_adoption.direct_range_start": 113,
+      "trace.direct_small_adoption.direct_small": 1,
+      "trace.direct_small_adoption.initial_capacity": 8,
+      "trace.direct_small_adoption.initial_direct_range_matches": 1,
+      "trace.direct_small_adoption.initial_page_count": 1,
+      "trace.direct_small_adoption.initial_regular_queue": 1,
+      "trace.direct_small_adoption.initial_remote_list_empty": 1,
+      "trace.direct_small_adoption.initial_used": 2,
+      "trace.direct_small_adoption.original_theap_restored": 1,
+      "trace.direct_small_adoption.page_count_restored": 1,
+      "trace.direct_small_adoption.page_count_zero_before_allocation": 1,
+      "trace.direct_small_adoption.page_map_and_arena_bitmap_preserved": 1,
+      "trace.direct_small_adoption.queue_empty_before_allocation": 1,
+      "trace.direct_small_adoption.queue_tail_reassociated": 1,
+      "trace.direct_small_adoption.remote_list_empty": 1,
+      "trace.direct_small_adoption.remote_list_empty_before_allocation": 1,
+      "trace.direct_small_adoption.request": 1024,
+      "trace.direct_small_adoption.reserved": 64,
+      "trace.direct_small_adoption.two_blocks_same_page": 1,
+      "trace.direct_small_adoption.used_after_allocation": 3,
+      "trace.direct_small_adoption.valid": 1
+    }
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

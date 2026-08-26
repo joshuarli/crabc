@@ -28854,6 +28854,16 @@ impl<'attach, 'heap, 'arena, 'map>
         self.engine.session.theap().page_count()
     }
 
+    /// Test-only direct-cache witness while this linear mapped-page handoff
+    /// retains the detached queue, Theap, PageMap, and arena ownership.
+    /// It observes one slot without exposing a generic abandoned-page
+    /// allocation path or mutating the source cache image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.engine.session.direct_page(index)
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_abandoned_count(&self) -> Option<usize> {

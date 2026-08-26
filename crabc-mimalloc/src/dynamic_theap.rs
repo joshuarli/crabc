@@ -2723,6 +2723,238 @@ mod tests {
         });
     }
 
+    /// Records one direct-small mapped abandonment followed by the private
+    /// allocation-time adoption adapter. The C oracle discovers the page
+    /// through its next same-heap allocation; Rust explicitly consumes
+    /// `adopt()` immediately before the matching allocation.
+    ///
+    /// This fixes one same-thread, same-Theap, arena-backed 1024-byte
+    /// direct-small page with two local live blocks. It proves its complete
+    /// rounded direct-cache image before abandonment, while detached, and
+    /// after reclaim. It is not generic abandoned-page scanning,
+    /// cross-thread adoption, remote-free routing, thread exit, public
+    /// `mi_*` behavior, or an AArch64 claim.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_direct_small_allocation_adoption_trace_matches_pinned_c_protocol() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_SIZE_MAX;
+            let first = allocator
+                .allocate(request, false)
+                .expect("first native direct-small adoption allocation");
+            let survivor = allocator
+                .allocate(request, false)
+                .expect("survivor keeps the direct-small page nonempty");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("first allocation names one live direct-small page");
+            assert_eq!(unsafe { allocator.page_for_block(survivor) }, page.as_ptr());
+            let memory = unsafe { page.as_ref().memid() };
+            let block_size = unsafe { page.as_ref().block_size() };
+            let bin = crate::size_class::bin(block_size)
+                .expect("the direct-small allocation has a regular size-class bin");
+            let original_theap = unsafe { page.as_ref().theap() };
+            let reserved = usize::from(unsafe { page.as_ref().reserved() });
+            let initial_capacity = usize::from(unsafe { page.as_ref().capacity() });
+            let initial_used = unsafe { page.as_ref().used() };
+            let direct_range_start = 113usize;
+            let direct_range_end = 128usize;
+            let initial_direct_range_matches = (0..PAGES_DIRECT).all(|index| {
+                let expected = if (direct_range_start..=direct_range_end).contains(&index) {
+                    page.as_ptr()
+                } else {
+                    crate::types::EMPTY_PAGE.as_ptr()
+                };
+                allocator.direct_page(index) == Some(expected)
+            });
+            let initial_regular_queue = allocator.queue_count(bin).unwrap_or_default();
+            let initial_page_count = unsafe { (&*allocator.theap_identity()).page_count() };
+            let initial_remote_list_empty =
+                unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let arena_backed = memory.kind() == MemoryKind::Arena;
+            let direct_small = block_size <= SMALL_SIZE_MAX;
+            let two_blocks_same_page = unsafe {
+                allocator.page_for_block(first) == page.as_ptr()
+                    && allocator.page_for_block(survivor) == page.as_ptr()
+            };
+
+            assert_eq!(request, SMALL_SIZE_MAX);
+            assert_eq!(block_size, SMALL_SIZE_MAX);
+            assert_eq!(reserved, 64);
+            assert_eq!(initial_capacity, 8);
+            assert_eq!(initial_used, 2);
+            assert_eq!(initial_regular_queue, 1);
+            assert_eq!(initial_page_count, 1);
+            assert!(
+                arena_backed
+                    && direct_small
+                    && two_blocks_same_page
+                    && initial_direct_range_matches
+                    && initial_remote_list_empty,
+                "the direct-small adoption precondition fixes one direct-cache image"
+            );
+
+            // SAFETY: both blocks remain live on this exact nonfull page;
+            // no remote producer exists while this linear handoff owns it.
+            let handoff = match unsafe { allocator.abandon_mapped_regular(first) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the native direct-small page enters the adoption handoff");
+                }
+            };
+            let abandoned_bitmap_before_allocation = handoff.test_dynamic_abandoned_page_is_set()
+                && unsafe { page.as_ref().abandoned_test_thread_id() }
+                    == THREAD_ID_ABANDONED_MAPPED;
+            let abandoned_count_before_allocation = handoff.test_abandoned_count() == Some(1);
+            let queue_empty_before_allocation = handoff.test_dynamic_regular_queue_is_empty();
+            let page_count_zero_before_allocation = handoff.test_page_count() == 0;
+            let direct_range_empty_before_allocation = (0..PAGES_DIRECT).all(|index| {
+                handoff.test_direct_page(index) == Some(crate::types::EMPTY_PAGE.as_ptr())
+            });
+            let page_map_and_arena_bitmap_preserved = unsafe {
+                handoff.test_page_for_block(first) == page.as_ptr()
+                    && handoff.test_page_for_block(survivor) == page.as_ptr()
+            } && handoff.test_dynamic_arena_page_is_set();
+            let remote_list_empty_before_allocation =
+                unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            assert!(
+                abandoned_bitmap_before_allocation
+                    && abandoned_count_before_allocation
+                    && queue_empty_before_allocation
+                    && page_count_zero_before_allocation
+                    && direct_range_empty_before_allocation
+                    && page_map_and_arena_bitmap_preserved
+                    && remote_list_empty_before_allocation,
+                "direct-small abandonment clears its cache image while preserving mapping"
+            );
+
+            let mut allocator = match handoff.adopt() {
+                Ok(allocator) => allocator,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the exact direct-small page is claimed through allocation-time adoption");
+                }
+            };
+            let adopted = allocator
+                .allocate(request, false)
+                .expect("adoption restores the direct cache before the next allocation");
+            let allocation_is_same_page = unsafe { allocator.page_for_block(adopted) } == page.as_ptr();
+            let abandoned_bitmap_cleared = allocator.test_dynamic_abandoned_page_is_clear(bin, memory);
+            let heap = unsafe { &*allocator.theap_identity().cast::<Theap>() }.heap();
+            let abandoned_count_cleared = unsafe { heap.as_ref() }
+                .and_then(|heap| heap.abandoned_count(bin))
+                == Some(0);
+            let abandoned_identity_cleared = !matches!(
+                unsafe { page.as_ref().abandoned_test_thread_id() },
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let original_theap_restored = unsafe { page.as_ref().theap() } == original_theap
+                && unsafe { page.as_ref().theap() } == allocator.theap_identity()
+                && unsafe {
+                    allocator.test_dynamic_associated_theap_is_current(page, original_theap)
+                };
+            let queue_tail_reassociated = allocator.test_dynamic_regular_queue_contains_only(bin, page)
+                && unsafe { page.as_ref().next().is_null() && page.as_ref().prev().is_null() };
+            let page_count_restored = unsafe { (&*allocator.theap_identity()).page_count() } == 1;
+            let direct_range_restored = (0..PAGES_DIRECT).all(|index| {
+                let expected = if (direct_range_start..=direct_range_end).contains(&index) {
+                    page.as_ptr()
+                } else {
+                    crate::types::EMPTY_PAGE.as_ptr()
+                };
+                allocator.direct_page(index) == Some(expected)
+            });
+            let remote_list_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let used_after_allocation = unsafe { page.as_ref().used() };
+            let valid = request == SMALL_SIZE_MAX
+                && block_size == SMALL_SIZE_MAX
+                && reserved == 64
+                && initial_capacity == 8
+                && initial_used == 2
+                && direct_range_start == 113
+                && direct_range_end == 128
+                && arena_backed
+                && direct_small
+                && two_blocks_same_page
+                && initial_direct_range_matches
+                && initial_regular_queue == 1
+                && initial_page_count == 1
+                && initial_remote_list_empty
+                && abandoned_bitmap_before_allocation
+                && abandoned_count_before_allocation
+                && queue_empty_before_allocation
+                && page_count_zero_before_allocation
+                && direct_range_empty_before_allocation
+                && page_map_and_arena_bitmap_preserved
+                && remote_list_empty_before_allocation
+                && allocation_is_same_page
+                && abandoned_bitmap_cleared
+                && abandoned_count_cleared
+                && abandoned_identity_cleared
+                && original_theap_restored
+                && queue_tail_reassociated
+                && page_count_restored
+                && direct_range_restored
+                && remote_list_empty
+                && used_after_allocation == 3;
+            assert!(valid, "direct-small allocation-time adoption trace diverged from pinned C");
+
+            std::println!("CRABC_MI_DIRECT_SMALL_ADOPTION_TRACE_BEGIN");
+            std::println!("trace.direct_small_adoption.request={request}");
+            std::println!("trace.direct_small_adoption.block_size={block_size}");
+            std::println!("trace.direct_small_adoption.reserved={reserved}");
+            std::println!("trace.direct_small_adoption.initial_capacity={initial_capacity}");
+            std::println!("trace.direct_small_adoption.initial_used={initial_used}");
+            std::println!("trace.direct_small_adoption.direct_range_start={direct_range_start}");
+            std::println!("trace.direct_small_adoption.direct_range_end={direct_range_end}");
+            std::println!("trace.direct_small_adoption.arena_backed={}", arena_backed as u8);
+            std::println!("trace.direct_small_adoption.direct_small={}", direct_small as u8);
+            std::println!("trace.direct_small_adoption.two_blocks_same_page={}", two_blocks_same_page as u8);
+            std::println!("trace.direct_small_adoption.initial_direct_range_matches={}", initial_direct_range_matches as u8);
+            std::println!("trace.direct_small_adoption.initial_regular_queue={initial_regular_queue}");
+            std::println!("trace.direct_small_adoption.initial_page_count={initial_page_count}");
+            std::println!("trace.direct_small_adoption.initial_remote_list_empty={}", initial_remote_list_empty as u8);
+            std::println!("trace.direct_small_adoption.abandoned_bitmap_before_allocation={}", abandoned_bitmap_before_allocation as u8);
+            std::println!("trace.direct_small_adoption.abandoned_count_before_allocation={}", abandoned_count_before_allocation as u8);
+            std::println!("trace.direct_small_adoption.queue_empty_before_allocation={}", queue_empty_before_allocation as u8);
+            std::println!("trace.direct_small_adoption.page_count_zero_before_allocation={}", page_count_zero_before_allocation as u8);
+            std::println!("trace.direct_small_adoption.direct_range_empty_before_allocation={}", direct_range_empty_before_allocation as u8);
+            std::println!("trace.direct_small_adoption.page_map_and_arena_bitmap_preserved={}", page_map_and_arena_bitmap_preserved as u8);
+            std::println!("trace.direct_small_adoption.remote_list_empty_before_allocation={}", remote_list_empty_before_allocation as u8);
+            std::println!("trace.direct_small_adoption.allocation_is_same_page={}", allocation_is_same_page as u8);
+            std::println!("trace.direct_small_adoption.abandoned_bitmap_cleared={}", abandoned_bitmap_cleared as u8);
+            std::println!("trace.direct_small_adoption.abandoned_count_cleared={}", abandoned_count_cleared as u8);
+            std::println!("trace.direct_small_adoption.abandoned_identity_cleared={}", abandoned_identity_cleared as u8);
+            std::println!("trace.direct_small_adoption.original_theap_restored={}", original_theap_restored as u8);
+            std::println!("trace.direct_small_adoption.queue_tail_reassociated={}", queue_tail_reassociated as u8);
+            std::println!("trace.direct_small_adoption.page_count_restored={}", page_count_restored as u8);
+            std::println!("trace.direct_small_adoption.direct_range_restored={}", direct_range_restored as u8);
+            std::println!("trace.direct_small_adoption.remote_list_empty={}", remote_list_empty as u8);
+            std::println!("trace.direct_small_adoption.used_after_allocation={used_after_allocation}");
+            std::println!("trace.direct_small_adoption.valid={}", valid as u8);
+            std::println!("CRABC_MI_DIRECT_SMALL_ADOPTION_TRACE_END");
+            // SAFETY: adoption restored each current allocation to one
+            // ordinary local owner; return every exact block exactly once.
+            unsafe { allocator.free(adopted) }
+                .expect("the adopted allocation frees through the restored page");
+            unsafe { allocator.free(first) }
+                .expect("the first pre-adoption allocation frees after adoption");
+            unsafe { allocator.free(survivor) }
+                .expect("the survivor allocation frees after adoption");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
     #[test]
     fn dynamic_mapped_regular_remote_free_empty_releases_the_queue_detached_arena_page() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {

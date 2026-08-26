@@ -791,6 +791,66 @@ class X86_64SourceMapTests(unittest.TestCase):
             units["tls-interface-and-thread-identity"]["difference"],
         )
 
+    def test_direct_small_allocation_adoption_lane_is_scoped_to_its_seven_source_boundaries(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "arena-lifecycle",
+            "core-layouts-and-configuration",
+            "ordinary-allocation-paths",
+            "page-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "tls-interface-and-thread-identity",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_direct_small_allocation_adoption_evidence.py",
+            "compat/allocator/x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_direct_small_allocation_adoption_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
+                for evidence in lane_evidence:
+                    self.assertIn(evidence, units[unit_id]["evidence"])
+        self.assertEqual(
+            {
+                units[unit_id]["source_anchor"]["member"]
+                for unit_id in reviewed_unit_ids
+            },
+            {
+                "include/mimalloc/prim-tls.h",
+                "include/mimalloc/types.h",
+                "src/alloc.c",
+                "src/arena.c",
+                "src/page-map.c",
+                "src/page-queue.c",
+                "src/page.c",
+            },
+        )
+        self.assertIn(
+            "32-value native C/Rust differential",
+            units["core-layouts-and-configuration"]["difference"],
+        )
+        self.assertEqual(
+            units["core-layouts-and-configuration"]["source_anchor"],
+            {
+                "member": "include/mimalloc/types.h",
+                "start_line": 35,
+                "end_line": 598,
+                "sha256": "98c7115c84a86e1624e0dbb9abe8fb7b1bd238c94f0ef4a2ab0c18b6f361c184",
+            },
+        )
+
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(
             unit

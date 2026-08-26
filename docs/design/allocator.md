@@ -898,8 +898,8 @@ remains outside this nonfull sole route, checked by `used < reserved` because
 it can remain in a regular queue; the sixth and seventh handoffs own the
 non-direct and direct full-small counterparts.
 
-One deliberately consuming allocation-time edge is now complete for this
-sole route only. `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
+Bounded deliberately consuming allocation-time edges are now complete for
+these sole routes only. `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
 accepts either an exact `PageKind::Medium` route, or an exact
 `PageKind::Small` direct-cache route whose source force/false collection left
 an immediate local free block, the exhausted fully committed scalar-extension

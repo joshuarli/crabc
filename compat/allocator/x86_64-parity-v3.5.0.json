@@ -129,6 +129,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 32 address-independent values for one private arena-backed, same-origin, same-thread/same-Theap nonfull 1024-byte direct-small page with two live blocks. _mi_page_abandon detaches its ordinary regular queue and clears its complete rounded direct-cache range while retaining PageMap and ordinary arena-bitmap registration. The pinned C next same-heap mi_heap_malloc_small claims the exact mapped-abandoned page, clears its bitmap/count, restores original Theap association, requeues it at the regular tail, restores its full direct-cache range, and allocates the third live block; Rust explicitly consumes its test-only `adopt()` handoff adapter immediately before its matching third allocation, rather than making generic Rust allocation scan abandoned pages. It proves only this direct-small allocation-time same-origin adapter mapping; it is not general or cross-thread abandonment/adoption, remote routing, lifecycle, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-direct-small-allocation-adoption",
+      "id": "native-direct-small-allocation-time-adoption-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/direct-small-allocation-adoption.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 13 address-independent values for one real pinned-C medium arena page forced through its source full queue to initially-unmapped abandonment, then through public mi_free calls that cross the exact reabandon threshold and publish its arena bitmap. Rust exercises one bounded real full-medium post-Theap-teardown route with sequential client frees through the same threshold. This does not establish general abandonment/adoption or free routing, public mi_* behavior, libc integration, backend promotion, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-unmapped-reabandon",
       "id": "native-unmapped-full-medium-reabandon-differential",
@@ -356,7 +364,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, one 38-field same-Theap full direct-small regular-bin retire/force-release differential, one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route, and one 18-value same-origin allocation-time mapped-adoption differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, one 38-field same-Theap full direct-small regular-bin retire/force-release differential, one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route, one 18-value same-origin allocation-time mapped-adoption differential, and one 32-value same-Theap direct-small allocation-time adoption differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

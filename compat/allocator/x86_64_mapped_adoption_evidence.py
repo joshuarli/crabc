@@ -35,6 +35,11 @@ TRACE_BEGIN = "CRABC_MI_MAPPED_ADOPTION_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_MAPPED_ADOPTION_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
 NORMALIZED_PINNED_SOURCE = "<temporary-pinned-mimalloc-source>"
+EVIDENCE_SCHEMA = "crabc-mimalloc-x86_64-mapped-adoption-evidence"
+EVIDENCE_KIND = "mimalloc-x86_64-mapped-arena-allocation-time-adoption-differential-evidence"
+EVIDENCE_LABEL = "mapped-adoption"
+PROBE_STEM = "mapped-adoption"
+TEMPORARY_PREFIX = "crabc-mimalloc-x86-mapped-adoption-"
 
 spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
 assert spec is not None and spec.loader is not None
@@ -354,7 +359,7 @@ def load_schema(path: Path = SCHEMA_PATH) -> dict[str, Any]:
         raise EvidenceError("mapped-adoption schema fields drifted")
     if type(schema["format"]) is not int or schema["format"] != 1:
         raise EvidenceError("unsupported x86-64 mapped-adoption schema format")
-    if schema["schema"] != "crabc-mimalloc-x86_64-mapped-adoption-evidence":
+    if schema["schema"] != EVIDENCE_SCHEMA:
         raise EvidenceError("unsupported x86-64 mapped-adoption schema")
     if schema["profile"] != EXPECTED_PROFILE or not exactly_matches(schema["target"], EXPECTED_TARGET):
         raise EvidenceError("mapped-adoption schema target/profile drifted")
@@ -542,11 +547,11 @@ def validate_normalized_c_command(command: object, schema: Mapping[str, Any]) ->
         "-I",
         f"{NORMALIZED_PINNED_SOURCE}/src",
         *list(schema["release_flags"]),
-        f"{NORMALIZED_EVIDENCE_ROOT}/mapped-adoption.c",
+        f"{NORMALIZED_EVIDENCE_ROOT}/{PROBE_STEM}.c",
         *(f"{NORMALIZED_PINNED_SOURCE}/{member}" for member in schema["release_source_set"]),
         "-pthread",
         "-o",
-        f"{NORMALIZED_EVIDENCE_ROOT}/mapped-adoption-c",
+        f"{NORMALIZED_EVIDENCE_ROOT}/{PROBE_STEM}-c",
     ]
     if command[1:] != expected:
         raise EvidenceError("mapped-adoption report C command drifted")
@@ -602,8 +607,8 @@ def validate_normalized_rust_command(command: object) -> None:
 def build_c_trace(
     compiler: str, readelf: str, source: Path, temporary: Path, schema: Mapping[str, Any]
 ) -> dict[str, Any]:
-    probe_source = temporary / "mapped-adoption.c"
-    probe_binary = temporary / "mapped-adoption-c"
+    probe_source = temporary / f"{PROBE_STEM}.c"
+    probe_binary = temporary / f"{PROBE_STEM}-c"
     probe_source.write_text(C_TRACE_PROBE, encoding="utf-8")
     command = c_trace_command(compiler, source, probe_source, probe_binary, schema)
     validate_c_command(command, schema)
@@ -621,7 +626,7 @@ def build_c_trace(
     return {
         "build_command": normalize_command(command, temporary, source),
         "elf": elf,
-        "run_command": [f"{NORMALIZED_EVIDENCE_ROOT}/mapped-adoption-c"],
+        "run_command": [f"{NORMALIZED_EVIDENCE_ROOT}/{PROBE_STEM}-c"],
         "source_sha256": sha256_bytes(C_TRACE_PROBE.encode("utf-8")),
         "trace": trace,
     }
@@ -676,7 +681,7 @@ def report_from_results(
         "c_probe": dict(c_probe),
         "comparison": compare_traces(c_trace, rust_trace),
         "format": 1,
-        "kind": "mimalloc-x86_64-mapped-arena-allocation-time-adoption-differential-evidence",
+        "kind": EVIDENCE_KIND,
         "profile": schema["profile"],
         "provenance": dict(provenance),
         "rust_probe": dict(rust_probe),
@@ -705,7 +710,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError("mapped-adoption report schema drifted")
     if type(report["format"]) is not int or report["format"] != 1 or report["status"] != "passed":
         raise EvidenceError("mapped-adoption report must record a passing format-1 result")
-    if report["kind"] != "mimalloc-x86_64-mapped-arena-allocation-time-adoption-differential-evidence":
+    if report["kind"] != EVIDENCE_KIND:
         raise EvidenceError("mapped-adoption report kind drifted")
     if report["profile"] != EXPECTED_PROFILE or not exactly_matches(report["target"], EXPECTED_TARGET):
         raise EvidenceError("mapped-adoption report target/profile drifted")
@@ -741,7 +746,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
         raise EvidenceError("mapped-adoption report Rust probe record drifted")
     if not exactly_matches(c_probe["elf"], EXPECTED_C_ELF):
         raise EvidenceError("mapped-adoption report C ELF identity drifted")
-    if not exactly_matches(c_probe["run_command"], [f"{NORMALIZED_EVIDENCE_ROOT}/mapped-adoption-c"]):
+    if not exactly_matches(c_probe["run_command"], [f"{NORMALIZED_EVIDENCE_ROOT}/{PROBE_STEM}-c"]):
         raise EvidenceError("mapped-adoption report C run command drifted")
     if c_probe["source_sha256"] != sha256_bytes(C_TRACE_PROBE.encode("utf-8")):
         raise EvidenceError("mapped-adoption report C source hash drifted")
@@ -786,7 +791,7 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
         readelf = run.require_tool("readelf")
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-x86-mapped-adoption-") as temporary_name:
+    with tempfile.TemporaryDirectory(prefix=TEMPORARY_PREFIX) as temporary_name:
         temporary = Path(temporary_name)
         try:
             source = run.safe_extract(archive, temporary / "source", pin["archive_root"])
@@ -822,10 +827,10 @@ def main() -> int:
     try:
         report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:
-        print(f"allocator x86-64 mapped-adoption evidence: FAIL: {error}", file=os.sys.stderr)
+        print(f"allocator x86-64 {EVIDENCE_LABEL} evidence: FAIL: {error}", file=os.sys.stderr)
         return 1
     print(
-        "allocator x86-64 mapped-adoption evidence: PASS "
+        f"allocator x86-64 {EVIDENCE_LABEL} evidence: PASS "
         f"({report['comparison']['compared_value_count']} values; report: "
         f"{report_path_display(arguments.report)})"
     )

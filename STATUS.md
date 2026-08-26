@@ -62,6 +62,18 @@ consuming handoff immediately before its matching third allocation. This is
 private native x86 evidence only, not general or cross-thread
 abandonment/adoption, public API/runtime behavior, backend promotion, public
 x86 support, or AArch64 evidence. A separate
+32-value C/Rust differential covers one arena-backed, same-origin,
+same-thread/same-Theap nonfull 1024-byte direct-small page with two live
+blocks. `_mi_page_abandon` clears its complete rounded direct-cache range while
+retaining PageMap and ordinary-arena-bitmap registration; the pinned C next
+same-heap `mi_heap_malloc_small` claims that exact mapped-abandoned page,
+clears bitmap/count state, restores the original Theap, requeues at the
+regular tail, restores the full range, and allocates the third block. Rust
+explicitly consumes its private test-only handoff immediately before its
+matching third allocation rather than making generic allocation scan abandoned
+pages. This remains private native x86 evidence only, not general or
+cross-thread abandonment/adoption, remote routing, lifecycle, public API/runtime
+behavior, backend promotion, public x86 support, or AArch64 evidence. A separate
 six-mode staged public-header gate compile-links selected C/C++ forms against
 the pinned C release shared object, including one C11 compile/link-only probe
 that instantiates the five base-header `*_csize` static-inline dispatch helpers,
