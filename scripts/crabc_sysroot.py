@@ -129,8 +129,27 @@ STATIC_RUNTIME_COMMAND_KINDS = frozenset(
     }
 )
 STATIC_RUNTIME_RUST_TARGET_FEATURE = "target-feature=-crt-static,-outline-atomics"
+STATIC_RUNTIME_TLS_MODEL = "-Ztls-model=initial-exec"
 STATIC_RUNTIME_CFLAGS_KEY = "CFLAGS_aarch64_unknown_linux_musl"
 STATIC_RUNTIME_CFLAGS_VALUE = "-mno-outline-atomics"
+ELF_STB_LOCAL = 0
+ELF_STT_TLS = 6
+ELF_STV_DEFAULT = 0
+R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 = 541
+R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC = 542
+R_AARCH64_TLSDESC_FIRST = 562
+R_AARCH64_TLSDESC_LAST = 569
+R_AARCH64_TLS_TPREL64 = 1030
+STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_NAMES = {
+    R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21: "R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21",
+    R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC: "R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC",
+}
+STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_TYPES = frozenset(
+    STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_NAMES
+)
+STATIC_RUNTIME_LIFECYCLE_TLS_SYMBOL = re.compile(
+    r"crabc_mimalloc.*runtime_lifecycle.*THREAD_LIFECYCLE"
+)
 HOST_BUILD_PATH_ROOTS = frozenset({"Users", "home", "private", "root", "tmp", "var", "workspace", "build", "opt"})
 BUILD_PATH_COMPONENTS = frozenset(
     {".cargo", ".rustup", "cargo", "crabc-sysroot", "crabc-sysroot-build-comparison", "crabc-sysroot-build-primary", "debug", "release", "target"}
@@ -763,6 +782,131 @@ def _archive_member_symbols(member: Mapping[str, object]) -> set[str]:
     }
 
 
+def audit_static_runtime_lifecycle_tls(member: Mapping[str, object]) -> dict[str, object]:
+    """Recompute the private post-LTO lifecycle TLS proof from ``libc.a``.
+
+    The installed static archive deliberately keeps a single Rust runtime
+    object. Fat LTO folds crabc-mimalloc into that member, so this exact ELF
+    check binds the named private pthread lifecycle root to the initial-exec
+    model without creating a public allocator or C ABI symbol.
+    """
+
+    elf = member.get("elf")
+    symbols = elf.get("defined_symbols") if isinstance(elf, dict) else None
+    relocations = elf.get("relocations") if isinstance(elf, dict) else None
+    if not isinstance(symbols, list) or not isinstance(relocations, list):
+        return {
+            "status": "rejected",
+            "reason": "selected Rust runtime member lacks parsed ELF symbols or relocations",
+        }
+    matched = [
+        symbol
+        for symbol in symbols
+        if isinstance(symbol, dict)
+        and isinstance(symbol.get("name"), str)
+        and STATIC_RUNTIME_LIFECYCLE_TLS_SYMBOL.search(symbol["name"])
+    ]
+    if len(matched) != 1:
+        return {
+            "status": "rejected",
+            "reason": f"expected exactly one private runtime lifecycle TLS symbol, found {len(matched)}",
+        }
+    symbol = matched[0]
+    symbol_valid = (
+        symbol.get("type") == ELF_STT_TLS
+        and symbol.get("binding") == ELF_STB_LOCAL
+        and symbol.get("visibility") == ELF_STV_DEFAULT
+        and isinstance(symbol.get("size"), int)
+        and symbol["size"] > 0
+        and isinstance(symbol.get("table_index"), int)
+        and isinstance(symbol.get("entry_index"), int)
+        and isinstance(symbol.get("name"), str)
+    )
+    root_relocations = [
+        relocation
+        for relocation in relocations
+        if isinstance(relocation, dict)
+        and relocation.get("symbol_table_index") == symbol.get("table_index")
+        and relocation.get("symbol_index") == symbol.get("entry_index")
+        and isinstance(relocation.get("type"), int)
+    ]
+    relocation_types = frozenset(int(relocation["type"]) for relocation in root_relocations)
+    relocation_valid = (
+        STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_TYPES <= relocation_types
+        and relocation_types <= STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_TYPES
+    )
+    if not symbol_valid or not relocation_valid:
+        return {
+            "status": "rejected",
+            "reason": "private runtime lifecycle TLS root is not a local initial-exec symbol",
+            "observed_relocation_types": sorted(relocation_types),
+        }
+    return {
+        "status": "verified",
+        "access_model": "initial-exec",
+        "symbol": {
+            "name": symbol["name"],
+            "size": symbol["size"],
+            "type": "TLS",
+            "binding": "LOCAL",
+            "visibility": "DEFAULT",
+        },
+        "required_relocations": [
+            STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_NAMES[relocation]
+            for relocation in sorted(STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_TYPES)
+        ],
+        "forbidden_tls_forms": [],
+    }
+
+
+def audit_shared_runtime_tls(path: Path) -> dict[str, object]:
+    """Verify the final shared libc image kept initial-exec TLS relocation form.
+
+    Release libc.so is stripped, so it cannot retain the named private root.
+    The paired static-root audit supplies that identity; this final-link audit
+    proves the shared image contains TLS offsets rather than TLSDESC or a
+    dynamic TLS resolver boundary.
+    """
+
+    elf = inspect_elf(path)
+    relocations = elf.get("relocations")
+    undefined_symbols = elf.get("undefined_symbols")
+    relocation_types = {
+        relocation.get("type")
+        for relocation in relocations
+        if isinstance(relocation, dict) and isinstance(relocation.get("type"), int)
+    } if isinstance(relocations, list) else set()
+    dynamic_relocations = sorted(
+        relocation
+        for relocation in relocation_types
+        if isinstance(relocation, int) and R_AARCH64_TLSDESC_FIRST <= relocation <= R_AARCH64_TLSDESC_LAST
+    )
+    resolver_symbol = any(
+        isinstance(symbol, dict)
+        and isinstance(symbol.get("name"), str)
+        and "__tls_get_addr" in symbol["name"]
+        for symbol in undefined_symbols
+    ) if isinstance(undefined_symbols, list) else True
+    if R_AARCH64_TLS_TPREL64 not in relocation_types or dynamic_relocations or resolver_symbol:
+        return {
+            "status": "rejected",
+            "reason": "shared libc does not retain the required initial-exec TLS link form",
+            "observed_tls_tprel64": R_AARCH64_TLS_TPREL64 in relocation_types,
+            "forbidden_tls_forms": dynamic_relocations + (["__tls_get_addr"] if resolver_symbol else []),
+        }
+    return {
+        "status": "verified",
+        "access_model": "initial-exec",
+        "required_relocation": "R_AARCH64_TLS_TPREL64",
+        "observed_tls_tprel64_count": sum(
+            1
+            for relocation in relocations
+            if isinstance(relocation, dict) and relocation.get("type") == R_AARCH64_TLS_TPREL64
+        ),
+        "forbidden_tls_forms": [],
+    }
+
+
 def read_static_runtime_provenance(
     path: Path | None,
     archive: Path,
@@ -804,6 +948,7 @@ def read_static_runtime_provenance(
     build = value.get("build")
     excluded = value.get("excluded_members")
     allocator_exception = value.get("native_allocator_exception")
+    recorded_lifecycle_tls = value.get("runtime_lifecycle_tls")
     operations = commands.get("operations")
     operation_by_kind = {
         entry.get("kind"): entry
@@ -858,6 +1003,7 @@ def read_static_runtime_provenance(
     if len(expected_by_name) != len(STATIC_RUNTIME_ROLES):
         member_valid = False
     observed_roles: set[str] = set()
+    runtime_member: dict[str, object] | None = None
     for member in actual_members:
         name = member.get("name")
         expected = expected_by_name.get(name) if isinstance(name, str) else None
@@ -878,6 +1024,8 @@ def read_static_runtime_provenance(
             member_valid = False
         if isinstance(role, str):
             observed_roles.add(role)
+            if role == "crabc_rust_runtime":
+                runtime_member = member
         checked_members.append(
             {
                 "name": name,
@@ -889,6 +1037,19 @@ def read_static_runtime_provenance(
             }
         )
     member_valid = member_valid and observed_roles == STATIC_RUNTIME_ROLES
+    actual_lifecycle_tls = (
+        audit_static_runtime_lifecycle_tls(runtime_member)
+        if runtime_member is not None
+        else {"status": "rejected", "reason": "static archive has no crabc Rust runtime member"}
+    )
+    lifecycle_tls_valid = (
+        actual_lifecycle_tls.get("status") == "verified"
+        and isinstance(recorded_lifecycle_tls, dict)
+        and all(
+            recorded_lifecycle_tls.get(key) == actual_lifecycle_tls.get(key)
+            for key in ("access_model", "symbol", "required_relocations", "forbidden_tls_forms")
+        )
+    )
 
     all_excluded = excluded.get("all") if isinstance(excluded, dict) else None
     stock_builtins = excluded.get("stock_compiler_builtins") if isinstance(excluded, dict) else None
@@ -913,6 +1074,7 @@ def read_static_runtime_provenance(
         isinstance(build, dict)
         and isinstance(build.get("runtime_rustflags"), list)
         and STATIC_RUNTIME_RUST_TARGET_FEATURE in build["runtime_rustflags"]
+        and STATIC_RUNTIME_TLS_MODEL in build["runtime_rustflags"]
         and isinstance(build.get("runtime_cflags"), dict)
         and build["runtime_cflags"].get(STATIC_RUNTIME_CFLAGS_KEY) == STATIC_RUNTIME_CFLAGS_VALUE
     )
@@ -939,6 +1101,7 @@ def read_static_runtime_provenance(
         and excluded_valid
         and no_embedded_stock_runtime
         and build_valid
+        and lifecycle_tls_valid
         and allocator_valid
     )
     return {
@@ -956,11 +1119,13 @@ def read_static_runtime_provenance(
             "native_compiler_rt": native_compiler_rt if isinstance(native_compiler_rt, list) else [],
         },
         "native_allocator_exception": allocator_exception if isinstance(allocator_exception, dict) else {},
+        "runtime_lifecycle_tls": actual_lifecycle_tls,
         "checks": {
             "commands": "verified" if command_record_valid else "rejected",
             "members": "verified" if member_valid else "rejected",
             "excluded_runtime": "verified" if excluded_valid and no_embedded_stock_runtime else "rejected",
             "build_flags": "verified" if build_valid else "rejected",
+            "runtime_lifecycle_tls": "verified" if lifecycle_tls_valid else "rejected",
             "allocator_exception": "verified" if allocator_valid else "rejected",
         },
     }
@@ -1616,6 +1781,7 @@ def inspect_elf(path: Path) -> dict[str, object]:
                     relocation_entries.append(
                         {
                             "section": section_name,
+                            "symbol_table_index": link,
                             "file_offset": offset + entry,
                             "offset": relocation_offset,
                             "type": relocation_info & 0xffff_ffff,
@@ -1629,6 +1795,7 @@ def inspect_elf(path: Path) -> dict[str, object]:
                     relocation_entries.append(
                         {
                             "section": section_name,
+                            "symbol_table_index": link,
                             "file_offset": offset + entry,
                             "offset": relocation_offset,
                             "type": relocation_info & 0xffff_ffff,
@@ -1686,6 +1853,8 @@ def inspect_elf(path: Path) -> dict[str, object]:
                 continue
             symbol = {
                 "table": section_name,
+                "table_index": index,
+                "entry_index": entry_index,
                 "name": _cstring(strings, name_offset) if name_offset else "",
                 "binding": info >> 4,
                 "type": info & 0x0f,
@@ -2167,6 +2336,7 @@ def assemble_sysroot(
         checked_paths["libc.a"],
         inputs.libc_static_commands,
     )
+    shared_runtime_tls = audit_shared_runtime_tls(checked_paths["libc.so"])
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{destination.name}.", dir=destination.parent) as temporary:
         staging = Path(temporary) / destination.name
@@ -2218,6 +2388,7 @@ def assemble_sysroot(
                 "crt": crt_provenance.get("provenance"),
                 "compiler_helpers": builtins_provenance.get("provenance"),
                 "static_runtime": static_runtime_provenance.get("provenance"),
+                "shared_runtime_tls": shared_runtime_tls,
             },
             "driver_module": "share/crabc/crabc_sysroot.py",
         }
@@ -2235,6 +2406,7 @@ def assemble_sysroot(
         crt_verified = crt_provenance["status"] == "verified"
         builtins_verified = builtins_provenance["status"] == "verified"
         static_runtime_verified = static_runtime_provenance["status"] == "verified"
+        shared_runtime_tls_verified = shared_runtime_tls["status"] == "verified"
         artifact_purity_passed = artifact_purity["status"] == "passed"
         link_passed = installed_link_audit["status"] == "passed"
         crt_sysroot_pure_rust = (
@@ -2242,6 +2414,7 @@ def assemble_sysroot(
             and crt_verified
             and builtins_verified
             and static_runtime_verified
+            and shared_runtime_tls_verified
             and artifact_purity_passed
             and link_passed
         )
@@ -2256,6 +2429,7 @@ def assemble_sysroot(
             "crt_owned": crt_provenance,
             "compiler_helpers": builtins_provenance,
             "static_runtime": static_runtime_provenance,
+            "shared_runtime_tls": shared_runtime_tls,
             "startup_objects": {name: installed_artifacts[name] for name in CRT_OBJECTS},
             "runtime_source_languages": source_audit,
             "dependency_purity": dependency_audit,
@@ -2274,6 +2448,7 @@ def assemble_sysroot(
                     "Rust CRT source and startup objects",
                     "Rust compiler-helper archive",
                     "compiler-runtime-free static libc archive boundary",
+                    "private runtime initial-exec TLS static-root and shared-link audit",
                     "installed archive and ELF member/source audit",
                     "sealed application driver and final-link inputs",
                     "crabc runtime source-language audit",
@@ -2296,6 +2471,7 @@ def assemble_sysroot(
                 "crt_provenance": crt_provenance["status"],
                 "builtins_provenance": builtins_provenance["status"],
                 "static_runtime_provenance": static_runtime_provenance["status"],
+                "shared_runtime_tls": shared_runtime_tls["status"],
                 "artifact_purity": artifact_purity["status"],
                 "link_input_audit": installed_link_audit["status"],
             },
@@ -2660,8 +2836,9 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
 def audit_installed_sysroot(sysroot: Path) -> dict[str, object]:
     root = require_directory(sysroot, "installed sysroot")
     manifest = load_installed_manifest(root)
-    artifacts = artifact_records(installed_runtime_paths(root), relative_to=root)
-    link_audit = audit_link_inputs(list(installed_runtime_paths(root).values()), root)
+    runtime_paths = installed_runtime_paths(root)
+    artifacts = artifact_records(runtime_paths, relative_to=root)
+    link_audit = audit_link_inputs(list(runtime_paths.values()), root)
     purity_path = require_regular_file(root / "share/crabc/purity.json", "installed purity report")
     try:
         installed_purity = json.loads(purity_path.read_text(encoding="utf-8"))
@@ -2676,6 +2853,7 @@ def audit_installed_sysroot(sysroot: Path) -> dict[str, object]:
         "artifacts": artifacts,
         "runtime_artifact_purity": artifact_purity,
         "link_input_audit": link_audit,
+        "shared_runtime_tls": audit_shared_runtime_tls(runtime_paths["libc.so"]),
         "generated_at_unix_seconds": int(time.time()),
     }
 

@@ -15,17 +15,21 @@ boundaries.
    state.
 5. `crabc-mimalloc` is the incomplete pinned, errno-free allocator engine. It
    consumes `crabc-core` and reviewed focused cryptographic primitives, but
-   never libc; after promotion, `libc` owns its C ABI adaptation and lifecycle
-   integration. The existing C backend remains production until then.
+   never libc. Before promotion, `libc` has one private Rust-only dependency
+   on its no-page process/pthread lifecycle control; that boundary owns no C
+   ABI, allocation routing, or backend choice. `libc` will own full C ABI
+   adaptation and lifecycle integration after promotion. The existing C
+   backend remains production until then.
 6. `crabc-rs` is the idiomatic Rust facade. It consumes `crabc-core` directly
    for typed native operations and never treats the C ABI as its syscall API.
 7. `compat`, `tests`, and `libc-test-harness` are executable evidence. They
    validate contracts but are not runtime dependencies.
 
 The normal dependency direction is toward narrower boundaries: `crabc-rs`,
-`crabc-mimalloc`, and `libc` may consume `crabc-core`; `libc` may consume
-`crabc-mimalloc` after its promotion; evidence may exercise every runtime
-layer before promotion.
+`crabc-mimalloc`, and `libc` may consume `crabc-core`; `libc` may consume the
+bounded private lifecycle control in `crabc-mimalloc` now, while full allocator
+adaptation remains a post-promotion boundary; evidence may exercise every
+runtime layer before promotion.
 `ldso` stays independently bootstrappable because it starts before ordinary
 runtime services are available. Neither `crabc-core` nor `crabc-rs` may own
 libc or loader singleton state.

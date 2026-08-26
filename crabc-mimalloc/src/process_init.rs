@@ -31,7 +31,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 use crate::main_theap::{
     MainStaticAttachmentStorage, MainStaticHeapFoundation,
-    MainStaticHeapFoundationError, MainStaticTheapAttachment, MainStaticTheapError,
+    MainStaticHeapFoundationError, MainStaticHeapLease, MainStaticTheapAttachment,
+    MainStaticTheapError,
 };
 use crate::meta::{MetaAllocator, MetaError};
 use crate::os::MemoryConfig;
@@ -425,6 +426,28 @@ impl ProcessMainThread {
             return Err(ProcessMainInitError::Retained);
         }
         self.attachment.as_mut().ok_or(ProcessMainInitError::Retained)
+    }
+
+    /// Mints the live static main-Heap lease on the ticket-zero thread.
+    ///
+    /// The private libc bridge calls this during process initialization and
+    /// retains the Copy process-lifetime witness for later pthread workers.
+    /// A worker must never mint the lease itself: this method verifies the
+    /// initial attachment's current-thread identity. The caller must keep the
+    /// ticket-zero owner alive and must not begin its teardown while the
+    /// returned lease or any attachment made from it exists.
+    #[inline]
+    pub(crate) fn shared_main_heap_lease(
+        &self,
+    ) -> Result<MainStaticHeapLease<'_>, ProcessMainInitError> {
+        if self.state != ProcessMainThreadState::Attached {
+            return Err(ProcessMainInitError::Retained);
+        }
+        self.attachment
+            .as_ref()
+            .ok_or(ProcessMainInitError::Retained)?
+            .shared_main_heap_lease()
+            .map_err(ProcessMainInitError::InitialThread)
     }
 
     /// Performs the existing bounded main-thread TLD/Theap teardown. Process

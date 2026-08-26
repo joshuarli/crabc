@@ -39,9 +39,29 @@ RUNTIME_RUSTFLAGS = (
     "link-dead-code",
     "-C",
     "target-feature=-crt-static,-outline-atomics",
+    # The private crabc-mimalloc lifecycle roots are part of libc's startup
+    # image. Rust has no per-static TLS-model annotation, so preserve the
+    # native runtime's initial-exec contract even though this builder replaces
+    # Cargo's config rustflags with its sealed reproducible environment.
+    "-Ztls-model=initial-exec",
 )
 RUNTIME_CFLAGS_KEY = "CFLAGS_aarch64_unknown_linux_musl"
 RUNTIME_CFLAGS = "-mno-outline-atomics"
+RUNTIME_LIFECYCLE_TLS_SYMBOL = re.compile(
+    r"crabc_mimalloc.*runtime_lifecycle.*THREAD_LIFECYCLE"
+)
+RUNTIME_LIFECYCLE_TLS_RELOCATIONS = (
+    "R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21",
+    "R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC",
+)
+RUNTIME_LIFECYCLE_TLS_FORBIDDEN_FORMS = (
+    "TLSDESC",
+    "TLSGD",
+    "TLSLD",
+    "DTPMOD",
+    "DTPREL",
+    "__tls_get_addr",
+)
 
 # Cargo's `staticlib` emitter embeds the target's stock compiler-builtins and
 # its native compiler-rt fallbacks even though the installed C driver owns a
@@ -249,6 +269,75 @@ def _archive_member_symbols(llvm_nm: str, member: Path, records: list[dict[str, 
     return sorted(set(symbols))
 
 
+def audit_static_runtime_lifecycle_tls(
+    readelf: str,
+    member: Path,
+    records: list[dict[str, object]],
+) -> dict[str, object]:
+    """Bind the selected static Rust root to the private IE lifecycle TLS.
+
+    Release fat-LTO deliberately merges crabc-mimalloc into libc's one Rust
+    archive member.  Symbol membership alone would not prove that the private
+    pthread lifecycle survived that merge with its required TLS access model.
+    Keep the proof at this exact post-LTO object boundary.
+    """
+
+    symbols = run_checked([readelf, "-sW", str(member)], records).decode("utf-8", errors="replace")
+    matches = [line for line in symbols.splitlines() if RUNTIME_LIFECYCLE_TLS_SYMBOL.search(line)]
+    if len(matches) != 1:
+        raise BuildError(
+            "selected Rust libc member must contain exactly one private "
+            f"runtime lifecycle TLS symbol, found {matches!r}"
+        )
+    fields = matches[0].split()
+    # readelf's wide symbol-table row is: index:, value, size, type, bind,
+    # visibility, section, name. The symbol is deliberately local in the
+    # static root; it is not an installed C ABI.
+    if len(fields) != 8 or fields[3:6] != ["TLS", "LOCAL", "DEFAULT"]:
+        raise BuildError(f"runtime lifecycle TLS symbol has wrong binding: {matches[0]}")
+    try:
+        size = int(fields[2])
+    except ValueError as error:
+        raise BuildError(f"runtime lifecycle TLS symbol has invalid size: {matches[0]}") from error
+    if size == 0:
+        raise BuildError("runtime lifecycle TLS symbol must have nonzero storage")
+    symbol_name = fields[7]
+
+    relocations = run_checked([readelf, "-rW", str(member)], records).decode("utf-8", errors="replace")
+    root_relocations = [line for line in relocations.splitlines() if symbol_name in line]
+    observed = {
+        relocation
+        for relocation in RUNTIME_LIFECYCLE_TLS_RELOCATIONS
+        if any(relocation in line for line in root_relocations)
+    }
+    if observed != set(RUNTIME_LIFECYCLE_TLS_RELOCATIONS):
+        raise BuildError(
+            "runtime lifecycle TLS root lacks its complete initial-exec relocation pair: "
+            + ", ".join(sorted(set(RUNTIME_LIFECYCLE_TLS_RELOCATIONS) - observed))
+        )
+    forbidden = [
+        form
+        for form in RUNTIME_LIFECYCLE_TLS_FORBIDDEN_FORMS
+        if any(form in line for line in root_relocations)
+    ]
+    if forbidden:
+        raise BuildError(
+            "runtime lifecycle TLS root uses a forbidden dynamic access form: " + ", ".join(forbidden)
+        )
+    return {
+        "access_model": "initial-exec",
+        "symbol": {
+            "name": symbol_name,
+            "size": size,
+            "type": "TLS",
+            "binding": "LOCAL",
+            "visibility": "DEFAULT",
+        },
+        "required_relocations": list(RUNTIME_LIFECYCLE_TLS_RELOCATIONS),
+        "forbidden_tls_forms": [],
+    }
+
+
 def rebuild_static_runtime_archive(
     source: Path,
     output: Path,
@@ -266,8 +355,9 @@ def rebuild_static_runtime_archive(
         raise BuildError(f"Cargo did not produce libc.a: {cargo_staticlib}")
     llvm_ar = shutil.which("llvm-ar")
     llvm_nm = shutil.which("llvm-nm")
-    if llvm_ar is None or llvm_nm is None:
-        raise BuildError("llvm-ar and llvm-nm are required to construct the owned static runtime archive")
+    readelf = shutil.which("readelf")
+    if llvm_ar is None or llvm_nm is None or readelf is None:
+        raise BuildError("llvm-ar, llvm-nm, and readelf are required to construct the owned static runtime archive")
     members_output = run_checked([llvm_ar, "t", str(cargo_staticlib)], records)
     members = [line for line in members_output.decode("utf-8", errors="replace").splitlines() if line]
     selection = select_static_runtime_members(members)
@@ -290,6 +380,7 @@ def rebuild_static_runtime_archive(
             raise BuildError("selected Rust libc member does not define __libc_start_main")
         if "mi_malloc" not in allocator_symbols:
             raise BuildError("selected allocator member does not define mimalloc's mi_malloc")
+        runtime_lifecycle_tls = audit_static_runtime_lifecycle_tls(readelf, selected_paths[0], records)
         staged_archive = stage / output.name
         run_checked([llvm_ar, "rcsD", str(staged_archive), *(str(path) for path in selected_paths)], records)
         rebuilt_output = run_checked([llvm_ar, "t", str(staged_archive)], records)
@@ -344,6 +435,8 @@ def rebuild_static_runtime_archive(
                 [Path(llvm_ar).name, "t", portable_output],
                 [Path(llvm_nm).name, "--defined-only", "--extern-only", f"$CRABC_STATIC_RUNTIME/members/{selection.runtime_member}"],
                 [Path(llvm_nm).name, "--defined-only", "--extern-only", f"$CRABC_STATIC_RUNTIME/members/{selection.allocator_member}"],
+                [Path(readelf).name, "-sW", f"$CRABC_STATIC_RUNTIME/members/{selection.runtime_member}"],
+                [Path(readelf).name, "-rW", f"$CRABC_STATIC_RUNTIME/members/{selection.runtime_member}"],
             ],
         },
     ]
@@ -368,6 +461,7 @@ def rebuild_static_runtime_archive(
             "member": selection.allocator_member,
             "reason": "libmimalloc-sys remains the separately tracked full-runtime-purity blocker",
         },
+        "runtime_lifecycle_tls": runtime_lifecycle_tls,
         "build": {
             "runtime_rustflags": list(RUNTIME_RUSTFLAGS),
             "runtime_cflags": {RUNTIME_CFLAGS_KEY: RUNTIME_CFLAGS},

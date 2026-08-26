@@ -24,11 +24,13 @@ TLS variable. A separate witness retains and inspects the source-declared
 identity-helper TLS root, which is unused by pinned Linux/AArch64 mimalloc.
 
 The runner also compiles the identical witnesses with the pinned nightly's
-default TLS model as a negative control. That object must contain
+default TLS model as a negative control. It explicitly clears
+`CARGO_ENCODED_RUSTFLAGS` for that one build, overriding the production
+target-wide setting in `.cargo/config.toml`; that object must contain
 `R_AARCH64_TLSDESC_CALL` for every root. This demonstrates that the explicit
 initial-exec flag is required; it is not redundant source documentation.
 
 This proves the exact bounded rlib codegen shape, not production integration.
 Rust has no per-static TLS-model attribute: the initial-exec choice is a crate
-codegen setting. The future `crabc-libc` integration must apply the same
-per-crate flag and separately audit the final linked allocator/runtime ELF.
+codegen setting. The private `crabc-libc` bridge applies it target-wide, and
+the sealed sysroot separately audits the final linked allocator/runtime ELF.

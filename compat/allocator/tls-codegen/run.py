@@ -281,15 +281,20 @@ def main() -> int:
 
         reject_forbidden_tls_forms(symbol_table + relocations)
 
-        # The pinned nightly's Rust default is a TLSDESC sequence for these
-        # same hidden roots. Keep that negative control executable so a future
-        # toolchain cannot silently make this judge's explicit model flag look
-        # optional, or replace it with an unreviewed access form.
+        # The production target configuration now deliberately makes
+        # initial-exec ambient for every native runtime crate. Clear Cargo's
+        # encoded rustflags only for this negative control so it measures the
+        # pinned compiler default rather than accidentally inheriting the
+        # production policy. Keep the contrast executable: a future toolchain
+        # must not silently make the explicit runtime model look optional or
+        # replace it with an unreviewed access form.
+        default_model_environment = environment.copy()
+        default_model_environment["CARGO_ENCODED_RUSTFLAGS"] = ""
         default_model_command = cargo_base_command + [
             *common_codegen_flags,
             "-Cmetadata=crabc_mimalloc_tls_default_control",
         ]
-        default_cargo_output = run(default_model_command, env=environment)
+        default_cargo_output = run(default_model_command, env=default_model_environment)
         default_archive = artifact_from_cargo_output(default_cargo_output)
         default_object_path = temporary_root / "crabc_mimalloc_tls_default_control.o"
         default_archive_member = extract_single_object(
@@ -323,6 +328,7 @@ def main() -> int:
             },
             "default_model_control": {
                 "cargo_command": default_model_command,
+                "environment_override": {"CARGO_ENCODED_RUSTFLAGS": ""},
                 "archive_member": default_archive_member,
                 "object_sha256": sha256(default_object_path),
                 "observed_root_access": "R_AARCH64_TLSDESC_* including R_AARCH64_TLSDESC_CALL",
@@ -340,7 +346,7 @@ def main() -> int:
             "forbidden_tls_forms": [],
             "codegen_scope": (
                 "test-only crabc-mimalloc probe feature; production integration must apply "
-                "the same per-crate -Ztls-model=initial-exec setting"
+                "the initial-exec setting target-wide and audit the installed runtime images"
             ),
         }
 

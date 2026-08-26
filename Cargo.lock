@@ -104,6 +104,7 @@ version = "0.3.0"
 dependencies = [
  "base64ct",
  "crabc-core",
+ "crabc-mimalloc",
  "libm",
  "libmimalloc-sys",
  "sha-crypt",

@@ -843,7 +843,7 @@ aggregate-registry adoption remain absent.
 - **Decision/removal:** accepted until the PageMap supports its source
   concurrent consumers, automatic reservation/multi-arena routing exists, and
   the remaining heterogeneous-full/singleton/unmapped/huge owner-exit
-  traversal plus pthread/TLS integration is proved.
+  traversal plus page-bearing pthread/TLS integration is proved.
   It does not
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown, or default backend use.
@@ -873,8 +873,9 @@ aggregate-registry adoption remain absent.
   post-drain finish clears fast, resets default/cached, detaches the shared heap
   list before its TLD list, then frees metadata and releases the main-attachment
   gate. It has no general shared PageMap/arena routing, producer-lifetime
-  registry, nonempty-page traversal, `pthread`/TLS callback, process shutdown,
-  or public routing. Fallible private lock or metadata errors after source
+  registry, nonempty-page traversal, page-bearing `pthread`/TLS callback,
+  process shutdown, or public routing. The separately recorded private libc
+  bridge invokes only this direct no-page entry/finish path. Fallible private lock or metadata errors after source
   mutation retain the concrete owner instead of claiming a completed teardown.
 - **Evidence:**
   `main_heap_thread::tests::later_thread_uses_main_fast_slot_and_retires_before_main_storage`
@@ -888,10 +889,44 @@ aggregate-registry adoption remain absent.
   until a page-bearing general lifecycle can be driven through the runtime.
 - **Decision/removal:** accepted until a shared PageMap/arena and remote
   producer lifetime can support the remaining `_mi_theap_collect_abandon`
-  nonempty-page paths, after which the real crabc pthread/TLS integration can invoke that completed
-  lifecycle. It does not authorize a raw shared-Heap pointer, a user-visible
-  attachment API, a fake pthread hook, or treating a retained owner as safely
-  torn down.
+  nonempty-page paths, after which the real crabc pthread/TLS integration can
+  invoke that completed lifecycle. It does not authorize a raw shared-Heap
+  pointer, a user-visible attachment API, page-bearing routing, or treating a
+  retained owner as safely torn down.
+
+### `CRABC-MI-RUNTIME-NO-PAGE-PTHREAD-BRIDGE` — accepted private runtime bridge
+
+- **Upstream/Rust:** the same source-order no-page initialization and finish
+  boundary in `src/init.c:236-282,305-360,377-421,448-481`,
+  `src/theap.c:228-306,414-449`, and `src/threadlocal.c:205-214`, represented
+  by `runtime_lifecycle.rs`, its hidden `__crabc_runtime` Rust-only boundary,
+  and the callers in `libc/src/c_abi.rs`.
+- **Category:** private production lifecycle control, not allocator routing.
+  The bridge itself has no installed C symbol, public Rust API, pthread key,
+  or allocation trace differential entry. The active C backend's pre-existing
+  private key remains outside the 128-key application capacity.
+- **Difference:** `__libc_start_main` retains the ticket-zero
+  `ProcessMainThread` and the main-thread-minted `MainStaticHeapLease` after
+  initial TLS/guard setup and before constructors. A pthread child attaches
+  before user code, and its parent waits for an explicit success/failure
+  handshake; a failed attach reaches no user code and makes `pthread_create`
+  return `EAGAIN`. Normal return, `pthread_exit`, and cancellation finish only
+  after libc cleanup and TSD destructors. The C mimalloc allocation backend is
+  unchanged. Main-thread teardown is deliberately absent, and a forked child
+  only disables the copied bridge without repairing locks, roots, or pages.
+- **Evidence:** `crabc-mimalloc/tests/runtime_lifecycle.rs` proves overlapping
+  attach/finish and churn against the retained process owner;
+  `tests/fixtures/pthread_create_join_tls_regression_test.c` and
+  `tests/fixtures/static_pthread_tls_test.c` exercise return, direct
+  `pthread_exit`, and TSD-dtor allocation through the dynamic and static
+  runtime paths; `scripts/build_owned_sysroot.py` and
+  `scripts/crabc_sysroot.py` audit the post-LTO named
+  `THREAD_LIFECYCLE` TLSIE root and final shared TPREL form.
+- **Decision/removal:** accepted only while it stays no-page and private. A
+  page-bearing runtime path needs its own source-shaped owner, failure and
+  fork contract, direct stress evidence, and a separate backend-routing and
+  promotion decision. It does not authorize allocation interposition, a
+  generic callback registry, public lifecycle attachment, or fork recovery.
 
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 

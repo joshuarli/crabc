@@ -171,6 +171,19 @@ pthread/TLS keys, route allocation/free, or implement shutdown/fork.
 Preflight failure remains cold; every failure after static selection retains
 the process image rather than reopening ticket zero.
 
+`runtime_lifecycle.rs` is the intentionally smaller production bridge over
+those no-page owners. `__libc_start_main` invokes it after initial TLS and the
+stack guard but before constructors, retaining the ticket-zero owner and its
+main-thread-minted `MainStaticHeapLease` for the process lifetime. A pthread
+child attaches before its user routine; its parent waits for that result and
+returns `EAGAIN` if attachment fails. Normal return, `pthread_exit`, and
+cancellation finish only after libc cleanup and TSD destructors. The bridge
+itself exposes no C symbol, uses no pthread key, routes no C allocation, and
+leaves `libmimalloc-sys` as the active backend with its existing private key
+outside the 128-key application capacity. The main owner is retained at normal
+exit, and a forked child only disables the bridge rather than attempting lock,
+root, page, or general fork repair.
+
 `main_theap.rs` is the sole static-TLD exception. It owns one private,
 process-static owner whose aligned/address-stable `Heap` and default `Theap`
 field slots are current-thread-only (`!Send`/`!Sync`). The coordinator splits
@@ -786,14 +799,16 @@ non-entropy-adding degraded-path difference is recorded in
 `compat/allocator/known-differences.md`. The static main-Theap slice initializes
 this exact image; both static and private dynamic Theap attachment use it, and
 the narrow non-abandoning dynamic session reuses the private page engine.
-General allocator routing and production thread/process integration remain
-absent.
+General allocator routing and page-bearing production thread/process
+integration remain absent; only the bounded no-page lifecycle bridge is live.
 Five bounded Loom
 schedules execute the shared live-owner and abandoned owner-claim/unown head
 transitions. The compiler-TLS evidence proves private initial-exec AArch64 code
 generation in a dedicated crate probe and proves that the pinned compiler
-default would instead emit TLSDESC; public runtime integration must still apply
-the required per-crate model and audit the final linked ELF. The bounded
+default would instead emit TLSDESC. The bridge applies initial-exec target-wide
+in both normal and sealed-sysroot Rust flags; its installed static archive is
+audited for the named `THREAD_LIFECYCLE` TLSIE root, and final `libc.so` must
+use TPREL relocations with no TLSDESC or `__tls_get_addr`. The bounded
 dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while

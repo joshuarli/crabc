@@ -15,6 +15,7 @@ bench = false
 
 [dependencies]
 crabc-core = { path = "../crabc-core" }
+crabc-mimalloc = { path = "../crabc-mimalloc" }
 libm = "0.2"
 libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"] }
 # RustCrypto's SHA-crypt implementation and MCF serializer. `alloc` is used

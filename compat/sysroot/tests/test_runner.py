@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -201,6 +202,87 @@ class DriverRequestTests(unittest.TestCase):
 
 
 class SealingAndAuditTests(unittest.TestCase):
+    def test_static_runtime_lifecycle_tls_requires_named_initial_exec_root(self) -> None:
+        member = {
+            "elf": {
+                "defined_symbols": [
+                    {
+                        "name": "_RNvNtC_test_14crabc_mimalloc17runtime_lifecycle16THREAD_LIFECYCLE",
+                        "type": TOOL.ELF_STT_TLS,
+                        "binding": TOOL.ELF_STB_LOCAL,
+                        "visibility": TOOL.ELF_STV_DEFAULT,
+                        "size": 392,
+                        "table_index": 7,
+                        "entry_index": 21,
+                    }
+                ],
+                "relocations": [
+                    {
+                        "symbol_table_index": 7,
+                        "symbol_index": 21,
+                        "type": relocation,
+                    }
+                    for relocation in TOOL.STATIC_RUNTIME_LIFECYCLE_TLS_RELOCATION_TYPES
+                ],
+            }
+        }
+
+        audit = TOOL.audit_static_runtime_lifecycle_tls(member)
+
+        self.assertEqual(audit["status"], "verified")
+        self.assertEqual(audit["access_model"], "initial-exec")
+        self.assertEqual(
+            audit["required_relocations"],
+            [
+                "R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21",
+                "R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC",
+            ],
+        )
+
+    def test_static_runtime_lifecycle_tls_rejects_dynamic_descriptor(self) -> None:
+        member = {
+            "elf": {
+                "defined_symbols": [
+                    {
+                        "name": "_RNvNtC_test_14crabc_mimalloc17runtime_lifecycle16THREAD_LIFECYCLE",
+                        "type": TOOL.ELF_STT_TLS,
+                        "binding": TOOL.ELF_STB_LOCAL,
+                        "visibility": TOOL.ELF_STV_DEFAULT,
+                        "size": 392,
+                        "table_index": 7,
+                        "entry_index": 21,
+                    }
+                ],
+                "relocations": [
+                    {
+                        "symbol_table_index": 7,
+                        "symbol_index": 21,
+                        "type": TOOL.R_AARCH64_TLSDESC_FIRST,
+                    }
+                ],
+            }
+        }
+
+        audit = TOOL.audit_static_runtime_lifecycle_tls(member)
+
+        self.assertEqual(audit["status"], "rejected")
+
+    def test_shared_runtime_tls_rejects_dynamic_descriptor(self) -> None:
+        with mock.patch.object(
+            TOOL,
+            "inspect_elf",
+            return_value={
+                "relocations": [
+                    {"type": TOOL.R_AARCH64_TLS_TPREL64},
+                    {"type": TOOL.R_AARCH64_TLSDESC_FIRST},
+                ],
+                "undefined_symbols": [],
+            },
+        ):
+            audit = TOOL.audit_shared_runtime_tls(Path("libc.so"))
+
+        self.assertEqual(audit["status"], "rejected")
+
     def test_sealed_environment_removes_all_target_search_overrides(self) -> None:
         source = {key: "/ambient" for key in TOOL.SEALED_ENVIRONMENT_KEYS}
         source["PATH"] = "/tools"

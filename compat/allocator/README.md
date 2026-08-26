@@ -159,7 +159,15 @@ then publishes default followed by its fixed fast slot while dynamic remains
 the immutable count-zero image and cached remains empty. After user destructors
 its direct no-page finish clears fast, resets default/cached, detaches the
 shared heap list then its TLD list, releases metadata, and decrements the main
-attachment's teardown gate. `main_heap_page.rs` can borrow one current later owner with a matched
+attachment's teardown gate. A private `libc` bridge now drives exactly this
+no-page path for real pthread workers: process startup retains the ticket-zero
+owner and its main-thread-minted Heap lease before constructors, child attach
+precedes user code and has a parent/child failure handshake, and normal return,
+`pthread_exit`, and cancellation finish after cleanup and TSD destructors. The
+bridge itself has no C ABI, pthread key, allocation routing, main-thread
+teardown, or fork repair; the active C mimalloc backend retains its existing
+private key outside the 128-key application capacity. `main_heap_page.rs`
+can borrow one current later owner with a matched
 process pair, use the same `pages_main` bitmap, and retain the map lifecycle
 through normal free/release plus one scoped producer before returning to that
 no-page teardown. It can also consume a live engine into a post-fast-slot drain
@@ -188,8 +196,8 @@ Every other live-page state rejects before detach. Only an empty drain permits t
 root/list/TLD teardown. A force/release failure remains terminally retained.
 This admits overlapping no-page owners but only one sequential page owner;
 concurrent routing, general page abandonment/owner exit, later free/reclaim
-beyond those handoffs, source deferred callbacks/arena collection, libc/pthread
-hooks, and public allocation routing remain absent. Any page/root/list mismatch
+beyond those handoffs, source deferred callbacks/arena collection, page-bearing
+libc/pthread hooks, and public allocation routing remain absent. Any page/root/list mismatch
 is retained rather than treated as complete teardown.
 `dynamic_theap.rs` now takes a nonzero ticket through an atomic
 later-ticket gate, then retains one `!Send` caller-pinned Heap, metadata TLD
@@ -680,12 +688,14 @@ and returns an ordinary drain when retirement/force collection empties every
 page. When it instead leaves exactly one initial nonfull medium with an
 immediate head, it returns that exact existing one-page handoff rather than an
 aggregate registry; multi-member and post-free-reduced registries never gain
-that edge. It still does not claim a general thread
-lifecycle, abandonment traversal, or `pthread`
-integration claim. The compiler-TLS codegen probe proves hidden
-initial-exec AArch64 root access and direct thread-pointer identity without a
-TLS resolver, but production integration must still apply that per-crate model
-and audit the final linked ELF. A
+that edge. It still does not claim a general thread lifecycle, abandonment
+traversal, or page-bearing `pthread` integration. The private no-page bridge
+is separately bounded to the direct process/pthread entry and finish order.
+The compiler-TLS codegen probe proves hidden initial-exec AArch64 root access
+and direct thread-pointer identity without a TLS resolver. The actual bridge
+sets that model target-wide in normal and sealed-sysroot builds; the sysroot
+audit requires the post-LTO named `THREAD_LIFECYCLE` static TLSIE root and a
+TPREL-only final `libc.so`, rejecting TLSDESC and `__tls_get_addr`. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
 creating-thread context; it exports neither standard allocation names nor
 `mi_*` names. It is not a public allocator API and makes no
@@ -702,6 +712,10 @@ Run the harness through the pinned Linux/AArch64 development image:
 ./scripts/dev.sh allocator --quick
 ./scripts/dev.sh allocator --full
 ./scripts/dev.sh allocator-tls
+./scripts/dev.sh sysroot
+./scripts/dev.sh static-pthread-tls
+./scripts/dev.sh test -p crabc-libc --test pthread_create_join_tls_regression
+./scripts/dev.sh pthread-stress --iterations 1 --timeout 15
 ./scripts/dev.sh allocator-perf --smoke
 ./scripts/dev.sh allocator-perf --full
 ./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
@@ -746,9 +760,10 @@ The quick gate also invokes the dedicated allocator compiler-TLS judge. It
 builds one default-off probe codegen unit with
 `-Ztls-model=initial-exec`, requires all five roots to be hidden `STT_TLS`
 objects in the appropriate initialized/uninitialized TLS sections, and rejects
-resolver-based or dynamic TLS relocation forms. A negative-control build must
-show that the pinned compiler default emits TLSDESC, keeping the production
-model requirement explicit. `allocator-tls` runs this judge alone and writes
+resolver-based or dynamic TLS relocation forms. Its negative-control build
+explicitly clears the production target rustflags and must show that the
+pinned compiler default emits TLSDESC, keeping the production model requirement
+explicit. `allocator-tls` runs this judge alone and writes
 `compat/reports/allocator/tls-codegen.json`.
 
 `allocator --full` extends that gate by building and auditing the standalone
@@ -760,7 +775,8 @@ API checks. After that passing Milestone 4 adapter lane it deliberately returns
 exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
 general integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle, the
 remaining applicable Loom protocols, and pthread stress. The bounded page
-protocols and caller-owned TLS registry do not satisfy that lifecycle gate.
+protocols, caller-owned TLS registry, and private no-page bridge do not satisfy
+that lifecycle gate.
 Loom 0.7.2 is an exact, defaults-disabled dev-dependency: its allocation-backed
 `std` scheduler, `generator` build script, and tracing support stack exist only
 in tests. The generator's external assembly path is not selected on AArch64,

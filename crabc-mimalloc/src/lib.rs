@@ -78,6 +78,7 @@ mod process_page_map;
 mod provenance;
 mod random;
 mod remote_free;
+mod runtime_lifecycle;
 mod size_class;
 mod single_thread;
 mod subproc;
@@ -93,3 +94,16 @@ pub use test_context::{
     TestAllocatorContext, TestContextAllocationError, TestContextFreeError,
     TestContextInitError, TestContextPointerError, TestContextShutdownError,
 };
+
+// This is deliberately a Rust-only, documentation-hidden friend boundary for
+// `crabc-libc`. It owns no C ABI, allocator routing, or backend selection.
+// Keeping the narrow lifecycle control surface here lets the engine retain its
+// source-shaped owners without depending on libc or public pthread APIs.
+#[doc(hidden)]
+pub mod __crabc_runtime {
+    pub use crate::runtime_lifecycle::{
+        ThreadAttachResult, ThreadFinishResult, after_fork_child,
+        attach_current_thread, finish_current_thread_after_user_destructors,
+        initialize_process, process_is_active,
+    };
+}

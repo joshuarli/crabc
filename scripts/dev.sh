@@ -171,6 +171,11 @@ refresh_dashboard() {
 }
 
 run_workspace_tests() {
+    # Native Linux/AArch64 Cargo uses the target rustflags for build scripts
+    # and proc-macros too. Keep target runtime crates on initial-exec while
+    # the test-only wrapper removes that model solely from dynamically loaded
+    # host tools; see `rustc_test_host_tool_wrapper.sh` for the boundary.
+    local test_rustc_wrapper="/workspace/scripts/rustc_test_host_tool_wrapper.sh"
     # Without an explicit target selector, Cargo's test default also compiles
     # crabc-rs static-library examples. Those no_std proof artifacts own their
     # panic handlers and are built independently by the crabc-rs evidence gate.
@@ -189,7 +194,7 @@ run_workspace_tests() {
         # An explicit package selector is already a complete Cargo scope.
         # Injecting `--workspace` also selects unrelated no_std runtime lib-test
         # targets and makes focused package commands fail during their link.
-        run_in_container python3 scripts/run_owned_test_suite.py \
+        run_in_container env RUSTC_WRAPPER="$test_rustc_wrapper" python3 scripts/run_owned_test_suite.py \
             --sysroot target/crabc-sysroot \
             --loader target/debug/libldso.so \
             -- cargo test "$@"
@@ -198,7 +203,7 @@ run_workspace_tests() {
     for argument in "$@"; do
         case "$argument" in
             --lib|--bins|--tests|--examples|--benches|--all-targets|--doc|--bin|--bin=*|--example|--example=*|--test|--test=*|--bench|--bench=*)
-                run_in_container python3 scripts/run_owned_test_suite.py \
+                run_in_container env RUSTC_WRAPPER="$test_rustc_wrapper" python3 scripts/run_owned_test_suite.py \
                     --sysroot target/crabc-sysroot \
                     --loader target/debug/libldso.so \
                     -- cargo test --workspace "$@"
@@ -206,7 +211,7 @@ run_workspace_tests() {
                 ;;
         esac
     done
-    run_in_container python3 scripts/run_owned_test_suite.py \
+    run_in_container env RUSTC_WRAPPER="$test_rustc_wrapper" python3 scripts/run_owned_test_suite.py \
         --sysroot target/crabc-sysroot \
         --loader target/debug/libldso.so \
         -- cargo test --workspace --tests "$@"

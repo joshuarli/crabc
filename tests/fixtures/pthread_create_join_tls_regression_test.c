@@ -6,16 +6,28 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "../../compat/perf/fixtures/pthread_create_join_tls_contract.h"
 
 static pthread_key_t destructor_key;
 static unsigned int destructor_calls;
+static int destructor_allocation_failed;
 static pthread_key_t slot_reuse_key;
 
 static void rearming_destructor(void *value)
 {
+    void *allocation;
+
     (void)value;
+    /* The allocator lifecycle must still be live here: libc runs its private
+     * no-page finish only after the complete user TSD-destructor phase. */
+    allocation = malloc(37);
+    if (allocation == NULL) {
+        destructor_allocation_failed = 1;
+        return;
+    }
+    free(allocation);
     destructor_calls += 1;
     if (destructor_calls < PTHREAD_DESTRUCTOR_ITERATIONS)
         (void)pthread_setspecific(destructor_key,
@@ -36,13 +48,45 @@ static int test_rearming_destructor(void)
     void *result = (void *)(uintptr_t)1;
 
     destructor_calls = 0;
+    destructor_allocation_failed = 0;
     if (pthread_key_create(&destructor_key, rearming_destructor) != 0)
         return 1;
     if (pthread_create(&worker, NULL, destructor_worker, NULL) != 0)
         return 2;
     if (pthread_join(worker, &result) != 0)
         return 3;
-    if (result != NULL || destructor_calls != PTHREAD_DESTRUCTOR_ITERATIONS)
+    if (result != NULL || destructor_calls != PTHREAD_DESTRUCTOR_ITERATIONS
+            || destructor_allocation_failed)
+        return 4;
+    if (pthread_key_delete(destructor_key) != 0)
+        return 5;
+    return 0;
+}
+
+static void *pthread_exit_destructor_worker(void *opaque)
+{
+    (void)opaque;
+    if (pthread_setspecific(destructor_key, (void *)(uintptr_t)1) != 0)
+        return (void *)(uintptr_t)1;
+    pthread_exit((void *)(uintptr_t)0x51);
+}
+
+static int test_pthread_exit_runs_destructors_before_runtime_finish(void)
+{
+    pthread_t worker;
+    void *result = NULL;
+
+    destructor_calls = 0;
+    destructor_allocation_failed = 0;
+    if (pthread_key_create(&destructor_key, rearming_destructor) != 0)
+        return 1;
+    if (pthread_create(&worker, NULL, pthread_exit_destructor_worker, NULL) != 0)
+        return 2;
+    if (pthread_join(worker, &result) != 0)
+        return 3;
+    if (result != (void *)(uintptr_t)0x51
+            || destructor_calls != PTHREAD_DESTRUCTOR_ITERATIONS
+            || destructor_allocation_failed)
         return 4;
     if (pthread_key_delete(destructor_key) != 0)
         return 5;
@@ -113,6 +157,8 @@ int main(void)
         return 20;
     if (test_rearming_destructor() != 0)
         return 30;
+    if (test_pthread_exit_runs_destructors_before_runtime_finish() != 0)
+        return 35;
     if (test_slot_reuse_clears_tsd() != 0)
         return 40;
     if (test_null_destructor_keys_reserve_capacity() != 0)

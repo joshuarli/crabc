@@ -54,6 +54,7 @@ class StaticRuntimeArchiveTests(unittest.TestCase):
             "-mno-outline-atomics",
         )
         self.assertIn("target-feature=-crt-static,-outline-atomics", environment["CARGO_ENCODED_RUSTFLAGS"])
+        self.assertIn("-Ztls-model=initial-exec", environment["CARGO_ENCODED_RUSTFLAGS"])
 
 
 if __name__ == "__main__":

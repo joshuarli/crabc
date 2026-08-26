@@ -41,6 +41,21 @@ thread teardown. This is not a general process initialization state machine:
 options/OS setup, stats, pthread/TLS keys, automatic shared-arena reservation,
 free routing, shutdown, and fork handling remain separate.
 
+One private `crabc-libc` bridge now consumes only the already-complete no-page
+owners. After initial TLS and the stack guard exist but before constructors,
+`libc/src/c_abi.rs::__libc_start_main` initializes and process-lifetime retains
+the ticket-zero `ProcessMainThread` plus its main-thread-minted
+`MainStaticHeapLease`. Each real `pthread` child attaches before its start
+routine can run; the parent waits for that result and returns `EAGAIN` rather
+than reporting a runnable thread whose no-page owner could not attach. Normal
+return, `pthread_exit`, and cancellation finish the Rust owner only after libc
+has run cleanup handlers and POSIX TSD destructors. This boundary has no C
+symbol, does not consume a pthread key, does not route `malloc`/`free`, and
+leaves the C mimalloc backend active with its existing private key outside the
+128-key application capacity. The process owner is retained at normal
+exit; a post-fork child only disables this incomplete lifecycle and performs
+no inherited-lock, root, or page-state repair.
+
 `process_page_map.rs` owns the separate process-static source-page-map
 publication boundary. It freezes one `MemoryConfig` and selected
 `MainSubprocess`, initializes a `PageMap` in its final slot, then
@@ -309,7 +324,10 @@ the canonical empty cached root. After user destructors, its direct no-page
 finish clears fast, resets default/cached, detaches the shared heap list before
 the TLD list, clears/frees the Theap metadata, tears down the TLD, and releases
 the shared-main lifetime count. The main attachment rejects teardown while that
-count is nonzero. `main_heap_page.rs` now binds one current
+count is nonzero. The private libc bridge invokes this direct no-page
+attach/finish path for real pthread workers, but never enters the page session.
+It is therefore not a page-bearing pthread/TLS lifecycle or allocation-routing
+claim. `main_heap_page.rs` now binds one current
 `MainHeapThreadAttachment` to the same matching `ProcessPageArenaLease` before
 it borrows the attachment as a page session. It verifies subprocess and frozen
 configuration before map acquisition, serializes the complete engine and one
@@ -679,7 +697,8 @@ and page count are empty. An unfinished engine poisons both the static owner
 and the process map root rather than fabricating a release route. The bounded
 process coordinator may supply the map predecessor, but neither page owner
 reserves an arena or implements multi-arena routing, general abandonment/owner
-exit, pthread/TLS hooks, process shutdown, or public allocator routing.
+exit, page-bearing pthread/TLS hooks, process shutdown, or public allocator
+routing.
 
 `DynamicTheapAttachment` uses `MainSubprocess::issue_later_thread_ticket` so
 it atomically refuses ticket zero while the selected static bootstrap is
@@ -1172,12 +1191,20 @@ owner-claim/unown races under bounded schedules; deterministic native
 regressions cover the bitmap-field quiescence and full one-page abandonment
 interleavings. A dedicated pinned-target probe proves that the TLS
 roots are hidden `STT_TLS` objects accessed through initial-exec relocations
-without `__tls_get_addr`; its negative control proves the pinned compiler
-default emits TLSDESC. Rust has no per-static model annotation, so this is a
-bounded crate-codegen proof: production integration must apply the same
-per-crate setting and audit the final linked static and shared images. These
-slices do not provide integrated allocator thread lifecycle, general terminal
-page release, or metadata reuse while a remote producer can exist.
+without `__tls_get_addr`; its negative control explicitly clears the
+production target flags and proves the pinned compiler default emits TLSDESC.
+Rust has no per-static model annotation. The private
+runtime bridge therefore makes initial-exec target-wide in `.cargo/config.toml`
+and in `scripts/build_owned_sysroot.py`'s sealed runtime flags. The sysroot
+builder then checks the actual post-LTO static runtime root by name:
+`THREAD_LIFECYCLE` must be a nonzero local `STT_TLS` object with the exact
+TLSIE relocation pair, while dynamic-TLS forms are rejected. It separately
+checks the final shared `libc.so` for `R_AARCH64_TLS_TPREL64` and rejects
+TLSDESC and `__tls_get_addr`. The probe remains a narrow compiler negative
+control; the named static-root and final-shared-ELF audits bind this specific
+private lifecycle to the installed production images. These slices do not
+provide page-bearing allocator thread lifecycle, general terminal page
+release, or metadata reuse while a remote producer can exist.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control

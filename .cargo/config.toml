@@ -8,5 +8,9 @@ rustflags = ["-C", "link-dead-code"]
 # cdylib artifacts that are the libc and dynamic loader. The native AArch64
 # Docker image links against the separately pinned musl 1.2.6 reference, so
 # opt into dynamic artifacts while preserving the project-wide dead-code flag.
+# crabc-mimalloc's private runtime roots are loaded with libc at process start;
+# all native runtime crates therefore use the pinned initial-exec TLS model.
+# Rust has no per-static model annotation, so keeping this target-wide setting
+# here and in the sealed sysroot builder is the executable production contract.
 [target.aarch64-unknown-linux-musl]
-rustflags = ["-C", "link-dead-code", "-C", "target-feature=-crt-static"]
+rustflags = ["-C", "link-dead-code", "-C", "target-feature=-crt-static", "-Ztls-model=initial-exec"]

@@ -2786,6 +2786,11 @@ unsafe fn sys_fork() -> i64 {
         Err(errno) => -(errno.raw() as i64),
     };
     if result == 0 {
+        // This bounded Rust allocator bridge has no atfork repair yet. Do not
+        // let the child interpret copied parent roots, locks, or main-thread
+        // identity as an active allocator lifecycle; the C backend remains
+        // available and no child attachment is attempted.
+        crabc_mimalloc::__crabc_runtime::after_fork_child();
         reset_thread_registry_after_fork(parent_slot, parent_tid);
     }
     result
@@ -3727,9 +3732,11 @@ const PTHREAD_EXPLICIT_SCHED: c_int = 1;
 const PTHREAD_BARRIER_SERIAL_THREAD: c_int = -1;
 
 const PTHREAD_KEYS_MAX: usize = 128;
-// The approved mimalloc path reserves one runtime key. Keep that private slot
-// separate from POSIX's 128-key application capacity instead of letting a null
-// destructor masquerade as a free key.
+// The Rust lifecycle bridge uses direct private calls and no pthread key, but
+// the still-active C mimalloc backend retains its one implementation-private
+// key. Keep that slot beyond the 128-key POSIX application capacity so a
+// destructor that allocates cannot make a conforming application lose its
+// final key. Backend promotion is the condition for revisiting this boundary.
 const PTHREAD_KEY_SLOTS: usize = PTHREAD_KEYS_MAX + 1;
 const PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4;
 const SEM_VALUE_MAX: c_int = 0x7fffffff;
@@ -3744,6 +3751,19 @@ const DT_DETACHED: c_int = 3;
 // exit wake.  Keeping publication and the state transition in one atomic
 // word prevents a lost wake on weakly ordered machines.
 const DT_TIMED_JOIN_WAITER: c_int = c_int::MIN;
+
+// A parent requests the no-page Rust allocator lifecycle only after its
+// process-main coordinator is active. The child publishes ATTACHED or FAILED
+// through this futex word before it may enter user code, so `pthread_create`
+// never reports success for a worker that could not establish its real
+// compiler-TLS/TLD/Theap owner. This is private runtime state, not a pthread
+// key or a public allocator ABI.
+const MIMALLOC_THREAD_LIFECYCLE_NOT_REQUESTED: c_int = 0;
+const MIMALLOC_THREAD_LIFECYCLE_ATTACHING: c_int = 1;
+const MIMALLOC_THREAD_LIFECYCLE_ATTACHED: c_int = 2;
+const MIMALLOC_THREAD_LIFECYCLE_FINISHED: c_int = 3;
+const MIMALLOC_THREAD_LIFECYCLE_RETAINED: c_int = 4;
+const MIMALLOC_THREAD_LIFECYCLE_FAILED: c_int = 5;
 
 #[inline(always)]
 fn detach_state_kind(state: c_int) -> c_int {
@@ -4124,6 +4144,9 @@ struct Thread {
     // later dynamic-TLS expansion moved the allocation.
     tls_initial_tp: *mut u8,
     combined_stack_tls_mapping: bool,
+    // Parent/child startup handshake and exact-once post-destructor finish
+    // state for the private no-page Rust mimalloc lifecycle bridge.
+    mimalloc_lifecycle: c_int,
     tsd: [*mut c_void; PTHREAD_KEY_SLOTS],
     // Number of non-null TSD values whose currently allocated key has a
     // destructor. This makes the ordinary no-destructor exit path explicit
@@ -4151,6 +4174,7 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
     tls_initial_block: core::ptr::null_mut(),
     tls_initial_tp: core::ptr::null_mut(),
     combined_stack_tls_mapping: false,
+    mimalloc_lifecycle: MIMALLOC_THREAD_LIFECYCLE_NOT_REQUESTED,
     tsd: [core::ptr::null_mut(); PTHREAD_KEY_SLOTS],
     tsd_destructor_values: 0,
     tsd_nonnull: [0; PTHREAD_TSD_WORDS],
@@ -4441,6 +4465,7 @@ unsafe fn initialize_thread_slot(slot: &mut Thread) {
     slot.tls_initial_block = core::ptr::null_mut();
     slot.tls_initial_tp = core::ptr::null_mut();
     slot.combined_stack_tls_mapping = false;
+    slot.mimalloc_lifecycle = MIMALLOC_THREAD_LIFECYCLE_NOT_REQUESTED;
     clear_thread_tsd(slot);
     slot.cancelbuf = core::ptr::null_mut();
     slot.robust_list = robust_list_head {
@@ -4655,12 +4680,47 @@ unsafe fn refresh_thread_tls_slot(slot: &mut Thread) {
     }
 }
 
+/// Finish the private Rust mimalloc worker owner after libc has run every
+/// user-owned cleanup handler and TSD destructor. A failure remains explicitly
+/// retained in the Rust TLS slot and disables future attachment; it never gets
+/// rewritten as a successful `_mi_thread_done` transition.
+unsafe fn finish_mimalloc_thread_lifecycle_after_user_destructors(slot: &mut Thread) {
+    if a_load(&raw const slot.mimalloc_lifecycle) != MIMALLOC_THREAD_LIFECYCLE_ATTACHED {
+        return;
+    }
+    let result = crabc_mimalloc::__crabc_runtime::finish_current_thread_after_user_destructors();
+    let state = if result == crabc_mimalloc::__crabc_runtime::ThreadFinishResult::Finished {
+        MIMALLOC_THREAD_LIFECYCLE_FINISHED
+    } else {
+        MIMALLOC_THREAD_LIFECYCLE_RETAINED
+    };
+    a_store(&raw mut slot.mimalloc_lifecycle, state);
+}
+
 unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
     let slot = &mut *(slot as *mut Thread);
     // `__rc_create_thread_tls` copies the creator's TLS template. Replace
     // that inherited cache before any cancellation-point or pthread call can
     // observe the new thread's slot.
     CURRENT_THREAD = slot;
+    if a_load(&raw const slot.mimalloc_lifecycle) == MIMALLOC_THREAD_LIFECYCLE_ATTACHING {
+        let attached = crabc_mimalloc::__crabc_runtime::attach_current_thread()
+            == crabc_mimalloc::__crabc_runtime::ThreadAttachResult::Attached;
+        let lifecycle = if attached {
+            MIMALLOC_THREAD_LIFECYCLE_ATTACHED
+        } else {
+            MIMALLOC_THREAD_LIFECYCLE_FAILED
+        };
+        a_store(&raw mut slot.mimalloc_lifecycle, lifecycle);
+        futex_wake(&raw mut slot.mimalloc_lifecycle, 1);
+        if !attached {
+            // The parent has not received a pthread_t. Publish the failed
+            // startup and leave through the ordinary child-cleartid path so
+            // it can reclaim this private stack/TLS mapping safely.
+            publish_thread_exit(slot as *mut Thread);
+            sys_exit_thread(0);
+        }
+    }
     // The public signal-set helpers correctly reject musl-reserved signals;
     // unblock the runtime cancellation signal through the raw kernel seam.
     let cancel_set: SigSetT = 1_u64 << (SIGCANCEL - 1);
@@ -4669,10 +4729,52 @@ unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
         core::mem::transmute::<usize, _>(slot.user_fn);
     let ret = user_fn(slot.user_arg);
     run_key_dtors(slot);
+    finish_mimalloc_thread_lifecycle_after_user_destructors(slot);
     refresh_thread_tls_slot(slot);
     slot.result = ret;
     publish_thread_exit(slot as *mut Thread);
     sys_exit_thread(0)
+}
+
+/// Wait for a requested allocator lifecycle attachment before publishing a
+/// successful pthread creation. On failure the child has already exited
+/// without invoking user code; wait for `CLONE_CHILD_CLEARTID` before freeing
+/// the private stack/TLS mapping that only this parent can still observe.
+unsafe fn wait_for_mimalloc_thread_lifecycle_start(slot: *mut Thread) -> bool {
+    let lifecycle = &raw mut (*slot).mimalloc_lifecycle;
+    loop {
+        match a_load(lifecycle) {
+            MIMALLOC_THREAD_LIFECYCLE_ATTACHING => {
+                sys_futex(
+                    lifecycle,
+                    FUTEX_WAIT,
+                    MIMALLOC_THREAD_LIFECYCLE_ATTACHING,
+                    null_mut(),
+                    null_mut(),
+                    0,
+                );
+            }
+            MIMALLOC_THREAD_LIFECYCLE_ATTACHED
+            | MIMALLOC_THREAD_LIFECYCLE_FINISHED
+            | MIMALLOC_THREAD_LIFECYCLE_RETAINED => return true,
+            MIMALLOC_THREAD_LIFECYCLE_FAILED => {
+                let tid_ptr = &raw mut (*slot).tid;
+                loop {
+                    let tid = a_load(tid_ptr);
+                    if tid == 0 {
+                        break;
+                    }
+                    if tid < 0 {
+                        return false;
+                    }
+                    sys_futex(tid_ptr, FUTEX_WAIT, tid, null_mut(), null_mut(), 0);
+                }
+                release_thread_slot(&mut *slot);
+                return false;
+            }
+            _ => return false,
+        }
+    }
 }
 
 unsafe fn find_thread() -> Option<&'static mut Thread> {
@@ -4821,6 +4923,15 @@ pub unsafe extern "C" fn pthread_create(
     (*slot).tls_initial_block = tls_block;
     (*slot).tls_initial_tp = fs_base;
     (*slot).combined_stack_tls_mapping = true;
+    let mimalloc_lifecycle_requested = crabc_mimalloc::__crabc_runtime::process_is_active();
+    a_store(
+        &raw mut (*slot).mimalloc_lifecycle,
+        if mimalloc_lifecycle_requested {
+            MIMALLOC_THREAD_LIFECYCLE_ATTACHING
+        } else {
+            MIMALLOC_THREAD_LIFECYCLE_NOT_REQUESTED
+        },
+    );
     let stack_top = stack.add(stack_mapping_size);
     let tid_ptr = &raw mut (*slot).tid;
     let flags = CLONE_VM
@@ -4855,6 +4966,9 @@ pub unsafe extern "C" fn pthread_create(
     );
     if tid < 0 {
         release_thread_slot(&mut *slot);
+        return EAGAIN;
+    }
+    if mimalloc_lifecycle_requested && !wait_for_mimalloc_thread_lifecycle_start(slot) {
         return EAGAIN;
     }
     *thread = slot as PthreadT;
@@ -4932,6 +5046,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
     if let Some(slot) = find_thread() {
         run_cleanup_handlers(slot);
         run_key_dtors(slot);
+        finish_mimalloc_thread_lifecycle_after_user_destructors(slot);
         refresh_thread_tls_slot(slot);
         slot.result = retval;
         publish_thread_exit(slot as *mut Thread);
@@ -6585,6 +6700,7 @@ unsafe fn do_cancel() -> ! {
     if let Some(slot) = find_thread() {
         run_cleanup_handlers(slot);
         run_key_dtors(slot);
+        finish_mimalloc_thread_lifecycle_after_user_destructors(slot);
         refresh_thread_tls_slot(slot);
         slot.result = !0usize as *mut c_void; // PTHREAD_CANCELED
         publish_thread_exit(slot as *mut Thread);
@@ -21826,6 +21942,7 @@ const AT_NULL: usize = 0;
 const AT_PHDR: usize = 3;
 const AT_PHENT: usize = 4;
 const AT_PHNUM: usize = 5;
+const CABI_AT_PAGESZ: usize = 6;
 const AT_RANDOM: usize = 25;
 const PT_PHDR: u32 = 6;
 const PT_TLS: u32 = 7;
@@ -22023,6 +22140,16 @@ pub unsafe extern "C" fn __libc_start_main(
     if !unsafe { initialize_stack_guard(vectors.auxv) } {
         unsafe { _exit(127) };
     }
+
+    // The current Rust mimalloc port contributes only a private no-page
+    // lifecycle shadow here. Its ticket-zero owner is retained for this
+    // process before constructors, while public C allocation remains routed
+    // through `libmimalloc-sys`. A failed shadow setup is explicitly inactive
+    // rather than changing the established libc startup failure contract.
+    let process_page_size =
+        unsafe { startup_auxv_value(vectors.auxv, CABI_AT_PAGESZ) }.unwrap_or(0);
+    let _mimalloc_lifecycle_active =
+        crabc_mimalloc::__crabc_runtime::initialize_process(process_page_size);
 
     // Register finalizers before app code can install atexit callbacks. The
     // LIFO chain then gives application callbacks first, executable fini
