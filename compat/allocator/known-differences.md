@@ -970,7 +970,26 @@ aggregate-registry adoption remain absent.
   existing teardown. A sole, mixed-size, non-singleton, OS-backed, existing
   queue/direct, allocation-time, reclaim/adoption/requeue, scan, or concurrent
   case remains absent, while a collection failure retains the drain.
-  `DynamicThreadExitDrain::abandon_full_medium_pages` is a second separate
+  `DynamicThreadExitDrain::abandon_full_os_singleton_pages` is a separate
+  sequential dynamic aggregate, not a general `BIN_FULL` or OS-list traversal:
+  it requires two or more same-rounded-size full `MemoryKind::Os` singleton
+  members, each with `reserved == used == 1`, zero retirement countdown, empty
+  local free list, a valid clipped PageMap/alias release image, an initially
+  empty dynamic `Heap::os_abandoned_pages` list, and every other queue/direct
+  entry empty. It preserves source force -> false collection -> full-queue/
+  page-count detach -> private OS-list insertion -> unmapped unown for every
+  member. The returned `DynamicThreadExitFullOsSingletonPagesRoute` retains
+  only the original drain, sealed size, and member count, not a raw member list
+  or dynamic bitmap/count pair. Each sequential canonical free re-resolves
+  PageMap, accepts only the raw empty failed-reclaim result, removes that exact
+  private-list member, then releases its clipped PageMap -> alias -> primary
+  metadata -> mapping image. The final free returns the empty drain for
+  existing teardown. A sole, arena-backed, mixed-size, non-singleton,
+  preexisting-list, allocation-time, reclaim/adoption/requeue, scan, producer,
+  concurrent, huge, or general owner-exit case remains absent, while a
+  collection, list, or mapping-release failure retains the sole owner
+  terminally.
+  `DynamicThreadExitDrain::abandon_full_medium_pages` is a third separate
   sequential dynamic aggregate, not a general `BIN_FULL` traversal: it
   requires two or more full `MemoryKind::Arena` `PageKind::Medium` members with
   one rounded block size and regular bin, `reserved > 1`, `used == reserved`,
@@ -987,7 +1006,7 @@ aggregate-registry adoption remain absent.
   mixed-size/class, non-medium, OS-backed, existing queue/direct,
   allocation-time, reclaim/adoption/requeue, scan, producer, or concurrent case
   remains absent, while a collection failure retains the drain.
-  `DynamicThreadExitDrain::abandon_full_large_pages` is a third separate
+  `DynamicThreadExitDrain::abandon_full_large_pages` is a fourth separate
   sequential dynamic aggregate, not a general `BIN_FULL` traversal: it
   requires two or more full `MemoryKind::Arena` `PageKind::Large` members with
   one rounded block size and regular bin, `reserved > 1`, `used == reserved`,
@@ -1005,7 +1024,7 @@ aggregate-registry adoption remain absent.
   malformed-span, existing queue/direct, allocation-time,
   reclaim/adoption/requeue, scan, producer, or concurrent case remains absent,
   while a collection failure retains the drain.
-  `DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fourth
+  `DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fifth
   separate sequential dynamic aggregate, not a general ordinary-bin traversal:
   it is proven through that exact ordinary source fixture and requires two or
   more full `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin,
@@ -1026,7 +1045,7 @@ aggregate-registry adoption remain absent.
   reclaim/adoption/requeue, scan, producer, and concurrent cases remain absent,
   while a collection failure retains the drain; production ordinary dynamic
   allocation remains sealed.
-  `DynamicThreadExitDrain::abandon_full_direct_small_pages` is a fifth
+  `DynamicThreadExitDrain::abandon_full_direct_small_pages` is a sixth
   separate sequential dynamic aggregate, not a general ordinary-bin traversal:
   it is proven through that exact ordinary source fixture and requires two or
   more full `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin,
@@ -1170,8 +1189,8 @@ aggregate-registry adoption remain absent.
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
   owners are the post-TLS arena/OS singleton, homogeneous full-singleton,
-  full-medium, and full-large aggregates, sole full-medium, full-large,
-  full-non-direct-small, and
+  full-OS-singleton, full-medium, full-large, full-non-direct-small, and
+  full-direct-small aggregates, sole full-medium, full-large, full-non-direct-small, and
   full-direct-small handoffs above and the later-main full-medium,
   full-large, and full-non-direct-small routes;
   none routes

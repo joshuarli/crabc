@@ -466,6 +466,27 @@ pub(crate) struct DynamicThreadExitFullSingletonPagesRoute<'attach, 'heap, 'aren
     terminal: bool,
 }
 
+/// A bounded source-order aggregate of two-or-more full OS-aligned singleton
+/// pages retained by a post-TLS dynamic drain.
+///
+/// Every member had one rounded block size, one live block, and `BIN_FULL`
+/// membership while linked in the source Theap. Unlike arena singletons, an
+/// aligned OS singleton may have ordinary block-size geometry; the sealed
+/// `MemoryKind::Os` plus clipped `ReleaseSpan::Os` image is its source class.
+/// Before common abandonment clears each low owner, source links it into the
+/// dynamic Heap's private OS list. The route keeps only the drain plus
+/// size/count facts: every later free re-resolves its PageMap member and
+/// removes that exact list member before its clipped terminal release. It has
+/// no raw page list, arena bitmap/count pair, list traversal, allocation-time
+/// claim/requeue, or concurrent-free authority.
+#[must_use = "a dynamic full OS-singleton aggregate route must release every member or remain terminally retained"]
+pub(crate) struct DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map> {
+    drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+    block_size: usize,
+    remaining_pages: usize,
+    terminal: bool,
+}
+
 /// A bounded source-order aggregate of two-or-more full arena medium pages
 /// retained by a post-TLS dynamic drain.
 ///
@@ -2273,6 +2294,109 @@ pub(crate) enum DynamicThreadExitFullSingletonPagesRemoteFreeFailure<
     Terminal {
         route: DynamicThreadExitFullSingletonPagesRoute<'attach, 'heap, 'arena, 'map>,
         error: DynamicThreadExitFullSingletonPagesRemoteFreeError,
+    },
+}
+
+/// A source-boundary refusal while a post-TLS dynamic drain prepares its
+/// homogeneous full OS-aligned singleton aggregate traversal. `Rejected`
+/// means the complete queue/direct/list preflight left source state untouched;
+/// once source collection or list insertion begins, the drain remains the
+/// only terminal owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitFullOsSingletonPagesAbandonError {
+    Collection,
+    ForeignPage,
+    NonOs,
+    NotFullSingleton,
+    NotMultiplePages,
+    OsAbandonedListNotEmpty,
+    OsAbandonedList(HeapOsAbandonedPageListError),
+    Queue,
+    RouteCountOverflow,
+    PostDetachState,
+    UnexpectedAbandonOutcome(AbandonResult),
+    Abandon(AbandonError),
+}
+
+/// The retained source drain after one dynamic full OS-aligned singleton
+/// aggregate owner-exit traversal attempt.
+#[must_use = "a failed dynamic full OS singleton aggregate transition retains its draining owner"]
+pub(crate) enum DynamicThreadExitFullOsSingletonPagesAbandonFailure<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    /// Preflight rejected before source collection, queue mutation, or
+    /// private OS-list insertion.
+    Rejected {
+        drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullOsSingletonPagesAbandonError,
+    },
+    /// Source force/false collection, queue removal, private-list insertion,
+    /// or unmapped abandonment may have changed the drain, which remains the
+    /// only terminal owner.
+    RetainedDrain {
+        drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullOsSingletonPagesAbandonError,
+    },
+}
+
+/// One result while the dynamic full OS-aligned singleton aggregate route
+/// handles one canonical client free.
+#[must_use = "a nonterminal dynamic full OS singleton aggregate result retains the only route owner"]
+pub(crate) enum DynamicThreadExitFullOsSingletonPagesFreeResult<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    /// One member's exact OS-list removal and clipped mapping release
+    /// completed while another PageMap member remains in the route.
+    ReleasedPage(DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map>),
+    /// The final member released, returning the empty dynamic drain for its
+    /// existing source root/list teardown.
+    Released(DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>),
+}
+
+/// A process-map, private-list, or source-route reason one dynamic full
+/// OS-aligned singleton aggregate client free could not complete normally.
+/// `Unmapped` and `InvalidBlock` are pre-mutation observations; every other
+/// result may have acquired a source low owner bit or changed terminal
+/// release state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeError {
+    Terminal,
+    Unmapped,
+    InvalidBlock,
+    ConcurrentOwner,
+    OsAbandonedList(HeapOsAbandonedPageListError),
+    UnexpectedFreeOutcome(abandoned::UnmappedAbandonedFreeResult),
+    Abandon(AbandonError),
+    Release,
+}
+
+/// A retained dynamic full OS-aligned singleton aggregate route after one
+/// client-free attempt.
+#[must_use = "a failed dynamic full OS singleton aggregate free retains its route"]
+pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    /// The supplied block was absent from the current PageMap or did not name
+    /// a canonical OS singleton allocation, so no source owner bit changed.
+    Rejected {
+        route: DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullOsSingletonPagesRemoteFreeError,
+    },
+    /// A source tail may have acquired a low owner bit, changed the private
+    /// OS list, cleared a PageMap entry, or parked a mapping release owner.
+    /// Retain the route only as a terminal owner.
+    Terminal {
+        route: DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitFullOsSingletonPagesRemoteFreeError,
     },
 }
 
@@ -11459,6 +11583,37 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
 impl<'attach, 'heap, 'arena, 'map>
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>
 {
+    /// Reads only the private-list empty witness required before a bounded
+    /// OS-singleton aggregate can establish that every later member belongs
+    /// to its own source traversal.
+    fn os_abandoned_pages_are_empty(&self) -> Result<bool, HeapOsAbandonedPageListError> {
+        self.session.os_abandoned_pages_are_empty()
+    }
+
+    /// Inserts one exact source-classified OS singleton into the dynamic
+    /// Heap's private list. Classification and terminal ownership stay with
+    /// the caller; this narrow helper merely preserves the source list order.
+    fn push_os_abandoned_page(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        // SAFETY: callers retain the dynamic Heap, page metadata, and full
+        // source abandonment transition through paired removal or terminal
+        // retention.
+        unsafe { self.session.push_os_abandoned_singleton(page) }
+    }
+
+    /// Removes one exact all-free OS singleton from the dynamic Heap's
+    /// private list before its clipped terminal mapping release.
+    fn remove_os_abandoned_page(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        // SAFETY: callers have claimed the page's source low owner bit and
+        // retain it through the terminal release immediately after removal.
+        unsafe { self.session.remove_os_abandoned_singleton(page) }
+    }
+
     /// Preserves the non-arena half of `_mi_arenas_page_abandon` for the
     /// caller-pinned dynamic Heap before common abandonment clears the page's
     /// low owner state.
@@ -11469,7 +11624,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the caller preflighted this exact live full OS singleton,
         // retained its dynamic Heap through the drain, and has not yet made
         // the common abandonment transition consume its source identity.
-        unsafe { self.session.push_os_abandoned_singleton(page) }
+        self.push_os_abandoned_page(page)
             .map_err(DynamicThreadExitSingletonAbandonError::OsAbandonedList)
     }
 
@@ -11482,7 +11637,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the all-free handoff has claimed this exact still-live list
         // member and retains it through the immediately following terminal
         // OS release.
-        unsafe { self.session.remove_os_abandoned_singleton(page) }
+        self.remove_os_abandoned_page(page)
             .map_err(DynamicThreadExitSingletonRemoteFreeError::OsAbandonedList)
     }
 }
@@ -11853,6 +12008,420 @@ impl<'attach, 'heap, 'arena, 'map>
         }
 
         Ok(DynamicThreadExitFullSingletonPagesRoute {
+            drain: self,
+            block_size,
+            remaining_pages: detached_pages,
+            terminal: false,
+        })
+    }
+
+    /// Traverses a bounded homogeneous full OS-aligned singleton source queue
+    /// into one sequential post-TLS dynamic route.
+    ///
+    /// `mi_theap_collect_ex(MI_ABANDON)` reaches `BIN_FULL` after the
+    /// retired-page pass, force-collects each current member, then
+    /// `_mi_page_abandon` false-collects, detaches, and abandons it. For a
+    /// non-arena singleton, `_mi_arenas_page_abandon` first links the exact
+    /// page into its dynamic Heap's private OS list. This boundary preserves
+    /// that order only for two-or-more same-size OS singleton members and
+    /// only when that list starts empty, so it never turns the list into a
+    /// general aggregate registry.
+    ///
+    /// Every later canonical free re-resolves its PageMap member, takes only
+    /// the raw failed-reclaim empty tail, removes that exact OS-list member,
+    /// and releases its own clipped map/metadata/mapping image. It keeps no
+    /// raw member list, does not publish an arena bitmap/count pair, and
+    /// grants no traversal, reclaim/requeue, allocation-time, producer, or
+    /// concurrent-free authority. Arena, mixed-size/class, direct-cache,
+    /// pre-existing-list, and all other owner-exit shapes remain separate.
+    ///
+    /// # Safety
+    ///
+    /// No scoped producer may survive. Every current page must be a full
+    /// OS-aligned singleton member of one rounded source size, with a valid
+    /// clipped PageMap/alias release image, and every client alias must be
+    /// consumed exactly once through the returned linear route or retained
+    /// terminally. This is valid only after the concrete dynamic regular
+    /// TLS-slot-clear transition.
+    pub(crate) unsafe fn abandon_full_os_singleton_pages(
+        mut self,
+    ) -> Result<
+        DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitFullOsSingletonPagesAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |drain, error| {
+            DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected { drain, error }
+        };
+        let retained = |drain, error| {
+            DynamicThreadExitFullOsSingletonPagesAbandonFailure::RetainedDrain { drain, error }
+        };
+        if self.engine.is_collection_poisoned() || self.engine.pending_os_release.is_some() {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesAbandonError::Collection,
+            ));
+        }
+        match self.engine.os_abandoned_pages_are_empty() {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::OsAbandonedListNotEmpty,
+                ));
+            }
+            Err(error) => {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::OsAbandonedList(error),
+                ));
+            }
+        }
+
+        // Full live singleton geometry with zero retirement countdown makes
+        // the preceding retired-page pass a no-op. Do not broaden this route
+        // into a general retired traversal.
+        let expected_page_count = self.engine.session.theap().page_count();
+        if expected_page_count < 2 {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesAbandonError::NotMultiplePages,
+            ));
+        }
+        for index in 0..PAGES_DIRECT {
+            if self.engine.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                ));
+            }
+        }
+
+        // `BIN_FULL` can mix all source page classes. Prove that the complete
+        // image is instead this one homogeneous OS singleton class before
+        // force collection, queue mutation, or list insertion.
+        let mut observed_page_count = 0usize;
+        let mut expected_block_size = None;
+        for queue_bin in 0..BIN_COUNT {
+            let Some(queue) = self.engine.session.queue(queue_bin) else {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                ));
+            };
+            if queue_bin != BIN_FULL {
+                if queue.count() != 0 || !queue.is_empty() {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                    ));
+                }
+                continue;
+            }
+            if queue.count() < 2 {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::NotMultiplePages,
+                ));
+            }
+            let mut remaining = queue.count();
+            let mut page = queue.first();
+            let mut previous = core::ptr::null_mut();
+            while remaining != 0 {
+                let Some(page_nonnull) = NonNull::new(page) else {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                    ));
+                };
+                // SAFETY: the consuming dynamic drain exclusively owns the
+                // source queue image through this non-mutating preflight.
+                let page_ref = unsafe { page_nonnull.as_ref() };
+                if page_ref.prev() != previous {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                    ));
+                }
+                if !self.engine.owns_page(page_ref)
+                    || page_ref.heap() != self.engine.session.theap().heap()
+                {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::ForeignPage,
+                    ));
+                }
+                if page_ref.memid().kind() != MemoryKind::Os {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::NonOs,
+                    ));
+                }
+                // An OS-aligned singleton can be small, medium, or otherwise
+                // ordinary-sized; `MemoryKind::Os` and its clipped release
+                // span—not PageKind or BIN_HUGE—are the source classifier.
+                if page_ref.reserved() != 1
+                    || page_ref.used() != 1
+                    || !page_is_in_full(page_ref)
+                    || page_ref.retire_expire() != 0
+                    || !page_ref.free_list_head().is_null()
+                    || !matches!(
+                        self.engine.release_span(page_nonnull.as_ptr()),
+                        Some(ReleaseSpan::Os(_))
+                    )
+                {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::NotFullSingleton,
+                    ));
+                }
+                match expected_block_size {
+                    None => expected_block_size = Some(page_ref.block_size()),
+                    Some(expected_size) if expected_size == page_ref.block_size() => {}
+                    _ => {
+                        return Err(reject(
+                            self,
+                            DynamicThreadExitFullOsSingletonPagesAbandonError::NotFullSingleton,
+                        ));
+                    }
+                }
+                observed_page_count = match observed_page_count.checked_add(1) {
+                    Some(count) => count,
+                    None => {
+                        return Err(reject(
+                            self,
+                            DynamicThreadExitFullOsSingletonPagesAbandonError::RouteCountOverflow,
+                        ));
+                    }
+                };
+                // SAFETY: structural preflight bounds this walk by queue
+                // count and validates the final tail below.
+                page = unsafe { page_nonnull.as_ref().next() };
+                previous = page_nonnull.as_ptr();
+                remaining -= 1;
+            }
+            if !page.is_null() || queue.last() != previous {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                ));
+            }
+        }
+        if observed_page_count != expected_page_count {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+            ));
+        }
+        let Some(block_size) = expected_block_size else {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesAbandonError::NotMultiplePages,
+            ));
+        };
+
+        let mut detached_pages = 0usize;
+        let mut page = match self.engine.session.queue(BIN_FULL) {
+            Some(queue) => queue.first(),
+            None => {
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                ));
+            }
+        };
+        let mut last_detached = None;
+        while !page.is_null() {
+            let Some(page_nonnull) = NonNull::new(page) else {
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                ));
+            };
+            // Save the queue successor before removal overwrites its links and
+            // before the current page becomes the private OS-list head.
+            let next = unsafe { page_nonnull.as_ref().next() };
+
+            if let Err(error) = self.engine.page_free_collect_force(page_nonnull) {
+                self.engine.retain_page_collect_poison(page_nonnull, error, None);
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Collection,
+                ));
+            }
+            let after_force = unsafe { page_nonnull.as_ref() };
+            if after_force.memid().kind() != MemoryKind::Os
+                || after_force.block_size() != block_size
+                || after_force.reserved() != 1
+                || after_force.used() != 1
+                || !page_is_in_full(after_force)
+            {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::NotFullSingleton,
+                ));
+            }
+            if let Err(error) = self.engine.page_free_collect_false(page_nonnull) {
+                self.engine.retain_page_collect_poison(page_nonnull, error, None);
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Collection,
+                ));
+            }
+            let after_collect = unsafe { page_nonnull.as_ref() };
+            if after_collect.memid().kind() != MemoryKind::Os
+                || after_collect.block_size() != block_size
+                || after_collect.reserved() != 1
+                || after_collect.used() != 1
+                || !page_is_in_full(after_collect)
+            {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::NotFullSingleton,
+                ));
+            }
+
+            let queue = match self.engine.session.queue_mut(BIN_FULL) {
+                Some(queue) => queue as *mut _,
+                None => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                    ));
+                }
+            };
+            // SAFETY: complete preflight proved the intrusive links, and the
+            // consuming drain is the source's sole queue mutator.
+            unsafe { page_queue_remove_metadata(&mut *queue, page_nonnull.as_ptr()) };
+            if !self.engine.session.note_page_removed() {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::Queue,
+                ));
+            }
+            // The source non-arena arm links the detached still-associated
+            // page before common abandonment clears the low owner state.
+            if let Err(error) = self.engine.push_os_abandoned_page(page_nonnull) {
+                self.engine.retain_page_collect_poison(
+                    page_nonnull,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::OsAbandonedList(error),
+                ));
+            }
+            match unsafe { abandoned::abandon_unmappable_after_collect(page_nonnull) } {
+                Ok(AbandonResult::UnownedUnmapped) => {}
+                Ok(outcome) => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::UnexpectedAbandonOutcome(
+                            outcome,
+                        ),
+                    ));
+                }
+                Err(error) => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::Abandon(error),
+                    ));
+                }
+            }
+            detached_pages = match detached_pages.checked_add(1) {
+                Some(count) => count,
+                None => {
+                    self.engine.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(retained(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesAbandonError::RouteCountOverflow,
+                    ));
+                }
+            };
+            last_detached = Some(page_nonnull);
+            page = next;
+        }
+
+        let list_has_members = match self.engine.os_abandoned_pages_are_empty() {
+            Ok(is_empty) => !is_empty,
+            Err(error) => {
+                if let Some(page) = last_detached {
+                    self.engine.retain_page_collect_poison(
+                        page,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                }
+                return Err(retained(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesAbandonError::OsAbandonedList(error),
+                ));
+            }
+        };
+        if detached_pages < 2
+            || detached_pages != expected_page_count
+            || !list_has_members
+            || self.engine.is_collection_poisoned()
+            || self.engine.pending_os_release.is_some()
+            || self.engine.session.theap().page_count() != 0
+            || (0..BIN_COUNT).any(|bin| {
+                !self
+                    .engine
+                    .session
+                    .queue(bin)
+                    .is_some_and(|queue| queue.is_empty())
+            })
+            || (0..PAGES_DIRECT)
+                .any(|index| self.engine.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()))
+        {
+            if let Some(page) = last_detached {
+                self.engine.retain_page_collect_poison(
+                    page,
+                    PageCollectError::Lifecycle,
+                    None,
+                );
+            }
+            return Err(retained(
+                self,
+                DynamicThreadExitFullOsSingletonPagesAbandonError::PostDetachState,
+            ));
+        }
+
+        Ok(DynamicThreadExitFullOsSingletonPagesRoute {
             drain: self,
             block_size,
             remaining_pages: detached_pages,
@@ -17123,6 +17692,202 @@ impl<'attach, 'heap, 'arena, 'map>
     #[inline]
     pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
         self.drain.test_dynamic_arena_page_is_clear(memory)
+    }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map>
+{
+    /// Routes one exact client free through the bounded post-TLS dynamic full
+    /// OS-aligned singleton aggregate.
+    ///
+    /// Each free re-resolves its exact clipped PageMap member. The source
+    /// abandonment identity held after its low-owner claim selects only the
+    /// raw terminal-empty tail; the route then removes that exact private
+    /// OS-list member before map/alias/metadata/mapping release. It therefore
+    /// stores neither raw member pointers nor mutable list state.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be an exact once-live canonical allocation in one member
+    /// transferred by [`DynamicThreadExitDrain::abandon_full_os_singleton_pages`].
+    /// It must not be freed, transferred, or concurrently used through any
+    /// other route. This consuming API serializes one source failed-reclaim
+    /// decision at a time; it does not make the aggregate allocation-time,
+    /// reclaim/requeue, list-traversal, producer, or concurrent-free capable.
+    pub(crate) unsafe fn remote_free_after_thread_exit(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitFullOsSingletonPagesFreeResult<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |route, error| {
+            DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Rejected { route, error }
+        };
+        let terminal = |route, error| {
+            DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal { route, error }
+        };
+        if self.terminal {
+            return Err(terminal(
+                self,
+                DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Terminal,
+            ));
+        }
+        if self.remaining_pages == 0 {
+            self.terminal = true;
+            return Err(terminal(
+                self,
+                DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Release,
+            ));
+        }
+        // SAFETY: the route retains the sole dynamic PageMap borrower through
+        // this lookup, low-owner claim, private-list removal, and possible
+        // clipped terminal release. It stores no former-Theap member pointer.
+        let page = NonNull::new(unsafe { self.drain.engine.page_map.checked_lookup(block.as_ptr()) });
+        let Some(page) = page else {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Unmapped,
+            ));
+        };
+        // SAFETY: PageMap registration and the linear route retain this page
+        // metadata through the pre-mutation source-shape validation.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.memid().kind() != MemoryKind::Os
+            || page_ref.heap() != self.drain.engine.session.theap().heap()
+            || page_ref.block_size() != self.block_size
+            || page_ref.reserved() != 1
+            || page_ref.used() != 1
+            || page_is_in_full(page_ref)
+            || !matches!(self.drain.engine.release_span(page.as_ptr()), Some(ReleaseSpan::Os(_)))
+        {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesRemoteFreeError::InvalidBlock,
+            ));
+        }
+        let Some(canonical_block) = self.drain.engine.canonical_block_start(page_ref, block) else {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesRemoteFreeError::InvalidBlock,
+            ));
+        };
+        // SAFETY: the sealed OS singleton geometry and PageMap member proof
+        // hold through this local preflight, which ends before the atomic
+        // failed-reclaim tail mutates the source low owner bit.
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err() {
+            return Err(reject(
+                self,
+                DynamicThreadExitFullOsSingletonPagesRemoteFreeError::InvalidBlock,
+            ));
+        }
+
+        // Construction of `DynamicTheapPageDrainSession` cleared the dynamic
+        // regular TLS slot. That source fact makes reclaim fail before the raw
+        // singleton tail below and leaves this route to perform only its exact
+        // list removal plus clipped terminal release.
+        match unsafe { abandoned::free_unmappable_after_failed_reclaim(page, canonical_block) } {
+            Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
+                // `_mi_arenas_page_unabandon` removes the non-arena member
+                // before PageMap/alias/metadata/mapping release. A failure
+                // may have acquired the low owner bit, so retain terminally.
+                if let Err(error) = self.drain.engine.remove_os_abandoned_page(page) {
+                    self.terminal = true;
+                    return Err(terminal(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesRemoteFreeError::OsAbandonedList(
+                            error,
+                        ),
+                    ));
+                }
+                if !self
+                    .drain
+                    .engine
+                    .release_queue_detached_abandoned_os_page(page)
+                    || self.drain.engine.pending_os_release.is_some()
+                {
+                    self.terminal = true;
+                    return Err(terminal(
+                        self,
+                        DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Release,
+                    ));
+                }
+                if self.remaining_pages == 1 {
+                    self.remaining_pages = 0;
+                    Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::Released(
+                        self.drain,
+                    ))
+                } else {
+                    self.remaining_pages -= 1;
+                    Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(self))
+                }
+            }
+            Ok(abandoned::UnmappedAbandonedFreeResult::PublishedToExistingOwner) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesRemoteFreeError::ConcurrentOwner,
+                ))
+            }
+            Ok(outcome) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesRemoteFreeError::UnexpectedFreeOutcome(
+                        outcome,
+                    ),
+                ))
+            }
+            Err(error) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Abandon(error),
+                ))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_remaining_pages(&self) -> usize { self.remaining_pages }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_count(&self) -> usize { self.drain.test_page_count() }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        // SAFETY: the route retains the same exclusive dynamic PageMap owner
+        // as its client-free path; this witness only reads one map entry.
+        unsafe { self.drain.test_page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {
+        self.drain.test_os_abandoned_page_head()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_has_pending_os_release(&self) -> bool {
+        self.drain.engine.has_pending_os_release()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_page_map_entries_are_clear(
+        &self,
+        published: &PublishedOsAlignedPage,
+    ) -> bool {
+        self.drain.engine.test_os_page_map_entries_are_clear(published)
     }
 }
 

@@ -246,7 +246,25 @@ its existing teardown. Sole, heterogeneous, non-singleton, OS-backed,
 allocation-time, reclaim/adoption/requeue, scan, and concurrent cases remain
 outside this route; a collection failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_medium_pages` is a second bounded dynamic
+`DynamicThreadExitDrain::abandon_full_os_singleton_pages` is a separate bounded
+dynamic aggregate, not a general full-queue or OS-list traversal. It admits
+only two or more same-rounded-size full `MemoryKind::Os` singleton members in
+`BIN_FULL`, each with `reserved == used == 1`, zero retirement countdown, empty
+local free list, a valid clipped PageMap/alias release image, an initially
+empty dynamic `Heap::os_abandoned_pages` list, and every direct slot and other
+queue empty. Source force -> false collection -> full-queue/page-count detach
+-> private OS-list insertion -> unmapped unown runs for every member. The route
+retains the dynamic drain, sealed size, and member count rather than a raw
+member list or dynamic bitmap/count pair; each sequential canonical free
+re-resolves PageMap, must take the raw empty failed-reclaim result, removes its
+exact private-list member, and releases only its clipped PageMap -> alias ->
+primary metadata -> mapping image. The last release returns the empty drain for
+existing teardown. Sole, arena-backed, heterogeneous, non-singleton,
+preexisting-list, allocation-time, reclaim/adoption/requeue, scan, producer,
+concurrent, huge, and general owner-exit cases remain outside this route; a
+collection, list, or mapping-release failure retains the sole owner terminally.
+
+`DynamicThreadExitDrain::abandon_full_medium_pages` is a third bounded dynamic
 aggregate, not a general full-queue traversal. It admits only two or more full
 `MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
 block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
@@ -263,7 +281,7 @@ teardown. Sole, mixed-size/class, non-medium, OS-backed, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases remain outside
 this route; a collection failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_large_pages` is a third bounded dynamic
+`DynamicThreadExitDrain::abandon_full_large_pages` is a fourth bounded dynamic
 aggregate, not a general full-queue traversal. It admits only two or more full
 `MemoryKind::Arena` `PageKind::Large` members in `BIN_FULL`, with one rounded
 block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
@@ -281,7 +299,7 @@ non-large, OS-backed, malformed-span, allocation-time, reclaim/adoption/requeue,
 scan, producer, and concurrent cases remain outside this route; a collection
 failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fourth
+`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fifth
 bounded dynamic aggregate, not a general ordinary-bin traversal. It is proven
 only through the exact ordinary `true`/`2` fixture and admits two or more full
 `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin, with one
@@ -302,7 +320,7 @@ scan, producer, and concurrent cases remain outside this route; a collection
 failure retains the drain. Production ordinary dynamic allocation remains
 sealed.
 
-`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a fifth bounded
+`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a sixth bounded
 dynamic aggregate, not a general ordinary-bin traversal. It is proven only
 through the exact ordinary `true`/`2` fixture and admits two or more full
 `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin, with one
@@ -455,7 +473,7 @@ before that terminal release. It does not reclaim the departed Theap, adopt,
 requeue, scan, or accept multiple pages or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular,
-post-TLS singleton, homogeneous full-singleton/full-medium/full-large aggregate, sole
+post-TLS singleton, homogeneous full-singleton/full-OS-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate, sole
 full-medium/full-large/full-non-direct-small/full-direct-small, and
 mapped-one-block handoffs, pthread/process hooks, complete
 subprocess layout/lifecycle, and C pthread-mutex layout claims remain absent. A
@@ -480,8 +498,8 @@ release—and returns the drained engine; an existing owner remains terminal.
 Separately, the source-shaped initially-unmapped failed-reclaim substrate
 selects terminal-empty, reabandonment, or unownership after its expected-head
 CAS/conflict collection. It has raw page-span release authority only through
-the post-TLS arena/OS-singleton, homogeneous full-singleton/full-medium/full-large
-aggregate, sole full-medium, full-large, full-non-direct-small, and
+the post-TLS arena/OS-singleton, homogeneous full-singleton/full-OS-singleton/full-medium/full-large/
+full-non-direct-small/full-direct-small aggregate, sole full-medium, full-large, full-non-direct-small, and
 full-direct-small handoffs above, not as general
 free routing. General
 producer routing, regular/nonempty unmapped lifecycle integration, terminal
@@ -523,7 +541,7 @@ quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
 generic/direct collection, and the joined full-page release/unfull branches.
 Except for these bounded owner-side collection routes, post-TLS arena/OS-
-singleton, homogeneous full-singleton/full-medium/full-large aggregate, sole full-medium,
+singleton, homogeneous full-singleton/full-OS-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate, sole full-medium,
 full-large, full-non-direct-small, and full-direct-small terminal releases,
 bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main

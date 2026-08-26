@@ -727,6 +727,27 @@ impl Heap {
         self.os_abandoned_pages
     }
 
+    /// Reports whether this Heap's private non-arena abandoned-page list has
+    /// no current members.
+    ///
+    /// A bounded owner-exit route may use this only as an entry witness: it
+    /// proves that every later list member was inserted by that same route.
+    /// It deliberately exposes no traversal, claim, or removal capability.
+    #[inline]
+    pub(crate) fn os_abandoned_pages_are_empty(
+        &self,
+    ) -> Result<bool, HeapOsAbandonedPageListError> {
+        let guard = self
+            .os_abandoned_pages_lock
+            .lock()
+            .map_err(HeapOsAbandonedPageListError::Lock)?;
+        let is_empty = self.os_abandoned_pages.is_null();
+        match guard.unlock() {
+            Ok(()) => Ok(is_empty),
+            Err(error) => Err(HeapOsAbandonedPageListError::Lock(error)),
+        }
+    }
+
     /// Links one non-arena abandoned page at this Heap's private OS-list
     /// head.
     ///
@@ -4141,7 +4162,9 @@ mod tests {
         let mut page = os_abandoned_test_page(&heap);
         let page_pointer = core::ptr::addr_of_mut!(page);
 
+        assert_eq!(heap.os_abandoned_pages_are_empty(), Ok(true));
         assert_eq!(heap.push_os_abandoned_page(&mut page), Ok(()));
+        assert_eq!(heap.os_abandoned_pages_are_empty(), Ok(false));
         assert_eq!(heap.os_abandoned_pages, page_pointer);
         assert!(page.prev.is_null());
         assert!(page.next.is_null());
@@ -4171,6 +4194,7 @@ mod tests {
         assert!(first.next.is_null());
 
         assert_eq!(heap.remove_os_abandoned_page(&mut second), Ok(()));
+        assert_eq!(heap.os_abandoned_pages_are_empty(), Ok(true));
         assert!(heap.os_abandoned_pages.is_null());
         assert!(second.prev.is_null());
         assert!(second.next.is_null());

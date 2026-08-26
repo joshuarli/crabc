@@ -1486,6 +1486,19 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         unsafe { heap.push_os_abandoned_page(&mut *page.as_ptr()) }
     }
 
+    /// Proves that a bounded OS-singleton aggregate starts from the empty
+    /// private list, without exposing the list as a general abandoned-page
+    /// registry.
+    pub(crate) fn os_abandoned_pages_are_empty(
+        &self,
+    ) -> Result<bool, HeapOsAbandonedPageListError> {
+        self.attachment
+            .heap
+            .as_ref()
+            .get_ref()
+            .os_abandoned_pages_are_empty()
+    }
+
     /// Removes one exact all-free OS-aligned singleton from this dynamic
     /// attachment's private Heap list before the terminal mapping release.
     ///
@@ -1779,6 +1792,11 @@ mod tests {
         DynamicThreadExitFullSingletonPagesAbandonFailure,
         DynamicThreadExitFullSingletonPagesFreeResult,
         DynamicThreadExitFullSingletonPagesRemoteFreeFailure,
+        DynamicThreadExitFullOsSingletonPagesAbandonFailure,
+        DynamicThreadExitFullOsSingletonPagesAbandonError,
+        DynamicThreadExitFullOsSingletonPagesFreeResult,
+        DynamicThreadExitFullOsSingletonPagesRemoteFreeError,
+        DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure,
         DynamicThreadExitFullLargePagesAbandonError,
         DynamicThreadExitFullLargeAbandonError,
         DynamicThreadExitFullLargeAbandonFailure,
@@ -5554,6 +5572,371 @@ mod tests {
                 owner.terminal_os_release.is_some(),
                 "terminal Drop transfers the unique OS release owner into the retained attachment"
             );
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_os_singleton_pages_route_releases_each_clipped_map() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates its first OS-aligned singleton");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first OS singleton is PageMap-published");
+            let second = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates its second OS-aligned singleton");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second OS singleton is PageMap-published");
+            let first_ref = unsafe { first_page.as_ref() };
+            let second_ref = unsafe { second_page.as_ref() };
+            assert!(first_ref.memid().is_os());
+            assert!(second_ref.memid().is_os());
+            assert_eq!(first_ref.block_size(), second_ref.block_size());
+            assert_eq!(first_ref.reserved(), 1);
+            assert_eq!(first_ref.used(), 1);
+            assert_eq!(second_ref.reserved(), 1);
+            assert_eq!(second_ref.used(), 1);
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
+            let first_published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), first_page) }
+                .expect("the first singleton retains its clipped release token");
+            let second_published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), second_page) }
+                .expect("the second singleton retains its clipped release token");
+            assert!(allocator.test_os_page_map_entries_match(&first_published));
+            assert!(allocator.test_os_page_map_entries_match(&second_published));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the regular TLS slot before OS aggregate abandonment: {error:?}");
+                }
+            };
+            // SAFETY: both exact OS-aligned singleton allocations remain live
+            // in the complete homogeneous full source queue. The route owns
+            // their sequential failed-reclaim frees after source detachment.
+            let route = match unsafe { drain.abandon_full_os_singleton_pages() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the two OS singletons enter their aggregate route: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            let head = route.test_os_abandoned_page_head();
+            let head_page = NonNull::new(head)
+                .expect("source OS abandonment links a nonempty private list");
+            let tail = unsafe { head_page.as_ref().next() };
+            assert!(!tail.is_null(), "both aggregate members stay linked in the private list");
+            assert!(unsafe { (*tail).next() }.is_null());
+            assert!(
+                (head == first_page.as_ptr() && tail == second_page.as_ptr())
+                    || (head == second_page.as_ptr() && tail == first_page.as_ptr()),
+                "the private list contains exactly the two detached OS aggregate members"
+            );
+
+            let tail_block = if tail == first_page.as_ptr() { first } else { second };
+            let head_block = if head == first_page.as_ptr() { first } else { second };
+            // SAFETY: `tail_block` names the exact non-head member of the
+            // source-owned list. Its terminal release must unlink only that
+            // member and leave the other clipped mapping routable.
+            let route = match unsafe { route.remote_free_after_thread_exit(tail_block) } {
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(route)) => route,
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::Released(drain)) => {
+                    core::mem::forget(drain);
+                    panic!("one of two OS aggregate members cannot finish the route");
+                }
+                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the exact non-head OS aggregate member releases: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert_eq!(route.test_os_abandoned_page_head(), head);
+            assert!(unsafe { route.test_page_for_block(tail_block) }.is_null());
+            assert_eq!(
+                unsafe { route.test_page_for_block(head_block) },
+                head,
+                "releasing one OS aggregate member leaves the other clipped map registered"
+            );
+
+            // SAFETY: `head_block` is the remaining exact aggregate client
+            // allocation after the earlier interior-list removal.
+            let drain = match unsafe { route.remote_free_after_thread_exit(head_block) } {
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final OS aggregate member must finish the route");
+                }
+                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the remaining OS aggregate member releases its clipped map: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(first) }.is_null());
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert!(drain.test_os_abandoned_page_head().is_null());
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_os_singleton_pages_route_rejects_a_sole_page_before_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates one OS-aligned singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the OS singleton remains PageMap-published");
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the regular TLS slot before sole aggregate refusal: {error:?}");
+                }
+            };
+            // SAFETY: the one live OS singleton is supplied only to prove the
+            // aggregate boundary remains disjoint from the established sole
+            // singleton handoff and rejects before collection or list insert.
+            let drain = match unsafe { drain.abandon_full_os_singleton_pages() } {
+                Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullOsSingletonPagesAbandonError::NotMultiplePages,
+                }) => drain,
+                Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("sole OS aggregate refusal remains pre-mutation: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("one OS singleton cannot enter the aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+            assert_eq!(unsafe { drain.test_page_for_block(block) }, page.as_ptr());
+            assert!(drain.test_os_abandoned_page_head().is_null());
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_os_singleton_pages_route_retains_a_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates its first OS singleton");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first OS singleton remains PageMap-published");
+            let second = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates its second OS singleton");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second OS singleton remains PageMap-published");
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the regular TLS slot before OS aggregate collection: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the injected force collector fails only after complete
+            // OS queue/list preflight and before queue detachment or list
+            // insertion, so source state must remain intact.
+            let drain = match unsafe { drain.abandon_full_os_singleton_pages() } {
+                Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitFullOsSingletonPagesAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the injected OS aggregate collection failure retains its drain: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("the injected collection failure cannot create an OS aggregate route");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(2));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+            assert!(drain.test_os_abandoned_page_head().is_null());
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_os_singleton_pages_route_retains_failed_unmap_terminally() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let fault = fault::install(fault::Plan::disabled());
+            let first = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates its first OS singleton");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first OS singleton remains PageMap-published");
+            let first_published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), first_page) }
+                .expect("the first OS singleton retains its clipped release token");
+            let second = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the fixture creates its second OS singleton");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second OS singleton remains PageMap-published");
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the regular TLS slot before failed OS aggregate release: {error:?}");
+                }
+            };
+            let route = match unsafe { drain.abandon_full_os_singleton_pages() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the OS aggregate enters its failed-unmap route: {error:?}");
+                }
+            };
+            fault.set(fault::Plan::at(
+                fault::Point::Unmap,
+                1,
+                crabc_core::Errno::NOMEM,
+            ));
+            // SAFETY: `first` remains one exact aggregate allocation. Its
+            // failed mapping reclaim must terminalize the whole linear route
+            // before the second member can be released.
+            let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error: DynamicThreadExitFullOsSingletonPagesRemoteFreeError::Release,
+                }) => route,
+                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("failed OS aggregate unmap retains its release terminal: {error:?}");
+                }
+                Err(DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the exact first OS aggregate member is not rejected: {error:?}");
+                }
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the configured first OS aggregate unmap must not release a route");
+                }
+                Ok(DynamicThreadExitFullOsSingletonPagesFreeResult::Released(drain)) => {
+                    core::mem::forget(drain);
+                    panic!("the configured first OS aggregate unmap must not finish the route");
+                }
+            };
+            assert_eq!(fault.observed(), 1);
+            fault.set(fault::Plan::disabled());
+            assert!(route.test_has_pending_os_release());
+            assert_eq!(
+                route.test_os_abandoned_page_head(),
+                second_page.as_ptr(),
+                "the failed first release unlinks only its exact member before parking the mapping owner"
+            );
+            assert!(route.test_os_page_map_entries_are_clear(&first_published));
+            assert!(unsafe { route.test_page_for_block(first) }.is_null());
+            assert_eq!(
+                unsafe { route.test_page_for_block(second) },
+                second_page.as_ptr(),
+                "the second aggregate member remains PageMap-routable after the first terminal failure"
+            );
+
+            drop(route);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            assert!(owner.terminal_os_release.is_some());
             DynamicPageFixtureOutcome::RetainTerminal
         });
     }

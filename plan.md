@@ -1,6 +1,6 @@
 The crucial framing is: **do not design a new allocator**. Produce a provenance-preserving, semantically faithful Rust port of a fixed upstream mimalloc v3 release, then optimize only where measurement shows the Rust translation diverges. The objective is to remove the C allocator from the production dependency graph while retaining mimalloc’s design, behavior, and performance—not to create “mimalloc-inspired” machinery.
 
-## Handoff — 2026-08-25
+## Handoff — 2026-08-26
 
 The current checkpoint completes the dependency/crypto boundary, dynamic
 Theap-to-page-engine binding, private dynamic arena-pages ownership, and two
@@ -55,7 +55,26 @@ Sole, mixed-size, non-singleton, OS-backed, preexisting queue/direct,
 allocation-time, reclaim/adoption/requeue, scan, and concurrent cases reject
 before detach, while a collection failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_medium_pages` now captures a second
+`DynamicThreadExitDrain::abandon_full_os_singleton_pages` now captures a
+separate bounded post-TLS `MI_ABANDON` aggregate: two or more same-rounded-size
+full `MemoryKind::Os` singleton members in `BIN_FULL`, each with
+`reserved == used == 1`, zero retirement countdown, empty local free lists,
+valid clipped PageMap/alias release images, an initially empty dynamic
+`Heap::os_abandoned_pages` list, and no other queue/direct state. It preserves
+source force -> false collection -> full-queue/page-count detach -> private
+OS-list insertion -> unmapped unown for every member. The returned
+`DynamicThreadExitFullOsSingletonPagesRoute` retains only the dynamic drain,
+the sealed size, and member count—not a raw member list or a dynamic
+bitmap/count pair. Each sequential canonical free re-resolves PageMap, takes
+only the raw empty failed-reclaim result, removes its exact private-list member,
+then releases one clipped PageMap -> alias -> primary-metadata -> mapping
+image; the final member returns the empty drain for existing teardown. Sole,
+arena-backed, mixed-size, non-singleton, preexisting-list, allocation-time,
+reclaim/adoption/requeue, scan, producer, concurrent, huge, and general
+owner-exit cases reject before detach; collection, list, or mapping-release
+failure retains the only owner terminally.
+
+`DynamicThreadExitDrain::abandon_full_medium_pages` now captures a third
 separate post-TLS `MI_ABANDON` aggregate: two or more full
 `MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
 block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
@@ -73,7 +92,7 @@ non-medium, OS-backed, preexisting queue/direct, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
 detach, while a collection failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_large_pages` now captures a third
+`DynamicThreadExitDrain::abandon_full_large_pages` now captures a fourth
 separate post-TLS `MI_ABANDON` aggregate: two or more full
 `MemoryKind::Arena` `PageKind::Large` members in `BIN_FULL`, with one rounded
 block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
@@ -93,7 +112,7 @@ reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
 detach, while a collection failure retains the drain.
 
 `DynamicThreadExitDrain::abandon_full_non_direct_small_pages` now captures a
-fourth separate post-TLS `MI_ABANDON` aggregate: two or more full
+fifth separate post-TLS `MI_ABANDON` aggregate: two or more full
 `MemoryKind::Arena` `PageKind::Small` members in one ordinary source bin, with
 one rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
 `used == reserved`, zero retirement countdowns, empty local free lists, exact
@@ -115,7 +134,7 @@ producer, and concurrent cases reject before detach, while a collection failure
 retains the drain. This proves the source aggregate without exposing ordinary
 dynamic allocation or a general thread-exit traversal.
 
-`DynamicThreadExitDrain::abandon_full_direct_small_pages` now captures a fifth
+`DynamicThreadExitDrain::abandon_full_direct_small_pages` now captures a sixth
 separate post-TLS `MI_ABANDON` aggregate, also proved only through that exact
 ordinary source fixture: two or more full `MemoryKind::Arena` `PageKind::Small`
 members in one ordinary source bin, with one rounded
@@ -622,7 +641,7 @@ General producer routing, concurrent/general shared/later-thread page-bearing
 ownership, remaining heterogeneous full/singleton/unmapped/huge owner-exit
 pages and behavior beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, the
-homogeneous full-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate routes, sole small-or-medium route (apart
+homogeneous full-singleton/full-OS-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate routes, sole small-or-medium route (apart
 from its exact mapped-medium consuming handoff), and aggregate regular-pages
 registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
@@ -645,10 +664,11 @@ pairing or unmapped abandonment to `src/arena.c:1304-1424`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit
-client-free transfer has eleven narrow forms: the sole full-medium route,
+client-free transfer has twelve narrow forms: the sole full-medium route,
 full-large route, full non-direct-small route, full direct-small route,
-homogeneous full-singleton, full-medium, full-large, full-non-direct-small,
-and full-direct-small aggregate routes, sole small-or-medium route, and
+homogeneous full-singleton, full-OS-singleton, full-medium, full-large,
+full-non-direct-small, and full-direct-small aggregate routes, sole
+small-or-medium route, and
 aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
@@ -687,6 +707,10 @@ Checkpoint evidence is green: the focused
 `dynamic_thread_exit_full_singleton_pages_route_rejects_a_sole_singleton_before_mutation`,
 `dynamic_thread_exit_full_singleton_pages_route_rejects_mixed_sizes_before_mutation`,
 and `dynamic_thread_exit_full_singleton_pages_route_retains_a_collection_failure`,
+`dynamic_thread_exit_full_os_singleton_pages_route_releases_each_clipped_map`,
+`dynamic_thread_exit_full_os_singleton_pages_route_rejects_a_sole_page_before_mutation`,
+`dynamic_thread_exit_full_os_singleton_pages_route_retains_a_collection_failure`,
+and `dynamic_thread_exit_full_os_singleton_pages_route_retains_failed_unmap_terminally`,
 `dynamic_thread_exit_full_medium_pages_route_reabandons_each_same_bin_page_then_releases`,
 `dynamic_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`,
 `dynamic_thread_exit_full_medium_pages_route_rejects_mixed_full_classes_before_mutation`,
@@ -804,17 +828,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 521 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 525 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 114 items and 118
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 115 items and 119
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-dynamic-full-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
 The frozen-profile direct-small no-immediate source family is now exhaustive:

@@ -647,8 +647,8 @@ allocation-time claim, reclaim, or requeue for a post-exit route.
 
 The nonfull regular aggregate continues to reject full, singleton, huge,
 unmapped, foreign, malformed, or non-source-derived direct-cache state before
-detach. The separate homogeneous full-singleton, full-medium, full-large,
-non-direct-small, and direct-small aggregates are the only full aggregate
+detach. The separate homogeneous full-singleton, full-OS-singleton, full-medium,
+full-large, non-direct-small, and direct-small aggregates are the only full aggregate
 exceptions. The direct
 aggregate requires two or more same-bin full arena small pages, its exact
 rounded direct-cache range to name the current queue head, every other direct
@@ -765,7 +765,26 @@ OS-backed, preexisting queue/direct state, allocation-time, reclaim/adoption/
 requeue, scan, or concurrent case is not this route, and collection ambiguity
 retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_medium_pages` is a second, separately
+`DynamicThreadExitDrain::abandon_full_os_singleton_pages` is a separate,
+bounded post-TLS dynamic aggregate boundary. It admits exactly two or more
+same-rounded-size full `MemoryKind::Os` singleton members in `BIN_FULL`, each
+with `reserved == used == 1`, zero retirement countdown, empty local free list,
+valid clipped PageMap/alias release image, an initially empty dynamic
+`Heap::os_abandoned_pages` list, and every other queue/direct entry empty. It
+preserves source force collection -> false collection -> full-queue removal ->
+page-count decrement -> private OS-list insertion -> unmapped unown for every
+member. The returned `DynamicThreadExitFullOsSingletonPagesRoute` stores only
+the dynamic drain, sealed size, and member count rather than a raw former-Theap
+list or dynamic bitmap/count pair. Each sequential canonical free re-resolves
+its PageMap entry, reaches only the raw empty failed-reclaim tail, removes that
+exact private-list member, then releases its own clipped PageMap -> alias ->
+primary metadata -> mapping image. The final member returns the empty drain for
+the existing root/list/key teardown. A sole, arena-backed, heterogeneous,
+non-singleton, preexisting-list, allocation-time, reclaim/adoption/requeue,
+scan, producer, concurrent, huge, or general owner-exit case is not this route;
+collection, private-list, or mapping-release ambiguity retains the sole owner.
+
+`DynamicThreadExitDrain::abandon_full_medium_pages` is a third, separately
 typed post-TLS dynamic aggregate boundary. It admits exactly two or more full
 `MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
 block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
@@ -785,7 +804,7 @@ preexisting queue/direct state, allocation-time, reclaim/adoption/requeue,
 scan, producer, and concurrent cases reject before detach; a collection fault
 retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_large_pages` is a third, separately
+`DynamicThreadExitDrain::abandon_full_large_pages` is a fourth, separately
 typed post-TLS dynamic aggregate boundary. It admits exactly two or more full
 `MemoryKind::Arena` `PageKind::Large` members in `BIN_FULL`, with one rounded
 block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
@@ -806,7 +825,7 @@ OS-backed, malformed-span, preexisting queue/direct state, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
 detach; a collection fault retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fourth,
+`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fifth,
 separately typed post-TLS dynamic aggregate boundary. It is exercised only by
 the exact ordinary dynamic `true`/`2` fixture, while the production ordinary
 page-session boundary remains sealed. It admits exactly two or more full
@@ -827,7 +846,7 @@ mixed-bin/class, direct-small, `BIN_FULL`, OS-backed, malformed-span,
 allocation-time, reclaim/adoption/requeue, scan, producer, and concurrent cases
 reject before detach; a collection fault retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a fifth,
+`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a sixth,
 separately typed post-TLS dynamic aggregate boundary. It is exercised only by
 the exact ordinary dynamic `true`/`2` fixture, while the production ordinary
 page-session boundary remains sealed. It admits exactly two or more full
@@ -1053,8 +1072,8 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs, homogeneous full-singleton/full-medium/full-large
-aggregates, and the separate dynamic sole full-medium, full-large,
+OS-aligned singleton handoffs, homogeneous full-singleton/full-OS-singleton/full-medium/full-large/
+full-non-direct-small/full-direct-small aggregates, and the separate dynamic sole full-medium, full-large,
 full-non-direct-small, and full-direct-small handoffs above; all other
 initially-unmapped pages retain the raw terminal decision for a later
 lifecycle. A test-only Loom model executes the
