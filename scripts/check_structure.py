@@ -42,10 +42,11 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter plus the exact `pollfd`
 # record seam, `fs_x86_64.rs` owns only descriptor `fstat`,
-# `process_x86_64.rs` owns read-only identity/session and record-lock
-# observations,
+# `process_x86_64.rs` owns read-only identity/session, scheduler-priority, and
+# record-lock observations,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
-# `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking set,
+# `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
+# mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
 # three record-independent task observations, and `time_x86_64.rs` owns the
 # separately proved clock-query and relative-sleep seams. No other facade

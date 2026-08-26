@@ -25,6 +25,9 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
+./scripts/dev-x86_64.sh msync-reference
+./scripts/dev-x86_64.sh madvise-reference
+./scripts/dev-x86_64.sh mincore-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh time-observation-reference
@@ -35,6 +38,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh process-session-reference
 ./scripts/dev-x86_64.sh pidfd-open-reference
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
+./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
@@ -135,6 +139,22 @@ Rust facade. It does not compile project C headers or select a C ABI artifact.
 behavior. It establishes only the per-range typed Rust locking boundary, not
 global locking policy or C mapping support.
 
+`msync-reference` executes a pinned-musl x86 probe for `msync`, its accepted
+`MS_*` flag combinations, and zero-length no-op behavior. It establishes only
+the typed Rust mapping-synchronization boundary, not C mapping support or wider
+VM policy.
+
+`madvise-reference` executes a pinned-musl x86 probe for the `madvise` syscall,
+its closed normal/random/sequential/will-need/DONTNEED advice vocabulary,
+private-anonymous Linux page discard, and musl-compatible POSIX `DONTNEED`
+no-op behavior. It establishes only the typed Rust advisory boundary, not C
+mapping support or wider VM policy.
+
+`mincore-reference` executes a pinned-musl x86 probe for `mincore`, its
+4096-byte page unit, one-byte-per-page output, and partial-range rounding. It
+establishes only the typed Rust residency boundary, not C mapping support or a
+general VM facade.
+
 `rand-reference` runs a pinned-musl native x86 reference executable for
 `getrandom` syscall/flag values and initialized-length behavior. It does not
 link or select a crabc artifact.
@@ -180,6 +200,12 @@ or C process support.
 the `struct flock` record shape, unlocked queries, and a forked conflicting-lock
 observation. It establishes only the typed read-only Rust lock-query boundary,
 not lock mutation, general `fcntl`, or C process support.
+
+`scheduler-priority-bounds-reference` executes a pinned-musl x86 probe for the
+`SCHED_OTHER`/`SCHED_FIFO`/`SCHED_RR` priority minima and maxima, raw syscall
+values, and invalid-policy behavior. It establishes only the typed Rust
+read-only scheduler-priority bounds query, not scheduling mutation or C process
+support.
 
 `fstat-reference` records the pinned-musl x86 144-byte `fstat` record and
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
@@ -227,32 +253,34 @@ selected `crabc-libc` artifact or general x86 C ABI claim.
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
 `x86_64_fs`, `x86_64_io`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`,
 `x86_64_poll`, `x86_64_process_identity`, `x86_64_process_session`,
-`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_sleep`, `x86_64_system`,
-`x86_64_thread`, and `x86_64_time` tests. The I/O regression proves vector
-segment and short-read behavior, 64-bit positioned/vector offsets,
-`preadv2`/`pwritev2` flags and current-offset sentinel, plus descriptor
-duplication and `fcntl` flags. The eventfd regression proves `NONBLOCK`/
-`CLOEXEC`, counter accumulation and reset, semaphore reads, and Linux's
-reserved all-ones counter error through direct kernel seams. The parameter
-regression proves stable scalar aux-vector observations while retaining the x86
-exclusion of the pointer-valued `AT_EXECFN` API. The pipe regression proves
-Linux/x86-64's distinct `O_DIRECT` packet-mode bit, packet-tail discard, and
-descriptor `CLOEXEC`. The mapping regression proves closed anonymous/file
-mapping, bounded remap growth/shrink/fixed replacement, protection, unmapping,
-and per-range `mlock`/`mlock2(MLOCK_ONFAULT)`/`munlock` with constrained-memlock
-outcomes, including a sparse 4 GiB file offset; it permits `PROT_NONE`, rejects
-`MAP_32BIT` and wider map/protection policy, and leaves `MREMAP_DONTUNMAP`
-deferred. The readiness regression proves typed borrowed-record
-empty/readable/hangup pipe behavior, temporary `ppoll` signal-mask restoration,
-signal-only `pause` completion, requested-flag retention, and timeout-range
-rejection. The filesystem regression proves only a typed descriptor `fstat`
-record. The process regressions prove typed PID/identity/session observations,
-owned nonblocking pidfds, and read-only conflicting-lock `F_GETLK` records; the
-system and thread regressions prove the named bounded kernel observations. It
-verifies the explicitly admitted Rust subset only; it does not make pselect,
-epoll, signalfd, broader filesystem path-core behavior, mapping synchronization,
-advice/residency, global locking policy, other kernel-record-owning facade
-families, or a general x86-64 facade selectable or supported.
+`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_scheduler_priority_bounds`,
+`x86_64_sleep`, `x86_64_system`, `x86_64_thread`, and `x86_64_time` tests. The
+I/O regression proves vector segment and short-read behavior, 64-bit
+positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
+sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
+proves `NONBLOCK`/`CLOEXEC`, counter accumulation and reset, semaphore reads,
+and Linux's reserved all-ones counter error through direct kernel seams. The
+parameter regression proves stable scalar aux-vector observations while
+retaining the x86 exclusion of the pointer-valued `AT_EXECFN` API. The pipe
+regression proves Linux/x86-64's distinct `O_DIRECT` packet-mode bit, packet-tail
+discard, and descriptor `CLOEXEC`. The mapping regression proves closed
+anonymous/file mapping, bounded remap growth/shrink/fixed replacement,
+protection, unmapping, per-range `mlock`/`mlock2(MLOCK_ONFAULT)`/`munlock` with
+constrained-memlock outcomes, `msync`, closed Linux/POSIX advisory behavior, and
+page-residency output/rounding, including a sparse 4 GiB file offset; it permits
+`PROT_NONE`, rejects `MAP_32BIT` and wider map/protection policy, and leaves
+`MREMAP_DONTUNMAP` deferred. The readiness regression proves typed
+borrowed-record empty/readable/hangup pipe behavior, temporary `ppoll`
+signal-mask restoration, signal-only `pause` completion, requested-flag
+retention, and timeout-range rejection. The filesystem regression proves only a
+typed descriptor `fstat` record. The process regressions prove typed
+PID/identity/session observations, owned nonblocking pidfds, read-only
+conflicting-lock `F_GETLK` records, and scheduler-priority bounds; the system
+and thread regressions prove the named bounded kernel observations. It verifies
+the explicitly admitted Rust subset only; it does not make pselect, epoll,
+signalfd, broader filesystem path-core behavior, global locking policy, wider
+mapping policy, other kernel-record-owning facade families, or a general x86-64
+facade selectable or supported.
 
 The random regression proves raw Linux `getrandom` flag values and initialized
 prefix handling, musl's bounded 256-byte `getentropy` behavior, and owned

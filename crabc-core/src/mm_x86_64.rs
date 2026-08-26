@@ -7,7 +7,8 @@
 
 use crate::syscall::{
     decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK, SYS_MLOCK2,
-    SYS_MMAP, SYS_MPROTECT, SYS_MREMAP, SYS_MUNLOCK, SYS_MUNMAP,
+    SYS_MADVISE, SYS_MMAP, SYS_MINCORE, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK,
+    SYS_MUNMAP,
 };
 use crate::{RawFd, Result};
 
@@ -213,4 +214,94 @@ pub unsafe fn munlock_raw(address: *mut u8, length: usize) -> Result<()> {
     // SAFETY: The caller owns the mapped-range contract; Linux validates the
     // address and range.
     decode(unsafe { syscall2(SYS_MUNLOCK, address as usize, length) }).map(|_| ())
+}
+
+/// Synchronizes a mapped range with its backing storage.
+///
+/// This is the Linux/x86-64 `msync` syscall directly; it does not use libc or
+/// thread-local `errno`.
+///
+/// # Safety
+///
+/// `address` must be page-aligned. For a nonzero `length`, it must identify a
+/// valid mapped range which remains valid for the duration of the call. A zero
+/// length is a Linux no-op. The caller must preserve pointer provenance and
+/// Rust reference invariants across an operation which may write mapped
+/// contents back to its backing storage or invalidate cached data. `flags`
+/// must contain a Linux-supported synchronization mode; invalid combinations
+/// are reported by the kernel as `EINVAL`.
+#[inline]
+pub unsafe fn msync_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contracts;
+    // Linux validates the synchronization flags and mapping.
+    decode(unsafe { syscall3(SYS_MSYNC, address as usize, length, flags as usize) }).map(|_| ())
+}
+
+/// Advises Linux about access to a mapped range.
+///
+/// # Safety
+///
+/// `address` must be page-aligned. For a nonzero `length`, it must identify
+/// the first byte of a valid mapped range, `address..address+length` must not
+/// overflow, and the range must remain mapped for the duration of the call. A
+/// zero length is a Linux no-op. The caller must preserve pointer provenance
+/// and Rust reference invariants across advice that can discard or alter page
+/// contents, such as `MADV_DONTNEED`. Linux rounds the final partial page as
+/// specified by the kernel ABI.
+#[inline]
+pub unsafe fn madvise_raw(address: *mut u8, length: usize, advice: u32) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contracts;
+    // Linux validates the advice value and mapping.
+    decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
+        .map(|_| ())
+}
+
+/// Applies a POSIX memory-access advisory through Linux's `madvise` ABI.
+///
+/// The syscall is shared with [`madvise_raw`], but this separate seam keeps
+/// POSIX `DONTNEED` from being confused with Linux's page-discarding
+/// `MADV_DONTNEED` policy in a higher-level facade.
+///
+/// # Safety
+///
+/// For policies other than POSIX `DONTNEED`, `address` must be page-aligned
+/// and `address..address+length` must satisfy the Linux advisory syscall's
+/// mapped-range and pointer-validity requirements. POSIX `DONTNEED` is a
+/// successful musl-compatible no-op on Linux, so it does not access or
+/// validate the supplied range.
+#[inline]
+pub unsafe fn posix_madvise_raw(address: *mut u8, length: usize, advice: u32) -> Result<()> {
+    // musl's POSIX_MADV_DONTNEED is intentionally a no-op on Linux: issuing
+    // Linux MADV_DONTNEED here would discard private anonymous contents and
+    // silently change the POSIX contract.
+    if advice == 4 {
+        let _ = (address, length);
+        return Ok(());
+    }
+    // SAFETY: The caller owns the mapped-range contract. Linux validates the
+    // POSIX advice value and reports invalid values as EINVAL.
+    decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
+        .map(|_| ())
+}
+
+/// Queries Linux page residency for a mapped range.
+///
+/// Linux writes one byte per page of the range to `vector`; bit zero is set
+/// when that page is resident and the remaining bits are unspecified.
+///
+/// # Safety
+///
+/// `address` must be page-aligned and identify the first byte of a range
+/// which remains mapped for the duration of the call. `length` must not make
+/// `address..address+length` wrap. `vector` must be writable for the kernel's
+/// page count, namely `ceil(length / 4096)` bytes, and must remain valid for
+/// that duration. The caller must keep this output storage disjoint from the
+/// mapping being queried. A null `vector` is permitted only when the kernel
+/// page count is zero.
+#[inline]
+pub unsafe fn mincore_raw(address: *mut u8, length: usize, vector: *mut u8) -> Result<()> {
+    // SAFETY: The caller supplies the mapped-range and output-vector validity
+    // contracts; Linux validates the address and range.
+    decode(unsafe { syscall3(SYS_MINCORE, address as usize, length, vector as usize) })
+        .map(|_| ())
 }

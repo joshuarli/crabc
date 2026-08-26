@@ -35,6 +35,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mlock-reference  verify pinned-musl x86 memory-locking ABI and behavior
+  msync-reference  verify pinned-musl x86 mapping-synchronization ABI and behavior
+  madvise-reference  verify pinned-musl x86 mapping-advice ABI and behavior
+  mincore-reference  verify pinned-musl x86 mapping-residency ABI and behavior
   rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
   time-observation-reference  verify pinned-musl x86 realtime observation behavior
@@ -45,6 +48,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   process-session-reference  verify pinned-musl x86 process group/session behavior
   pidfd-open-reference  verify pinned-musl x86 pidfd_open behavior
   fcntl-getlk-reference  verify pinned-musl x86 fcntl lock-query behavior
+  scheduler-priority-bounds-reference  verify pinned-musl x86 scheduler-priority bounds
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
   system-reference  verify pinned-musl x86 uname/sysinfo ABI and behavior reference
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
@@ -74,10 +78,14 @@ mapping declarations. `mm-abi-reference` establishes only the pinned-musl
 constants used by the separately admitted Rust mapping facade.
 `mlock-reference` establishes only the pinned-musl x86 per-range memory-locking
 boundary used by that facade.
+`msync-reference`, `madvise-reference`, and `mincore-reference` establish only
+their named mapping-synchronization, Linux/POSIX advisory, and page-residency
+boundaries used by the typed Rust facade.
 `rand-reference`, `time-abi-reference`, `time-observation-reference`,
 `relative-sleep-reference`, `poll-reference`, `ppoll-reference`,
 `process-identity-reference`, `process-session-reference`,
-`pidfd-open-reference`, `fcntl-getlk-reference`, `fstat-reference`,
+`pidfd-open-reference`, `fcntl-getlk-reference`,
+`scheduler-priority-bounds-reference`, `fstat-reference`,
 `system-reference`, and `thread-reference` establish only their named
 pinned-musl kernel boundaries for separately admitted Rust slices.
 `libc-syscall` compiles only the unintegrated raw syscall module.
@@ -243,6 +251,18 @@ run_mlock_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_mlock_reference.sh
 }
 
+run_msync_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_msync_reference.sh
+}
+
+run_madvise_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_madvise_reference.sh
+}
+
+run_mincore_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_mincore_reference.sh
+}
+
 run_rand_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rand_reference.sh
 }
@@ -281,6 +301,10 @@ run_pidfd_open_reference() {
 
 run_fcntl_getlk_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_fcntl_getlk_reference.sh
+}
+
+run_scheduler_priority_bounds_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh
 }
 
 run_fstat_reference() {
@@ -334,7 +358,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -428,6 +452,21 @@ case "$command" in
         ensure_image
         run_mlock_reference
         ;;
+    msync-reference)
+        [ "$#" -eq 0 ] || fail "msync-reference takes no arguments"
+        ensure_image
+        run_msync_reference
+        ;;
+    madvise-reference)
+        [ "$#" -eq 0 ] || fail "madvise-reference takes no arguments"
+        ensure_image
+        run_madvise_reference
+        ;;
+    mincore-reference)
+        [ "$#" -eq 0 ] || fail "mincore-reference takes no arguments"
+        ensure_image
+        run_mincore_reference
+        ;;
     rand-reference)
         [ "$#" -eq 0 ] || fail "rand-reference takes no arguments"
         ensure_image
@@ -478,6 +517,11 @@ case "$command" in
         ensure_image
         run_fcntl_getlk_reference
         ;;
+    scheduler-priority-bounds-reference)
+        [ "$#" -eq 0 ] || fail "scheduler-priority-bounds-reference takes no arguments"
+        ensure_image
+        run_scheduler_priority_bounds_reference
+        ;;
     fstat-reference)
         [ "$#" -eq 0 ] || fail "fstat-reference takes no arguments"
         ensure_image
@@ -503,7 +547,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
+            --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
             -- --test-threads=1
         ;;
     libc-syscall)

@@ -87,6 +87,142 @@ fn x86_64_mapping_flags_match_the_linux_abi() {
     assert_eq!(mm::MremapFlags::MAYMOVE.bits(), 0x1);
     assert_eq!(mm::MlockFlags::empty().bits(), 0x0);
     assert_eq!(mm::MlockFlags::ONFAULT.bits(), 0x1);
+    assert_eq!(mm::MsyncFlags::ASYNC.bits(), 0x1);
+    assert_eq!(mm::MsyncFlags::INVALIDATE.bits(), 0x2);
+    assert_eq!(mm::MsyncFlags::SYNC.bits(), 0x4);
+    assert_eq!(mm::Advice::Normal as u32, 0);
+    assert_eq!(mm::Advice::Random as u32, 1);
+    assert_eq!(mm::Advice::Sequential as u32, 2);
+    assert_eq!(mm::Advice::WillNeed as u32, 3);
+    assert_eq!(mm::Advice::LinuxDontNeed as u32, 4);
+    assert_eq!(mm::PosixAdvice::Normal as u32, 0);
+    assert_eq!(mm::PosixAdvice::Random as u32, 1);
+    assert_eq!(mm::PosixAdvice::Sequential as u32, 2);
+    assert_eq!(mm::PosixAdvice::WillNeed as u32, 3);
+    assert_eq!(mm::PosixAdvice::DontNeed as u32, 4);
+    assert_eq!(mm::MINCORE_PAGE_SIZE, PAGE_SIZE);
+}
+
+#[test]
+fn x86_64_msync_accepts_linux_sync_modes_for_anonymous_mapping() {
+    let mapping = Mapping::anonymous();
+    // SAFETY: The mapping owns a writable page until Drop unmaps it.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+
+    // SAFETY: The mapping is page-aligned, mapped, and remains owned for the
+    // duration of each direct synchronization syscall.
+    unsafe { mm::msync(mapping.pointer, mapping.length, mm::MsyncFlags::SYNC) }
+        .expect("synchronize anonymous page through direct x86-64 msync");
+    // SAFETY: The same mapped range remains valid for the asynchronous call.
+    unsafe { mm::msync(mapping.pointer, mapping.length, mm::MsyncFlags::ASYNC) }
+        .expect("schedule anonymous page synchronization through direct x86-64 msync");
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x5a);
+}
+
+#[test]
+fn x86_64_msync_and_madvise_accept_zero_length_as_linux_noops() {
+    let mapping = Mapping::anonymous();
+
+    // SAFETY: Linux accepts zero-length operations without accessing the
+    // otherwise valid, page-aligned mapping address.
+    unsafe { mm::msync(mapping.pointer, 0, mm::MsyncFlags::empty()) }
+        .expect("zero-length x86-64 msync is a no-op");
+    // SAFETY: Linux accepts zero-length normal advice without accessing the
+    // otherwise valid mapped range.
+    unsafe { mm::madvise(mapping.pointer, 0, mm::Advice::Normal) }
+        .expect("zero-length x86-64 madvise is a no-op");
+}
+
+#[test]
+fn x86_64_madvise_linux_dontneed_discards_anonymous_page_contents() {
+    let mapping = Mapping::anonymous();
+    // SAFETY: The mapping owns a writable page until Drop unmaps it.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+
+    // Linux's private-anonymous MADV_DONTNEED policy discards the page; the
+    // next read faults in a fresh zero-filled page.
+    // SAFETY: The mapped range remains valid, and no typed contents are used
+    // across the potentially destructive advice operation.
+    unsafe { mm::madvise(mapping.pointer, mapping.length, mm::Advice::LinuxDontNeed) }
+        .expect("discard anonymous page through direct x86-64 madvise");
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0);
+}
+
+#[test]
+fn x86_64_posix_madvise_dontneed_preserves_anonymous_page_contents() {
+    let mapping = Mapping::anonymous();
+    // SAFETY: The mapping owns a writable page until Drop unmaps it.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+
+    // POSIX_MADV_DONTNEED is an advisory no-op on Linux in musl's contract;
+    // it must not inherit Linux MADV_DONTNEED's page-discard behavior.
+    // POSIX DONTNEED does not forward to Linux madvise. The deliberately
+    // unaligned, one-byte-shifted range would otherwise be rejected by Linux.
+    // SAFETY: The pointer originates in the owned mapping; this no-op advisory
+    // does not access or validate the shifted range.
+    unsafe {
+        mm::posix_madvise(
+            mapping.pointer.cast::<u8>().wrapping_add(1).cast(),
+            mapping.length,
+            mm::PosixAdvice::DontNeed,
+        )
+    }
+        .expect("apply POSIX x86-64 DONTNEED advisory");
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x5a);
+}
+
+#[test]
+fn x86_64_mincore_reports_residency_and_preserves_extra_output() {
+    let mapping = {
+        let pointer = unsafe {
+            mm::mmap_anonymous(
+                core::ptr::null_mut(),
+                PAGE_SIZE * 2,
+                mm::ProtFlags::READ | mm::ProtFlags::WRITE,
+                mm::MapFlags::PRIVATE,
+            )
+        }
+        .expect("create a two-page x86-64 anonymous mapping");
+        Mapping {
+            pointer,
+            length: PAGE_SIZE * 2,
+        }
+    };
+
+    // Discard both pages, then fault only the first one before querying.
+    // SAFETY: The complete two-page mapping remains owned throughout.
+    unsafe { mm::madvise(mapping.pointer, mapping.length, mm::Advice::LinuxDontNeed) }
+        .expect("discard pages before x86-64 residency query");
+    // SAFETY: The first page is mapped writable and remains so until Drop.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+
+    let mut residency = [0xa5_u8; 3];
+    // SAFETY: The mapping is aligned and the output is separate caller-owned
+    // storage with one byte per queried page plus an untouched sentinel.
+    unsafe { mm::mincore(mapping.pointer, mapping.length, &mut residency) }
+        .expect("query x86-64 page residency through direct mincore");
+    assert_eq!(residency[0] & 1, 1, "the written page must be resident");
+    assert_eq!(residency[2], 0xa5, "extra output remains untouched");
+}
+
+#[test]
+fn x86_64_mincore_rejects_short_or_overflowing_output_before_syscall() {
+    let mapping = Mapping::anonymous();
+    let mut short = [];
+    let mut overflow = [0_u8; 1];
+
+    // SAFETY: The mapping remains valid; the short output is intentionally
+    // rejected before any kernel write.
+    assert_eq!(
+        unsafe { mm::mincore(mapping.pointer, PAGE_SIZE, &mut short) },
+        Err(crabc_rs::Errno::INVAL),
+    );
+    // SAFETY: This invalid length is used only to exercise checked arithmetic;
+    // no raw syscall should receive it.
+    assert_eq!(
+        unsafe { mm::mincore(mapping.pointer, usize::MAX, &mut overflow) },
+        Err(crabc_rs::Errno::INVAL),
+    );
 }
 
 #[test]

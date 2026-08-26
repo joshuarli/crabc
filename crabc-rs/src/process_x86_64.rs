@@ -2,9 +2,10 @@
 //!
 //! This module intentionally admits only scalar identity queries, the
 //! kernel's three-word real/effective/saved credential observations, pidfd
-//! creation, and the read-only typed `fcntl(F_GETLK)` record-lock query. The
-//! larger process facade remains AArch64-only until each of its target-sized
-//! records and state transitions has an independent x86-64 contract.
+//! creation, scheduler-priority bounds, and the read-only typed `fcntl(F_GETLK)`
+//! record-lock query. The larger process facade remains AArch64-only until
+//! each of its target-sized records and state transitions has an independent
+//! x86-64 contract.
 
 use bitflags::bitflags;
 
@@ -110,6 +111,51 @@ pub struct GidTriple {
     pub effective: Gid,
     /// The saved-set group ID.
     pub saved: Gid,
+}
+
+/// A Linux scheduler policy with a stable priority-range query.
+///
+/// This closed vocabulary deliberately covers only policies whose Linux
+/// priority bounds are stable and directly observable here. Scheduler
+/// selection and mutation are outside this read-only API.
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum SchedulerPolicy {
+    /// The normal time-sharing scheduler policy (`SCHED_OTHER`).
+    Other = 0,
+    /// The first-in, first-out real-time policy (`SCHED_FIFO`).
+    Fifo = 1,
+    /// The round-robin real-time policy (`SCHED_RR`).
+    RoundRobin = 2,
+}
+
+impl SchedulerPolicy {
+    /// Returns the Linux scheduler policy token.
+    #[inline]
+    pub const fn as_raw(self) -> i32 {
+        self as i32
+    }
+}
+
+/// The minimum and maximum priority accepted by one Linux scheduler policy.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SchedulerPriorityBounds {
+    minimum: i32,
+    maximum: i32,
+}
+
+impl SchedulerPriorityBounds {
+    /// Returns the lowest priority accepted by the policy.
+    #[inline]
+    pub const fn minimum(self) -> i32 {
+        self.minimum
+    }
+
+    /// Returns the highest priority accepted by the policy.
+    #[inline]
+    pub const fn maximum(self) -> i32 {
+        self.maximum
+    }
 }
 
 // Linux/x86-64 `struct flock` has the same field order and 32-byte record
@@ -257,6 +303,21 @@ pub fn pidfd_open(pid: Pid, flags: PidfdFlags) -> Result<OwnedFd> {
     // SAFETY: successful Linux pidfd_open returns one fresh, non-negative
     // descriptor whose ownership transfers to this value.
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Reads the accepted priority bounds for one Linux scheduler policy.
+///
+/// This is a read-only direct-kernel observation. Linux errors remain
+/// ordinary [`crate::Errno`] results. The facade also rejects an inverted
+/// kernel record as [`crate::Errno::RANGE`] rather than exposing an impossible
+/// range.
+#[inline]
+pub fn scheduler_priority_bounds(policy: SchedulerPolicy) -> Result<SchedulerPriorityBounds> {
+    let (minimum, maximum) = crabc_core::process::scheduler_priority_bounds_raw(policy.as_raw())?;
+    if minimum > maximum {
+        return Err(crate::Errno::RANGE);
+    }
+    Ok(SchedulerPriorityBounds { minimum, maximum })
 }
 
 /// Returns the caller's real Linux user ID.

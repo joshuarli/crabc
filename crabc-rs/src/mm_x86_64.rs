@@ -2,8 +2,8 @@
 //!
 //! This admission owns ordinary anonymous/file mappings, bounded remapping,
 //! protection changes, unmapping, and per-range memory-locking. It deliberately
-//! excludes residency, advice, synchronization, and process-wide VM policy
-//! until each has its own x86-64 contract and native evidence.
+//! exposes bounded mapping synchronization, advice, and residency operations;
+//! process-wide VM policy remains outside this staged x86-64 admission.
 
 use bitflags::bitflags;
 
@@ -88,6 +88,64 @@ bitflags! {
         const _ = !0;
     }
 }
+
+bitflags! {
+    /// Linux/x86-64 `MS_*` flags for [`msync`].
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct MsyncFlags: u32 {
+        /// `MS_ASYNC`: schedule an update and return without waiting.
+        const ASYNC = 0x1;
+        /// `MS_INVALIDATE`: invalidate other cached mappings of the file.
+        const INVALIDATE = 0x2;
+        /// `MS_SYNC`: update the backing storage and wait for completion.
+        const SYNC = 0x4;
+        /// Preserve future Linux-defined bits; the kernel validates them.
+        const _ = !0;
+    }
+}
+
+/// POSIX advisory policies accepted by [`posix_madvise`].
+///
+/// This is separate from [`Advice`]: Linux's `MADV_DONTNEED` can discard
+/// private anonymous page contents, while POSIX `POSIX_MADV_DONTNEED` is only
+/// an access-pattern advisory.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u32)]
+pub enum PosixAdvice {
+    /// `POSIX_MADV_NORMAL`.
+    Normal = 0,
+    /// `POSIX_MADV_RANDOM`.
+    Random = 1,
+    /// `POSIX_MADV_SEQUENTIAL`.
+    Sequential = 2,
+    /// `POSIX_MADV_WILLNEED`.
+    WillNeed = 3,
+    /// `POSIX_MADV_DONTNEED`.
+    DontNeed = 4,
+}
+
+/// Closed Linux `madvise` policies exposed by this native facade.
+///
+/// `LinuxDontNeed` has Linux's page-discarding behavior; it is deliberately
+/// named separately from POSIX's advisory `DONTNEED` policy.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u32)]
+pub enum Advice {
+    /// `MADV_NORMAL`.
+    Normal = 0,
+    /// `MADV_RANDOM`.
+    Random = 1,
+    /// `MADV_SEQUENTIAL`.
+    Sequential = 2,
+    /// `MADV_WILLNEED`.
+    WillNeed = 3,
+    /// `MADV_DONTNEED`: discard private anonymous pages on next access.
+    LinuxDontNeed = 4,
+}
+
+/// The Linux/x86-64 base page size used to size a [`mincore`] output vector.
+pub const MINCORE_PAGE_SIZE: usize = 4096;
 
 #[inline]
 fn checked_protection_bits(bits: u32) -> Result<u32> {
@@ -352,4 +410,104 @@ pub unsafe fn mlock_with(ptr: *mut c_void, len: usize, flags: MlockFlags) -> Res
 pub unsafe fn munlock(ptr: *mut c_void, len: usize) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and provenance contract.
     unsafe { crabc_core::mm::munlock_raw(ptr.cast(), len) }
+}
+
+/// Synchronizes a mapped range with its backing storage.
+///
+/// This native Rust operation returns the direct kernel [`Result`] and never
+/// writes C thread-local `errno` or uses a C ABI sentinel return value.
+/// `MsyncFlags::SYNC` waits for modified file-backed pages to reach storage;
+/// `MsyncFlags::ASYNC` schedules the update, and `MsyncFlags::INVALIDATE`
+/// requests invalidation of other cached mappings.
+///
+/// # Safety
+///
+/// `ptr` must be page-aligned. For a nonzero `len`, it must identify a valid
+/// mapped range which remains valid for the duration of the call. A zero
+/// length is a Linux no-op. The caller must preserve pointer provenance and
+/// Rust reference invariants across an operation which may write mapped
+/// contents back to its backing storage or invalidate cached data. Invalid
+/// flag combinations are returned as [`crate::Errno::INVAL`].
+#[inline]
+pub unsafe fn msync(ptr: *mut c_void, len: usize, flags: MsyncFlags) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contracts.
+    unsafe { crabc_core::mm::msync_raw(ptr.cast(), len, flags.bits()) }
+}
+
+/// Gives Linux an access-pattern or page-discarding advisory for a mapping.
+///
+/// # Safety
+///
+/// `ptr` must be page-aligned. For a nonzero `len`, it must identify the first
+/// byte of a valid mapped range whose address arithmetic does not overflow and
+/// which remains mapped during the call. A zero length is a Linux no-op. The
+/// caller must preserve pointer provenance and must not rely on Rust references
+/// or typed contents across advice that can discard or alter pages, including
+/// [`Advice::LinuxDontNeed`]. Linux rounds a final partial page according to
+/// its `madvise` ABI.
+#[inline]
+pub unsafe fn madvise(ptr: *mut c_void, len: usize, advice: Advice) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contract.
+    unsafe { crabc_core::mm::madvise_raw(ptr.cast(), len, advice as u32) }
+}
+
+/// Gives Linux the POSIX access-pattern advisory for a mapped range.
+///
+/// Unlike [`madvise`], this operation exposes only the POSIX policy set and
+/// does not name Linux's page-discarding `MADV_DONTNEED` behavior. The
+/// operation remains unsafe because the pointer and mapped-range contract is
+/// still supplied by the caller; errors are direct Linux [`crate::Errno`]
+/// values rather than C `errno` state.
+///
+/// # Safety
+///
+/// For policies other than [`PosixAdvice::DontNeed`], `ptr` must be
+/// page-aligned, identify the first byte of a valid mapped range, and have a
+/// `ptr..ptr+len` range that remains valid for the duration of the call. POSIX
+/// `DONTNEED` is a successful musl-compatible no-op on Linux, so it does not
+/// access or validate the supplied range. The caller must preserve pointer
+/// provenance and Rust reference invariants across every advisory operation
+/// that reaches the kernel.
+#[inline]
+pub unsafe fn posix_madvise(
+    ptr: *mut c_void,
+    len: usize,
+    advice: PosixAdvice,
+) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and pointer-provenance
+    // contract. The typed advice is one of POSIX's five policies.
+    unsafe { crabc_core::mm::posix_madvise_raw(ptr.cast(), len, advice as u32) }
+}
+
+/// Queries Linux residency for each page intersecting a mapped range.
+///
+/// The first `ceil(len / 4096)` bytes of `residency` are the caller-owned
+/// output area. Linux writes one byte per actual kernel page; bit zero reports
+/// whether that page is resident and the other bits are unspecified. Bytes
+/// after the required page count are left untouched. This operation never
+/// enters the public C ABI and never reads or writes thread-local `errno`.
+///
+/// # Safety
+///
+/// `ptr` must be page-aligned and identify the first byte of a range which
+/// remains mapped for the duration of the call. `len` must not wrap the
+/// `ptr..ptr+len` address range. `residency` must remain exclusively borrowed,
+/// writable, and disjoint from the queried mapping for the duration of the
+/// syscall; it must contain at least [`MINCORE_PAGE_SIZE`]-based
+/// `ceil(len / 4096)` bytes. The caller must not inspect the output until this
+/// function returns. For a zero-length range, an empty output slice is
+/// sufficient, but Linux still validates `ptr` according to its syscall ABI.
+#[inline]
+pub unsafe fn mincore(ptr: *mut c_void, len: usize, residency: &mut [u8]) -> Result<()> {
+    let required = len
+        .checked_add(MINCORE_PAGE_SIZE - 1)
+        .map(|rounded| rounded / MINCORE_PAGE_SIZE)
+        .ok_or(crate::Errno::INVAL)?;
+    if residency.len() < required {
+        return Err(crate::Errno::INVAL);
+    }
+
+    // SAFETY: The length check proves Linux cannot write beyond the supplied
+    // slice on Linux/x86-64's 4096-byte base page ABI.
+    unsafe { crabc_core::mm::mincore_raw(ptr.cast(), len, residency.as_mut_ptr()) }
 }

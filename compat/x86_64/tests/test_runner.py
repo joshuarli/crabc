@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -66,6 +66,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
         self.assertIn('run_mlock_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mlock_reference.sh', source)
+        self.assertIn('run_msync_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_msync_reference.sh', source)
+        self.assertIn('run_madvise_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_madvise_reference.sh', source)
+        self.assertIn('run_mincore_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_mincore_reference.sh', source)
         self.assertIn('run_rand_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_time_abi_reference()', source)
@@ -86,6 +92,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_pidfd_open_reference.sh', source)
         self.assertIn('run_fcntl_getlk_reference()', source)
         self.assertIn('compat/x86_64/run_x86_fcntl_getlk_reference.sh', source)
+        self.assertIn('run_scheduler_priority_bounds_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh', source)
         self.assertIn('run_fstat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_fstat_reference.sh', source)
         self.assertIn('run_system_reference()', source)
@@ -113,6 +121,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_process_session', source)
         self.assertIn('--test x86_64_pidfd_open', source)
         self.assertIn('--test x86_64_rand', source)
+        self.assertIn('--test x86_64_scheduler_priority_bounds', source)
         self.assertIn('--test x86_64_sleep', source)
         self.assertIn('--test x86_64_system', source)
         self.assertIn('--test x86_64_thread', source)
@@ -158,6 +167,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             encoding="utf-8"
         )
         mlock = (ROOT / "compat" / "x86_64" / "run_x86_mlock_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        msync = (ROOT / "compat" / "x86_64" / "run_x86_msync_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        madvise = (ROOT / "compat" / "x86_64" / "run_x86_madvise_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        mincore = (ROOT / "compat" / "x86_64" / "run_x86_mincore_reference.sh").read_text(
             encoding="utf-8"
         )
         signal = (ROOT / "compat" / "x86_64" / "run_signal_header_abi.sh").read_text(
@@ -214,6 +232,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         fcntl_getlk_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_fcntl_getlk_reference.sh"
         ).read_text(encoding="utf-8")
+        scheduler_priority_bounds_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_scheduler_priority_bounds_reference.sh"
+        ).read_text(encoding="utf-8")
         fstat_reference = (ROOT / "compat" / "x86_64" / "run_x86_fstat_reference.sh").read_text(
             encoding="utf-8"
         )
@@ -260,6 +281,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_mlock_reference_probe.c', mlock)
         self.assertIn('memory-locking ABI/behavior reference', mlock)
         self.assertNotIn('-p crabc-libc', mlock)
+        self.assertIn('x86_msync_reference_probe.c', msync)
+        self.assertIn('msync ABI/behavior reference', msync)
+        self.assertNotIn('-p crabc-libc', msync)
+        self.assertIn('x86_madvise_reference_probe.c', madvise)
+        self.assertIn('madvise ABI/behavior reference', madvise)
+        self.assertNotIn('-p crabc-libc', madvise)
+        self.assertIn('x86_mincore_reference_probe.c', mincore)
+        self.assertIn('mincore ABI/behavior reference', mincore)
+        self.assertNotIn('-p crabc-libc', mincore)
         self.assertIn('signal_header_abi_probe.c', signal)
         self.assertIn('signal_header_posix_abi_probe.c', signal)
         self.assertIn('-fsyntax-only', signal)
@@ -332,6 +362,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_fcntl_getlk_reference_probe.c', fcntl_getlk_reference)
         self.assertIn('fcntl_getlk reference', fcntl_getlk_reference)
         self.assertNotIn('-p crabc-libc', fcntl_getlk_reference)
+        self.assertIn('x86_scheduler_priority_bounds_reference_probe.c', scheduler_priority_bounds_reference)
+        self.assertIn('scheduler-priority bounds reference', scheduler_priority_bounds_reference)
+        self.assertNotIn('-p crabc-libc', scheduler_priority_bounds_reference)
         self.assertIn('x86_fstat_reference_probe.c', fstat_reference)
         self.assertIn('fstat reference', fstat_reference)
         self.assertNotIn('-p crabc-libc', fstat_reference)
@@ -634,6 +667,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_pidfd_open",
                     "--test",
                     "x86_64_rand",
+                    "--test",
+                    "x86_64_scheduler_priority_bounds",
                     "--test",
                     "x86_64_sleep",
                     "--test",
