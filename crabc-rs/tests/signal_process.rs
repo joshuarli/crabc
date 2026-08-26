@@ -1,3 +1,5 @@
+#![cfg(target_arch = "aarch64")]
+
 use std::ffi::CStr;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

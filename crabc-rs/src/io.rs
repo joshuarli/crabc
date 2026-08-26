@@ -209,7 +209,7 @@ pub fn dup<Fd: AsFd>(fd: Fd) -> Result<OwnedFd> {
 /// `dup2(fd, new)`—replace the descriptor held by `new`.
 ///
 /// The mutable owner prevents aliasing the target through this API. Linux's
-/// AArch64 implementation uses `dup3` internally while preserving `dup2`'s
+/// target implementation uses `dup3` internally while preserving `dup2`'s
 /// equal-descriptor no-op semantics.
 #[inline]
 pub fn dup2<Fd: AsFd>(fd: Fd, new: &mut OwnedFd) -> Result<()> {
@@ -382,7 +382,7 @@ pub fn preadv<Fd: AsFd>(fd: Fd, buffers: &mut [IoSliceMut<'_>], offset: u64) -> 
 /// `offset == u64::MAX` is the explicit Linux sentinel for the descriptor's
 /// current file position; that form may advance the position. Every other
 /// `u64` is passed as a positioned offset, with its low and high 32-bit words
-/// preserved by the AArch64 syscall seam. Unknown `ReadWriteFlags` bits return
+/// preserved by the target syscall seam. Unknown `ReadWriteFlags` bits return
 /// `EINVAL` before a syscall. A short read initializes only its returned byte
 /// count; the remaining initialized segments are unchanged.
 #[inline]
@@ -482,7 +482,7 @@ pub fn pwritev<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], offset: u64) -> Result
 /// `offset == u64::MAX` is the explicit Linux sentinel for the descriptor's
 /// current file position; that form may advance the position. Every other
 /// `u64` is passed as a positioned offset, with its low and high 32-bit words
-/// preserved by the AArch64 syscall seam. Unknown `ReadWriteFlags` bits return
+/// preserved by the target syscall seam. Unknown `ReadWriteFlags` bits return
 /// `EINVAL` before a syscall. A successful short write is returned as its
 /// actual byte count.
 #[inline]

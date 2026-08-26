@@ -21,11 +21,10 @@ PRODUCTION_SOURCE = (
 HISTORICAL_OR_TASK_SOURCES = {Path("cleanup.md")}
 X86_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"x86_64"')
 RISC_V_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"riscv64"')
-# The staged native x86-64 runtime program begins with a small, explicit core
-# foundation. Keep this list specific, including its directly-owned native
-# behavior test module: later x86 libc, loader, CRT, or facade work must add
-# its own reviewed source boundary instead of inheriting a directory-wide
-# exception.
+# The staged native x86-64 runtime program begins with small, explicit core
+# direct-facade, and source-only relocation foundations. Keep each list
+# specific: later x86 libc, loader, CRT, or facade work must add its own
+# reviewed source boundary rather than inheriting a directory-wide exception.
 X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/fenv_x86_64.rs"),
     Path("crabc-core/src/lib.rs"),
@@ -33,6 +32,20 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/tests.rs"),
     Path("crabc-core/src/thread.rs"),
     Path("crabc-core/src/vdso.rs"),
+}
+# This facade admission is deliberately narrower than a general x86 target:
+# `lib.rs` exposes only target-record-independent families, while `signal.rs`
+# owns the separately-proved x86 kernel signal records and restorer. No other
+# facade source inherits this exception.
+X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
+    Path("crabc-rs/src/lib.rs"),
+    Path("crabc-rs/src/signal.rs"),
+}
+# This source-only loader foundation has no `crabc-ldso` integration or public
+# interpreter boundary. It is listed independently so a later loader slice
+# cannot inherit an artifact-wide x86 exception.
+X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
+    Path("ldso/src/x86_64_relocation.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the
@@ -172,13 +185,17 @@ def check_root_c_link_boundaries(errors: list[str]) -> None:
 def is_authorized_x86_branch(relative: Path, line: str) -> bool:
     """Return whether one exact production x86 cfg has a reviewed boundary.
 
-    The staged core foundation is intentionally target-specific and does not
-    make any public runtime artifact selectable. The separate allocator lane
-    retains its narrow source-file allowlist. A new x86 cfg elsewhere must be
-    added deliberately with the owning vertical slice.
+    The staged core, direct-facade, and source-only loader foundations are
+    intentionally target-specific and do not establish public runtime support.
+    The separate allocator lane retains its narrow source-file allowlist. A
+    new x86 cfg elsewhere must be added deliberately with its vertical slice.
     """
 
     if relative in X86_RUNTIME_FOUNDATION_CORE_SOURCES:
+        return True
+    if relative in X86_RUNTIME_FOUNDATION_FACADE_SOURCES:
+        return True
+    if relative in X86_RUNTIME_FOUNDATION_LDSO_SOURCES:
         return True
     if relative in X86_ALLOCATOR_EVIDENCE_CORE_SOURCES:
         return 'feature = "allocator-x86-evidence"' in line
@@ -333,7 +350,7 @@ def main() -> int:
                     relative, line
                 ):
                     errors.append(
-                        f"{relative}:{line_number}: x86-64 branch is outside private allocator evidence"
+                        f"{relative}:{line_number}: x86-64 branch is outside an explicit staged boundary"
                     )
 
     core_root = ROOT / "crabc-core" / "src" / "lib.rs"
@@ -345,9 +362,18 @@ def main() -> int:
 
     rust_facade_root = ROOT / "crabc-rs" / "src" / "lib.rs"
     rust_facade_text = rust_facade_root.read_text()
-    if 'compile_error!("crabc-rs supports Linux/AArch64 little-endian only")' not in rust_facade_text:
+    if any(
+        target not in rust_facade_text
+        for target in (
+            'target_os = "linux"',
+            'target_arch = "aarch64"',
+            'target_arch = "x86_64"',
+            'target_endian = "little"',
+            'compile_error!("crabc-rs supports little-endian Linux/AArch64 and staged Linux/x86-64 only")',
+        )
+    ):
         errors.append(
-            "crabc-rs/src/lib.rs: public facade must reject non-Linux/AArch64 targets explicitly"
+            "crabc-rs/src/lib.rs: staged Linux/x86-64 facade target rejection is missing"
         )
 
     libc_root = ROOT / "libc" / "src" / "lib.rs"

@@ -1,8 +1,9 @@
-//! Typed AArch64 floating-point environment operations.
+//! Typed floating-point environment operations for the staged Linux targets.
 //!
 //! These wrappers preserve the native Rust contract: they update the calling
-//! thread's FPCR/FPSR directly through `crabc-core`, without calling C fenv
-//! functions or translating C sentinel/`errno` results.
+//! thread's architecture-specific floating-point environment directly through
+//! `crabc-core`, without calling C fenv functions or translating C
+//! sentinel/`errno` results.
 
 pub use crabc_core::fenv::{Environment, ExceptionFlags, RoundingMode};
 
@@ -32,12 +33,12 @@ pub fn set_rounding(rounding: RoundingMode) {
 
 /// Restores the calling thread's captured floating-point environment on drop.
 ///
-/// The guard owns an architectural FPCR/FPSR snapshot; it does not borrow a C
-/// `fenv_t` or modify process-global state. Rust code in the guarded region is
-/// still subject to ordinary compiler floating-point transformations, so this
-/// guard is appropriate for preserving a foreign or explicitly controlled
-/// hardware environment, not for promising dynamic-rounding arithmetic from
-/// arbitrary optimized Rust expressions.
+/// The guard owns an architecture-specific floating-point snapshot; it does
+/// not borrow a C `fenv_t` or modify process-global state. Rust code in the
+/// guarded region is still subject to ordinary compiler floating-point
+/// transformations, so this guard is appropriate for preserving a foreign or
+/// explicitly controlled hardware environment, not for promising
+/// dynamic-rounding arithmetic from arbitrary optimized Rust expressions.
 #[must_use = "dropping the guard restores the previous floating-point environment"]
 pub struct EnvironmentGuard {
     saved: Environment,

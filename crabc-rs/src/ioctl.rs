@@ -12,7 +12,7 @@ use core::ptr;
 
 use crate::{AsFd, Result};
 
-/// A Linux ioctl request code on AArch64.
+/// A Linux ioctl request code on the staged supported 64-bit targets.
 pub type Opcode = u32;
 
 /// The signed integer result reported by a successful ioctl.
@@ -34,7 +34,7 @@ pub enum Direction {
     ReadWrite,
 }
 
-/// Linux `_IOC` request-code constructors for AArch64.
+/// Linux `_IOC` request-code constructors shared by AArch64 and x86-64.
 pub mod opcode {
     use super::{Direction, Opcode};
     use core::mem;

@@ -11,15 +11,16 @@
 #![no_std]
 
 // `crabc-rs` is a public facade, unlike the fixed-mimalloc engine's narrowly
-// scoped native x86-64 evidence lane. Keep its platform boundary explicit so
-// Cargo feature unification with that private engine cannot turn an internal
-// `crabc-core` evidence feature into an x86 facade build.
+// scoped native x86-64 evidence lane. Linux/x86-64 admission here is the
+// explicit staged direct-facade foundation from `x86-64.md`; it does not make
+// the facade or platform publicly supported, and runtime-owned features stay
+// separately gated until their own native boundaries exist.
 #[cfg(not(all(
     target_os = "linux",
-    target_arch = "aarch64",
+    any(target_arch = "aarch64", target_arch = "x86_64"),
     target_endian = "little"
 )))]
-compile_error!("crabc-rs supports Linux/AArch64 little-endian only");
+compile_error!("crabc-rs supports little-endian Linux/AArch64 and staged Linux/x86-64 only");
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -28,54 +29,82 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
-#[cfg(feature = "runtime-stdio")]
+#[cfg(all(feature = "runtime-stdio", target_arch = "aarch64"))]
 pub mod cfile;
 pub mod collections;
-#[cfg(feature = "runtime-loader")]
-pub mod dl;
+// The staged x86-64 facade exposes only `buffer`, `collections`, `fd`,
+// `fenv`, `ffi`, `io`, `ioctl`, `memory`, `numeric`, `param`, `pipe`, `rand`,
+// `signal`, `stdio`, and `text`, plus the root descriptor/error types. These
+// are the target-record-independent families or have an explicit x86 ABI
+// proof. Every other public module owns an AArch64 kernel-record contract and
+// stays absent until its record family has its own x86 proof; admission must
+// not silently make an AArch64 layout usable on x86-64.
+#[cfg(target_arch = "aarch64")]
 pub mod event;
+#[cfg(feature = "runtime-loader")]
+#[cfg(target_arch = "aarch64")]
+pub mod dl;
 pub mod fd;
 pub mod fenv;
 pub mod ffi;
+#[cfg(target_arch = "aarch64")]
 pub mod fs;
 pub mod io;
 pub mod ioctl;
+#[cfg(target_arch = "aarch64")]
 pub mod ipc;
 pub mod memory;
+#[cfg(target_arch = "aarch64")]
 pub mod mm;
+#[cfg(target_arch = "aarch64")]
 pub mod mount;
+#[cfg(target_arch = "aarch64")]
 pub mod net;
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 pub mod netdb;
 pub mod numeric;
 pub mod param;
+#[cfg(target_arch = "aarch64")]
 pub mod path;
+#[cfg(target_arch = "aarch64")]
 pub mod pattern;
 pub mod pipe;
+#[cfg(target_arch = "aarch64")]
 pub mod process;
+#[cfg(target_arch = "aarch64")]
 pub mod pty;
 pub mod rand;
+#[cfg(target_arch = "aarch64")]
 mod raw_dir;
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 pub mod resolver;
-#[cfg(feature = "runtime-thread")]
+#[cfg(all(feature = "runtime-thread", target_arch = "aarch64"))]
 pub mod runtime_thread;
+#[cfg(target_arch = "aarch64")]
 pub mod shm;
 pub mod signal;
 pub mod stdio;
+#[cfg(target_arch = "aarch64")]
 pub mod sync;
+#[cfg(target_arch = "aarch64")]
 pub mod system;
+#[cfg(target_arch = "aarch64")]
 pub mod termios;
 pub mod text;
+#[cfg(target_arch = "aarch64")]
 pub mod thread;
+#[cfg(target_arch = "aarch64")]
 pub mod time;
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 pub mod timezone;
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 pub mod users;
 
 pub use crabc_core::{Errno, Result};
 pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+#[cfg(target_arch = "x86_64")]
+pub use signal::Pid;
+#[cfg(target_arch = "aarch64")]
 pub use raw_dir::{RawDir, RawDirEntry};
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+#![cfg(target_arch = "aarch64")]
+
 use core::ffi::CStr;
 
 use crabc_rs::fs::{self, Mode, OFlags, ABS, CWD};
@@ -70,7 +72,7 @@ fn typed_ioctl_wrappers_use_direct_kernel_state() {
 }
 
 #[test]
-fn ioctl_opcode_helpers_match_the_linux_aarch64_encoding() {
+fn ioctl_opcode_helpers_match_the_linux_64_bit_encoding() {
     assert_eq!(opcode::none(b'T', 227), 0x54e3);
     assert_eq!(opcode::read::<u32>(b'U', 15), 0x8004_550f);
     assert_eq!(opcode::write::<i32>(b'T', 200), 0x4004_54c8);

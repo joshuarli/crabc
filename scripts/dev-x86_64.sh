@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 staged foundation evidence entry point.
 #
-# This is a deliberately closed foundation lane. It proves only crabc-core
-# under the native musl target; it does not select libc, ldso, CRT, sysroot,
-# crabc-rs, or allocator evidence commands.
+# This is a deliberately closed foundation lane. It proves explicitly named
+# native core, direct-facade, raw-C-syscall, and source-only relocation slices;
+# it does not select a libc, ldso artifact, CRT, sysroot, or allocator build.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,12 +20,17 @@ Usage: ./scripts/dev-x86_64.sh <command>
 Native Linux/x86-64 staged-foundation evidence commands:
   image  build the pinned Linux/amd64 core-evidence image
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
+  facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
+  ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
-an x86 libc artifact, ldso, CRT, sysroot, crabc-rs, allocator, generic Cargo,
-or shell command. `libc-syscall` compiles only the unintegrated raw syscall
-module; it is not a crabc-libc build or C ABI support claim.
+an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
+command. `facade` covers only the separately admitted direct `crabc-rs`
+subset; `libc-syscall` compiles only the unintegrated raw syscall module.
+`ldso-relocation` compiles only the unintegrated checked relocation source.
+None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
+support claim.
 EOF
 }
 
@@ -84,12 +89,51 @@ run_in_container() {
         "$IMAGE" "$@"
 }
 
+run_core_tests() {
+    run_in_container bash -ceu '
+        target_dir="$(mktemp -d /tmp/crabc-x86-64-core.XXXXXX)"
+        CARGO_TARGET_DIR="$target_dir" cargo test --locked --target x86_64-unknown-linux-musl \
+            -p crabc-core --lib --no-default-features -- --test-threads=1
+
+        mapfile -d "" -t test_binaries < <(
+            find "$target_dir/x86_64-unknown-linux-musl/debug/deps" -maxdepth 1 \
+                -type f -name "crabc_core-*" -perm -111 -print0
+        )
+        if [ "${#test_binaries[@]}" -ne 1 ]; then
+            printf "ERROR: expected one crabc-core test binary, found %s\\n" \
+                "${#test_binaries[@]}" >&2
+            exit 1
+        fi
+
+        test_binary="${test_binaries[0]}"
+        command -v objdump >/dev/null || {
+            printf "ERROR: x86 fenv codegen gate requires objdump\\n" >&2
+            exit 1
+        }
+        if objdump -d -- "$test_binary" | grep -Eqi "[[:space:]]fxrstor(64)?[[:space:]]"; then
+            printf "ERROR: x86 fenv codegen must not reload XMM state with fxrstor: %s\\n" \
+                "$test_binary" >&2
+            exit 1
+        fi
+        printf "x86 fenv codegen gate: PASS (no fxrstor in %s)\\n" "$test_binary"
+    '
+}
+
 run_libc_syscall_probe() {
     run_in_container bash -ceu '
         probe=/tmp/crabc-x86-libc-syscall-probe
         rustc --edition=2021 --target x86_64-unknown-linux-musl \
             /workspace/compat/x86_64/libc_syscall_probe.rs -o "$probe"
         "$probe"
+    '
+}
+
+run_ldso_relocation_tests() {
+    run_in_container bash -ceu '
+        test_binary=/tmp/crabc-x86-64-ldso-relocation
+        rustup run nightly-2026-07-24 rustc --edition=2021 --test \
+            /workspace/ldso/src/x86_64_relocation.rs -o "$test_binary"
+        "$test_binary" --test-threads=1
     '
 }
 
@@ -102,7 +146,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|core|libc-syscall) ;;
+    image|core|facade|libc-syscall|ldso-relocation) ;;
     *)
         usage >&2
         exit 2
@@ -119,12 +163,23 @@ case "$command" in
     core)
         [ "$#" -eq 0 ] || fail "core takes no arguments"
         ensure_image
+        run_core_tests
+        ;;
+    facade)
+        [ "$#" -eq 0 ] || fail "facade takes no arguments"
+        ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
-            -p crabc-core --lib --no-default-features -- --test-threads=1
+            -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
+            -- --test-threads=1
         ;;
     libc-syscall)
         [ "$#" -eq 0 ] || fail "libc-syscall takes no arguments"
         ensure_image
         run_libc_syscall_probe
+        ;;
+    ldso-relocation)
+        [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"
+        ensure_image
+        run_ldso_relocation_tests
         ;;
 esac

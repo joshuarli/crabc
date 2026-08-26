@@ -21,11 +21,16 @@ const MXCSR_ROUNDING_SHIFT: u32 = 3;
 // counterpart in the existing core API and remains preserved in raw snapshots.
 const EXCEPTION_MASK: u32 = 0x003d;
 
-const X87_CONTROL_WORD_OFFSET: usize = 0;
-const X87_STATUS_WORD_OFFSET: usize = 2;
-const MXCSR_OFFSET: usize = 24;
 const MXCSR_MASK_OFFSET: usize = 28;
 const DEFAULT_MXCSR_MASK: u32 = 0x0000_ffbf;
+
+// `FNSTENV`/`FLDENV` use the legacy 28-byte protected-mode environment in
+// 64-bit mode.  Unlike the compact FXSAVE header, its status word begins at
+// byte four.  We use this format only when an operation must alter x87 status:
+// it restores x87 control/status/tag and instruction metadata, but never the
+// x87 data-register stack or any XMM registers.
+const X87_ENV_CONTROL_WORD_OFFSET: usize = 0;
+const X87_ENV_STATUS_WORD_OFFSET: usize = 4;
 
 /// The five ISO C floating-point exception flags on Linux/x86-64.
 ///
@@ -256,13 +261,38 @@ impl Environment {
     }
 }
 
-/// The legacy 512-byte FXSAVE image used to edit x87 status without changing
-/// the x87 register stack or the XMM registers.
+/// The 28-byte legacy x87 environment used to alter control/status state
+/// without loading the x87 data-register stack or any XMM registers.
 ///
-/// FXSAVE/FXRSTOR require a 16-byte-aligned operand.  The fields used here are
-/// common to the architecturally required FXSAVE format: x87 control at byte
-/// 0, x87 status at byte 2, MXCSR at byte 24, and the MXCSR writable mask at
-/// byte 28.  Other bytes are captured and restored unchanged.
+/// `FNSTENV` temporarily masks x87 exceptions while it writes this image;
+/// every caller restores it with `FLDENV` before executing another x87
+/// instruction. The captured tag word and instruction metadata remain
+/// unchanged, so this type is not a public portable `fenv_t` representation.
+#[repr(C, align(4))]
+struct X87Environment {
+    bytes: [u8; 28],
+}
+
+impl X87Environment {
+    #[inline]
+    fn zeroed() -> Self {
+        Self { bytes: [0; 28] }
+    }
+
+    #[inline]
+    fn write_u16(&mut self, offset: usize, value: u16) {
+        let bytes = value.to_le_bytes();
+        self.bytes[offset] = bytes[0];
+        self.bytes[offset + 1] = bytes[1];
+    }
+}
+
+/// The legacy 512-byte FXSAVE image used solely to discover the CPU's MXCSR
+/// writable mask.
+///
+/// FXSAVE requires a 16-byte-aligned operand.  It saves state to memory but
+/// does not restore or otherwise modify x87/XMM registers, so it has no live
+/// register-clobber contract beyond its explicit output memory.
 #[repr(C, align(16))]
 struct FxSaveArea {
     bytes: [u8; 512],
@@ -275,18 +305,6 @@ impl FxSaveArea {
     }
 
     #[inline]
-    fn read_u16(&self, offset: usize) -> u16 {
-        u16::from_le_bytes([self.bytes[offset], self.bytes[offset + 1]])
-    }
-
-    #[inline]
-    fn write_u16(&mut self, offset: usize, value: u16) {
-        let bytes = value.to_le_bytes();
-        self.bytes[offset] = bytes[0];
-        self.bytes[offset + 1] = bytes[1];
-    }
-
-    #[inline]
     fn read_u32(&self, offset: usize) -> u32 {
         u32::from_le_bytes([
             self.bytes[offset],
@@ -294,15 +312,6 @@ impl FxSaveArea {
             self.bytes[offset + 2],
             self.bytes[offset + 3],
         ])
-    }
-
-    #[inline]
-    fn write_u32(&mut self, offset: usize, value: u32) {
-        let bytes = value.to_le_bytes();
-        self.bytes[offset] = bytes[0];
-        self.bytes[offset + 1] = bytes[1];
-        self.bytes[offset + 2] = bytes[2];
-        self.bytes[offset + 3] = bytes[3];
     }
 
     #[inline]
@@ -318,13 +327,12 @@ impl FxSaveArea {
 }
 
 #[inline]
-fn capture_state() -> FxSaveArea {
+fn capture_mxcsr_mask() -> u32 {
     let mut state = FxSaveArea::zeroed();
-    // SAFETY: The Linux/x86-64 target contract assumes the architectural
-    // FXSAVE/FXRSTOR facilities required by the SysV x86-64 floating-point
-    // ABI. `FxSaveArea` is exactly 512 bytes and 16-byte aligned as the
-    // instruction requires. This snapshots only the calling thread's x87,
-    // XMM, and MXCSR state into the local object.
+    // SAFETY: The Linux/x86-64 target contract assumes the FXSAVE facility
+    // required by the SysV x86-64 floating-point ABI. `FxSaveArea` is exactly
+    // 512 bytes and 16-byte aligned as the instruction requires. FXSAVE only
+    // writes the local image; it does not modify architectural x87/XMM state.
     unsafe {
         asm!(
             "fxsave64 [{state}]",
@@ -332,58 +340,143 @@ fn capture_state() -> FxSaveArea {
             options(nostack, preserves_flags),
         );
     }
-    state
+    state.mxcsr_mask()
 }
 
 #[inline]
-fn restore_state(state: &FxSaveArea) {
-    // SAFETY: `state` originated from `capture_state`, retains the complete
-    // FXSAVE image, and has 16-byte alignment.  The caller changes only the
-    // documented control/status/MXCSR fields.  MXCSR is masked to the CPU's
-    // advertised writable bits before this instruction executes.
+fn capture_x87_environment() -> X87Environment {
+    let mut environment = X87Environment::zeroed();
+    // SAFETY: `environment` owns the exact 28-byte x87 environment image.
+    // FNSTENV writes it and temporarily masks x87 exceptions; callers restore
+    // it with `restore_x87_environment` before another x87 instruction.
     unsafe {
         asm!(
-            "fxrstor64 [{state}]",
-            state = in(reg) state,
+            "fnstenv [{environment}]",
+            environment = in(reg) &mut environment,
+            options(nostack, preserves_flags),
+        );
+    }
+    environment
+}
+
+#[inline]
+fn restore_x87_environment(environment: &X87Environment) {
+    // SAFETY: `environment` originated from `capture_x87_environment`; its
+    // only edits are the documented control/status fields. FLDENV restores
+    // that narrow x87 environment and does not write x87 data or XMM state.
+    unsafe {
+        asm!(
+            "fldenv [{environment}]",
+            environment = in(reg) environment,
             options(nostack, preserves_flags),
         );
     }
 }
 
 #[inline]
-fn environment_from_state(state: &FxSaveArea) -> Environment {
-    Environment {
-        control_word: state.read_u16(X87_CONTROL_WORD_OFFSET),
-        status_word: state.read_u16(X87_STATUS_WORD_OFFSET),
-        mxcsr: state.read_u32(MXCSR_OFFSET),
+fn read_control_word() -> u16 {
+    let mut control_word = 0u16;
+    // SAFETY: `control_word` is live writable storage for the x87 control
+    // word. FNSTCW observes state without changing it.
+    unsafe {
+        asm!(
+            "fnstcw [{control_word}]",
+            control_word = in(reg) &mut control_word,
+            options(nostack, preserves_flags),
+        );
+    }
+    control_word
+}
+
+#[inline]
+fn read_status_word() -> u16 {
+    let mut status_word = 0u16;
+    // SAFETY: `status_word` is live writable storage for the x87 status word.
+    // FNSTSW observes state without changing it.
+    unsafe {
+        asm!(
+            "fnstsw [{status_word}]",
+            status_word = in(reg) &mut status_word,
+            options(nostack, preserves_flags),
+        );
+    }
+    status_word
+}
+
+#[inline]
+fn write_control_word(control_word: u16) {
+    // SAFETY: `control_word` is a plain x87 control word supplied by either a
+    // captured environment or the typed rounding update. FLDCW changes only
+    // the x87 control word, never data/XMM registers.
+    unsafe {
+        asm!(
+            "fldcw [{control_word}]",
+            control_word = in(reg) &control_word,
+            options(nostack, preserves_flags),
+        );
     }
 }
 
 #[inline]
-fn apply_environment(state: &mut FxSaveArea, environment: Environment) {
-    state.write_u16(X87_CONTROL_WORD_OFFSET, environment.control_word);
-    state.write_u16(X87_STATUS_WORD_OFFSET, environment.status_word);
-    let mxcsr = environment.mxcsr & state.mxcsr_mask();
-    state.write_u32(MXCSR_OFFSET, mxcsr);
+fn read_mxcsr() -> u32 {
+    let mut mxcsr = 0u32;
+    // SAFETY: `mxcsr` is live writable storage for the MXCSR register.
+    unsafe {
+        asm!(
+            "stmxcsr [{mxcsr}]",
+            mxcsr = in(reg) &mut mxcsr,
+            options(nostack, preserves_flags),
+        );
+    }
+    mxcsr
+}
+
+#[inline]
+fn write_mxcsr(mxcsr: u32) {
+    // SAFETY: callers pass a captured MXCSR with only supported edits, or an
+    // environment already restricted by the CPU writable mask. LDMXCSR
+    // changes only MXCSR and never XMM data registers.
+    unsafe {
+        asm!(
+            "ldmxcsr [{mxcsr}]",
+            mxcsr = in(reg) &mxcsr,
+            options(nostack, preserves_flags),
+        );
+    }
+}
+
+#[inline]
+fn environment_from_registers() -> Environment {
+    Environment {
+        control_word: read_control_word(),
+        status_word: read_status_word(),
+        mxcsr: read_mxcsr(),
+    }
+}
+
+#[inline]
+fn set_x87_environment(control_word: u16, status_word: u16) {
+    let mut x87_environment = capture_x87_environment();
+    x87_environment.write_u16(X87_ENV_CONTROL_WORD_OFFSET, control_word);
+    x87_environment.write_u16(X87_ENV_STATUS_WORD_OFFSET, status_word);
+    restore_x87_environment(&x87_environment);
 }
 
 /// Captures the calling thread's x87 control/status words and MXCSR.
 #[inline]
 pub fn get_environment() -> Environment {
-    environment_from_state(&capture_state())
+    environment_from_registers()
 }
 
 /// Restores a previously captured floating-point environment.
 ///
-/// The full FXSAVE image is first captured so x87 data registers and XMM
-/// registers are restored exactly as they were at this call boundary; only the
-/// environment fields in `environment` are changed.  Unsupported MXCSR bits
-/// are discarded using the CPU-provided mask.
+/// This restores only the intended x87 control/status and MXCSR state; it
+/// never reloads the x87 data-register stack or XMM registers. Unsupported
+/// MXCSR bits are discarded using the CPU-provided mask.
 #[inline]
 pub fn set_environment(environment: Environment) {
-    let mut state = capture_state();
-    apply_environment(&mut state, environment);
-    restore_state(&state);
+    set_x87_environment(environment.control_word, environment.status_word);
+    write_mxcsr(environment.mxcsr & capture_mxcsr_mask());
 }
 
 /// Returns the calling thread's current x87 rounding mode.
@@ -400,18 +493,12 @@ pub fn get_rounding() -> RoundingMode {
 /// preserving all other environment bits.
 #[inline]
 pub fn set_rounding(rounding: RoundingMode) {
-    let mut state = capture_state();
-    let control_word = state.read_u16(X87_CONTROL_WORD_OFFSET);
-    let mxcsr = state.read_u32(MXCSR_OFFSET);
-    state.write_u16(
-        X87_CONTROL_WORD_OFFSET,
+    let control_word = read_control_word();
+    let mxcsr = read_mxcsr();
+    write_control_word(
         (control_word & !X87_ROUNDING_MASK) | rounding.raw(),
     );
-    state.write_u32(
-        MXCSR_OFFSET,
-        (mxcsr & !MXCSR_ROUNDING_MASK) | rounding.mxcsr_raw(),
-    );
-    restore_state(&state);
+    write_mxcsr((mxcsr & !MXCSR_ROUNDING_MASK) | rounding.mxcsr_raw());
 }
 
 /// Clears selected pending exception flags in both x87 and MXCSR.
@@ -424,12 +511,12 @@ pub fn clear_exceptions(flags: ExceptionFlags) {
         return;
     }
 
-    let mut state = capture_state();
-    let status_word = state.read_u16(X87_STATUS_WORD_OFFSET) & !(flags.bits() as u16);
-    let mxcsr = state.read_u32(MXCSR_OFFSET) & !flags.bits();
-    state.write_u16(X87_STATUS_WORD_OFFSET, status_word);
-    state.write_u32(MXCSR_OFFSET, mxcsr);
-    restore_state(&state);
+    let environment = get_environment();
+    set_x87_environment(
+        environment.control_word,
+        environment.status_word & !(flags.bits() as u16),
+    );
+    write_mxcsr(environment.mxcsr & !flags.bits());
 }
 
 /// Raises selected pending exception flags in both x87 and MXCSR.
@@ -443,12 +530,12 @@ pub fn raise_exceptions(flags: ExceptionFlags) {
         return;
     }
 
-    let mut state = capture_state();
-    let status_word = state.read_u16(X87_STATUS_WORD_OFFSET) | flags.bits() as u16;
-    let mxcsr = state.read_u32(MXCSR_OFFSET) | flags.bits();
-    state.write_u16(X87_STATUS_WORD_OFFSET, status_word);
-    state.write_u32(MXCSR_OFFSET, mxcsr);
-    restore_state(&state);
+    let environment = get_environment();
+    set_x87_environment(
+        environment.control_word,
+        environment.status_word | flags.bits() as u16,
+    );
+    write_mxcsr(environment.mxcsr | flags.bits());
 }
 
 /// Tests selected pending exception flags across x87 and MXCSR.
@@ -481,6 +568,8 @@ pub fn update_environment(environment: Environment) {
 
 #[cfg(test)]
 mod tests {
+    use core::arch::x86_64::{_mm_add_pd, _mm_set1_pd, _mm_set_pd, _mm_storeu_pd};
+
     use super::{
         clear_exceptions, get_environment, get_rounding, hold_exceptions, raise_exceptions,
         set_environment, set_rounding, test_exceptions, update_environment, Environment,
@@ -565,5 +654,51 @@ mod tests {
             test_exceptions(ExceptionFlags::ALL),
             ExceptionFlags::INVALID | ExceptionFlags::OVERFLOW,
         );
+    }
+
+    // This exercises both an ordinary scalar and an SSE value across every
+    // mutator. The operations after each mutation are exact binary operations,
+    // so their expected bit patterns are independent of the rounding mode.
+    // The native runner owns the separate emitted-code invariant: no fenv path
+    // may contain `fxrstor`, which would reload stale XMM state without a Rust
+    // register-clobber declaration.
+    #[inline(never)]
+    fn values_survive_fenv_mutators(snapshot: Environment) -> (u64, [u64; 2]) {
+        let scalar = std::hint::black_box(1.5f64);
+        let lower = std::hint::black_box(-3.25f64);
+        let upper = std::hint::black_box(9.75f64);
+
+        // SAFETY: SSE2 is mandatory for the Linux/x86-64 target. Both vector
+        // operations use exact binary fractions, and `lanes` owns sufficient
+        // storage for the unaligned result store.
+        unsafe {
+            let vector = _mm_set_pd(upper, lower);
+            let live_vector = _mm_add_pd(vector, _mm_set1_pd(0.5));
+            let live_scalar = scalar * 4.0;
+
+            set_environment(snapshot);
+            set_rounding(RoundingMode::TowardZero);
+            raise_exceptions(ExceptionFlags::INVALID | ExceptionFlags::INEXACT);
+            clear_exceptions(ExceptionFlags::INVALID);
+            let held = hold_exceptions();
+            update_environment(held);
+
+            let scalar_result = live_scalar * 0.5;
+            let result_vector = _mm_add_pd(live_vector, _mm_set1_pd(0.25));
+            let mut lanes = [0.0f64; 2];
+            _mm_storeu_pd(lanes.as_mut_ptr(), result_vector);
+            (scalar_result.to_bits(), [lanes[0].to_bits(), lanes[1].to_bits()])
+        }
+    }
+
+    #[test]
+    fn fenv_mutators_preserve_scalar_and_simd_values() {
+        let _restore = Restore(get_environment());
+        set_environment(Environment::default());
+
+        let (scalar, lanes) = values_survive_fenv_mutators(get_environment());
+
+        assert_eq!(scalar, 3.0f64.to_bits());
+        assert_eq!(lanes, [(-2.5f64).to_bits(), 10.5f64.to_bits()]);
     }
 }

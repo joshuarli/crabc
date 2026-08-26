@@ -26,6 +26,7 @@ const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1;
 const ELF_ET_DYN: u16 = 3;
 const ELF_EM_X86_64: u16 = 62;
+#[cfg(target_arch = "aarch64")]
 const ELF_EM_AARCH64: u16 = 183;
 #[cfg(target_arch = "aarch64")]
 const SUPPORTED_ELF_MACHINE: u16 = ELF_EM_AARCH64;
@@ -619,11 +620,10 @@ mod tests {
     #[test]
     fn rejects_a_foreign_elf_machine() {
         let mut image = synthetic_vdso();
-        let foreign_machine = if super::SUPPORTED_ELF_MACHINE == super::ELF_EM_AARCH64 {
-            super::ELF_EM_X86_64
-        } else {
-            super::ELF_EM_AARCH64
-        };
+        #[cfg(target_arch = "aarch64")]
+        let foreign_machine = super::ELF_EM_X86_64;
+        #[cfg(target_arch = "x86_64")]
+        let foreign_machine = 183;
         put_u16(&mut image, 18, foreign_machine);
 
         assert_eq!(clock_gettime_symbol_offset(&image), None);

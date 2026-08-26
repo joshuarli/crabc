@@ -1,60 +1,287 @@
-//! Native Linux/AArch64 signal facilities.
+//! Native Linux signal facilities for the staged supported targets.
 //!
-//! Signal masks and synchronous waiting are ordinary typed operations. Handler
-//! installation and alternate-stack replacement are unsafe because the kernel
-//! can later enter the supplied code or memory at an arbitrary interruption
-//! point. This module uses `crabc-core`'s direct kernel seams exclusively; it
-//! never calls the public C ABI or reads TLS `errno`.
+//! Linux/AArch64 exposes the complete typed mask, waiting, queue, descriptor,
+//! and alternate-stack families. The staged x86-64 surface is deliberately
+//! narrower: one-argument handler actions and delivery to the current thread.
+//! Handler installation is unsafe because the kernel can later enter supplied
+//! code at an arbitrary interruption point. This module uses `crabc-core`'s
+//! direct kernel seams exclusively; it never calls the public C ABI or reads
+//! TLS `errno`.
 
 use core::arch::global_asm;
+#[cfg(target_arch = "aarch64")]
 use core::convert::Infallible;
+#[cfg(target_arch = "aarch64")]
 use core::ffi::c_void;
 use core::fmt;
 use core::mem::MaybeUninit;
+use core::num::NonZeroI32;
 use core::ptr;
 
 use bitflags::bitflags;
 
+#[cfg(target_arch = "aarch64")]
 use crate::process::{self, Pid};
+#[cfg(target_arch = "aarch64")]
 use crate::time::Timespec;
-use crate::{AsFd, Errno, OwnedFd, Result};
+#[cfg(target_arch = "aarch64")]
+use crate::{AsFd, Errno, OwnedFd};
+use crate::Result;
 
+#[cfg(target_arch = "aarch64")]
 pub use crate::process::Signal;
 
+/// A non-zero Linux process or thread identifier used by the staged x86-64
+/// signal facade.
+///
+/// This narrow type exists here rather than admitting `process` wholesale:
+/// that larger facade still contains AArch64-only kernel records. It is only
+/// the typed selector needed by direct signal observation and delivery.
+#[cfg(target_arch = "x86_64")]
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Pid(NonZeroI32);
+
+#[cfg(target_arch = "x86_64")]
+impl Pid {
+    /// The Linux init process.
+    pub const INIT: Self = Self(unsafe { NonZeroI32::new_unchecked(1) });
+
+    /// Converts a positive raw Linux process or thread identifier.
+    #[inline]
+    pub const fn from_raw(raw: i32) -> Option<Self> {
+        if raw > 0 {
+            // SAFETY: The comparison proves that `raw` is non-zero.
+            Some(Self(unsafe { NonZeroI32::new_unchecked(raw) }))
+        } else {
+            None
+        }
+    }
+
+    /// Converts a known positive raw Linux process or thread identifier.
+    ///
+    /// # Safety
+    ///
+    /// `raw` must be positive.
+    #[inline]
+    pub const unsafe fn from_raw_unchecked(raw: i32) -> Self {
+        Self(unsafe { NonZeroI32::new_unchecked(raw) })
+    }
+
+    /// Returns the raw Linux process or thread identifier.
+    #[inline]
+    pub const fn as_raw_pid(self) -> i32 {
+        self.0.get()
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl fmt::Display for Pid {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// A non-zero application-visible Linux signal number on staged x86-64.
+///
+/// Musl 1.2.6 reserves 32, 33, and 34 for its runtime; safe construction
+/// covers the standard range 1–31 and the 35–64 realtime range only.
+#[cfg(target_arch = "x86_64")]
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Signal(NonZeroI32);
+
+#[cfg(target_arch = "x86_64")]
+impl Signal {
+    /// `SIGHUP`.
+    pub const HUP: Self = Self(unsafe { NonZeroI32::new_unchecked(1) });
+    /// `SIGINT`.
+    pub const INT: Self = Self(unsafe { NonZeroI32::new_unchecked(2) });
+    /// `SIGQUIT`.
+    pub const QUIT: Self = Self(unsafe { NonZeroI32::new_unchecked(3) });
+    /// `SIGILL`.
+    pub const ILL: Self = Self(unsafe { NonZeroI32::new_unchecked(4) });
+    /// `SIGTRAP`.
+    pub const TRAP: Self = Self(unsafe { NonZeroI32::new_unchecked(5) });
+    /// `SIGABRT` / `SIGIOT`.
+    pub const ABORT: Self = Self(unsafe { NonZeroI32::new_unchecked(6) });
+    /// `SIGBUS`.
+    pub const BUS: Self = Self(unsafe { NonZeroI32::new_unchecked(7) });
+    /// `SIGFPE`.
+    pub const FPE: Self = Self(unsafe { NonZeroI32::new_unchecked(8) });
+    /// `SIGKILL`.
+    pub const KILL: Self = Self(unsafe { NonZeroI32::new_unchecked(9) });
+    /// `SIGUSR1`.
+    pub const USR1: Self = Self(unsafe { NonZeroI32::new_unchecked(10) });
+    /// `SIGSEGV`.
+    pub const SEGV: Self = Self(unsafe { NonZeroI32::new_unchecked(11) });
+    /// `SIGUSR2`.
+    pub const USR2: Self = Self(unsafe { NonZeroI32::new_unchecked(12) });
+    /// `SIGPIPE`.
+    pub const PIPE: Self = Self(unsafe { NonZeroI32::new_unchecked(13) });
+    /// `SIGALRM`.
+    pub const ALARM: Self = Self(unsafe { NonZeroI32::new_unchecked(14) });
+    /// `SIGTERM`.
+    pub const TERM: Self = Self(unsafe { NonZeroI32::new_unchecked(15) });
+    /// `SIGSTKFLT`.
+    pub const STKFLT: Self = Self(unsafe { NonZeroI32::new_unchecked(16) });
+    /// `SIGCHLD`.
+    pub const CHILD: Self = Self(unsafe { NonZeroI32::new_unchecked(17) });
+    /// `SIGCONT`.
+    pub const CONT: Self = Self(unsafe { NonZeroI32::new_unchecked(18) });
+    /// `SIGSTOP`.
+    pub const STOP: Self = Self(unsafe { NonZeroI32::new_unchecked(19) });
+    /// `SIGTSTP`.
+    pub const TSTP: Self = Self(unsafe { NonZeroI32::new_unchecked(20) });
+    /// `SIGTTIN`.
+    pub const TTIN: Self = Self(unsafe { NonZeroI32::new_unchecked(21) });
+    /// `SIGTTOU`.
+    pub const TTOU: Self = Self(unsafe { NonZeroI32::new_unchecked(22) });
+    /// `SIGURG`.
+    pub const URG: Self = Self(unsafe { NonZeroI32::new_unchecked(23) });
+    /// `SIGXCPU`.
+    pub const XCPU: Self = Self(unsafe { NonZeroI32::new_unchecked(24) });
+    /// `SIGXFSZ`.
+    pub const XFSZ: Self = Self(unsafe { NonZeroI32::new_unchecked(25) });
+    /// `SIGVTALRM`.
+    pub const VTALARM: Self = Self(unsafe { NonZeroI32::new_unchecked(26) });
+    /// `SIGPROF`.
+    pub const PROF: Self = Self(unsafe { NonZeroI32::new_unchecked(27) });
+    /// `SIGWINCH`.
+    pub const WINCH: Self = Self(unsafe { NonZeroI32::new_unchecked(28) });
+    /// `SIGIO` / `SIGPOLL`.
+    pub const IO: Self = Self(unsafe { NonZeroI32::new_unchecked(29) });
+    /// `SIGPWR`.
+    pub const POWER: Self = Self(unsafe { NonZeroI32::new_unchecked(30) });
+    /// `SIGSYS`.
+    pub const SYS: Self = Self(unsafe { NonZeroI32::new_unchecked(31) });
+    /// The first musl application-visible realtime signal.
+    pub const RTMIN: Self = Self(unsafe { NonZeroI32::new_unchecked(35) });
+    /// The last Linux realtime signal.
+    pub const RTMAX: Self = Self(unsafe { NonZeroI32::new_unchecked(64) });
+
+    /// Converts an application-visible Linux/musl signal number into a typed
+    /// signal.
+    #[inline]
+    pub const fn from_named_raw(raw: i32) -> Option<Self> {
+        if (raw >= 1 && raw <= 31) || (raw >= Self::RTMIN.as_raw() && raw <= Self::RTMAX.as_raw()) {
+            // SAFETY: The range check proves that `raw` is non-zero.
+            Some(Self(unsafe { NonZeroI32::new_unchecked(raw) }))
+        } else {
+            None
+        }
+    }
+
+    /// Constructs an arbitrary non-zero Linux signal number.
+    ///
+    /// # Safety
+    ///
+    /// `raw` must be valid for the intended kernel operation and must not be
+    /// one of musl's reserved 32, 33, or 34 values unless the caller owns the
+    /// runtime consequences.
+    #[inline]
+    pub const unsafe fn from_raw_unchecked(raw: i32) -> Self {
+        Self(unsafe { NonZeroI32::new_unchecked(raw) })
+    }
+
+    /// Returns the raw Linux signal number.
+    #[inline]
+    pub const fn as_raw(self) -> i32 {
+        self.0.get()
+    }
+
+    /// Returns whether this is an application-visible realtime signal.
+    #[inline]
+    #[must_use]
+    pub const fn is_realtime(self) -> bool {
+        self.as_raw() >= Self::RTMIN.as_raw() && self.as_raw() <= Self::RTMAX.as_raw()
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn calling_pid_raw() -> i32 {
+    process::getpid().as_raw_pid()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn calling_pid_raw() -> i32 {
+    crabc_core::process::getpid()
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn calling_uid_raw() -> u32 {
+    process::getuid().as_raw()
+}
+
+#[cfg(target_arch = "aarch64")]
 const SIG_BLOCK: i32 = 0;
+#[cfg(target_arch = "aarch64")]
 const SIG_UNBLOCK: i32 = 1;
+#[cfg(target_arch = "aarch64")]
 const SIG_SETMASK: i32 = 2;
 const SIG_DFL: usize = 0;
 const SIG_IGN: usize = 1;
 const SA_RESTORER: u64 = 0x0400_0000;
 const SA_SIGINFO: u64 = 0x0000_0004;
+#[cfg(target_arch = "aarch64")]
 const SS_ONSTACK: i32 = 1;
+#[cfg(target_arch = "aarch64")]
 const SS_DISABLE: i32 = 2;
+#[cfg(target_arch = "aarch64")]
 const SI_QUEUE: i32 = -1;
+#[cfg(target_arch = "aarch64")]
 const SIGINFO_SIGNO_OFFSET: usize = 0;
+#[cfg(target_arch = "aarch64")]
 const SIGINFO_ERRNO_OFFSET: usize = 4;
+#[cfg(target_arch = "aarch64")]
 const SIGINFO_CODE_OFFSET: usize = 8;
+#[cfg(target_arch = "aarch64")]
 const SIGINFO_PID_OFFSET: usize = 16;
+#[cfg(target_arch = "aarch64")]
 const SIGINFO_UID_OFFSET: usize = 20;
+#[cfg(target_arch = "aarch64")]
 const SIGINFO_VALUE_OFFSET: usize = 24;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_SIGNO_OFFSET: usize = 0;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_ERRNO_OFFSET: usize = 4;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_CODE_OFFSET: usize = 8;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_PID_OFFSET: usize = 12;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_UID_OFFSET: usize = 16;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_STATUS_OFFSET: usize = 40;
+#[cfg(target_arch = "aarch64")]
 const SIGNALFD_VALUE_OFFSET: usize = 44;
 
 // This is intentionally private and uniquely named so a program may link
 // crabc-rs alongside crabc's C facade, whose public C restorer has another
-// symbol. Linux/AArch64's rt_sigaction record must carry a restorer for the
-// kernel to return from a user handler.
+// symbol. The architecture-specific `rt_sigreturn` trap lets the kernel
+// return from a user handler without crossing either C ABI.
+#[cfg(target_arch = "aarch64")]
 global_asm!(
     ".global crabc_rs_signal_restorer",
     ".type crabc_rs_signal_restorer, %function",
     "crabc_rs_signal_restorer:",
     "mov x8, #139",
     "svc #0",
+);
+
+// Linux/x86-64 enters `rt_sigreturn` through syscall number 15 with no
+// arguments. The kernel consumes the signal frame it placed at the current
+// stack pointer; the restorer must therefore not adjust the stack first.
+#[cfg(target_arch = "x86_64")]
+global_asm!(
+    ".global crabc_rs_signal_restorer",
+    ".type crabc_rs_signal_restorer,@function",
+    "crabc_rs_signal_restorer:",
+    "mov rax, 15",
+    "syscall",
 );
 
 unsafe extern "C" {
@@ -67,10 +294,12 @@ unsafe extern "C" {
 /// Safe constructors exclude signals 32, 33, and 34, which musl reserves for its
 /// internal runtime. The raw kernel bit pattern is intentionally not exposed
 /// for construction, so ordinary Rust code cannot accidentally perturb them.
+#[cfg(target_arch = "aarch64")]
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct SignalSet(u64);
 
+#[cfg(target_arch = "aarch64")]
 impl SignalSet {
     /// The empty signal set.
     pub const EMPTY: Self = Self(0);
@@ -109,12 +338,14 @@ impl SignalSet {
         self.0 == 0
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[inline]
     pub(crate) const fn kernel_bits(&self) -> &u64 {
         &self.0
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 bitflags! {
     /// Flags accepted by Linux `signalfd4`.
     #[repr(transparent)]
@@ -134,10 +365,12 @@ bitflags! {
 /// This is intentionally distinct from [`SigInfo`]: Linux `signalfd4`
 /// presents a stable descriptor record, not the in-memory `siginfo_t` passed
 /// to handlers and synchronous waits.
+#[cfg(target_arch = "aarch64")]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct SignalFdInfo([u8; 128]);
 
+#[cfg(target_arch = "aarch64")]
 impl SignalFdInfo {
     /// Returns the raw signal number reported by the descriptor.
     #[inline]
@@ -203,6 +436,7 @@ impl SignalFdInfo {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 impl fmt::Debug for SignalFdInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -214,6 +448,7 @@ impl fmt::Debug for SignalFdInfo {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 impl fmt::Debug for SignalSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_tuple("SignalSet").field(&self.0).finish()
@@ -221,6 +456,7 @@ impl fmt::Debug for SignalSet {
 }
 
 /// Selects how a signal set changes the calling thread's mask.
+#[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(i32)]
 pub enum SigmaskHow {
@@ -233,7 +469,7 @@ pub enum SigmaskHow {
 }
 
 bitflags! {
-    /// Signal-action flags accepted by Linux/AArch64.
+    /// Signal-action flags accepted by Linux on the staged supported targets.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct SigActionFlags: u64 {
@@ -241,6 +477,7 @@ bitflags! {
         const NOCLDSTOP = 0x0000_0001;
         /// Do not leave terminated children as zombies.
         const NOCLDWAIT = 0x0000_0002;
+        #[cfg(target_arch = "aarch64")]
         /// Enter the three-argument signal-handler ABI.
         const SIGINFO = SA_SIGINFO;
         /// Run the handler on an enabled alternate signal stack.
@@ -269,6 +506,7 @@ pub enum SigHandler {
     Ignore,
     /// A one-argument C-ABI signal handler.
     Simple(unsafe extern "C" fn(Signal)),
+    #[cfg(target_arch = "aarch64")]
     /// A three-argument `SA_SIGINFO` C-ABI signal handler.
     SigInfo(unsafe extern "C" fn(Signal, *mut SigInfo, *mut c_void)),
 }
@@ -279,17 +517,30 @@ impl fmt::Debug for SigHandler {
             Self::Default => formatter.write_str("SigHandler::Default"),
             Self::Ignore => formatter.write_str("SigHandler::Ignore"),
             Self::Simple(_) => formatter.write_str("SigHandler::Simple(..)"),
+            #[cfg(target_arch = "aarch64")]
             Self::SigInfo(_) => formatter.write_str("SigHandler::SigInfo(..)"),
         }
     }
 }
 
 /// A complete kernel signal-action configuration.
-#[derive(Clone, Copy, Debug)]
+///
+/// On x86-64, an action returned by [`sigaction`] retains its original compact
+/// kernel record privately. Reinstalling that returned object therefore
+/// preserves every bit of the kernel mask, including musl-reserved signals,
+/// and preserves the original `SA_RESTORER` flag and restorer address. Newly
+/// constructed x86-64 actions instead select this crate's restorer.
+#[derive(Clone, Copy)]
 pub struct SigAction {
+    #[cfg(target_arch = "aarch64")]
     handler: SigHandler,
+    #[cfg(target_arch = "x86_64")]
+    handler: Option<SigHandler>,
+    #[cfg(target_arch = "aarch64")]
     mask: SignalSet,
     flags: SigActionFlags,
+    #[cfg(target_arch = "x86_64")]
+    queried_kernel: Option<crabc_core::signal::KernelSigAction>,
 }
 
 impl SigAction {
@@ -297,6 +548,7 @@ impl SigAction {
     /// matching `SA_SIGINFO` kernel ABI.
     #[inline]
     #[must_use]
+    #[cfg(target_arch = "aarch64")]
     pub fn new(handler: SigHandler, mask: SignalSet, flags: SigActionFlags) -> Self {
         // A one-argument handler must never be entered with the three-argument
         // `SA_SIGINFO` calling convention. The handler variant, rather than a
@@ -314,16 +566,51 @@ impl SigAction {
         }
     }
 
+    /// Creates a one-argument x86-64 signal action with an empty handler mask.
+    ///
+    /// A newly constructed action always installs `crabc-rs`' x86-64
+    /// `rt_sigreturn` restorer. Actions returned by [`sigaction`] retain the
+    /// exact kernel record instead, so they can be restored without changing
+    /// an inherited mask or restorer.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    #[must_use]
+    pub fn new(handler: SigHandler, flags: SigActionFlags) -> Self {
+        Self {
+            handler: Some(handler),
+            // A simple handler must never be entered through the three-
+            // argument SA_SIGINFO ABI, even if a caller retained that raw
+            // future-kernel bit from an observed action.
+            flags: SigActionFlags::from_bits_retain(flags.bits() & !SA_SIGINFO),
+            queried_kernel: None,
+        }
+    }
+
     /// Returns this action's configured handler.
     #[inline]
     #[must_use]
+    #[cfg(target_arch = "aarch64")]
     pub const fn handler(self) -> SigHandler {
+        self.handler
+    }
+
+    /// Returns the one-argument handler when its ABI is known to this staged
+    /// x86-64 facade.
+    ///
+    /// `None` means the kernel action used an ABI this narrow facade does not
+    /// expose. The action itself remains losslessly restorable through
+    /// [`sigaction`].
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    #[must_use]
+    pub const fn handler(self) -> Option<SigHandler> {
         self.handler
     }
 
     /// Returns the signals masked while this handler runs.
     #[inline]
     #[must_use]
+    #[cfg(target_arch = "aarch64")]
     pub const fn mask(self) -> SignalSet {
         self.mask
     }
@@ -335,13 +622,14 @@ impl SigAction {
         self.flags
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[inline]
     fn kernel(self) -> crabc_core::signal::KernelSigAction {
         let (handler, siginfo) = match self.handler {
             SigHandler::Default => (SIG_DFL, false),
             SigHandler::Ignore => (SIG_IGN, false),
-            SigHandler::Simple(handler) => (handler as usize, false),
-            SigHandler::SigInfo(handler) => (handler as usize, true),
+            SigHandler::Simple(handler) => (handler as *const () as usize, false),
+            SigHandler::SigInfo(handler) => (handler as *const () as usize, true),
         };
         let mut flags = self.flags.bits() | SA_RESTORER;
         if siginfo {
@@ -355,6 +643,28 @@ impl SigAction {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    fn kernel(self) -> crabc_core::signal::KernelSigAction {
+        if let Some(action) = self.queried_kernel {
+            return action;
+        }
+
+        let handler = match self.handler {
+            Some(SigHandler::Default) => SIG_DFL,
+            Some(SigHandler::Ignore) => SIG_IGN,
+            Some(SigHandler::Simple(handler)) => handler as *const () as usize,
+            None => unreachable!("new x86-64 SigAction always has a known handler"),
+        };
+        crabc_core::signal::KernelSigAction {
+            handler,
+            flags: self.flags.bits() | SA_RESTORER,
+            restorer: crabc_rs_signal_restorer as *const () as usize,
+            mask: 0,
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
     #[inline]
     unsafe fn from_kernel(action: crabc_core::signal::KernelSigAction) -> Self {
         let handler = match action.handler {
@@ -378,13 +688,48 @@ impl SigAction {
             flags: SigActionFlags::from_bits_retain(action.flags & !SA_RESTORER),
         }
     }
+
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    unsafe fn from_kernel(action: crabc_core::signal::KernelSigAction) -> Self {
+        let handler = match action.handler {
+            SIG_DFL => Some(SigHandler::Default),
+            SIG_IGN => Some(SigHandler::Ignore),
+            // The staged facade deliberately does not expose the x86-64
+            // SA_SIGINFO handler ABI. Keep its record opaque but restorable.
+            _ if action.flags & SA_SIGINFO != 0 => None,
+            address => {
+                // SAFETY: Linux returned the address of a one-argument C-ABI
+                // handler. This type stores but never invokes that address.
+                Some(SigHandler::Simple(unsafe { core::mem::transmute(address) }))
+            }
+        };
+        Self {
+            handler,
+            flags: SigActionFlags::from_bits_retain(action.flags & !SA_RESTORER),
+            queried_kernel: Some(action),
+        }
+    }
+}
+
+impl fmt::Debug for SigAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = formatter.debug_struct("SigAction");
+        #[cfg(target_arch = "aarch64")]
+        debug.field("handler", &self.handler).field("mask", &self.mask);
+        #[cfg(target_arch = "x86_64")]
+        debug.field("handler", &self.handler);
+        debug.field("flags", &self.flags).finish()
+    }
 }
 
 /// The kernel's 128-byte signal-information record.
+#[cfg(target_arch = "aarch64")]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct SigInfo(crabc_core::signal::SigInfo);
 
+#[cfg(target_arch = "aarch64")]
 impl SigInfo {
     /// Returns the raw `si_signo` value.
     #[inline]
@@ -440,7 +785,7 @@ impl SigInfo {
     fn read_i32(self, offset: usize) -> i32 {
         // SAFETY: All read offsets above refer to fixed initialized prefix
         // fields of the 128-byte kernel record, and unaligned reads preserve
-        // the Linux/AArch64 byte representation.
+        // the target Linux byte representation.
         unsafe { ptr::read_unaligned(self.0.bytes.as_ptr().add(offset).cast()) }
     }
 
@@ -452,23 +797,25 @@ impl SigInfo {
         write_i32(
             &mut info.bytes,
             SIGINFO_PID_OFFSET,
-            process::getpid().as_raw_pid(),
+            calling_pid_raw(),
         );
         write_i32(
             &mut info.bytes,
             SIGINFO_UID_OFFSET,
-            process::getuid().as_raw() as i32,
+            calling_uid_raw() as i32,
         );
         write_i32(&mut info.bytes, SIGINFO_VALUE_OFFSET, value);
         Self(info)
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[inline]
     pub(crate) const fn from_core(info: crabc_core::signal::SigInfo) -> Self {
         Self(info)
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 impl fmt::Debug for SigInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -480,6 +827,7 @@ impl fmt::Debug for SigInfo {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 bitflags! {
     /// Flags reported by or supplied to `sigaltstack`.
     #[repr(transparent)]
@@ -495,6 +843,7 @@ bitflags! {
 }
 
 /// An alternate signal-stack configuration.
+#[cfg(target_arch = "aarch64")]
 #[derive(Clone, Copy, Debug)]
 pub struct Stack {
     sp: *mut u8,
@@ -502,6 +851,7 @@ pub struct Stack {
     flags: StackFlags,
 }
 
+#[cfg(target_arch = "aarch64")]
 impl Stack {
     /// Builds an enabled alternate stack over caller-owned memory.
     ///
@@ -565,6 +915,7 @@ impl Stack {
 }
 
 /// Changes the calling thread's signal mask and returns the previous mask.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn sigprocmask(how: SigmaskHow, set: Option<&SignalSet>) -> Result<SignalSet> {
     let mut old = MaybeUninit::<u64>::uninit();
@@ -580,30 +931,35 @@ pub fn sigprocmask(how: SigmaskHow, set: Option<&SignalSet>) -> Result<SignalSet
 }
 
 /// Returns the calling thread's signal mask.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn current_mask() -> Result<SignalSet> {
     sigprocmask(SigmaskHow::SetMask, None)
 }
 
 /// Blocks all signals in `set` and returns the previous mask.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn block(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::Block, Some(set))
 }
 
 /// Unblocks all signals in `set` and returns the previous mask.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn unblock(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::Unblock, Some(set))
 }
 
 /// Replaces the calling thread's mask and returns its previous mask.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn set_mask(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::SetMask, Some(set))
 }
 
 /// Returns signals pending for the calling thread.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn pending() -> Result<SignalSet> {
     let mut set = MaybeUninit::<u64>::uninit();
@@ -620,6 +976,7 @@ pub fn pending() -> Result<SignalSet> {
 ///
 /// Linux returns `EINTR` after a signal handler runs, so the normal result is
 /// `Err(Errno::INTR)`.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn suspend(mask: &SignalSet) -> Result<Infallible> {
     // SAFETY: `mask` provides one readable kernel signal-set word.
@@ -630,18 +987,20 @@ pub fn suspend(mask: &SignalSet) -> Result<Infallible> {
 }
 
 /// Waits indefinitely for one member of `set`, returning its signal metadata.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn wait_info(set: &SignalSet) -> Result<(Signal, SigInfo)> {
     timed_wait(set, None)
 }
 
 /// Waits for one member of `set` until the optional relative timeout expires.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal, SigInfo)> {
     let mut info = MaybeUninit::<crabc_core::signal::SigInfo>::uninit();
     let timeout = timeout.map_or(ptr::null(), |timeout| (timeout as *const Timespec).cast());
     // SAFETY: `set`, `info`, and optional `Timespec` each use the exact
-    // Linux/AArch64 kernel ABI layout expected by `rt_sigtimedwait`.
+    // target Linux kernel ABI layout expected by `rt_sigtimedwait`.
     let raw =
         unsafe { crabc_core::signal::rt_sigtimedwait_raw(&set.0, info.as_mut_ptr(), timeout)? };
     let signal = Signal::from_named_raw(raw).ok_or(Errno::INVAL)?;
@@ -650,6 +1009,7 @@ pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal
 }
 
 /// Queues an integer-valued signal for `pid` using Linux `rt_sigqueueinfo`.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
     let info = SigInfo::queue(signal, value);
@@ -659,10 +1019,11 @@ pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
 }
 
 /// Sends `signal` to a known thread in the current process.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn kill_thread(tid: Pid, signal: Signal) -> Result<()> {
     crabc_core::process::tgkill(
-        process::getpid().as_raw_pid(),
+        calling_pid_raw(),
         tid.as_raw_pid(),
         signal.as_raw(),
     )
@@ -671,7 +1032,11 @@ pub fn kill_thread(tid: Pid, signal: Signal) -> Result<()> {
 /// Sends `signal` to the current thread.
 #[inline]
 pub fn raise(signal: Signal) -> Result<()> {
-    kill_thread(crate::thread::gettid(), signal)
+    crabc_core::process::tgkill(
+        calling_pid_raw(),
+        crabc_core::thread::gettid(),
+        signal.as_raw(),
+    )
 }
 
 /// Creates a Linux signal descriptor for signals already blocked in every
@@ -681,6 +1046,7 @@ pub fn raise(signal: Signal) -> Result<()> {
 /// [`block`] or [`set_mask`] before relying on descriptor delivery. The
 /// returned descriptor is an owned native resource and never crosses the C
 /// ABI.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn signalfd(mask: &SignalSet, flags: SignalFdFlags) -> Result<OwnedFd> {
     // SAFETY: `mask` owns the one kernel signal-set word for this invocation;
@@ -695,6 +1061,7 @@ pub fn signalfd(mask: &SignalSet, flags: SignalFdFlags) -> Result<OwnedFd> {
 ///
 /// As with [`signalfd`], callers must arrange signal masks for all relevant
 /// threads before expecting descriptor delivery.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn signalfd_update<Fd: AsFd>(fd: Fd, mask: &SignalSet) -> Result<()> {
     let fd = fd.as_fd();
@@ -704,6 +1071,7 @@ pub fn signalfd_update<Fd: AsFd>(fd: Fd, mask: &SignalSet) -> Result<()> {
 }
 
 /// Reads one complete Linux signal-descriptor record.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn read_signalfd<Fd: AsFd>(fd: Fd) -> Result<SignalFdInfo> {
     let fd = fd.as_fd();
@@ -754,6 +1122,7 @@ pub unsafe fn sigaction(signal: Signal, action: Option<&SigAction>) -> Result<Si
 /// An enabled `stack` must remain allocated, writable, correctly aligned for
 /// signal frames, and otherwise unused for its entire installed lifetime. It
 /// must not be replaced or freed while a handler can execute on it.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub unsafe fn sigaltstack(stack: Option<&Stack>) -> Result<Stack> {
     let kernel = stack.map(|stack| stack.kernel());
@@ -767,11 +1136,13 @@ pub unsafe fn sigaltstack(stack: Option<&Stack>) -> Result<Stack> {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 #[inline]
 const fn signal_bit(signal: Signal) -> u64 {
     1_u64 << (signal.as_raw() - 1)
 }
 
+#[cfg(target_arch = "aarch64")]
 #[inline]
 fn write_i32(bytes: &mut [u8; 128], offset: usize, value: i32) {
     // SAFETY: Every caller uses a fixed field wholly within the 128-byte

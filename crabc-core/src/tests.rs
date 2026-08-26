@@ -182,3 +182,95 @@ fn x86_64_futex_wait_and_wake_preserve_the_six_word_kernel_call() {
     assert!(woken <= 1, "one waiter cannot wake more than once");
     worker.join().expect("futex waiter returns after publication");
 }
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn x86_64_preadv2_pwritev2_preserve_split_offsets_and_sixth_flags() {
+    use core::ffi::CStr;
+
+    // `memfd_create` gives this ABI test a private anonymous regular file:
+    // no fixed pathname can collide with another test process, and closing
+    // the descriptor releases it even if an assertion below panics.
+    let name = CStr::from_bytes_with_nul(b"crabc-core-x86-64-preadv2\0")
+        .expect("fixed memfd name is NUL-terminated");
+    let fd = crate::fs::memfd_create(name, 0).expect("create anonymous I/O evidence file");
+
+    let operation = (|| -> crate::Result<()> {
+        // Linux `pwritev2` takes six raw syscall words. `RWF_APPEND` must
+        // arrive in x86-64's sixth word (`r9`): despite the positioned zero
+        // offset, the second byte must appear after this initial byte.
+        crate::io::write(fd, b"A")?;
+        let appended = b"B";
+        let append_iovec = [crate::io::Iovec {
+            iov_base: appended.as_ptr().cast_mut(),
+            iov_len: appended.len(),
+        }];
+        // SAFETY: The iovec and its byte slice remain live and readable for
+        // this synchronous kernel call.
+        assert_eq!(
+            unsafe { crate::io::pwritev2_raw(fd, append_iovec.as_ptr(), 1, 0, 0x10) }?,
+            1,
+        );
+
+        let mut beginning = [0u8; 2];
+        let beginning_iovec = [crate::io::Iovec {
+            iov_base: beginning.as_mut_ptr(),
+            iov_len: beginning.len(),
+        }];
+        // SAFETY: The iovec and its output buffer remain live and writable
+        // for this synchronous kernel call.
+        assert_eq!(
+            unsafe { crate::io::preadv2_raw(fd, beginning_iovec.as_ptr(), 1, 0, 0) }?,
+            2,
+        );
+        assert_eq!(beginning, *b"AB");
+
+        // A nonzero high word distinguishes the raw split-offset ABI from a
+        // superficially plausible four-word positioned-I/O call. The low
+        // offset is deliberately a hole: a misplaced high word would change
+        // this byte instead of the sparse location below.
+        const HIGH_OFFSET: u64 = 0x0000_0001_0000_0007;
+        let high_byte = b"H";
+        let high_iovec = [crate::io::Iovec {
+            iov_base: high_byte.as_ptr().cast_mut(),
+            iov_len: high_byte.len(),
+        }];
+        // SAFETY: The iovec and its byte slice remain live and readable for
+        // this synchronous kernel call.
+        assert_eq!(
+            unsafe { crate::io::pwritev2_raw(fd, high_iovec.as_ptr(), 1, HIGH_OFFSET, 0) }?,
+            1,
+        );
+
+        let mut low_byte = [0xff];
+        let low_iovec = [crate::io::Iovec {
+            iov_base: low_byte.as_mut_ptr(),
+            iov_len: low_byte.len(),
+        }];
+        // SAFETY: The iovec and its output buffer remain live and writable
+        // for this synchronous kernel call.
+        assert_eq!(
+            unsafe { crate::io::preadv2_raw(fd, low_iovec.as_ptr(), 1, 7, 0) }?,
+            1,
+        );
+        assert_eq!(low_byte, [0], "high offset was truncated to its low word");
+
+        let mut high_read = [0u8];
+        let high_read_iovec = [crate::io::Iovec {
+            iov_base: high_read.as_mut_ptr(),
+            iov_len: high_read.len(),
+        }];
+        // SAFETY: The iovec and its output buffer remain live and writable
+        // for this synchronous kernel call.
+        assert_eq!(
+            unsafe { crate::io::preadv2_raw(fd, high_read_iovec.as_ptr(), 1, HIGH_OFFSET, 0) }?,
+            1,
+        );
+        assert_eq!(high_read, *b"H");
+        Ok(())
+    })();
+
+    let close = crate::io::close(fd);
+    operation.expect("x86 preadv2/pwritev2 argument sequence");
+    close.expect("close anonymous I/O evidence descriptor");
+}

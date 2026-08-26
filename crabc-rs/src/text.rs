@@ -6,7 +6,7 @@
 //! thread-local `errno` participates in conversion.
 //!
 //! The native slice supports strict UTF-8, ASCII, UTF-16LE/BE, UTF-32LE/BE,
-//! Linux/AArch64 little-endian `WChar`, and the shared ISO-8859-2..16
+//! staged Linux targets' little-endian 32-bit `WChar`, and the shared ISO-8859-2..16
 //! single-byte tables. The remaining shared encoding names are retained for
 //! the C compatibility facade but remain unsupported here. ISO table slots
 //! which were undefined in the extracted source retain their table value;
@@ -423,7 +423,7 @@ pub enum TextEncoding {
     Utf32Le,
     /// Unicode scalar values encoded as big-endian UTF-32 code units.
     Utf32Be,
-    /// Linux/AArch64 `wchar_t`: little-endian 32-bit scalar values.
+    /// Staged Linux `wchar_t`: little-endian 32-bit scalar values.
     WChar,
     /// ISO-8859-2 (Latin-2) single-byte encoding.
     Iso8859_2,

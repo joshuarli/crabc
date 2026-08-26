@@ -34,7 +34,7 @@ pub type DecodeStop = DecodeStatus;
 /// Result of decoding one bounded radix-64-long value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DecodedLong {
-    /// The low 32-bit payload sign-extended to Linux/AArch64 `long` width.
+    /// The low 32-bit payload sign-extended to staged Linux 64-bit `long` width.
     pub value: i64,
     /// Number of input bytes consumed, excluding the stopping byte.
     pub consumed: usize,
@@ -46,7 +46,7 @@ pub struct DecodedLong {
 pub type DecodeOutcome = DecodedLong;
 
 impl DecodedLong {
-    /// Returns the decoded Linux/AArch64 `long` value.
+    /// Returns the decoded staged Linux 64-bit `long` value.
     #[must_use]
     pub const fn value(self) -> i64 {
         self.value
@@ -72,7 +72,7 @@ impl DecodedLong {
     }
 }
 
-/// The bounded musl radix-64 representation of an `AArch64` `long`.
+/// The bounded musl radix-64 representation of a staged Linux 64-bit `long`.
 ///
 /// The representation owns its six-byte inline storage, so it remains useful
 /// in `no_std` code and never inherits `l64a`'s process-global return buffer.
@@ -83,7 +83,7 @@ pub struct EncodedLong {
 }
 
 impl EncodedLong {
-    /// Constructs the bounded representation for an AArch64 `long` value.
+    /// Constructs the bounded representation for a staged Linux 64-bit `long` value.
     #[must_use]
     pub const fn new(value: i64) -> Self {
         Self::encode(value)
@@ -123,7 +123,7 @@ impl EncodedLong {
     ///
     /// The first NUL or invalid byte is not consumed.  As with musl, a value
     /// is limited to six digits; the resulting payload is converted through
-    /// `u32` then `i32`, providing the required sign extension on AArch64.
+    /// `u32` then `i32`, providing the required 64-bit sign extension.
     #[must_use]
     pub fn decode(input: &[u8]) -> DecodedLong {
         let mut value = 0u32;
@@ -184,7 +184,7 @@ impl EncodedLong {
         self.len == 0
     }
 
-    /// Returns the encoded value after the AArch64 sign extension step.
+    /// Returns the encoded value after the 64-bit sign extension step.
     #[must_use]
     pub fn value(&self) -> i64 {
         Self::decode(self.as_bytes()).value

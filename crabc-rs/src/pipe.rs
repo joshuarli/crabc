@@ -13,7 +13,7 @@ use crate::{AsFd, OwnedFd, Result};
 pub const PIPE_BUF: usize = 4096;
 
 bitflags! {
-    /// Flags accepted by Linux `pipe2` on AArch64.
+    /// Flags accepted by Linux `pipe2` on the staged 64-bit targets.
     ///
     /// Unknown bits are retained so callers which forward a newer
     /// kernel-defined flag do not lose it before the kernel validates it.
