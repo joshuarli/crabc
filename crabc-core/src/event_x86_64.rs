@@ -1,14 +1,16 @@
 //! Deliberately bounded Linux/x86-64 event-descriptor operations.
 //!
-//! This target-specific module owns the `poll(2)`, `ppoll(2)`, and epoll syscall
-//! seams. The x86-64 records are kept separate from the AArch64 event module so
-//! that a caller cannot accidentally pass an AArch64-owned record to an x86
-//! syscall. These are native core operations only; choosing a public facade or
-//! claiming x86-64 support remains outside this module.
+//! This target-specific module owns the `poll(2)`, `ppoll(2)`, `pselect6(2)`,
+//! and epoll syscall seams. The x86-64 records are kept separate from the
+//! AArch64 event module so that a caller cannot accidentally pass an
+//! AArch64-owned record to an x86 syscall. These are native core operations
+//! only; choosing a public facade or claiming x86-64 support remains outside
+//! this module.
 
 use crate::syscall::{
-    decode, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_EPOLL_CREATE1,
-    SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2, SYS_POLL, SYS_PPOLL, SYS_READ, SYS_WRITE,
+    decode, decode_i32, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6,
+    SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2, SYS_POLL, SYS_PPOLL,
+    SYS_PSELECT6, SYS_READ, SYS_WRITE,
 };
 use crate::{RawFd, Result};
 
@@ -198,6 +200,61 @@ pub unsafe fn epoll_wait_raw(
             core::mem::size_of::<usize>(),
         )
     }
+}
+
+/// Waits for descriptor readiness through the Linux/x86-64 `pselect6`
+/// syscall.
+///
+/// Linux mutates the supplied timeout and descriptor sets in place. The
+/// sixth syscall argument is a pointer to Linux's private pair of a signal
+/// mask pointer and its byte size; it is not the public 128-byte musl
+/// `sigset_t` size. On x86-64, the six syscall arguments are passed in
+/// `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, respectively.
+///
+/// # Safety
+///
+/// The descriptor-set pointers must be null or point to writable storage for
+/// the kernel's bit-vector representation. `timeout` must be null or point
+/// to writable Linux/x86-64 `timespec` storage. `sigmask` must be null or
+/// point to a kernel-sized signal mask of `sigsetsize` bytes. All pointed-to
+/// storage must remain live for the duration of the syscall.
+#[inline]
+pub unsafe fn pselect6_raw(
+    nfds: i32,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *mut u8,
+    sigmask: *const u8,
+    sigsetsize: usize,
+) -> Result<i32> {
+    // This is Linux's private x86-64 pselect6 argument-6 layout. Keep the
+    // record private so callers cannot mistake it for a public signal-set
+    // representation.
+    #[repr(C)]
+    struct KernelSigmask {
+        mask: *const u8,
+        size: usize,
+    }
+
+    let signal_argument = KernelSigmask {
+        mask: sigmask,
+        size: sigsetsize,
+    };
+    // SAFETY: The caller owns the pointed-to descriptor sets, timeout, and
+    // optional kernel signal mask. The stack pair is the exact x86-64
+    // pselect6 argument-6 layout and remains live for the call.
+    decode_i32(unsafe {
+        syscall6(
+            SYS_PSELECT6,
+            nfds as usize,
+            readfds as usize,
+            writefds as usize,
+            exceptfds as usize,
+            timeout as usize,
+            (&signal_argument as *const KernelSigmask) as usize,
+        )
+    })
 }
 
 /// Waits for readiness in caller-owned x86-64 `pollfd` records.

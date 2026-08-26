@@ -106,7 +106,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_timerfd.rs", remaining["source_owners"]
         )
         self.assertIn(
+            "crabc-rs/tests/x86_64_pselect.rs", remaining["source_owners"]
+        )
+        self.assertIn(
             "compat/x86_64/run_x86_timerfd_reference.sh", remaining["source_owners"]
+        )
+        self.assertIn(
+            "compat/x86_64/run_x86_pselect_reference.sh", remaining["source_owners"]
         )
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
@@ -118,6 +124,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh timerfd-reference",
         )
         self.assertEqual(remaining["native_evidence"][1]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][2]["command"],
+            "./scripts/dev-x86_64.sh pselect-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][2]["state"], "required")
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])

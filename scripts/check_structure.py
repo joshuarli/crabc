@@ -41,8 +41,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `lib.rs` exposes only target-record-independent families, `signal.rs` owns
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter, exact `pollfd` record seam,
-# and a privately evidenced packed `epoll_event` seam which remains under the
-# planned record-owning family, `fs_x86_64.rs` owns descriptor `fstat` plus file-access advice
+# and privately evidenced packed `epoll_event` and pselect descriptor-bit-vector
+# seams which remain under the planned record-owning family, `fs_x86_64.rs` owns descriptor `fstat` plus file-access advice
 # and readahead, `process_x86_64.rs` owns read-only identity/session,
 # getpriority/scheduler-priority, and record-lock observations,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,

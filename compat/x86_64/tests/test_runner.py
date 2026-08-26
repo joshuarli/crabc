@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|timerfd-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -84,6 +84,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_relative_sleep_reference.sh', source)
         self.assertIn('run_timerfd_reference()', source)
         self.assertIn('compat/x86_64/run_x86_timerfd_reference.sh', source)
+        self.assertIn('run_pselect_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_pselect_reference.sh', source)
         self.assertIn('run_poll_reference()', source)
         self.assertIn('compat/x86_64/run_x86_poll_reference.sh', source)
         self.assertIn('run_ppoll_reference()', source)
@@ -138,6 +140,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_thread', source)
         self.assertIn('--test x86_64_time', source)
         self.assertIn('--test x86_64_timerfd', source)
+        self.assertIn('--test x86_64_pselect', source)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_libc_errno_tls_probe()', source)
@@ -233,6 +236,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         timerfd_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_timerfd_reference.sh"
+        ).read_text(encoding="utf-8")
+        pselect_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_pselect_reference.sh"
         ).read_text(encoding="utf-8")
         poll_reference = (ROOT / "compat" / "x86_64" / "run_x86_poll_reference.sh").read_text(
             encoding="utf-8"
@@ -377,6 +383,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('timerfd ABI/lifecycle reference', timerfd_reference)
         self.assertIn('run_musl_oracle.sh', timerfd_reference)
         self.assertNotIn('-p crabc-libc', timerfd_reference)
+        self.assertIn('x86_pselect_reference_probe.c', pselect_reference)
+        self.assertIn('pselect ABI/behavior reference', pselect_reference)
+        self.assertIn('run_musl_oracle.sh', pselect_reference)
+        self.assertNotIn('-p crabc-libc', pselect_reference)
         self.assertIn('x86_poll_reference_probe.c', poll_reference)
         self.assertIn('poll ABI/behavior reference', poll_reference)
         self.assertNotIn('-p crabc-libc', poll_reference)
@@ -726,6 +736,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_pipe",
                     "--test",
                     "x86_64_poll",
+                    "--test",
+                    "x86_64_pselect",
                     "--test",
                     "x86_64_priority",
                     "--test",

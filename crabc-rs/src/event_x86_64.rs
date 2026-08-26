@@ -1,8 +1,11 @@
 //! The deliberately narrow Linux/x86-64 event facade.
 //!
 //! This target admits the scalar `eventfd2` counter seam and typed `poll(2)`,
-//! `ppoll(2)`, signal-only `pause`, and epoll readiness operations. `pselect`
-//! and signalfd remain absent until each has independent x86-64 evidence.
+//! `ppoll(2)`, `select(2)`, `pselect(2)`, signal-only `pause`, and epoll
+//! readiness operations. The descriptor-set records and pselect signal-mask
+//! pair stay target-specific: this module never reuses an AArch64 record or
+//! claims a public C polling ABI. Signalfd remains absent until it has
+//! independent x86-64 evidence.
 
 use core::convert::TryFrom;
 use core::ffi::c_void;
@@ -432,6 +435,200 @@ pub mod epoll {
             .and_then(|millis| i32::try_from(millis).ok())
             .ok_or(crate::Errno::INVAL)?;
         Ok(millis)
+    }
+}
+
+/// One 64-bit Linux/x86-64 `select` descriptor-set storage element.
+///
+/// The element is intentionally a transparent native value rather than a
+/// public C `fd_set` wrapper. Use [`fd_set_num_elements`] to allocate enough
+/// elements for a selected `nfds` range, then use the set helpers to mutate
+/// and inspect the bit vector. Linux's x86-64 kernel representation is one
+/// little-endian 64-bit word per element.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FdSetElement(u64);
+
+const FD_SET_BITS: usize = size_of::<FdSetElement>() * 8;
+
+const _: () = assert!(size_of::<FdSetElement>() == 8);
+const _: () = assert!(core::mem::align_of::<FdSetElement>() == 8);
+
+/// Sets `fd` in a Linux descriptor bit vector.
+#[doc(alias = "FD_SET")]
+#[inline]
+pub fn fd_set_insert(fds: &mut [FdSetElement], fd: crate::RawFd) {
+    let fd = fd as usize;
+    fds[fd / FD_SET_BITS].0 |= 1 << (fd % FD_SET_BITS);
+}
+
+/// Clears `fd` in a Linux descriptor bit vector.
+#[doc(alias = "FD_CLR")]
+#[inline]
+pub fn fd_set_remove(fds: &mut [FdSetElement], fd: crate::RawFd) {
+    let fd = fd as usize;
+    fds[fd / FD_SET_BITS].0 &= !(1 << (fd % FD_SET_BITS));
+}
+
+/// Computes the smallest `nfds` value which includes every set bit in `fds`.
+#[inline]
+pub fn fd_set_bound(fds: &[FdSetElement]) -> crate::RawFd {
+    if let Some(position) = fds.iter().rposition(|element| element.0 != 0) {
+        let element = fds[position].0;
+        (position * FD_SET_BITS + (FD_SET_BITS - element.leading_zeros() as usize)) as crate::RawFd
+    } else {
+        0
+    }
+}
+
+/// Computes the number of descriptor-set elements needed for `nfds` bits.
+///
+/// `set_count` is retained for Rustix source compatibility and is ignored by
+/// Linux's dense bit-vector representation.
+#[inline]
+pub const fn fd_set_num_elements(set_count: usize, nfds: crate::RawFd) -> usize {
+    let _ = set_count;
+    let nfds = nfds as usize;
+    nfds.div_ceil(FD_SET_BITS)
+}
+
+/// Iterates over the set descriptor numbers in ascending order.
+#[doc(alias = "FD_ISSET")]
+pub struct FdSetIter<'a> {
+    current: crate::RawFd,
+    fds: &'a [FdSetElement],
+}
+
+impl<'a> FdSetIter<'a> {
+    /// Constructs an iterator over `fds`.
+    #[inline]
+    pub fn new(fds: &'a [FdSetElement]) -> Self {
+        Self { current: 0, fds }
+    }
+}
+
+impl Iterator for FdSetIter<'_> {
+    type Item = crate::RawFd;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(element) = self.fds.get(self.current as usize / FD_SET_BITS) {
+            let shifted = element.0 >> (self.current as usize % FD_SET_BITS);
+            if shifted != 0 {
+                let fd = self.current + shifted.trailing_zeros() as crate::RawFd;
+                self.current = fd + 1;
+                return Some(fd);
+            }
+
+            if let Some(index) = self.fds[(self.current as usize / FD_SET_BITS) + 1..]
+                .iter()
+                .position(|element| element.0 != 0)
+            {
+                let index = index + (self.current as usize / FD_SET_BITS) + 1;
+                let element = self.fds[index].0;
+                let fd = (index * FD_SET_BITS) as crate::RawFd
+                    + element.trailing_zeros() as crate::RawFd;
+                self.current = fd + 1;
+                return Some(fd);
+            }
+        }
+        None
+    }
+}
+
+/// Waits for readiness in Linux descriptor bit vectors.
+///
+/// The sets are rewritten by Linux to contain only ready descriptors. Each
+/// supplied set must contain at least `fd_set_num_elements(0, nfds)` elements.
+/// This function is unsafe because Rust cannot prove that every raw descriptor
+/// in the sets stays open for the complete syscall; callers must also honor
+/// the returned-set mutation contract.
+///
+/// The timeout is copied before crossing the kernel boundary, so Linux's
+/// mutable `pselect6` timeout does not alter the caller's `Timespec`.
+/// Negative `nfds` and undersized sets are rejected with [`crate::Errno::INVAL`]
+/// before any pointer is formed or the kernel is entered.
+///
+/// # Safety
+///
+/// Every descriptor represented by a supplied set must remain open for the
+/// syscall's duration. Supplied mutable sets must remain valid and writable;
+/// their first `fd_set_num_elements(0, nfds)` elements are rewritten by Linux.
+pub unsafe fn select(
+    nfds: i32,
+    readfds: Option<&mut [FdSetElement]>,
+    writefds: Option<&mut [FdSetElement]>,
+    exceptfds: Option<&mut [FdSetElement]>,
+    timeout: Option<&Timespec>,
+) -> Result<i32> {
+    // SAFETY: `select` has exactly the unmasked pselect contract and does not
+    // add any pointer or descriptor obligations of its own.
+    unsafe { pselect(nfds, readfds, writefds, exceptfds, timeout, None) }
+}
+
+/// Waits for readiness while temporarily installing a signal mask.
+///
+/// This is the native Rust extension corresponding to C `pselect`. Its
+/// descriptor sets are Rustix-compatible bit-vector slices, and the mask is
+/// the borrowed kernel-sized [`SignalSet`]. Linux rewrites each supplied set
+/// to contain only ready descriptors. The timeout is copied, and the signal
+/// mask is atomically restored by the kernel before return.
+///
+/// Negative `nfds` and undersized sets are rejected with
+/// [`crate::Errno::INVAL`] rather than panicking. The x86-64 kernel signal
+/// mask is passed as one eight-byte word, even though the public musl
+/// `sigset_t` has a wider C representation.
+///
+/// # Safety
+///
+/// Every descriptor represented by a supplied set must remain open for the
+/// syscall's duration. Supplied mutable sets must remain valid and writable;
+/// their first `fd_set_num_elements(0, nfds)` elements are rewritten by Linux.
+pub unsafe fn pselect(
+    nfds: i32,
+    readfds: Option<&mut [FdSetElement]>,
+    writefds: Option<&mut [FdSetElement]>,
+    exceptfds: Option<&mut [FdSetElement]>,
+    timeout: Option<&Timespec>,
+    mask: Option<&SignalSet>,
+) -> Result<i32> {
+    if nfds < 0 {
+        return Err(crate::Errno::INVAL);
+    }
+    let required = fd_set_num_elements(0, nfds);
+    let readfds = match readfds {
+        Some(fds) if fds.len() < required => return Err(crate::Errno::INVAL),
+        Some(fds) => Some(fds.as_mut_ptr().cast()),
+        None => None,
+    };
+    let writefds = match writefds {
+        Some(fds) if fds.len() < required => return Err(crate::Errno::INVAL),
+        Some(fds) => Some(fds.as_mut_ptr().cast()),
+        None => None,
+    };
+    let exceptfds = match exceptfds {
+        Some(fds) if fds.len() < required => return Err(crate::Errno::INVAL),
+        Some(fds) => Some(fds.as_mut_ptr().cast()),
+        None => None,
+    };
+    let mut timeout = timeout.copied();
+    let timeout = timeout
+        .as_mut()
+        .map_or(ptr::null_mut(), |value| (value as *mut Timespec).cast());
+    let sigmask = mask.map_or(ptr::null(), |mask| (mask.kernel_bits() as *const u64).cast());
+    // SAFETY: The function's caller owns descriptor-set liveness and the
+    // pointed-to set storage. The local timeout and the borrowed signal mask
+    // remain live for the complete direct syscall. The core seam owns the
+    // x86-64 pselect6 argument-6 pair and uses the eight-byte mask size.
+    unsafe {
+        crabc_core::event::pselect6_raw(
+            nfds,
+            readfds.unwrap_or(ptr::null_mut()),
+            writefds.unwrap_or(ptr::null_mut()),
+            exceptfds.unwrap_or(ptr::null_mut()),
+            timeout,
+            sigmask,
+            crabc_core::signal::KERNEL_SIGSET_SIZE,
+        )
     }
 }
 
