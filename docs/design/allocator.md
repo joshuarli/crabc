@@ -1769,6 +1769,14 @@ release observations; it does not claim general thread exit, routing/concurrency
 adoption/reclaim, public behavior, backend, public x86, or AArch64 support.
 The retired-page prepass is only a narrow antecedent to broader
 retirement/teardown/routing work, not a general lifecycle result.
+The separate 37-field native automatic pthread-destructor lane is deliberately
+C-oracle-only: its unmodified pinned-C worker verifies the real mimalloc
+pthread key, returns naturally without explicit `mi_thread_done()` or
+`pthread_exit()`, then `pthread_join()` precedes observations of one
+mapped-abandoned detached medium page and its terminal release. It establishes
+the pinned C key-destructor path, not a Rust comparison, crabc pthread/TLS
+callback, Rust/private-runtime lifecycle integration, general destructor
+ordering, public x86 runtime, or AArch64 status.
 The separate 25-field aggregate post-exit lane is likewise bounded: it starts
 with exactly two distinct live nonfull medium pages in distinct bins: one real
 worker runs `mi_thread_done()` and returns, then the consumer calls

@@ -1058,6 +1058,40 @@ aggregate-registry adoption remain absent.
   interposition, a generic callback registry, public lifecycle attachment, or
   general fork recovery.
 
+### `CRABC-MI-AUTOMATIC-PTHREAD-DESTRUCTOR-C-ORACLE-ONLY` — accepted evidence boundary
+
+- **Upstream/Rust:** pinned C `src/init.c:504-511`,
+  `src/prim/unix/prim.c:1011-1040`, `src/init.c:426-477`,
+  `src/threadlocal.c:205-214`, `src/theap.c:97-152`, and the selected
+  page/arena/free/map tails, contrasted with
+  `dynamic_theap::DynamicTheapAttachment` and its bounded typed owner-exit
+  routes.
+- **Category:** native Linux/x86-64 private C-oracle evidence only. It has no
+  C ABI surface and no Rust/C differential entry.
+- **Difference:** the pinned C worker proves the actual automatic path: it
+  observes mimalloc's private pthread key associated with its initialized
+  default Theap, returns naturally without explicit `mi_thread_done()` or
+  `pthread_exit()`, and `pthread_join()` precedes the consumer's observations.
+  The source key destructor invokes `_mi_thread_done`, leaving the selected
+  nonfull medium page mapped-abandoned, detached, and available only to the
+  recorded consumer-free tail. Rust currently has bounded explicit typed
+  owner-exit models only; it has no crabc pthread/TLS lifecycle callback or
+  detached post-exit owner capable of carrying live worker pages across that
+  boundary. This C result therefore does not establish Rust callback parity or
+  general destructor ordering.
+- **Evidence:**
+  `x86_64_automatic_pthread_destructor_evidence.py`,
+  `x86_64-automatic-pthread-destructor-evidence-v3.5.0.json`, its focused
+  static contracts, and the
+  `native-pinned-c-automatic-pthread-destructor` parity gate record the
+  natural-return source/key boundary, 37 address-independent values, and the
+  mapped-abandoned/terminal-release postcondition.
+- **Decision/removal:** accepted until a real private crabc lifecycle bridge
+  invokes the Rust allocator in source order at thread exit and a direct
+  Rust/C boundary proof covers that behavior. It does not authorize a fake
+  pthread callback, a `Send` detached attachment, general lifecycle or
+  destructor-ordering claims, public x86 support, or backend promotion.
+
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 
 - **Upstream/Rust:** `src/threadlocal.c:23-214`, `src/init.c:236-360,377-421,448-481`,

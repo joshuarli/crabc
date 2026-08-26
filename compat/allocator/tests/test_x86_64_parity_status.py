@@ -42,6 +42,9 @@ DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
 )
+AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA = (
+    ROOT / "compat/allocator/x86_64-automatic-pthread-destructor-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -214,6 +217,13 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
         )
 
+    def test_automatic_pthread_destructor_schema_profile_is_exact(self) -> None:
+        schema = json.loads(AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA.read_text(encoding="utf-8"))
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-c-automatic-pthread-destructor",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -240,6 +250,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-medium-full-to-regular-retire-force-release-differential",
                 "native-full-non-direct-small-force-collect-post-exit-differential",
                 "native-full-direct-small-force-collect-post-exit-differential",
+                "native-pinned-c-automatic-pthread-destructor",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -422,6 +433,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ],
             "compat/reports/allocator/x86_64/"
             "full-direct-small-force-collect-post-exit.json",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-automatic-pthread-destructor"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-automatic-pthread-destructor",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-automatic-pthread-destructor"]["report"],
+            "compat/reports/allocator/x86_64/automatic-pthread-destructor.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -695,6 +714,21 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("does not establish general thread exit", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("public x86 support", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("AArch64 evidence", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        automatic_destructor = gates["native-pinned-c-automatic-pthread-destructor"]["claim"]
+        for fragment in (
+            "37 address-independent values",
+            "returns naturally",
+            "without an explicit mi_thread_done or pthread_exit call",
+            "real mimalloc pthread key",
+            "source key destructor to _mi_thread_done",
+            "pthread_join",
+            "C-oracle-only evidence",
+            "does not compare Rust",
+            "Rust pthread/TLS callback",
+            "general lifecycle/destructor ordering",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, automatic_destructor)
         retired = gates["native-retired-page-prepass-before-live-post-exit-differential"]["claim"]
         for fragment in (
             "21 address-independent values",
@@ -1369,6 +1403,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("18-value same-origin allocation-time mapped-adoption", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn(
             "32-value same-Theap direct-small allocation-time adoption differential",
+            lanes["general-thread-lifecycle-and-stress"]["reason"],
+        )
+        self.assertIn(
+            "37-field pinned-C automatic pthread-destructor probe",
+            lanes["general-thread-lifecycle-and-stress"]["reason"],
+        )
+        self.assertIn(
+            "Rust/private-runtime lifecycle integration",
             lanes["general-thread-lifecycle-and-stress"]["reason"],
         )
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])

@@ -992,6 +992,18 @@ x86-64 engine evidence only and does not establish public `mi_*` behavior,
 runtime integration, public x86 support, backend promotion, or AArch64
 evidence.
 
+The native x86-only track also has a separate 37-field pinned-C automatic
+pthread-destructor probe. Its worker creates two live 10241-byte clients on
+one private arena medium page, verifies mimalloc's real pthread key points at
+the initialized default Theap, then returns naturally without an explicit
+`mi_thread_done()` or `pthread_exit()` call. After `pthread_join()`, the probe
+records the mapped-abandoned, PageMap-registered, arena-bitmap-set, detached,
+unowned page and its two-free terminal release. This source-anchored evidence
+is C-oracle-only: it does not compare Rust or establish a crabc pthread/TLS
+callback, Rust/private-runtime lifecycle integration, general destructor
+ordering, public `mi_*` behavior, public x86 support, libc integration,
+backend promotion, or AArch64 evidence.
+
 The native x86-only track also has a separate 32-field dynamic full direct-small
 one-remote force-collect-to-mapped differential. A pinned-C worker fills one
 sole full direct-small ordinary regular-bin arena page (request/block size 1024,
