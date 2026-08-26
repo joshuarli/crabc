@@ -9077,18 +9077,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullSingletonPagesPostExitDetach {
             session,
