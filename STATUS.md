@@ -954,6 +954,20 @@ native x86-64 engine evidence only and does not establish general lifecycle,
 routing, concurrency, abandonment/adoption, public x86 support, backend
 promotion, libc integration, or AArch64 evidence.
 
+The native x86-only track also has a separate 69-field dynamic homogeneous
+full non-direct-small aggregate differential. Its pinned-C worker fills exactly
+two same-bin full ordinary-bin arena pages from request 1032 (1280-byte blocks,
+capacity/reserved 51, one arena slice each), performs real `mi_thread_done()`,
+and the consumer joins before any sequential free. Both members begin
+ordinarily unmapped-abandoned with dynamic abandoned bitmap/count clear; each
+member independently remains at `used == 45` after six normal-collector frees,
+maps at `used == 44` on the seventh with its dynamic bitmap/count publication,
+then releases its one-slice PageMap/arena span. Rust exercises only the
+corresponding bounded dynamic aggregate owner-exit route. This is private
+native x86-64 engine evidence only and does not establish general lifecycle,
+routing, concurrency, abandonment/adoption, public x86 support, backend
+promotion, libc integration, or AArch64 evidence.
+
 The native x86-only track also has a separate 32-field dynamic full direct-small
 one-remote force-collect-to-mapped differential. A pinned-C worker fills one
 sole full direct-small ordinary regular-bin arena page (request/block size 1024,

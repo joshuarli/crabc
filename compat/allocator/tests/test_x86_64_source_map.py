@@ -25,6 +25,10 @@ FULL_MEDIUM_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-medium-homogeneous-aggregate-evidence-v3.5.0.json"
 )
+FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-full-non-direct-small-homogeneous-aggregate-evidence-v3.5.0.json"
+)
 SCRIPT_PATH = ROOT / "compat/allocator/x86_64_source_map.py"
 SPEC = importlib.util.spec_from_file_location("crabc_x86_64_source_map", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -309,6 +313,7 @@ class X86_64SourceMapTests(unittest.TestCase):
             ],
             8,
         )
+
         for page in ("page0", "page1"):
             with self.subTest(page=page):
                 self.assertEqual(
@@ -334,6 +339,59 @@ class X86_64SourceMapTests(unittest.TestCase):
                 unit = units[unit_id]
                 self.assertEqual(unit["status"], "partial")
 
+    def test_dynamic_full_non_direct_small_homogeneous_aggregate_lane_is_scoped_to_reviewed_units(
+        self,
+    ):
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_full_non_direct_small_homogeneous_aggregate_evidence.py",
+            "compat/allocator/x86_64-dynamic-full-non-direct-small-homogeneous-aggregate-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_full_non_direct_small_homogeneous_aggregate_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        schema = json.loads(
+            FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA.read_text(encoding="utf-8")
+        )
+        expected = schema["trace"]["expected_values"]
+        self.assertEqual(
+            expected[
+                "trace.dynamic_full_non_direct_small_homogeneous_aggregate.request_size"
+            ],
+            1032,
+        )
+        self.assertEqual(
+            expected[
+                "trace.dynamic_full_non_direct_small_homogeneous_aggregate.block_size"
+            ],
+            1280,
+        )
+        self.assertEqual(
+            expected[
+                "trace.dynamic_full_non_direct_small_homogeneous_aggregate.reserved"
+            ],
+            51,
+        )
+        self.assertEqual(
+            expected[
+                "trace.dynamic_full_non_direct_small_homogeneous_aggregate.slice_count"
+            ],
+            1,
+        )
     def test_remote_free_scopes_record_both_bounded_native_differentials(self) -> None:
         remote = next(
             unit for unit in self.contract["units"] if unit["id"] == "local-and-remote-free"

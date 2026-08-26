@@ -9439,18 +9439,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullOsSingletonPagesPostExitDetach {
             session,
@@ -25941,6 +25946,56 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the route retains the same exclusive dynamic PageMap owner
         // as its client-free path; this witness only reads one map entry.
         unsafe { self.drain.test_page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_arena_span(&self, block: NonNull<u8>) -> Option<(*mut u8, usize)> {
+        let page = NonNull::new(unsafe { self.test_page_for_block(block) })?;
+        match self.drain.engine.release_span(page.as_ptr()) {
+            Some(ReleaseSpan::Arena {
+                slice_start, size, ..
+            }) => Some((slice_start, size)),
+            Some(ReleaseSpan::Os(_)) | None => None,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_map_span(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<(usize, bool, bool)> {
+        let page = NonNull::new(unsafe { self.test_page_for_block(block) })?;
+        let ReleaseSpan::Arena {
+            slice_start, size, ..
+        } = self.drain.engine.release_span(page.as_ptr())?
+        else {
+            return None;
+        };
+        let total_slices = size / ARENA_SLICE_SIZE;
+        let map_size = arena_page_map_size(page, slice_start, size)?;
+        let mapped_slices = map_size / ARENA_SLICE_SIZE;
+        let registered = (0..mapped_slices).all(|index| unsafe {
+            self.drain
+                .engine
+                .page_map
+                .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+        } == page.as_ptr());
+        let tail_unregistered = (mapped_slices..total_slices).all(|index| unsafe {
+            self.drain
+                .engine
+                .page_map
+                .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+        }
+        .is_null());
+        Some((mapped_slices, registered, tail_unregistered))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_map_range_is_clear(&self, slice_start: *mut u8, size: usize) -> bool {
+        self.drain.test_page_map_range_is_clear(slice_start, size)
     }
 
     #[cfg(test)]
