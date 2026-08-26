@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 109,
-    "item_count": 105,
+    "implemented": 110,
+    "item_count": 106,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 109
+    "unit_verified": 110
   },
-  "port_map_sha256": "4ca283d9dbfc1c9d94985ec0ccf052112ed5a53e396803eafe6cbed46b32e4e0",
+  "port_map_sha256": "c300c6c9cfcce462530441c09c8495a616035f5e9e3fd2e4b042cfe08a2dfc12",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -424,6 +424,10 @@
       "unit_verified"
     ],
     "item:src/theap.c:later-main-full-non-direct-small-one-remote-force-collect-to-mapped-post-exit-route": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:later-main-homogeneous-full-large-aggregate-post-exit-route": [
       "implemented",
       "unit_verified"
     ],

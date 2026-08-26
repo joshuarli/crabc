@@ -450,6 +450,16 @@ each free re-resolves PageMap membership, uses the claimed abandoned identity
 to select the unmapped or mapped tail, and releases one member at a time. It
 does not admit a sole page, a mixed full queue, allocation-time adoption,
 reclaim/requeue, or concurrent routing.
+A parallel but separate full-large aggregate route accepts only two or more
+same-bin full `PageKind::Large` arena members under the same complete
+direct/queue, rounded-size, and zero-retirement preflight. Each member proves
+its exact 64-slice arena/PageMap span before the route force- then
+false-collects, detaches, and ordinary-unmapped-abandons it. Its sequential
+client frees likewise re-resolve PageMap membership rather than retaining a
+raw list, independently cross the source unmapped-to-mapped threshold, and
+release one complete large span at a time. Sole pages and mixed medium/large
+full queues reject before mutation; the route has no adoption, reclaim,
+requeue, scanning, or concurrent routing.
 A fresh later-main owner may explicitly consume a sole mapped medium page that
 entered source owner exit already nonfull, or a sole direct-small page whose
 source collection left an immediate local free block, the exhausted fully

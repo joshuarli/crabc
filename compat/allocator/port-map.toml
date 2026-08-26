@@ -1028,6 +1028,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/theap.c"
+name = "later-main-homogeneous-full-large-aggregate-post-exit-route"
+source_region = "MI_ABANDON full-queue traversal from src/theap.c:89-152; force/false collection, _mi_page_abandon, and full-queue detach from src/page.c:214-302,414-518; full-page unmapped abandonment and later mostly-used reabandon-to-mapped in src/arena.c:1304-1424; failed-reclaim collection/unown selection in src/free.c:372-514; full-queue mutation from src/page-queue.c:204-304; and _mi_thread_done root order from src/init.c:377-421,448-481"
+rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::process_page_map, and crabc_mimalloc::types"
+rust_item = "MainHeapThreadProcessPageExitDrain::abandon_full_large_pages_to_process_route, MainHeapThreadProcessPageExitFullLargePagesRoute::remote_free_after_thread_exit, ThreadExitFullLargePagesPostExitDetach/ThreadExitFullLargePagesPostExitParts, PageAllocatorEngine::abandon_full_large_pages_to_process_route, abandoned::{abandon_unmappable_after_collect,free_full_large_after_failed_reclaim}, and ProcessPageMapPostExitAccess"
+intentional_difference = "This is one bounded homogeneous aggregate route for two or more full arena `PageKind::Large` members in `BIN_FULL`, not a general full-queue traversal. Preflight requires every direct slot and every other queue to be empty; every full member must have the same rounded block size/static-main bin, `reserved > 1`, `used == reserved`, zero retirement countdown, and one exact 64-slice paired-arena span. It preserves source force then false collection, full-queue removal, page-count decrement, and ordinary initially-unmapped abandonment before old-Theap/TLD teardown. The route retains no raw page list: each sequential client free re-resolves one PageMap member, locks the one preselected static-main bitmap/count pair, and uses the claimed abandoned identity to select the source unmapped or mapped failed-reclaim tail. A below-mostly-used free independently publishes that member's bit/count; a terminal free proves and releases only that member's complete PageMap span through PageMap -> pages_main -> metadata -> arena slices, and the final member closes the short map route. Sole pages and heterogeneous medium/large full queues reject before mutation; the route provides no allocation-time claim/adoption/reclaim/requeue, concurrent free routing, remote-force nonfull state, or other full/singleton/unmapped/huge owner-exit support."
+tests = ["crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/process_page_map.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/free.c"
 name = "later-main-full-medium-unmapped-to-mapped-post-exit-route"
 source_region = "MI_ABANDON full-queue visitation from src/theap.c:89-152; force/false collection, _mi_page_abandon, and full-queue detach from src/page.c:214-302,414-518; full-page unmapped abandonment and later mostly-used reabandon-to-mapped in src/arena.c:1304-1409; failed-reclaim expected-head/unown selection in src/free.c:372-514; full queue mutation from src/page-queue.c:204-304; and _mi_thread_done root order from src/init.c:377-421,448-481"

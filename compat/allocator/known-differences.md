@@ -468,9 +468,13 @@ result may refine it only when it can prove retained ownership.
   and uses the claimed abandoned identity to select the source unmapped or
   mapped tail. Each terminal release removes only that member through PageMap
   -> main bitmap -> metadata -> slice; a sole full page rejects before
-  mutation. Heterogeneous full queues, small/large full pages, remote-force
-  nonfull state, allocation-time adoption/reclaim/requeue, and concurrent
-  routing remain absent. Distinct source-specific predecessors accept one sole full
+  mutation. The separate homogeneous full-large aggregate accepts only the
+  corresponding `PageKind::Large` members, with the same complete preflight
+  plus every member's exact 64-slice arena/PageMap span; terminal release
+  proves and removes that complete span. Both routes reject heterogeneous full
+  queues before collection. Full small pages, remote-force nonfull state,
+  allocation-time adoption/reclaim/requeue, and concurrent routing remain
+  absent. Distinct source-specific predecessors accept one sole full
   medium, non-direct-small, or direct-small page with one joined remote free:
   force collection changes `used` to exactly `reserved - 1` while each page
   remains linked in its source queue. The medium page remains marked full in
@@ -629,7 +633,15 @@ aggregate-registry adoption remain absent.
   paired static-main count, and release one PageMap span at a time; its sibling
   `later_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`
   proves the aggregate boundary never overlaps the established sole-page
-  route; and
+  route. The corresponding
+  `later_thread_exit_full_large_pages_route_reabandons_each_same_bin_page_then_releases`
+  proves independent large-member threshold transitions, one-member-at-a-time
+  64-slice release, and last-member map closure; its siblings
+  `later_thread_exit_full_large_pages_route_rejects_a_sole_full_large_before_mutation`,
+  `later_thread_exit_full_large_pages_route_rejects_a_mixed_full_queue_before_mutation`,
+  and `later_thread_exit_full_large_pages_route_retains_a_collection_failure`
+  prove pre-mutation sole/mixed refusal and terminal retention after force
+  collection fails; and
   `later_thread_exit_full_medium_force_collects_to_a_client_free_only_mapped_process_route`
   proves one joined remote free is collected while the page remains linked in
   `BIN_FULL`, then source removes that full member, immediately publishes the
