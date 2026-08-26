@@ -469,16 +469,16 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
 /// A bounded source-order aggregate of two-or-more full arena singleton pages
 /// retained by a post-TLS dynamic drain.
 ///
-/// Every member had one rounded `PageKind::Singleton` block size, one live
-/// block, and `BIN_HUGE` geometry while linked in the source `BIN_FULL`
-/// queue. The route deliberately keeps only the dynamic drain plus sealed
-/// size/count facts: every later free re-resolves its PageMap member. It has
-/// no raw page list, dynamic abandoned bitmap/count pair, OS-list member,
-/// allocation-time claim/requeue, or concurrent-free authority.
+/// Every member had one live `PageKind::Singleton` block and `BIN_HUGE`
+/// geometry while linked in the source `BIN_FULL` queue. Members may have
+/// distinct rounded sizes, so the route deliberately keeps only the dynamic
+/// drain plus a count: every later free re-resolves and validates its own
+/// PageMap member. It has no raw page list, dynamic abandoned bitmap/count
+/// pair, OS-list member, allocation-time claim/requeue, or concurrent-free
+/// authority.
 #[must_use = "a dynamic full singleton aggregate route must release every member or remain terminally retained"]
 pub(crate) struct DynamicThreadExitFullSingletonPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
-    block_size: usize,
     remaining_pages: usize,
     terminal: bool,
 }
@@ -1582,26 +1582,26 @@ pub(crate) type ThreadExitFullDirectSmallPostExitFreeError =
 /// down.
 ///
 /// The source full queue may contain heterogeneous huge and singleton shapes,
-/// so this boundary seals one rounded singleton block size before it mutates a
-/// queue member. Each member remains source-unmappable: its one later client
-/// free must make it empty and release its complete PageMap/arena span. The
-/// registry deliberately stores no raw page list; every free re-resolves one
-/// currently registered member under the short process PageMap access.
+/// so this boundary proves every member is an arena singleton before it
+/// mutates a queue member. Each member remains source-unmappable: its one
+/// later client free must make it empty and release its complete
+/// PageMap/arena span. The registry deliberately stores no raw page list;
+/// every free re-resolves and validates one currently registered member under
+/// the short process PageMap access.
 #[must_use = "detached full singleton pages must become one process route or remain terminally retained"]
 pub(crate) struct ThreadExitFullSingletonPagesPostExitDetach<'attachment, 'main, 'arena> {
     session: MainHeapThreadPageDrainSession<'attachment, 'main>,
     parts: ThreadExitFullSingletonPagesPostExitParts<'arena>,
 }
 
-/// The process-lifetime facts for one homogeneous full arena-singleton
-/// aggregate. `remaining_pages` counts only PageMap registrations whose
-/// source terminal release has not completed. There is no static-main
-/// abandoned bitmap/count pair: source `BIN_HUGE` singleton geometry is never
-/// eligible for that regular-page publication.
+/// The process-lifetime facts for one full arena-singleton aggregate.
+/// `remaining_pages` counts only PageMap registrations whose source terminal
+/// release has not completed. There is no static-main abandoned bitmap/count
+/// pair: source `BIN_HUGE` singleton geometry is never eligible for that
+/// regular-page publication.
 #[must_use = "full singleton aggregate facts must remain coupled to PageMap access until every span releases"]
 pub(crate) struct ThreadExitFullSingletonPagesPostExitParts<'arena> {
     arena: ArenaView<'arena>,
-    block_size: usize,
     remaining_pages: usize,
     // The route is movable but intentionally not shareable. Its consuming
     // free API plus the post-exit PageMap guard serialize each source low-bit
@@ -7813,25 +7813,25 @@ impl<'attachment, 'main, 'arena, 'map>
         })
     }
 
-    /// Traverses a bounded homogeneous full arena-singleton source queue into
-    /// one process-owned post-exit registry.
+    /// Traverses a bounded full arena-singleton source queue into one
+    /// process-owned post-exit registry.
     ///
     /// `mi_theap_collect_ex(MI_ABANDON)` visits the heterogeneous `BIN_FULL`
     /// queue head-to-tail and calls `_mi_page_abandon` for every still-live
-    /// page. This first singleton aggregate preserves that order only when the
-    /// whole source image contains two or more same-size arena singletons. Each
-    /// member remains source-unmappable: the later one-block free may only
-    /// complete its PageMap -> `pages_main` -> metadata -> arena-slice release.
-    /// It neither creates a raw member list nor adds OS-list, allocation-time,
+    /// page. This singleton aggregate preserves that order only when the whole
+    /// source image contains two or more arena singletons. Each member remains
+    /// source-unmappable: the later one-block free may only complete its
+    /// PageMap -> `pages_main` -> metadata -> arena-slice release. It neither
+    /// creates a raw member list nor adds OS-list, allocation-time,
     /// reclaim/requeue, mixed-class, or concurrent ownership policy.
     ///
     /// # Safety
     ///
     /// No scoped producer may survive. Every current page must be a full
-    /// arena-backed singleton member of the same rounded source size, and every
-    /// client alias must be consumed exactly once through the returned linear
-    /// route or retained terminally. This is valid only after the concrete
-    /// later-main fast-slot-clear transition.
+    /// arena-backed singleton member, and every client alias must be consumed
+    /// exactly once through the returned linear route or retained terminally.
+    /// This is valid only after the concrete later-main fast-slot-clear
+    /// transition.
     pub(crate) unsafe fn abandon_full_singleton_pages_to_process_route(
         mut self,
     ) -> Result<
@@ -7872,11 +7872,10 @@ impl<'attachment, 'main, 'arena, 'map>
         }
 
         // Prove the complete queue image before force collection or queue
-        // mutation. `BIN_FULL` deliberately mixes source classes, so one
-        // rounded singleton block size is part of this bounded route's entry
-        // contract rather than an inferred later-free policy.
+        // mutation. `BIN_FULL` deliberately mixes source classes, so this
+        // route seals every member's arena singleton geometry while allowing
+        // each member's rounded size to remain source-distinct.
         let mut observed_page_count = 0usize;
-        let mut expected_block_size = None;
         for queue_bin in 0..BIN_COUNT {
             let Some(queue) = self.session.queue(queue_bin) else {
                 return Err(reject(
@@ -7962,16 +7961,6 @@ impl<'attachment, 'main, 'arena, 'map>
                         ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
                     ));
                 }
-                match expected_block_size {
-                    None => expected_block_size = Some(page_ref.block_size()),
-                    Some(expected_size) if expected_size == page_ref.block_size() => {}
-                    _ => {
-                        return Err(reject(
-                            self,
-                            ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
-                        ));
-                    }
-                }
                 observed_page_count = match observed_page_count.checked_add(1) {
                     Some(count) => count,
                     None => {
@@ -8000,13 +7989,6 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
             ));
         }
-        let Some(block_size) = expected_block_size else {
-            return Err(reject(
-                self,
-                ThreadExitFullSingletonPagesPostExitAbandonError::NotMultiplePages,
-            ));
-        };
-
         let mut detached_pages = 0usize;
         let mut page = match self.session.queue(BIN_FULL) {
             Some(queue) => queue.first(),
@@ -8036,7 +8018,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 ));
             }
             let after_force = unsafe { page_nonnull.as_ref() };
-            if after_force.block_size() != block_size
+            if after_force.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_force.block_size())
                     != Some(PageKind::Singleton)
                 || size_class::bin(after_force.block_size()) != Some(BIN_HUGE)
@@ -8057,7 +8039,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 ));
             }
             let after_collect = unsafe { page_nonnull.as_ref() };
-            if after_collect.block_size() != block_size
+            if after_collect.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_collect.block_size())
                     != Some(PageKind::Singleton)
                 || size_class::bin(after_collect.block_size()) != Some(BIN_HUGE)
@@ -8178,7 +8160,6 @@ impl<'attachment, 'main, 'arena, 'map>
             session,
             parts: ThreadExitFullSingletonPagesPostExitParts {
                 arena,
-                block_size,
                 remaining_pages: detached_pages,
                 _not_sync: PhantomData,
             },
@@ -11293,15 +11274,15 @@ enum ThreadExitFullRegularPagesPostExitFreeOutcome {
 
 impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
     /// Handles one source failed-reclaim client free through one complete short
-    /// PageMap operation for the exact sealed singleton size captured at
-    /// source owner exit.
+    /// PageMap operation for one exact singleton member captured at source
+    /// owner exit.
     ///
     /// # Safety
     ///
     /// `block` must be one exact once-live canonical allocation of a member in
-    /// this homogeneous full arena-singleton aggregate. The caller retains the
-    /// route linearly until every member has released or an explicit terminal
-    /// owner is retained. This never grants allocation-time reclaim, requeue,
+    /// this full arena-singleton aggregate. The caller retains the route
+    /// linearly until every member has released or an explicit terminal owner
+    /// is retained. This never grants allocation-time reclaim, requeue,
     /// OS-list, or concurrent-free authority.
     pub(crate) unsafe fn remote_free_after_thread_exit(
         &mut self,
@@ -11326,7 +11307,6 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
             || !page_ref.memid().arena_memory().is_some_and(|memory| {
                 memory.arena == core::ptr::from_ref(self.arena.arena()).cast_mut()
             })
-            || page_ref.block_size() != self.block_size
             || size_class::page_kind_for_block_size(page_ref.block_size())
                 != Some(PageKind::Singleton)
             || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
@@ -11396,7 +11376,8 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
 
     /// Re-derives one singleton's complete arena span under short map
     /// exclusion. The aggregate stores only sealed class facts; it never
-    /// trusts a pointer/range captured before old-Theap/TLD teardown.
+    /// trusts a pointer/range or a shared block size captured before
+    /// old-Theap/TLD teardown.
     fn member_span_matches(&self, page_map: &PageMap, page: NonNull<Page>, used: usize) -> bool {
         // SAFETY: callers retain the selected registered page through their
         // current short PageMap operation and inspect no data beyond its live
@@ -11411,7 +11392,8 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
         }
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
-        let Some(expected_slice_count) = page::singleton_page_slice_count(self.block_size) else {
+        let block_size = page_ref.block_size();
+        let Some(expected_slice_count) = page::singleton_page_slice_count(block_size) else {
             return false;
         };
         let Some(size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else {
@@ -11420,7 +11402,7 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
         let Some(slice_start) = self.arena.slice_start(slice_index) else {
             return false;
         };
-        let Some(usable_offset) = page::page_usable_start_offset(self.block_size) else {
+        let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
             return false;
         };
         let Some(span_end) = slice_start.addr().checked_add(size) else {
@@ -11431,7 +11413,6 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
         };
         if slice_count != expected_slice_count
             || page_ref.memid().kind() != MemoryKind::Arena
-            || page_ref.block_size() != self.block_size
             || size_class::page_kind_for_block_size(page_ref.block_size())
                 != Some(PageKind::Singleton)
             || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
@@ -13177,16 +13158,18 @@ impl<'attach, 'heap, 'arena, 'map>
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>
 {
-    /// Traverses a bounded homogeneous full arena-singleton source queue into
-    /// one sequential post-TLS dynamic route.
+    /// Traverses a bounded full arena-singleton source queue into one
+    /// sequential post-TLS dynamic route.
     ///
     /// `mi_theap_collect_ex(MI_ABANDON)` first performs its retired-page pass,
     /// then force-collects every current full-queue member and abandons the
     /// still-live pages. This boundary preserves that source order only when
-    /// the complete source image is two-or-more same-size arena singletons.
-    /// Each member stays source-unmappable, so its one later canonical free
-    /// must take the raw empty failed-reclaim result and release only its own
-    /// PageMap -> dynamic ordinary bit -> metadata -> arena-slice span.
+    /// the complete source image is two-or-more arena singletons. Each member
+    /// stays source-unmappable, so its one later canonical free must take the
+    /// raw empty failed-reclaim result and release only its own PageMap ->
+    /// dynamic ordinary bit -> metadata -> arena-slice span. The source full
+    /// queue does not require a common singleton size; later frees validate
+    /// their selected member independently.
     ///
     /// It does not create a raw member list, use an OS list, publish an
     /// abandoned bitmap/count pair, scan after exit, reclaim/requeue, or grant
@@ -13195,10 +13178,10 @@ impl<'attach, 'heap, 'arena, 'map>
     /// # Safety
     ///
     /// No scoped producer may survive. Every current page must be a full
-    /// arena-backed singleton member of the same rounded source size, and
-    /// every client alias must be consumed exactly once through the returned
-    /// linear route or retained terminally. This is valid only after the
-    /// concrete dynamic regular-TLS-slot-clear transition.
+    /// arena-backed singleton member, and every client alias must be consumed
+    /// exactly once through the returned linear route or retained terminally.
+    /// This is valid only after the concrete dynamic regular-TLS-slot-clear
+    /// transition.
     pub(crate) unsafe fn abandon_full_singleton_pages(
         mut self,
     ) -> Result<
@@ -13239,11 +13222,10 @@ impl<'attach, 'heap, 'arena, 'map>
         }
 
         // Prove the complete queue image before force collection or queue
-        // mutation. `BIN_FULL` deliberately mixes source classes, so the one
-        // rounded singleton size is an entry invariant, not a later-free
-        // selection policy.
+        // mutation. `BIN_FULL` deliberately mixes source classes, so this
+        // route seals every member's arena singleton geometry while allowing
+        // each member's rounded size to remain source-distinct.
         let mut observed_page_count = 0usize;
-        let mut expected_block_size = None;
         for queue_bin in 0..BIN_COUNT {
             let Some(queue) = self.engine.session.queue(queue_bin) else {
                 return Err(reject(
@@ -13314,16 +13296,6 @@ impl<'attach, 'heap, 'arena, 'map>
                         DynamicThreadExitFullSingletonPagesAbandonError::NotFullSingleton,
                     ));
                 }
-                match expected_block_size {
-                    None => expected_block_size = Some(page_ref.block_size()),
-                    Some(expected_size) if expected_size == page_ref.block_size() => {}
-                    _ => {
-                        return Err(reject(
-                            self,
-                            DynamicThreadExitFullSingletonPagesAbandonError::NotFullSingleton,
-                        ));
-                    }
-                }
                 observed_page_count = match observed_page_count.checked_add(1) {
                     Some(count) => count,
                     None => {
@@ -13352,13 +13324,6 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitFullSingletonPagesAbandonError::Queue,
             ));
         }
-        let Some(block_size) = expected_block_size else {
-            return Err(reject(
-                self,
-                DynamicThreadExitFullSingletonPagesAbandonError::NotMultiplePages,
-            ));
-        };
-
         let mut detached_pages = 0usize;
         let mut page = match self.engine.session.queue(BIN_FULL) {
             Some(queue) => queue.first(),
@@ -13389,7 +13354,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 ));
             }
             let after_force = unsafe { page_nonnull.as_ref() };
-            if after_force.block_size() != block_size
+            if after_force.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_force.block_size())
                     != Some(PageKind::Singleton)
                 || size_class::bin(after_force.block_size()) != Some(BIN_HUGE)
@@ -13415,7 +13380,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 ));
             }
             let after_collect = unsafe { page_nonnull.as_ref() };
-            if after_collect.block_size() != block_size
+            if after_collect.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_collect.block_size())
                     != Some(PageKind::Singleton)
                 || size_class::bin(after_collect.block_size()) != Some(BIN_HUGE)
@@ -13541,7 +13506,6 @@ impl<'attach, 'heap, 'arena, 'map>
 
         Ok(DynamicThreadExitFullSingletonPagesRoute {
             drain: self,
-            block_size,
             remaining_pages: detached_pages,
             terminal: false,
         })
@@ -20999,7 +20963,6 @@ impl<'attach, 'heap, 'arena, 'map>
         // metadata through the pre-mutation source-shape validation.
         let page_ref = unsafe { page.as_ref() };
         if page_ref.memid().kind() != MemoryKind::Arena
-            || page_ref.block_size() != self.block_size
             || size_class::page_kind_for_block_size(page_ref.block_size())
                 != Some(PageKind::Singleton)
             || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)

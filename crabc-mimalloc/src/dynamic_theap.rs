@@ -47,10 +47,10 @@
 //! complete rounded cache image and keeps the first partial head atomic, so
 //! observed `used` remains two until the final free. Each admits one sole
 //! nonfull dynamic arena page only; it is not a general owner-exit traversal.
-//! Five bounded homogeneous full aggregates also preserve `MI_ABANDON`
-//! traversal only for
-//! two-or-more source members with one sealed class/size/bin image: singleton
-//! members take only raw empty failed-reclaim release; medium members
+//! Five bounded full aggregates also preserve `MI_ABANDON` traversal only for
+//! two-or-more source members with their required sealed class/bin image:
+//! arena singleton members validate their own rounded sizes and take only raw
+//! empty failed-reclaim release; medium members
 //! re-resolve their own dynamic bitmap/count capability after their later
 //! low-owner claim; large members preserve their exact 64-slice arena span;
 //! non-direct-small members retain the source ordinary `true`/`2` option
@@ -2669,7 +2669,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_full_singleton_pages_route_rejects_mixed_sizes_before_mutation() {
+    fn dynamic_thread_exit_full_singleton_pages_route_releases_each_mixed_size_page() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
                 .page_session()
@@ -2696,6 +2696,8 @@ mod tests {
                 "the source full queue deliberately contains heterogeneous singleton sizes"
             );
             assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
+            let first_memory = unsafe { first_page.as_ref().memid() };
+            let second_memory = unsafe { second_page.as_ref().memid() };
 
             let drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
@@ -2704,13 +2706,11 @@ mod tests {
                     panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
                 }
             };
-            // SAFETY: both current allocations remain live solely to prove
-            // this heterogeneous full queue rejects before collection.
-            let drain = match unsafe { drain.abandon_full_singleton_pages() } {
-                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
-                    drain,
-                    error: DynamicThreadExitFullSingletonPagesAbandonError::NotFullSingleton,
-                }) => drain,
+            // SAFETY: the dynamic drain owns the complete heterogeneous
+            // full queue, its PageMap/dynamic-arena image, and both current
+            // client blocks through the returned linear aggregate route.
+            let route = match unsafe { drain.abandon_full_singleton_pages() } {
+                Ok(route) => route,
                 Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
                     drain,
                     error,
@@ -2720,19 +2720,59 @@ mod tests {
                     error,
                 }) => {
                     core::mem::forget(drain);
-                    panic!("mixed-size singleton proof is pre-collection: {error:?}");
-                }
-                Ok(route) => {
-                    core::mem::forget(route);
-                    panic!("mixed singleton sizes cannot enter the dynamic aggregate route");
+                    panic!("mixed-size full singletons enter the dynamic aggregate route: {error:?}");
                 }
             };
-            assert_eq!(drain.test_queue_count(BIN_FULL), Some(2));
-            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
-            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
 
-            core::mem::forget(drain);
-            DynamicPageFixtureOutcome::RetainTerminal
+            // SAFETY: `first` is one exact once-live heterogeneous member.
+            let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                Ok(DynamicThreadExitFullSingletonPagesFreeResult::ReleasedPage(route)) => route,
+                Ok(_) => panic!("the first singleton free leaves one aggregate member"),
+                Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first heterogeneous singleton free releases its exact dynamic member: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert!(unsafe { route.test_page_for_block(first) }.is_null());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
+            assert!(route.test_dynamic_arena_page_is_clear(first_memory));
+
+            // SAFETY: `second` is the final route-owned heterogeneous member.
+            let drain = match unsafe { route.remote_free_after_thread_exit(second) } {
+                Ok(DynamicThreadExitFullSingletonPagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullSingletonPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the second singleton free releases the final aggregate member");
+                }
+                Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the second heterogeneous singleton free releases the final dynamic member: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
         });
     }
 

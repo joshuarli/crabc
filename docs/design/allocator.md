@@ -391,19 +391,19 @@ They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 `MainHeapThreadProcessPageExitDrain::abandon_full_singleton_pages_to_process_route`
 is a separately typed aggregate boundary for two or more full arena
 `PageKind::Singleton` members in `BIN_FULL`. Its complete preflight requires
-every direct entry and every other queue to be empty, one rounded singleton
-block size, `reserved == used == 1`, a zero retirement countdown, an empty
-local free list, and an exact selected-arena span for every member. It then
+every direct entry and every other queue to be empty; each member has its own
+rounded singleton block size, `reserved == used == 1`, a zero retirement
+countdown, an empty local free list, and an exact selected-arena span. It then
 preserves source force -> false collection, full-queue/page-count detach, and
 ordinary unmapped abandonment for every member before old-Theap/TLD teardown.
 The linear route keeps no raw page list or static-main abandoned bitmap/count
-pair: each later free re-resolves one PageMap member, recovers only its
-canonical singleton allocation, and must take the raw failed-reclaim empty
-decision. Its terminal order is that member's complete PageMap span -> the
-ordinary `pages_main` bit at its first slice -> metadata -> arena slices; the
-last member closes the map route. Sole pages, heterogeneous rounded singleton
-sizes, non-singletons, OS-backed members, allocation-time adoption, reclaim,
-requeue, scanning, and concurrent routing reject or remain absent.
+pair: each later free re-resolves one PageMap member, revalidates its own
+geometry, recovers only its canonical singleton allocation, and must take the
+raw failed-reclaim empty decision. Its terminal order is that member's complete
+PageMap span -> the ordinary `pages_main` bit at its first slice -> metadata ->
+arena slices; the last member closes the map route. Sole pages, non-singletons,
+OS-backed members, allocation-time adoption, reclaim, requeue, scanning, and
+concurrent routing reject or remain absent.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_os_singleton_pages_to_process_route`
 is a separate aggregate boundary for two or more same-rounded-size
@@ -689,7 +689,7 @@ allocation-time claim, reclaim, or requeue for a post-exit route.
 
 The nonfull regular aggregate continues to reject full, singleton, huge,
 unmapped, foreign, malformed, or non-source-derived direct-cache state before
-detach. The separate homogeneous full-singleton, full-OS-singleton, full-medium,
+detach. The separate full-singleton, homogeneous full-OS-singleton, full-medium,
 full-large, non-direct-small, and direct-small aggregates are the only full aggregate
 exceptions. The direct
 aggregate requires two or more same-bin full arena small pages, its exact
@@ -792,18 +792,18 @@ cached-root/list/key teardown.
 
 `DynamicThreadExitDrain::abandon_full_singleton_pages` is the distinct
 post-TLS dynamic aggregate boundary. It admits exactly two or more full
-`MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`, with one
-rounded block size, `reserved == used == 1`, zero retirement countdown, empty
-local free lists, exact arena spans, and every other queue/direct entry empty.
-It preserves the source `MI_ABANDON` order for every member: force collection,
-false collection, full-queue removal, page-count decrement, then unmapped
-abandonment. The returned `DynamicThreadExitFullSingletonPagesRoute` stores no
-raw former-Theap member pointer and publishes no dynamic bitmap/count pair; it
-retains the `DynamicThreadExitDrain` until each sequential canonical free
-re-resolves its PageMap entry and reaches only the raw empty failed-reclaim
-tail. That free releases exactly its PageMap span -> dynamic ordinary bit ->
-metadata -> arena slices. The final member returns the empty drain for the
-existing root/list/key teardown. A sole, heterogeneous, non-singleton,
+`MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`; each has its
+own rounded block size, `reserved == used == 1`, zero retirement countdown,
+empty local free list, exact arena span, and every other queue/direct entry
+empty. It preserves the source `MI_ABANDON` order for every member: force
+collection, false collection, full-queue removal, page-count decrement, then
+unmapped abandonment. The returned `DynamicThreadExitFullSingletonPagesRoute`
+stores no raw former-Theap member pointer and publishes no dynamic bitmap/count
+pair; it retains the `DynamicThreadExitDrain` until each sequential canonical
+free re-resolves and validates its PageMap entry before it reaches only the raw
+empty failed-reclaim tail. That free releases exactly its PageMap span ->
+dynamic ordinary bit -> metadata -> arena slices. The final member returns the
+empty drain for the existing root/list/key teardown. A sole, non-singleton,
 OS-backed, preexisting queue/direct state, allocation-time, reclaim/adoption/
 requeue, scan, or concurrent case is not this route, and collection ambiguity
 retains the drain.
@@ -1206,7 +1206,7 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs, homogeneous full-singleton/full-OS-singleton/full-medium/full-large/
+OS-aligned singleton handoffs, full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/
 full-non-direct-small/full-direct-small aggregates, and the separate dynamic sole full-medium, full-large,
 full-non-direct-small, and full-direct-small handoffs above; all other
 initially-unmapped pages retain the raw terminal decision for a later
