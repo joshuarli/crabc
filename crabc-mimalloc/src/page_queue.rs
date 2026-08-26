@@ -4,20 +4,24 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/page-queue.c:40-55,252-423`
-// (page-queue predicates and intrusive queue membership operations). The
-// source's direct-page cache and `mi_theap_t` accounting require the absent
-// theap lifecycle state and remain outside this bounded metadata-only slice.
-// The mutating Rust names therefore end in `_metadata`: they are the exact
-// intrusive link/count/flag kernels, not yet the complete live allocator
-// operations named by the corresponding C functions.
+// Source map: pinned mimalloc v3.5.0 `src/page-queue.c:40-55,147-172,252-423`
+// (predicates, the test-only validity oracle, and intrusive queue membership
+// operations). The source's direct-page cache and `mi_theap_t` accounting
+// require the absent theap lifecycle state and remain outside this bounded
+// metadata-only slice. The mutating Rust names therefore end in `_metadata`:
+// they are the exact intrusive link/count/flag kernels, not yet the complete
+// live allocator operations named by the corresponding C functions.
 
 use core::ptr::null_mut;
 use core::sync::atomic::Ordering;
 
 use crate::config::{LARGE_MAX_OBJ_WSIZE, WORD_SIZE};
+#[cfg(test)]
+use crate::config::LARGE_MAX_OBJ_SIZE;
 
 use super::{Page, PageQueue, PAGE_IN_FULL_QUEUE};
+#[cfg(test)]
+use super::Theap;
 
 /// Port of `mi_page_queue_is_huge`.
 #[inline]
@@ -319,6 +323,92 @@ pub(crate) unsafe fn page_queue_enqueue_from_full_metadata(
     unsafe { page_queue_enqueue_from_ex_metadata(to, from, true, page) };
 }
 
+/// Test-only validator corresponding to mimalloc v3.5.0
+/// `_mi_page_queue_is_valid` (`src/page-queue.c:147-172`).
+///
+/// The pinned helper is assertion-backed and therefore returns `true` only
+/// after all checks pass. This Rust seam returns `false` for the same invalid
+/// metadata instead, so focused tests can exercise each boundary without
+/// aborting the test process. The caller must keep `theap`, `queue`, and every
+/// page reachable through `queue->first` initialized and exclusively stable
+/// for the duration of this call; the queue links must be dereferenceable.
+///
+/// # Safety
+///
+/// `queue` must be null or point to an initialized `PageQueue`. If non-null,
+/// every non-null `first`/`next` link must point to an initialized `Page` that
+/// remains alive and immobile for this call; `theap` is only compared and may
+/// be null when validating detached test fixtures.
+#[cfg(test)]
+pub(crate) unsafe fn page_queue_is_valid_for_test(
+    theap: *mut Theap,
+    queue: *const PageQueue,
+) -> bool {
+    if queue.is_null() {
+        return false;
+    }
+
+    // SAFETY: the caller guarantees that `queue` names an initialized queue
+    // whose reachable page links remain valid for this exclusive check.
+    let queue = unsafe { &*queue };
+    let Some(queue_wsize) = queue
+        .block_size
+        .checked_add(WORD_SIZE.saturating_sub(1))
+        .map(|size| size / WORD_SIZE)
+    else {
+        return false;
+    };
+
+    let mut count = 0usize;
+    let mut previous = null_mut();
+    let mut current = queue.first;
+    while !current.is_null() {
+        // SAFETY: each queue link is required by the caller to name an
+        // initialized page in the same stable intrusive list.
+        let page = unsafe { &*current };
+        if page.prev != previous {
+            return false;
+        }
+
+        // `mi_page_is_huge` is singleton-plus-(large-size or OS-base-before-
+        // metadata) in the pinned source. The latter is retained here even
+        // though production queue ownership does not construct OS-huge pages.
+        let page_is_huge = page.reserved == 1
+            && (page.block_size > LARGE_MAX_OBJ_SIZE
+                || match page.memid().os_memory() {
+                    Some(memory) => (memory.base as usize) < (current as usize),
+                    None => false,
+                });
+        if page_is_in_full(page) {
+            if queue_wsize != LARGE_MAX_OBJ_WSIZE + 2 {
+                return false;
+            }
+        } else if page_is_huge {
+            if queue_wsize != LARGE_MAX_OBJ_WSIZE + 1 {
+                return false;
+            }
+        } else if page.block_size != queue.block_size {
+            return false;
+        }
+
+        if page.theap != theap {
+            return false;
+        }
+        if page.next.is_null() && queue.last != current {
+            return false;
+        }
+
+        let Some(next_count) = count.checked_add(1) else {
+            return false;
+        };
+        count = next_count;
+        previous = current;
+        current = page.next;
+    }
+
+    queue.count == count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +439,9 @@ mod tests {
     }
 
     unsafe fn assert_queue(queue: &PageQueue, expected: &[*mut Page]) {
+        assert!(unsafe {
+            page_queue_is_valid_for_test(null_mut(), core::ptr::from_ref(queue))
+        });
         assert_eq!(queue.count, expected.len());
         assert_eq!(queue.first, expected.first().copied().unwrap_or(null_mut()));
         assert_eq!(queue.last, expected.last().copied().unwrap_or(null_mut()));
@@ -365,6 +458,83 @@ mod tests {
             current = page.next;
         }
         assert!(current.is_null());
+    }
+
+    #[test]
+    fn source_queue_validator_rejects_null_and_malformed_metadata() {
+        let block_size = 16;
+        let mut queue = PageQueue::empty(block_size);
+        let mut first = page(block_size);
+        let mut last = page(block_size);
+
+        // SAFETY: both pages are local, detached, and exclusively owned by
+        // this test while the queue is assembled and validated.
+        unsafe {
+            page_queue_push_at_end_metadata(&mut queue, &mut first);
+            page_queue_push_at_end_metadata(&mut queue, &mut last);
+            assert!(page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&queue),
+            ));
+            assert!(!page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::null(),
+            ));
+
+            last.test_set_queue_prev(null_mut());
+            assert!(!page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&queue),
+            ));
+            last.test_set_queue_prev(&mut first);
+
+            queue.count += 1;
+            assert!(!page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&queue),
+            ));
+            queue.count -= 1;
+
+            first.abandoned_test_set_theap(core::ptr::NonNull::<Theap>::dangling().as_ptr());
+            assert!(!page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&queue),
+            ));
+        }
+    }
+
+    #[test]
+    fn source_queue_validator_accepts_huge_and_full_queue_sentinels() {
+        let mut huge = PageQueue::empty((LARGE_MAX_OBJ_WSIZE + 1) * WORD_SIZE);
+        let mut huge_page = page((LARGE_MAX_OBJ_WSIZE + 1) * WORD_SIZE);
+        assert!(huge_page.set_capacity_reserved(1, 1));
+
+        // SAFETY: the singleton page is detached and exclusively owned by
+        // this test for the queue insertion and validator check.
+        unsafe {
+            page_queue_push_at_end_metadata(&mut huge, &mut huge_page);
+            assert!(page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&huge),
+            ));
+        }
+
+        let mut full = PageQueue::empty((LARGE_MAX_OBJ_WSIZE + 2) * WORD_SIZE);
+        let mut full_page = page(16);
+        // SAFETY: the singleton page is detached and exclusively owned by
+        // this test for the full-queue insertion and validator check.
+        unsafe {
+            page_queue_push_at_end_metadata(&mut full, &mut full_page);
+            assert!(page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&full),
+            ));
+            full.block_size = 16;
+            assert!(!page_queue_is_valid_for_test(
+                null_mut(),
+                core::ptr::from_ref(&full),
+            ));
+        }
     }
 
     #[test]

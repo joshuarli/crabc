@@ -684,7 +684,7 @@ tests = ["crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/single_threa
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 

@@ -3098,9 +3098,8 @@ mod tests {
         });
     }
 
-    #[test]
-    fn dynamic_thread_exit_full_singleton_pages_route_releases_each_same_size_page() {
-        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+    fn run_dynamic_full_singleton_homogeneous_aggregate_trace(emit_trace: bool) {
+        with_non_abandoning_dynamic_page_fixture(move |owner, arena, page_map| {
             let session = owner
                 .page_session()
                 .expect("non-abandoning dynamic attachment admits its page session");
@@ -3126,8 +3125,10 @@ mod tests {
                 second_page,
                 "each oversized dynamic allocation has its own singleton metadata page"
             );
+            assert_eq!(unsafe { first_page.as_ref().capacity() }, 1);
             assert_eq!(unsafe { first_page.as_ref().reserved() }, 1);
             assert_eq!(unsafe { first_page.as_ref().used() }, 1);
+            assert_eq!(unsafe { second_page.as_ref().capacity() }, 1);
             assert_eq!(unsafe { second_page.as_ref().reserved() }, 1);
             assert_eq!(unsafe { second_page.as_ref().used() }, 1);
             assert_eq!(
@@ -3138,6 +3139,48 @@ mod tests {
             assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
             let first_memory = unsafe { first_page.as_ref().memid() };
             let second_memory = unsafe { second_page.as_ref().memid() };
+            let first_ref = unsafe { first_page.as_ref() };
+            let second_ref = unsafe { second_page.as_ref() };
+            let block_size = first_ref.block_size() as usize;
+            let capacity = first_ref.capacity() as usize;
+            let reserved = first_ref.reserved() as usize;
+            let slice_count = first_memory
+                .arena_memory()
+                .map(|memory| memory.slice_count as usize)
+                .unwrap_or(usize::MAX);
+            let page_count = unsafe { (&*allocator.theap_identity()).page_count() };
+            let arena_backed = first_memory.kind() == MemoryKind::Arena
+                && second_memory.kind() == MemoryKind::Arena;
+            let large_singleton = block_size > MEDIUM_MAX_OBJ_SIZE
+                && crate::size_class::page_kind_for_block_size(block_size)
+                    == Some(crate::types::PageKind::Singleton)
+                && crate::size_class::page_kind_for_block_size(second_ref.block_size())
+                    == Some(crate::types::PageKind::Singleton);
+            let same_size = first_ref.block_size() == second_ref.block_size()
+                && first_ref.capacity() == second_ref.capacity()
+                && first_ref.reserved() == second_ref.reserved();
+            let full_before_thread_done = first_ref.used() == first_ref.capacity() as usize
+                && second_ref.used() == second_ref.capacity() as usize;
+            let full_queue_count_before_thread_done = allocator
+                .queue_count(BIN_FULL)
+                .unwrap_or(usize::MAX);
+            let direct_cache_empty_before_thread_done = (0..PAGES_DIRECT).all(|index| {
+                allocator.direct_page(index) == Some(crate::types::EMPTY_PAGE.as_ptr())
+            });
+            let no_remote_free_before_thread_done = first_ref.remote_free_head_is_owner_only()
+                && second_ref.remote_free_head_is_owner_only();
+            assert!(arena_backed && large_singleton && same_size && full_before_thread_done);
+            assert_eq!(page_count, 2);
+            assert_eq!(full_queue_count_before_thread_done, 2);
+            assert!(direct_cache_empty_before_thread_done && no_remote_free_before_thread_done);
+            assert_eq!(request, 524_289);
+            assert_eq!(block_size, 589_824);
+            assert_eq!(capacity, 1);
+            assert_eq!(reserved, 1);
+            assert_eq!(second_ref.capacity(), 1);
+            assert_eq!(second_ref.reserved(), 1);
+            assert_eq!(second_ref.used(), 1);
+            assert_eq!(slice_count, 9);
 
             let drain = match allocator.begin_thread_exit_drain() {
                 Ok(drain) => drain,
@@ -3169,6 +3212,139 @@ mod tests {
             assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
             assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
 
+            // Capture the exact source release spans while their metadata is
+            // still PageMap-published.  The span witnesses below read every
+            // mapped arena slice, and these saved ranges prove that terminal
+            // release clears every one of the same entries after metadata is
+            // no longer safe to inspect through its client block.
+            let (first_span_start, first_span_size) = route
+                .test_arena_span(first)
+                .expect("the first singleton retains its arena release span");
+            let (second_span_start, second_span_size) = route
+                .test_arena_span(second)
+                .expect("the second singleton retains its arena release span");
+            assert_eq!(first_span_size, 9 * ARENA_SLICE_SIZE);
+            assert_eq!(second_span_size, 9 * ARENA_SLICE_SIZE);
+            let page0_map_span = route
+                .test_page_map_span(first)
+                .expect("the first singleton retains its exact PageMap span");
+            let page1_map_span = route
+                .test_page_map_span(second)
+                .expect("the second singleton retains its exact PageMap span");
+
+            let first_page_map_registered_after_thread_done =
+                page0_map_span.1;
+            let second_page_map_registered_after_thread_done =
+                page1_map_span.1;
+            let page0_unmapped_after_thread_done = unsafe {
+                first_page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED
+            };
+            let page1_unmapped_after_thread_done = unsafe {
+                second_page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED
+            };
+            let page0_unowned_after_thread_done = unsafe {
+                first_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let page1_unowned_after_thread_done = unsafe {
+                second_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let page0_abandoned_after_thread_done = matches!(
+                unsafe { first_page.as_ref().abandoned_test_thread_id() },
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let page1_abandoned_after_thread_done = matches!(
+                unsafe { second_page.as_ref().abandoned_test_thread_id() },
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let page0_full_queue_detached_after_thread_done = unsafe {
+                !crate::types::page_queue::page_is_in_full(first_page.as_ref())
+                    && first_page.as_ref().is_queue_detached()
+                    && first_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let page1_full_queue_detached_after_thread_done = unsafe {
+                !crate::types::page_queue::page_is_in_full(second_page.as_ref())
+                    && second_page.as_ref().is_queue_detached()
+                    && second_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let page0_page_map_all_slices_registered_after_thread_done =
+                page0_map_span.0 == slice_count
+                    && first_page_map_registered_after_thread_done
+                    && page0_map_span.2;
+            let page1_page_map_all_slices_registered_after_thread_done =
+                page1_map_span.0 == slice_count
+                    && second_page_map_registered_after_thread_done
+                    && page1_map_span.2;
+            let page0_arena_page_bitmap_set_after_thread_done =
+                !route.test_dynamic_arena_page_is_clear(first_memory);
+            let page1_arena_page_bitmap_set_after_thread_done =
+                !route.test_dynamic_arena_page_is_clear(second_memory);
+            assert!(page0_unmapped_after_thread_done
+                && page1_unmapped_after_thread_done
+                && page0_unowned_after_thread_done
+                && page1_unowned_after_thread_done
+                && page0_abandoned_after_thread_done
+                && page1_abandoned_after_thread_done
+                && page0_page_map_all_slices_registered_after_thread_done
+                && page1_page_map_all_slices_registered_after_thread_done
+                && page0_arena_page_bitmap_set_after_thread_done
+                && page1_arena_page_bitmap_set_after_thread_done
+                && page0_full_queue_detached_after_thread_done
+                && page1_full_queue_detached_after_thread_done);
+
+            if emit_trace {
+                macro_rules! emit {
+                    ($name:literal, $value:expr) => {
+                        std::println!(
+                            "trace.dynamic_full_singleton_homogeneous_aggregate.{}={}",
+                            $name,
+                            ($value) as u8,
+                        );
+                    };
+                }
+                macro_rules! emit_number {
+                    ($name:literal, $value:expr) => {
+                        std::println!(
+                            "trace.dynamic_full_singleton_homogeneous_aggregate.{}={}",
+                            $name,
+                            $value,
+                        );
+                    };
+                }
+                emit!("arena_backed", arena_backed);
+                emit!("large_singleton", large_singleton);
+                emit_number!("page_count", page_count);
+                emit!("same_size", same_size);
+                emit!("full_before_thread_done", full_before_thread_done);
+                emit_number!("full_queue_count_before_thread_done", full_queue_count_before_thread_done);
+                emit!("direct_cache_empty_before_thread_done", direct_cache_empty_before_thread_done);
+                emit!("no_remote_free_before_thread_done", no_remote_free_before_thread_done);
+                emit_number!("request_size", request);
+                emit_number!("block_size", block_size);
+                emit_number!("capacity", capacity);
+                emit_number!("reserved", reserved);
+                emit_number!("slice_count", slice_count);
+                emit!("page0.unmapped_after_thread_done", page0_unmapped_after_thread_done);
+                emit!("page0.unowned_after_thread_done", page0_unowned_after_thread_done);
+                emit!("page0.abandoned_after_thread_done", page0_abandoned_after_thread_done);
+                emit_number!("page0.page_map_slice_count_after_thread_done", page0_map_span.0);
+                emit!("page0.page_map_registered_after_thread_done", first_page_map_registered_after_thread_done);
+                emit!("page0.page_map_all_slices_registered_after_thread_done", page0_page_map_all_slices_registered_after_thread_done);
+                emit_number!("page0.slice_count_after_thread_done", slice_count);
+                emit!("page0.arena_page_bitmap_set_after_thread_done", page0_arena_page_bitmap_set_after_thread_done);
+                emit!("page0.full_queue_detached_after_thread_done", page0_full_queue_detached_after_thread_done);
+                emit_number!("page0.used_after_thread_done", first_ref.used());
+                emit!("page1.unmapped_after_thread_done", page1_unmapped_after_thread_done);
+                emit!("page1.unowned_after_thread_done", page1_unowned_after_thread_done);
+                emit!("page1.abandoned_after_thread_done", page1_abandoned_after_thread_done);
+                emit_number!("page1.page_map_slice_count_after_thread_done", page1_map_span.0);
+                emit!("page1.page_map_registered_after_thread_done", second_page_map_registered_after_thread_done);
+                emit!("page1.page_map_all_slices_registered_after_thread_done", page1_page_map_all_slices_registered_after_thread_done);
+                emit_number!("page1.slice_count_after_thread_done", slice_count);
+                emit!("page1.arena_page_bitmap_set_after_thread_done", page1_arena_page_bitmap_set_after_thread_done);
+                emit!("page1.full_queue_detached_after_thread_done", page1_full_queue_detached_after_thread_done);
+                emit_number!("page1.used_after_thread_done", second_ref.used());
+            }
+
             // SAFETY: `first` is the route's exact once-live canonical block.
             let route = match unsafe { route.remote_free_after_thread_exit(first) } {
                 Ok(DynamicThreadExitFullSingletonPagesFreeResult::ReleasedPage(route)) => route,
@@ -3189,6 +3365,106 @@ mod tests {
             assert!(unsafe { route.test_page_for_block(first) }.is_null());
             assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
             assert!(route.test_dynamic_arena_page_is_clear(first_memory));
+            let page0_page_map_unregistered_after_first_terminal =
+                route.test_page_map_range_is_clear(first_span_start, first_span_size);
+            let page1_map_span_after_first_terminal = route
+                .test_page_map_span(second)
+                .expect("the retained second singleton keeps its exact PageMap span");
+            let page1_page_map_registered_after_first_terminal =
+                page1_map_span_after_first_terminal.1;
+            let page1_page_map_all_slices_registered_after_first_terminal =
+                page1_map_span_after_first_terminal.0 == slice_count
+                    && page1_page_map_registered_after_first_terminal
+                    && page1_map_span_after_first_terminal.2;
+            let page1_arena_page_bitmap_set_after_first_terminal =
+                !route.test_dynamic_arena_page_is_clear(second_memory);
+            let page1_unmapped_after_first_terminal = unsafe {
+                second_page.as_ref().abandoned_test_thread_id() == THREAD_ID_ABANDONED
+            };
+            let page1_unowned_after_first_terminal = unsafe {
+                second_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let page1_abandoned_after_first_terminal = matches!(
+                unsafe { second_page.as_ref().abandoned_test_thread_id() },
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let page1_full_queue_detached_after_first_terminal = unsafe {
+                second_page.as_ref().is_queue_detached()
+                    && second_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let arena_slice_is_free = |memory: MemoryId| {
+                memory
+                    .arena_memory()
+                    .and_then(|memory| unsafe { ArenaView::from_ptr(memory.arena) })
+                    .and_then(|arena| unsafe { arena.slices_free() })
+                    .and_then(|slices| {
+                        slices.is_set_range(
+                            memory.arena_memory()?.slice_index as usize,
+                            slice_count,
+                        )
+                    })
+                    == Some(true)
+            };
+            let page0_arena_page_bitmap_clear_after_terminal_free =
+                route.test_dynamic_arena_page_is_clear(first_memory);
+            let page0_arena_slice_released_after_terminal_free =
+                arena_slice_is_free(first_memory);
+            let first_terminal_released_only = route.test_remaining_pages() == 1
+                && page0_page_map_unregistered_after_first_terminal
+                && page0_arena_page_bitmap_clear_after_terminal_free
+                && page0_arena_slice_released_after_terminal_free
+                && unsafe { route.test_page_for_block(first) }.is_null();
+            let second_page_retained_after_first_terminal = page1_page_map_registered_after_first_terminal
+                && page1_page_map_all_slices_registered_after_first_terminal
+                && page1_arena_page_bitmap_set_after_first_terminal
+                && page1_unmapped_after_first_terminal
+                && page1_unowned_after_first_terminal
+                && page1_abandoned_after_first_terminal
+                && page1_full_queue_detached_after_first_terminal
+                && unsafe { second_page.as_ref().used() == 1 };
+            assert!(first_terminal_released_only && second_page_retained_after_first_terminal);
+            if emit_trace {
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.first_terminal_released_only={}",
+                    first_terminal_released_only as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.second_page_retained_after_first_terminal={}",
+                    second_page_retained_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.page_map_registered_after_first_terminal={}",
+                    page1_page_map_registered_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.page_map_slice_count_after_first_terminal={}",
+                    page1_map_span_after_first_terminal.0
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.page_map_all_slices_registered_after_first_terminal={}",
+                    page1_page_map_all_slices_registered_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.arena_page_bitmap_set_after_first_terminal={}",
+                    page1_arena_page_bitmap_set_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.unmapped_after_first_terminal={}",
+                    page1_unmapped_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.unowned_after_first_terminal={}",
+                    page1_unowned_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.abandoned_after_first_terminal={}",
+                    page1_abandoned_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.used_after_first_terminal={}",
+                    unsafe { second_page.as_ref().used() }
+                );
+            }
 
             // SAFETY: `second` is the final route-owned client block.
             let drain = match unsafe { route.remote_free_after_thread_exit(second) } {
@@ -3212,9 +3488,95 @@ mod tests {
             assert!(unsafe { drain.test_page_for_block(second) }.is_null());
             assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
             assert_eq!(drain.test_page_count(), 0);
-            assert!(drain.finish());
+            let page1_page_map_unregistered_after_final_terminal =
+                drain.test_page_map_range_is_clear(second_span_start, second_span_size);
+            let page1_arena_page_bitmap_clear_after_final_terminal =
+                drain.test_dynamic_arena_page_is_clear(second_memory);
+            let page1_arena_slice_released_after_final_terminal =
+                arena_slice_is_free(second_memory);
+            let second_terminal_clean = page1_page_map_unregistered_after_final_terminal
+                && page1_arena_page_bitmap_clear_after_final_terminal
+                && page1_arena_slice_released_after_final_terminal;
+            let drain_teardown_completed = drain.finish();
+            let valid = arena_backed
+                && large_singleton
+                && page_count == 2
+                && same_size
+                && full_before_thread_done
+                && full_queue_count_before_thread_done == 2
+                && direct_cache_empty_before_thread_done
+                && no_remote_free_before_thread_done
+                && request == 524_289
+                && block_size == 589_824
+                && capacity == 1
+                && reserved == 1
+                && slice_count == 9
+                && page0_unmapped_after_thread_done
+                && page1_unmapped_after_thread_done
+                && page0_unowned_after_thread_done
+                && page1_unowned_after_thread_done
+                && page0_abandoned_after_thread_done
+                && page1_abandoned_after_thread_done
+                && page0_page_map_all_slices_registered_after_thread_done
+                && page1_page_map_all_slices_registered_after_thread_done
+                && page0_arena_page_bitmap_set_after_thread_done
+                && page1_arena_page_bitmap_set_after_thread_done
+                && page0_full_queue_detached_after_thread_done
+                && page1_full_queue_detached_after_thread_done
+                && first_terminal_released_only
+                && second_page_retained_after_first_terminal
+                && second_terminal_clean
+                && drain_teardown_completed;
+            if emit_trace {
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page0.page_map_unregistered_after_terminal_free={}",
+                    page0_page_map_unregistered_after_first_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page0.arena_page_bitmap_clear_after_terminal_free={}",
+                    page0_arena_page_bitmap_clear_after_terminal_free as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page0.arena_slice_released_after_terminal_free={}",
+                    page0_arena_slice_released_after_terminal_free as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.page_map_unregistered_after_terminal_free={}",
+                    page1_page_map_unregistered_after_final_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.arena_page_bitmap_clear_after_terminal_free={}",
+                    page1_arena_page_bitmap_clear_after_final_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.page1.arena_slice_released_after_terminal_free={}",
+                    page1_arena_slice_released_after_final_terminal as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.second_terminal_clean={}",
+                    second_terminal_clean as u8
+                );
+                std::println!(
+                    "trace.dynamic_full_singleton_homogeneous_aggregate.valid={}",
+                    valid as u8
+                );
+            }
+            assert!(valid, "the full-singleton aggregate trace remains source-shaped");
             DynamicPageFixtureOutcome::TearDown
         });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_singleton_pages_route_releases_each_same_size_page() {
+        run_dynamic_full_singleton_homogeneous_aggregate_trace(false);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_dynamic_full_singleton_homogeneous_aggregate_trace_matches_pinned_c() {
+        std::println!("CRABC_MI_DYNAMIC_FULL_SINGLETON_HOMOGENEOUS_AGGREGATE_TRACE_BEGIN");
+        run_dynamic_full_singleton_homogeneous_aggregate_trace(true);
+        std::println!("CRABC_MI_DYNAMIC_FULL_SINGLETON_HOMOGENEOUS_AGGREGATE_TRACE_END");
     }
 
     #[test]

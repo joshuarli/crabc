@@ -34,6 +34,10 @@ FULL_MEDIUM_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-medium-homogeneous-aggregate-evidence-v3.5.0.json"
 )
+FULL_SINGLETON_HOMOGENEOUS_AGGREGATE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-full-singleton-homogeneous-aggregate-evidence-v3.5.0.json"
+)
 FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-non-direct-small-homogeneous-aggregate-evidence-v3.5.0.json"
@@ -198,6 +202,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-dynamic-full-medium-homogeneous-aggregate",
         )
 
+    def test_full_singleton_homogeneous_aggregate_schema_profile_is_exact(self) -> None:
+        schema = json.loads(
+            FULL_SINGLETON_HOMOGENEOUS_AGGREGATE_SCHEMA.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-dynamic-full-singleton-homogeneous-aggregate",
+        )
+
     def test_full_non_direct_small_homogeneous_aggregate_schema_profile_is_exact(self) -> None:
         schema = json.loads(
             FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA.read_text(encoding="utf-8")
@@ -277,6 +290,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-large-unmapped-reabandon-differential",
                 "native-dynamic-full-large-homogeneous-aggregate-differential",
                 "native-dynamic-full-medium-homogeneous-aggregate-differential",
+                "native-dynamic-full-singleton-homogeneous-aggregate-differential",
                 "native-dynamic-full-non-direct-small-homogeneous-aggregate-differential",
                 "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
@@ -624,6 +638,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/dynamic-full-medium-homogeneous-aggregate.json",
         )
         self.assertEqual(
+            gates["native-dynamic-full-singleton-homogeneous-aggregate-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-dynamic-full-singleton-homogeneous-aggregate",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-singleton-homogeneous-aggregate-differential"]["report"],
+            "compat/reports/allocator/x86_64/dynamic-full-singleton-homogeneous-aggregate.json",
+        )
+        self.assertEqual(
             gates["native-dynamic-full-non-direct-small-homogeneous-aggregate-differential"]["command"],
             "./compat/allocator/run-x86_64.sh allocator-dynamic-full-non-direct-small-homogeneous-aggregate",
         )
@@ -849,6 +872,28 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, aggregate_same_bin_still_live)
+        full_singleton_aggregate = gates[
+            "native-dynamic-full-singleton-homogeneous-aggregate-differential"
+        ]["claim"]
+        for fragment in (
+            "51 address-independent values",
+            "exactly two same-size full BIN_FULL arena singleton pages",
+            "request 524289",
+            "589824-byte blocks",
+            "capacity/reserved 1",
+            "nine arena slices each",
+            "calls real mi_thread_done()",
+            "consumer pthread_join()s before any sequential free",
+            "unmapped-abandoned, unowned",
+            "no dynamic abandoned bitmap/count is involved",
+            "page 1 remains registered",
+            "Rust exercises only the corresponding typed current-thread owner-exit model",
+            "does not claim a literal Rust worker thread or join",
+            "private native x86-64 engine evidence only",
+            "public x86 libc/ldso/crabc support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, full_singleton_aggregate)
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])

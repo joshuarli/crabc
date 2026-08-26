@@ -1527,6 +1527,19 @@ existing teardown. A sole, arena-backed, non-singleton,
   preflight, one-member-at-a-time PageMap/ordinary-bit/metadata/slice release,
   wholly pre-mutation sole refusal, and retained dynamic-drain collection
   failure.
+  The corresponding native x86-64 C/Rust differential compares 51
+  address-independent values for exactly two same-size full `BIN_FULL` arena
+  singleton pages: request 524289, 589824-byte blocks, capacity/reserved 1,
+  and nine arena slices per member. The C worker runs real `mi_thread_done()`
+  and the consumer joins before sequential frees. Both members begin
+  unmapped-abandoned, unowned, PageMap-registered across all nine slices,
+  ordinary-arena-bitmap-set, and full-queue-detached; no dynamic abandoned
+  bitmap/count is claimed. The first terminal free releases only page 0 while
+  page 1 remains registered, unmapped-abandoned, unowned, and used 1; the
+  second releases page 1. Rust is only the typed current-thread owner-exit
+  model and makes no Rust worker/join claim. This remains private native
+  x86-64 engine evidence only, not a general dynamic owner-exit, public x86
+  libc/ldso/crabc, or AArch64 claim.
   `dynamic_thread_exit_full_medium_pages_route_reabandons_each_distinct_bin_page_then_releases`,
   `dynamic_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`,
   `dynamic_thread_exit_full_medium_pages_route_rejects_mixed_full_classes_before_mutation`,

@@ -24719,6 +24719,56 @@ impl<'attach, 'heap, 'arena, 'map>
 
     #[cfg(test)]
     #[inline]
+    pub(crate) fn test_page_map_span(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<(usize, bool, bool)> {
+        let page = NonNull::new(unsafe { self.test_page_for_block(block) })?;
+        let ReleaseSpan::Arena {
+            slice_start, size, ..
+        } = self.drain.engine.release_span(page.as_ptr())?
+        else {
+            return None;
+        };
+        let total_slices = size / ARENA_SLICE_SIZE;
+        let map_size = arena_page_map_size(page, slice_start, size)?;
+        let mapped_slices = map_size / ARENA_SLICE_SIZE;
+        let registered = (0..mapped_slices).all(|index| unsafe {
+            self.drain
+                .engine
+                .page_map
+                .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+        } == page.as_ptr());
+        let tail_unregistered = (mapped_slices..total_slices).all(|index| unsafe {
+            self.drain
+                .engine
+                .page_map
+                .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+        }
+        .is_null());
+        Some((mapped_slices, registered, tail_unregistered))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_arena_span(&self, block: NonNull<u8>) -> Option<(*mut u8, usize)> {
+        let page = NonNull::new(unsafe { self.test_page_for_block(block) })?;
+        match self.drain.engine.release_span(page.as_ptr()) {
+            Some(ReleaseSpan::Arena {
+                slice_start, size, ..
+            }) => Some((slice_start, size)),
+            Some(ReleaseSpan::Os(_)) | None => None,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_map_range_is_clear(&self, slice_start: *mut u8, size: usize) -> bool {
+        self.drain.test_page_map_range_is_clear(slice_start, size)
+    }
+
+    #[cfg(test)]
+    #[inline]
     pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
         self.drain.test_dynamic_arena_page_is_clear(memory)
     }

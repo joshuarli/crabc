@@ -331,6 +331,21 @@ compile/link or execute a consumer, establish behavior or Rust implementation
 parity, cover static/object or unselected CMake modes, or create public x86 or
 AArch64 runtime support.
 
+The same native x86-only track additionally has a 51-field dynamic
+homogeneous full-singleton aggregate differential. Its pinned-C worker fills
+exactly two same-size full `BIN_FULL` arena singleton pages from request
+524289 (589824-byte blocks, capacity/reserved 1, nine arena slices each),
+performs real `mi_thread_done()`, and the consumer joins before any sequential
+free. Both members begin unmapped-abandoned, unowned, PageMap-registered over
+all nine slices, ordinary-arena-bitmap-set, and full-queue-detached; no dynamic
+abandoned bitmap/count is claimed. The first terminal free releases only page
+0 while page 1 remains registered, unmapped-abandoned, unowned, and `used == 1`;
+the second releases page 1 and closes the route. Rust exercises only the typed
+current-thread owner-exit model and does not claim a Rust worker thread or
+join. This is private native x86-64 engine evidence only: it does not establish
+general lifecycle, routing, concurrency, abandonment/adoption, public x86
+libc/ldso/crabc support, backend promotion, or AArch64 evidence.
+
 The same native x86-only track additionally has a 29-field dynamic
 full-medium one-remote force-collect-to-mapped differential. One C-oracle
 worker fills a sole full `BIN_FULL` medium arena page (request 10248,

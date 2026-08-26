@@ -938,6 +938,22 @@ lifecycle/routing/concurrent collection, abandonment/adoption, public API or
 runtime, public x86 support, libc integration, backend promotion, or AArch64
 evidence.
 
+The native x86-only track now also has a separate 51-field dynamic homogeneous
+full-singleton aggregate differential. Its pinned-C worker fills exactly two
+same-size full `BIN_FULL` arena singleton pages from request 524289 (589824-byte
+blocks, capacity/reserved 1, nine arena slices each), performs real
+`mi_thread_done()`, and the consumer joins before any sequential free. Both
+members begin unmapped-abandoned, unowned, PageMap-registered across all nine
+slices, ordinary-arena-bitmap-set, and full-queue-detached; no dynamic
+abandoned bitmap/count is involved. The first terminal free releases only page
+0 while page 1 remains PageMap-registered, unmapped-abandoned, unowned, and
+`used == 1`; the second terminal free releases page 1 and closes the route.
+Rust exercises only the corresponding typed current-thread owner-exit model and
+does not claim a Rust worker thread or join. This is private native x86-64
+engine evidence only: it does not establish general lifecycle, routing,
+concurrency, abandonment/adoption, public x86 support, libc integration,
+backend promotion, or AArch64 evidence.
+
 The native x86-only track now also has a separate dynamic homogeneous
 full-large aggregate differential. Its pinned-C worker fills exactly two
 same-bin full `BIN_FULL` arena large pages from request 86706 (98304-byte
