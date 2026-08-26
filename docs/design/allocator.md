@@ -154,12 +154,15 @@ abandonment. A separate full
 non-direct-small route preserves that same unmapped tail while detaching from
 its ordinary small bin instead of `BIN_FULL`; it requires
 `block_size > SMALL_SIZE_MAX`, has no direct-cache image, and takes the
-ordinary failed-reclaim collector. The complementary full direct-small route
+ordinary failed-reclaim collector. The complementary sole full direct-small route
 also remains in its ordinary bin, but requires `block_size <= SMALL_SIZE_MAX`,
 `reserved >= 16`, `used == reserved`, and its complete rounded
 `pages_free_direct` range. Queue removal clears that range before page-count
 detach, and its failed-reclaim partial collector retains the just-published
 atomic head before the source free count reaches the mostly-used boundary.
+A separate homogeneous full direct-small aggregate advances that range to each
+remaining ordinary-queue head before its respective page-count detach, then
+leaves it empty only after the final member is removed.
 Sequential client frees remain unmapped while `free <= reserved / 8`, then the
 first below-mostly-used free publishes the exact static-main bitmap/count pair
 and subsequent frees use the mapped tail. Their terminal empty results still
@@ -416,6 +419,27 @@ closes the map route. Sole pages, direct-small geometry/cache images, mixed
 bins/classes, remote-force nonfull state, allocation-time adoption, reclaim,
 requeue, scanning, and concurrent routing remain absent.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_pages_to_process_route`
+is a fourth, separately typed aggregate boundary for two or more full arena
+`PageKind::Small` members in one ordinary source bin. Every member has the
+same rounded `block_size <= SMALL_SIZE_MAX`, matching static-main bin,
+`reserved >= 16`, `used == reserved`, zero retirement countdown, empty local
+free list, and one exact paired-arena slice. The complete rounded
+`pages_free_direct` range must name the ordinary-queue head while every other
+direct entry and queue is empty. It preserves source force -> false collection,
+ordinary-bin removal, direct-cache-head advance before page-count detach, and
+ordinary unmapped abandonment for every member before old-Theap/TLD teardown.
+Its linear route stores no raw member list: each sequential free re-resolves
+its PageMap member, uses the sealed direct-small witness and claimed abandoned
+identity to choose the partial-collector unmapped or mapped tail, and keeps
+the just-pushed expected head through the source accounting lag. A member stays
+unmapped through `reserved / 8 + 1` frees; the next may publish only its
+preselected static-main bitmap/count pair. A terminal free releases only that
+member through PageMap -> `pages_main` -> metadata -> one arena slice; the last
+member closes the map route. Sole pages, stale/mixed cache images, non-direct
+geometry, mixed bins/classes, remote-force nonfull state, allocation-time
+adoption, reclaim, requeue, scanning, and concurrent routing remain absent.
+
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`,
 `MainHeapThreadProcessPageExitDrain::abandon_full_large_after_force_collect_to_mapped_process_route`,
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped_process_route`,
@@ -606,10 +630,15 @@ allocation-time claim, reclaim, or requeue for a post-exit route.
 
 The nonfull regular aggregate continues to reject full, singleton, huge,
 unmapped, foreign, malformed, or non-source-derived direct-cache state before
-detach. The separate homogeneous full-medium, full-large, and non-direct-small
-aggregates are the only full aggregate exceptions; heterogeneous full queues,
-direct-small aggregate members, remote-force nonfull state, and every other
-owner-exit class remain separate work.
+detach. The separate homogeneous full-medium, full-large, non-direct-small,
+and direct-small aggregates are the only full aggregate exceptions. The direct
+aggregate requires two or more same-bin full arena small pages, its exact
+rounded direct-cache range to name the current queue head, every other direct
+slot and queue empty, and `reserved >= 16`; each removal advances the range
+before its page-count decrement, while its later frees use the partial
+collector's retained expected head. Heterogeneous full queues, stale cache
+images, remote-force nonfull state, and every other owner-exit class remain
+separate work.
 An empty drain may call `MainHeapThreadAttachment::finish_after_page_drain`;
 the detached routes instead use their narrowly typed finish once the old Theap
 image is empty. Any force/release failure is retained terminally; the drain

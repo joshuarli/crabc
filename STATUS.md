@@ -97,11 +97,14 @@ before immediate mapped publication (the medium and large pages remain in
 `BIN_FULL`; the non-direct-small page remains in its ordinary bin with every
 direct slot empty; the direct-small page remains in its ordinary bin until its
 rounded direct-cache range is cleared during removal));
-and three separate homogeneous aggregate post-exit routes: full-medium and
-full-large `BIN_FULL` arena members, plus full non-direct-small members in one
-ordinary bin above `SMALL_SIZE_MAX` with every direct slot empty. The latter
-uses free.c's normal collector and retains one exact arena slice per member;
-direct-small aggregates remain absent. Alongside them is one aggregate
+and four separate homogeneous aggregate post-exit routes: full-medium and
+full-large `BIN_FULL` arena members, plus full non-direct-small and direct-small
+members in one ordinary bin. The non-direct route requires
+`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and every direct slot empty;
+the direct route requires `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
+its exact rounded range naming the queue head. The direct route advances that
+range before each page-count detach and uses free.c's partial collector; both
+retain one exact arena slice per member. Alongside them is one aggregate
 regular-pages post-exit registry that can route every qualifying surviving
 regular small, medium, or large page through sequential client frees. No full
 aggregate keeps a raw member list: each later free re-resolves its PageMap
@@ -281,6 +284,21 @@ bit/count and one-slice release. A sole page, direct-small geometry/cache
 image, mixed bin/class, or collection failure refuses or retains the route;
 it grants no direct-small partial-head, adoption, reclaim, requeue, scanning,
 or concurrent authority. The corresponding full non-direct-small and
+direct-small aggregate is instead admitted only by
+`abandon_full_direct_small_pages_to_process_route`: two or more full arena
+`PageKind::Small` members in one ordinary bin with the same rounded
+`block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, zero retirement countdowns,
+empty local free lists, and one paired-arena slice each. Its complete rounded
+direct-cache range names the current ordinary-queue head while every other
+direct slot and queue is empty. It preserves force -> false collection,
+ordinary-bin removal, direct-cache-head advance before page-count detach, and
+ordinary unmapped abandonment. Later frees re-resolve one PageMap member at a
+time, keep the partial collector's just-pushed expected head through the source
+accounting lag, then independently publish/release only that member's paired
+bit/count and one-slice span. Sole pages, stale/mixed cache images, non-direct
+geometry, mixed bins/classes, collection failures, adoption, reclaim, requeue,
+scanning, and concurrent routing refuse or retain the route. The corresponding
+full non-direct-small and
 direct-small one-joined-remote predecessors remain linked in their ordinary
 bins while force collection makes them nonfull; the former keeps its empty
 direct image, while the latter clears its rounded direct range before
@@ -355,8 +373,9 @@ path can adopt, reclaim, or requeue an aggregate registry member, including a
 registry later reduced to one member by a client free. The nonfull regular
 registry continues to reject full/singleton/unmapped/huge/foreign pages and
 malformed direct-cache images; the separate homogeneous full-medium,
-full-large, and non-direct-small aggregates do not admit heterogeneous full
-queues, direct-small members, or remote-force nonfull state. Concurrent client routes, deferred callbacks, arena
+full-large, non-direct-small, and direct-small aggregates do not admit
+heterogeneous full queues, stale direct-cache images, or remote-force nonfull
+state. Concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits
 `finish_after_page_drain` to reset default/cached, detach its shared heap list
@@ -583,7 +602,7 @@ source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
 singleton above, the separate dynamic full-medium, full-large,
 full-non-direct-small, and full direct-small handoffs, and the bounded later-main normal full-medium,
-full-large, and full non-direct-small process routes are its lifecycle-integrated raw-release
+full-large, full non-direct-small, and full direct-small process routes are its lifecycle-integrated raw-release
 callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
 support, and general heap destruction remain absent.
@@ -629,8 +648,9 @@ terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,
 and reusable abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
-full-medium/full-large/full-non-direct-small/full-direct-small routes, sole small-or-medium
-route, and regular-pages aggregate, allocation-time
+full-medium/full-large/full-non-direct-small/full-direct-small routes, four
+homogeneous full-page aggregates, sole small-or-medium route, and regular-pages
+aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit beyond the exact sole mapped
 medium handoff, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,

@@ -1058,6 +1058,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/theap.c"
+name = "later-main-homogeneous-full-direct-small-aggregate-post-exit-route"
+source_region = "MI_ABANDON ordinary-bin traversal from src/theap.c:97-115,123-152; force/false collection and _mi_page_abandon from src/page.c:214-303,414-518; regular-bin removal and exact rounded direct-cache queue-head update from src/page-queue.c:204-274; full-page unmapped abandonment and later mostly-used reabandon-to-mapped in src/arena.c:1216-1283,1304-1380; failed-reclaim partial collection/expected-head unown selection in src/free.c:372-418,479-515; and _mi_thread_done root order from src/init.c:377-421,448-481"
+rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::process_page_map, crabc_mimalloc::remote_free, and crabc_mimalloc::types"
+rust_item = "MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_pages_to_process_route, MainHeapThreadProcessPageExitFullDirectSmallPagesRoute::remote_free_after_thread_exit, ThreadExitFullDirectSmallPagesPostExitDetach/ThreadExitFullDirectSmallPagesPostExitParts, PageAllocatorEngine::abandon_full_direct_small_pages_to_process_route, abandoned::{abandon_unmappable_after_collect,free_full_direct_small_after_failed_reclaim}, remote_free::collect_abandoned_partly, and ProcessPageMapPostExitAccess"
+intentional_difference = "This is one bounded homogeneous aggregate route for two or more full arena `PageKind::Small` members in exactly one ordinary source bin, not a generic small-page or full-queue traversal. Preflight requires the same rounded `block_size <= SMALL_SIZE_MAX` and static-main bin for every member, `reserved >= 16`, `used == reserved`, `!page_is_in_full`, zero retirement countdown, an empty local free list, one exact paired-arena slice, and the complete source-derived direct-cache image: the exact rounded range names the ordinary queue head while every other direct slot and every other queue is empty. It preserves source force then false collection, regular-bin removal, rounded direct-cache advance before page-count decrement, and ordinary initially-unmapped abandonment before old-Theap/TLD teardown. The route retains no raw page list: each sequential client free re-resolves one PageMap member, locks the preselected static-main bitmap/count pair, and uses the claimed abandoned identity to select the partial-collector unmapped or mapped tail with the just-published head as its expected unown value. A direct member remains unmapped through `reserved / 8 + 1` frees; the next free independently publishes that member's bit/count. A terminal free releases only that member through PageMap -> pages_main -> metadata -> one arena slice, and the final member closes the short map route. A sole page, stale/mixed cache image, non-direct geometry, a second ordinary bin, a full-queue member, or a collection failure rejects or retains before it can create a route. The route provides no allocation-time claim/adoption/reclaim/requeue, concurrent free routing, mixed bins/classes, remote-force nonfull state, or other full/singleton/unmapped/huge owner-exit support."
+tests = ["crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/process_page_map.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/free.c"
 name = "later-main-full-medium-unmapped-to-mapped-post-exit-route"
 source_region = "MI_ABANDON full-queue visitation from src/theap.c:89-152; force/false collection, _mi_page_abandon, and full-queue detach from src/page.c:214-302,414-518; full-page unmapped abandonment and later mostly-used reabandon-to-mapped in src/arena.c:1304-1409; failed-reclaim expected-head/unown selection in src/free.c:372-514; full queue mutation from src/page-queue.c:204-304; and _mi_thread_done root order from src/init.c:377-421,448-481"

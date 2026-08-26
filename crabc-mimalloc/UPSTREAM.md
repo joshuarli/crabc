@@ -68,7 +68,7 @@ invented third form.
 ## Source-to-Rust mapping
 
 The dedicated full-regular medium/large/non-direct-small/direct-small post-exit
-row and the homogeneous full-medium/full-large/full-non-direct-small aggregate
+row and the homogeneous full-medium/full-large/full-non-direct-small/full-direct-small aggregate
 rows below are authoritative for those narrow owner-exit routes. The full
 non-direct-small route uses the ordinary `free.c` collector; the complementary
 full direct-small route requires `block_size <= SMALL_SIZE_MAX`,
@@ -131,12 +131,13 @@ no-immediate shapes, and full-origin routes remain client-free-only.
 
 > **Later-main homogeneous full-page aggregate correction.** The dedicated
 > aggregate rows below are authoritative for two-or-more same-bin full medium,
-> full large, or full non-direct-small members. Broad raw-tail rows that still
-> count ten later lifecycle owners predate the separate
-> `free_full_medium_after_failed_reclaim` and
-> `free_full_large_after_failed_reclaim` and
-> `free_full_non_direct_small_after_failed_reclaim` owners; read their count as
-> thirteen.
+> full large, full non-direct-small, or full direct-small members. Broad raw-tail rows that still
+> count ten later lifecycle owners predate the four separate
+> `free_full_medium_after_failed_reclaim`,
+> `free_full_large_after_failed_reclaim`,
+> `free_full_non_direct_small_after_failed_reclaim`, and
+> `free_full_direct_small_after_failed_reclaim` owners; read their count as
+> fourteen.
 > They remain provenance summaries, not a narrower capability claim.
 
 | Upstream path and function group | Rust module | Provenance/notice status |
@@ -223,6 +224,7 @@ deviation. It is a reviewable translation ledger, not an aspirational module
 plan.
 
 | `src/theap.c:97-115,123-152`, `src/page.c:214-243,291-303,414-518`, `src/page-queue.c:204-274`, `src/arena.c:1216-1283,1304-1380`, `src/free.c:372-418,479-515`, and `src/init.c:377-421,452-480`: ordinary-bin `MI_ABANDON` traversal, force/false collection, regular-bin removal with a non-direct no-op direct-cache update, ordinary unmapped abandonment, normal failed-reclaim collection, mapped reabandonment, and one-slice terminal release | `src/main_heap_page.rs`, `src/single_thread.rs`, `src/abandoned.rs`, `src/arena.rs`, `src/process_page_map.rs`, and `src/types.rs` | Applicable source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notices preserved; `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_pages_to_process_route`, `ThreadExitFullNonDirectSmallPagesPostExitParts`, `MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute`, and `free_full_non_direct_small_after_failed_reclaim` port one separate bounded later-main aggregate only: two or more full arena `PageKind::Small` members in one ordinary source bin, each with the same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and static-main bin, `reserved > 1`, `used == reserved`, `!page_is_in_full`, zero retirement countdown, empty local free list, and one exact paired-arena slice, while every direct entry and every other queue is empty. Source force -> false collection -> ordinary-bin/page-count detach -> ordinary unmapped abandonment runs for each member before old-Theap/TLD teardown. The process route keeps no raw page list; every sequential client free re-resolves PageMap membership, uses the sealed non-direct-small class and claimed abandoned identity to select free.c's normal unmapped or mapped tail, and releases only that member through PageMap -> `pages_main` -> metadata -> one arena slice. Sole pages, direct-small geometry/cache images, heterogeneous bins/classes, remote-force nonfull state, allocation-time adoption/reclaim/requeue, scanning, and concurrent routing remain absent. |
+| `src/theap.c:97-115,123-152`, `src/page.c:214-243,245-303,414-518`, `src/page-queue.c:204-274`, `src/arena.c:1216-1283,1304-1380`, `src/free.c:372-418,479-515`, and `src/init.c:377-421,452-480`: ordinary-bin `MI_ABANDON` traversal, force/false collection, regular-bin removal with exact rounded direct-cache queue-head advance before page-count detach, ordinary unmapped abandonment, partial failed-reclaim collection with expected-head unown, mapped reabandonment, and one-slice terminal release | `src/main_heap_page.rs`, `src/single_thread.rs`, `src/abandoned.rs`, `src/remote_free.rs`, `src/arena.rs`, `src/process_page_map.rs`, and `src/types.rs` | Applicable source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notices preserved; `MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_pages_to_process_route`, `ThreadExitFullDirectSmallPagesPostExitParts`, `MainHeapThreadProcessPageExitFullDirectSmallPagesRoute`, `free_full_direct_small_after_failed_reclaim`, and `remote_free::collect_abandoned_partly` port one separate bounded later-main aggregate only: two or more full arena `PageKind::Small` members in one ordinary source bin, each with the same rounded `block_size <= SMALL_SIZE_MAX` and static-main bin, `reserved >= 16`, `used == reserved`, `!page_is_in_full`, zero retirement countdown, empty local free list, and one exact paired-arena slice. Its preflight admits the complete source image only when the exact rounded `pages_free_direct` range names the current queue head and every other direct entry/queue is empty. Source force -> false collection -> ordinary-bin removal -> direct-cache advance -> page-count detach -> ordinary unmapped abandonment runs for each member before old-Theap/TLD teardown. The process route keeps no raw page list; every sequential client free re-resolves PageMap membership, uses the sealed direct-small class and claimed abandoned identity to select free.c's partial unmapped or mapped tail, preserving the just-pushed pointer as expected head. A member stays unmapped for `reserved / 8 + 1` frees; the next free may publish its static-main bitmap/count pair. A terminal free releases only that member through PageMap -> `pages_main` -> metadata -> one arena slice. Sole pages, stale/mixed cache images, non-direct geometry, heterogeneous bins/classes, remote-force nonfull state, allocation-time adoption/reclaim/requeue, scanning, and concurrent routing remain absent. |
 
 ## Configuration profile
 

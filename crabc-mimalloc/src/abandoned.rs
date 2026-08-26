@@ -358,6 +358,21 @@ pub(crate) enum FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult {
     Empty,
 }
 
+/// Result of the one bounded homogeneous full direct-small aggregate free
+/// tail.
+///
+/// This is deliberately distinct from non-direct small: every member began at
+/// or below `SMALL_SIZE_MAX`, retained one exact rounded direct-cache image at
+/// owner exit, and therefore takes free.c's partial collector. The partial
+/// head makes the source mostly-used transition lag one client free behind the
+/// normal collector path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FullDirectSmallAbandonedFreeAfterFailedReclaimResult {
+    PublishedToExistingOwner,
+    StillLive,
+    Empty,
+}
+
 impl RetainedAdoptFailure {
     #[inline]
     pub(crate) const fn page(self) -> NonNull<Page> { self.page }
@@ -1140,6 +1155,127 @@ pub(crate) unsafe fn free_full_non_direct_small_after_failed_reclaim<
         }
         MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
             Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
+        }
+    }
+}
+
+/// Ports the failed-reclaim tail for one member of the bounded homogeneous
+/// full direct-small aggregate route.
+///
+/// Its small `PageKind` alone is deliberately insufficient: this sealed class
+/// retains its exact rounded direct-cache image during source owner exit and
+/// takes `_mi_page_free_collect_partly` after a later free claims the low owner
+/// bit. The retained partial head is carried into both unmapped and mapped
+/// unown transitions, preserving free.c's one-free mostly-used lag.
+///
+/// # Safety
+///
+/// `page` and `block` must be one exact live member/allocation of the
+/// aggregate route. `expected_block_size` and `map` must be the homogeneous
+/// source preflight's exact direct-small size/bin/arena capability. The caller
+/// retains PageMap, metadata, arena, and terminal span-release ownership
+/// through every result; `Empty` retains the page low owner bit for that
+/// release. This grants no allocation-time reclaim, requeue, or direct-cache
+/// ownership.
+pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
+    M: MappedAbandonedPages + ?Sized,
+>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    expected_block_size: usize,
+    map: &M,
+) -> Result<FullDirectSmallAbandonedFreeAfterFailedReclaimResult, AbandonError> {
+    // SAFETY: the aggregate route owns this stable abandoned page and exact
+    // client block through the source `allow_collect=true` publication.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner);
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // A successful low-bit claim is the first legal point to inspect ordinary
+    // state. Keep the direct geometry proof here so a non-direct member cannot
+    // silently take free.c's partial collector.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    let source_identity = source_thread_identity(&state);
+    if !is_owned(&state) {
+        return Err(AbandonError::NotOwnedAssociated);
+    }
+    if state.reserved < 16
+        || state.block_size != expected_block_size
+        || state.block_size > crate::config::SMALL_SIZE_MAX
+        || size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Small)
+    {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    if state.memid.kind() != MemoryKind::Arena {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
+    if bin >= ARENA_BIN_COUNT
+        || map.bin() != bin
+        || map.page_slice_index(state.memid).is_none()
+    {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    match source_identity {
+        THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED => {}
+        _ => return Err(AbandonError::NotAbandoned),
+    }
+
+    // `_mi_page_free_collect_partly` leaves the just-pushed head atomically
+    // visible. `mi_abandoned_page_unown_from_free` must therefore use that
+    // exact pointer rather than the normal collector's zero head.
+    let expected_head = block.as_ptr().expose_provenance();
+    unsafe { remote_free::collect_abandoned_partly(page, block) }
+        .map_err(AbandonError::RemoteFree)?;
+    if page_is_empty(&state) {
+        if source_identity == THREAD_ID_ABANDONED_MAPPED {
+            unabandon_mapped(&state, Some(map))?;
+        }
+        return Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty);
+    }
+
+    if source_identity == THREAD_ID_ABANDONED {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, map)? {
+            return Ok(match result {
+                UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                    FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
+                }
+                UnmappedAbandonedFreeResult::Empty => {
+                    FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty
+                }
+                UnmappedAbandonedFreeResult::ReabandonedMapped
+                | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                    FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive
+                }
+            });
+        }
+        let mut no_test_hook: Option<fn()> = None;
+        return match unown_unmapped_from_free(page, &state, map, expected_head, &mut no_test_hook)? {
+            UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+            }
+            UnmappedAbandonedFreeResult::Empty => {
+                Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty)
+            }
+            UnmappedAbandonedFreeResult::ReabandonedMapped
+            | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
+            }
+        };
+    }
+
+    match unown_mapped_from_free(page, &state, map, expected_head)? {
+        MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
+            Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::Empty => {
+            Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
+            Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
         }
     }
 }
@@ -2342,6 +2478,116 @@ mod tests {
             page.remote_free_test_head() & 1,
             0,
             "the helper must claim before validating the sealed non-direct-small class"
+        );
+    }
+
+    #[test]
+    fn full_direct_small_aggregate_tail_preserves_partial_head_and_delays_mapping() {
+        let block_size = crate::config::SMALL_SIZE_MAX;
+        assert_eq!(
+            size_class::page_kind_for_block_size(block_size),
+            Some(PageKind::Small),
+            "the aggregate helper owns the direct regular small source class"
+        );
+        let bin = size_class::bin(block_size).expect("the direct-small size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(16, 16);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        let mut third = TestBlock([0; 16]);
+        let mut fourth = TestBlock([0; 16]);
+
+        assert_eq!(
+            unsafe {
+                free_full_direct_small_after_failed_reclaim(
+                    page_raw,
+                    first.pointer(),
+                    block_size,
+                    &map,
+                )
+            },
+            Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_eq!(
+            page.remote_free_test_head(),
+            first.pointer().as_ptr().expose_provenance(),
+            "the direct aggregate keeps its just-published partial head"
+        );
+        assert_eq!(page.remote_free_test_used(), 16);
+
+        for block in [second.pointer(), third.pointer()] {
+            assert_eq!(
+                unsafe {
+                    free_full_direct_small_after_failed_reclaim(page_raw, block, block_size, &map)
+                },
+                Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
+            );
+            assert!(!map.is_published(17));
+            assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        }
+
+        assert_eq!(
+            unsafe {
+                free_full_direct_small_after_failed_reclaim(
+                    page_raw,
+                    fourth.pointer(),
+                    block_size,
+                    &map,
+                )
+            },
+            Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head(), 0);
+        assert_eq!(page.remote_free_test_used(), 12);
+    }
+
+    #[test]
+    fn full_direct_small_aggregate_tail_rejects_non_direct_geometry_after_owner_claim() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        assert_eq!(
+            size_class::page_kind_for_block_size(block_size),
+            Some(PageKind::Small),
+            "the negative fixture stays in the broad small kind but is non-direct"
+        );
+        let bin = size_class::bin(block_size).expect("the non-direct-small size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(16, 16);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut block = TestBlock([0; 16]);
+
+        assert_eq!(
+            unsafe {
+                free_full_direct_small_after_failed_reclaim(
+                    page_raw,
+                    block.pointer(),
+                    block_size,
+                    &map,
+                )
+            },
+            Err(AbandonError::InvalidPageGeometry)
+        );
+        assert!(!map.is_published(17));
+        assert_ne!(
+            page.remote_free_test_head() & 1,
+            0,
+            "the helper must claim before validating the sealed direct-small class"
         );
     }
 

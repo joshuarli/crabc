@@ -20,9 +20,9 @@ one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
 route with exact full-medium, full-large, full-non-direct-small, and full-direct-small
-one-joined-remote-free force-collection predecessors), three bounded
+one-joined-remote-free force-collection predecessors), four bounded
 homogeneous full-page aggregate routes (medium and large `BIN_FULL` members,
-plus non-direct-small ordinary-bin members), and one aggregate regular
+plus non-direct-small and direct-small ordinary-bin members), and one aggregate regular
 small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
@@ -474,8 +474,22 @@ sequential normal-collector client frees re-resolve PageMap membership rather
 than retaining a raw list, independently cross each member's mostly-used
 boundary, and release one one-slice member at a time. Sole pages, direct-small
 geometry/cache images, mixed bins/classes, allocation-time adoption, reclaim,
-requeue, scanning, and concurrent routing remain absent; a homogeneous
-direct-small aggregate is not yet supported.
+requeue, scanning, and concurrent routing remain absent.
+A fourth, separately typed full direct-small aggregate route accepts two or
+more arena `PageKind::Small` members only in one ordinary source bin with the
+same rounded `block_size <= SMALL_SIZE_MAX`, static-main bin, full state,
+`reserved >= 16`, zero-retirement countdown, empty local free list, and exact
+one-slice paired-arena span. Its preflight requires the complete rounded
+direct-cache range to name the ordinary queue head, while every other direct
+slot and queue is empty. It force- then false-collects, removes each
+regular-bin member, advances that direct-cache range before decrementing the
+page count, and ordinary-unmapped-abandons every member before old-Theap/TLD
+teardown. Its sequential partial-collector client frees re-resolve PageMap
+membership, preserve each just-pushed expected head through the source
+accounting lag, and release one one-slice member at a time. Sole pages,
+stale/mixed cache images, non-direct geometry, mixed bins/classes,
+allocation-time adoption, reclaim, requeue, scanning, and concurrent routing
+remain absent.
 A fresh later-main owner may explicitly consume a sole mapped medium page that
 entered source owner exit already nonfull, or a sole direct-small page whose
 source collection left an immediate local free block, the exhausted fully
@@ -516,7 +530,7 @@ traversal's separate sole initial-medium/immediate-head outcome becomes the
 existing one-page route before that registry exists. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
-only after the source mostly-used boundary. The full direct-small route also
+only after the source mostly-used boundary. The sole full direct-small route also
 detaches from its regular bin, but requires `block_size <= SMALL_SIZE_MAX`,
 `reserved >= 16`, `used == reserved`, and its complete rounded direct-cache
 range; queue removal clears that range before page-count detach, and its

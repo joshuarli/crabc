@@ -479,10 +479,21 @@ result may refine it only when it can prove retained ownership.
   source force -> false collection -> ordinary-bin removal with the proven
   no-op direct-cache update -> page-count detach -> ordinary unmapped
   abandonment, then uses free.c's normal collector to re-resolve, reabandon,
-  and release each one-slice member independently. All three aggregate routes
-  reject heterogeneous full queues before collection. Direct-small aggregates,
-  remote-force nonfull state, allocation-time adoption/reclaim/requeue, and
-  concurrent routing remain absent. Distinct source-specific predecessors accept one sole full
+  and release each one-slice member independently. A fourth homogeneous full
+  direct-small aggregate accepts two or more same-bin ordinary `PageKind::Small`
+  arena members with `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, full
+  state, zero retirement countdowns, empty local free lists, and one
+  paired-arena slice per member. Its complete rounded direct-cache range names
+  the source ordinary-queue head while every other direct slot and queue is
+  empty. Source force -> false collection -> ordinary-bin removal ->
+  direct-cache-head advance -> page-count detach -> ordinary unmapped
+  abandonment runs for every member. Each later free re-resolves PageMap
+  membership, uses the partial collector, and preserves its just-pushed head
+  through the source accounting lag before mapped reabandonment or terminal
+  release. All four aggregate routes reject heterogeneous full queues before
+  collection. Stale/mixed direct-cache images, remote-force nonfull state,
+  allocation-time adoption/reclaim/requeue, and concurrent routing remain
+  absent. Distinct source-specific predecessors accept one sole full
   medium, non-direct-small, or direct-small page with one joined remote free:
   force collection changes `used` to exactly `reserved - 1` while each page
   remains linked in its source queue. The medium page remains marked full in
@@ -660,6 +671,17 @@ aggregate-registry adoption remain absent.
   `later_thread_exit_full_non_direct_small_pages_route_retains_a_collection_failure`
   prove the aggregate boundary never overlaps the established sole-page route
   and retains its drain terminally after force collection fails; and
+  `later_thread_exit_full_direct_small_pages_route_preserves_partial_head_then_releases_each_member`
+  proves two ordinary-bin full direct-small members retain the exact rounded
+  source cache image, detach before old-Theap/TLD teardown, independently hold
+  the partial-collector head through their source accounting lag, and release
+  one one-slice PageMap member at a time. Its siblings
+  `later_thread_exit_full_direct_small_pages_route_rejects_a_sole_full_page_before_mutation`,
+  `later_thread_exit_full_direct_small_pages_route_refuses_stale_rounded_direct_cache_before_detach`,
+  and `later_thread_exit_full_direct_small_pages_route_retains_a_collection_failure`
+  prove the aggregate boundary never overlaps the sole route, stale direct
+  state rejects before mutation, and a force-collector failure is retained
+  terminally; and
   `later_thread_exit_full_medium_force_collects_to_a_client_free_only_mapped_process_route`
   proves one joined remote free is collected while the page remains linked in
   `BIN_FULL`, then source removes that full member, immediately publishes the
