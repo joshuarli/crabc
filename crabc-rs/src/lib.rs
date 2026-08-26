@@ -33,14 +33,16 @@ pub mod buffer;
 pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
-// (eventfd counters only), `fd`, `fenv`, `ffi`, `io`, `ioctl`, `memory`,
-// `numeric`, `param`, `pipe`, `rand`, `signal`, `stdio`, `text`, and a bounded
-// `time` clock-query slice, plus the root descriptor/error types. These are
-// the target-record-independent
-// families or have an explicit x86 ABI proof. Every other public module owns
-// an AArch64 kernel-record contract and stays absent until its record family
-// has its own x86 proof; admission must not silently make an AArch64 layout
-// usable on x86-64.
+// (eventfd counters plus bounded poll), descriptor `fs::fstat`, `fd`, `fenv`,
+// `ffi`, `io`, `ioctl`, `memory`, `numeric`, `param`, `pipe`, read-only
+// `process` identity/session observations, `rand`, `signal`, `stdio`, bounded
+// `system::{uname, sysinfo, load_average}`, `text`, bounded
+// `thread::{gettid, sched_getcpu, sched_yield}`, and a bounded `time`
+// clock-query slice, plus the root descriptor/error types. These are the
+// target-record-independent families or have an explicit x86 ABI proof. Every
+// other public module owns an AArch64 kernel-record contract and stays absent
+// until its record family has its own x86 proof; admission must not silently
+// make an AArch64 layout usable on x86-64.
 mod eventfd;
 #[cfg(target_arch = "aarch64")]
 pub mod event;
@@ -54,6 +56,9 @@ pub mod fd;
 pub mod fenv;
 pub mod ffi;
 #[cfg(target_arch = "aarch64")]
+pub mod fs;
+#[cfg(target_arch = "x86_64")]
+#[path = "fs_x86_64.rs"]
 pub mod fs;
 pub mod io;
 pub mod ioctl;
@@ -100,10 +105,16 @@ pub mod stdio;
 pub mod sync;
 #[cfg(target_arch = "aarch64")]
 pub mod system;
+#[cfg(target_arch = "x86_64")]
+#[path = "system_x86_64.rs"]
+pub mod system;
 #[cfg(target_arch = "aarch64")]
 pub mod termios;
 pub mod text;
 #[cfg(target_arch = "aarch64")]
+pub mod thread;
+#[cfg(target_arch = "x86_64")]
+#[path = "thread_x86_64.rs"]
 pub mod thread;
 #[cfg(target_arch = "aarch64")]
 pub mod time;

@@ -159,6 +159,37 @@ pub fn getresgid() -> crate::Result<GidTriple> {
     })
 }
 
+/// Returns a process group ID. `None` selects the calling process.
+#[inline]
+pub fn getpgid(pid: Option<Pid>) -> crate::Result<Pid> {
+    crabc_core::process::getpgid(pid.map_or(0, Pid::as_raw_pid)).map(|raw| {
+        // Linux returns a positive process ID for every successful process
+        // group observation.
+        unsafe { Pid::from_raw_unchecked(raw) }
+    })
+}
+
+/// Returns the calling process's process group ID.
+#[inline]
+#[must_use]
+pub fn getpgrp() -> Pid {
+    match crabc_core::process::getpgid(0) {
+        // Linux returns a positive process ID for a live calling process.
+        Ok(raw) => unsafe { Pid::from_raw_unchecked(raw) },
+        Err(_) => panic!("Linux getpgid(0) syscall failed"),
+    }
+}
+
+/// Returns a session ID. `None` selects the calling process.
+#[inline]
+pub fn getsid(pid: Option<Pid>) -> crate::Result<Pid> {
+    crabc_core::process::getsid(pid.map_or(0, Pid::as_raw_pid)).map(|raw| {
+        // Linux returns a positive process ID for every successful session
+        // observation.
+        unsafe { Pid::from_raw_unchecked(raw) }
+    })
+}
+
 const _: () = assert!(core::mem::size_of::<Uid>() == 4);
 const _: () = assert!(core::mem::align_of::<Uid>() == 4);
 const _: () = assert!(core::mem::size_of::<Gid>() == 4);

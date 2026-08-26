@@ -96,21 +96,25 @@ status = "foundation-verified"
 [[family]]
 id = "facade.direct"
 order = 20
-depends_on = ["core.architecture"]
+depends_on = ["oracle.musl-toolchain", "core.architecture"]
 category = "rust-facade"
-description = "Record-independent direct crabc-rs operations plus scalar eventfd, a closed poll slice, read-only process identity, random-source, closed mmap/mprotect/munmap and clock_gettime/clock_getres slices, and the proved signal-action boundary."
+description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll, read-only process identity/session, gettid/getcpu/sched_yield, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice whose broader filesystem.path-core capability remains planned, closed mmap/mprotect/munmap and clock_gettime/clock_getres slices, and the proved signal-action boundary."
 aarch64_gates = ["crabc-rs"]
-source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/mm_x86_64.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs", "crabc-rs/src/process_x86_64.rs", "crabc-rs/src/rand.rs", "crabc-rs/src/time_x86_64.rs", "crabc-core/src/event_x86_64.rs", "crabc-core/src/mm_x86_64.rs", "crabc-core/src/rand.rs", "crabc-core/src/time_x86_64.rs", "crabc-rs/tests/x86_64_mm.rs", "crabc-rs/tests/x86_64_poll.rs", "crabc-rs/tests/x86_64_process_identity.rs", "crabc-rs/tests/x86_64_rand.rs", "crabc-rs/tests/x86_64_time.rs", "compat/x86_64/run_x86_mm_reference.sh", "compat/x86_64/run_x86_poll_reference.sh", "compat/x86_64/run_x86_process_identity_reference.sh", "compat/x86_64/run_x86_rand_reference.sh", "compat/x86_64/run_x86_time_reference.sh", "compat/x86_64/x86_mm_reference_probe.c", "compat/x86_64/x86_poll_reference_probe.c", "compat/x86_64/x86_process_identity_reference_probe.c", "compat/x86_64/x86_rand_reference_probe.c", "compat/x86_64/x86_time_reference_probe.c"]
-x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout and poll syscall number", "x86 getpid/getppid/get*id syscall numbers and three-word credential records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap r10/r8/r9 argument placement and full 64-bit offset", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout and clock_gettime/clock_getres syscall values"]
+source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/mm_x86_64.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs", "crabc-rs/src/process_x86_64.rs", "crabc-rs/src/rand.rs", "crabc-rs/src/system_x86_64.rs", "crabc-rs/src/thread_x86_64.rs", "crabc-rs/src/time_x86_64.rs", "crabc-core/src/event_x86_64.rs", "crabc-core/src/mm_x86_64.rs", "crabc-core/src/rand.rs", "crabc-core/src/system_x86_64.rs", "crabc-core/src/time_x86_64.rs", "crabc-rs/tests/x86_64_fs.rs", "crabc-rs/tests/x86_64_mm.rs", "crabc-rs/tests/x86_64_poll.rs", "crabc-rs/tests/x86_64_process_identity.rs", "crabc-rs/tests/x86_64_process_session.rs", "crabc-rs/tests/x86_64_rand.rs", "crabc-rs/tests/x86_64_system.rs", "crabc-rs/tests/x86_64_thread.rs", "crabc-rs/tests/x86_64_time.rs", "compat/x86_64/run_x86_fstat_reference.sh", "compat/x86_64/run_x86_mm_reference.sh", "compat/x86_64/run_x86_poll_reference.sh", "compat/x86_64/run_x86_process_identity_reference.sh", "compat/x86_64/run_x86_process_session_reference.sh", "compat/x86_64/run_x86_rand_reference.sh", "compat/x86_64/run_x86_system_reference.sh", "compat/x86_64/run_x86_thread_reference.sh", "compat/x86_64/run_x86_time_reference.sh", "compat/x86_64/x86_fstat_reference_probe.c", "compat/x86_64/x86_mm_reference_probe.c", "compat/x86_64/x86_poll_reference_probe.c", "compat/x86_64/x86_process_identity_reference_probe.c", "compat/x86_64/x86_process_session_reference_probe.c", "compat/x86_64/x86_rand_reference_probe.c", "compat/x86_64/x86_system_reference_probe.c", "compat/x86_64/x86_thread_reference_probe.c", "compat/x86_64/x86_time_reference_probe.c"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout and poll syscall number", "x86 getpid/getppid/get*id/getpgid/getsid syscall numbers and typed identity records", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 144-byte fstat record", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap r10/r8/r9 argument placement and full 64-bit offset", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout and clock_gettime/clock_getres syscall values"]
 x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed direct-facade subset with scalar eventfd, poll, read-only process identity, getrandom/getentropy, mmap/mprotect/munmap, and realtime/monotonic/monotonic-raw clock queries; it excludes every unproved record-owning and wider VM-policy family." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded facade subset with scalar eventfd, poll, descriptor fstat, read-only process identity/session, gettid/getcpu/sched_yield, uname/sysinfo/load observations, getrandom/getentropy, mmap/mprotect/munmap, and realtime/monotonic/monotonic-raw clock queries; the broader filesystem.path-core and every other unproved record-owning/wider-VM family remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh rand-reference", scope = "Pinned-musl x86 getrandom constants and initialized-length behavior for the admitted Rust random-source boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-abi-reference", scope = "Pinned-musl x86 timespec layout, admitted clock values, and clock_gettime/clock_getres syscall constants for the bounded Rust clock boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh poll-reference", scope = "Pinned-musl x86 poll readiness and hangup behavior for the typed Rust poll boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-identity-reference", scope = "Pinned-musl x86 scalar and real/effective/saved process identity behavior for the typed Rust observation boundary." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh process-session-reference", scope = "Pinned-musl x86 process-group/session behavior for typed optional-Pid observations." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh fstat-reference", scope = "Pinned-musl x86 144-byte fstat record and regular-file behavior for the bounded descriptor slice; it does not complete filesystem.path-core." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh system-reference", scope = "Pinned-musl x86 uname and kernel sysinfo-prefix behavior for the bounded typed system observations." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh thread-reference", scope = "Pinned-musl x86 gettid, getcpu, and scheduler-yield behavior for the bounded typed thread slice." },
 ]
-oracle = [{ kind = "kernel-abi", source = "Linux 5.10 x86-64 syscall ABI", role = "Direct kernel behavior contract." }, { kind = "test-only-native-api", source = "Pinned Rustix", role = "Later behavior comparison only; never a production dependency." }]
+oracle = [{ kind = "kernel-abi", source = "Linux 5.10 x86-64 syscall ABI", role = "Direct kernel behavior contract." }, { kind = "c-posix", source = "Pinned musl 1.2.6 source build", role = "Native C/POSIX behavior and ABI oracle for the admitted focused observations." }, { kind = "test-only-native-api", source = "Pinned Rustix", role = "Later behavior comparison only; never a production dependency." }]
 capabilities = [
   "error.termination.abort",
   "memory.bytes-basic",
@@ -156,7 +160,10 @@ capabilities = [
   "process.pid-observation",
   "process.identity-triples",
   "process.identity",
+  "process.session-observation",
   "thread.futex-basic",
+  "thread.identity",
+  "thread.cpu-observation",
   "network.byte-order",
   "network.ipv6-constants",
   "network.ethernet-database",
@@ -166,6 +173,9 @@ capabilities = [
   "network.ip-address-types",
   "network.ip-codec",
   "system.auxv",
+  "system.load-average",
+  "system.name-observation",
+  "system.identity-info",
 ]
 status = "foundation-verified"
 
@@ -272,13 +282,10 @@ capabilities = [
   "process.child-ownership",
   "process.pidfd-open",
   "process.fcntl-lock-observation",
-  "process.session-observation",
   "thread.credentials-res",
   "process.fs-credentials",
   "process.resource-limit-mutation",
   "process.umask",
-  "thread.identity",
-  "thread.cpu-observation",
   "thread.cpu-affinity-observation",
   "thread.cpu-affinity-mutation",
   "thread.scheduler-rr-interval",
@@ -302,9 +309,6 @@ capabilities = [
   "system.inotify",
   "process.scheduler-priority-bounds",
   "process.resource-limits-targeted",
-  "system.load-average",
-  "system.name-observation",
-  "system.identity-info",
   "mount.basic",
 ]
 status = "planned"
@@ -346,9 +350,9 @@ depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
 description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact."
 aarch64_gates = ["abi-probe", "build", "test"]
-source_owners = ["include", "include/bits/alltypes.h", "include/bits/fcntl.h", "include/bits/mman.h", "include/bits/reg.h", "include/bits/setjmp.h", "include/bits/stat.h", "include/bits/syscall.h", "include/fcntl.h", "include/fenv.h", "include/float.h", "include/poll.h", "include/setjmp.h", "include/signal.h", "include/time.h", "include/sys/mman.h", "include/sys/stat.h", "include/sys/syscall.h", "include/sys/types.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "compat/x86_64/sys_reg_header_abi_probe.c", "compat/x86_64/run_sys_reg_header_abi.sh", "compat/x86_64/types_header_abi_probe.c", "compat/x86_64/types_header_abi_probe.cpp", "compat/x86_64/run_types_header_abi.sh", "compat/x86_64/stat_header_abi_probe.c", "compat/x86_64/stat_header_abi_probe.cpp", "compat/x86_64/run_stat_header_abi.sh", "compat/x86_64/time_header_abi_probe.c", "compat/x86_64/time_header_abi_probe.cpp", "compat/x86_64/run_time_header_abi.sh", "compat/x86_64/poll_header_abi_probe.c", "compat/x86_64/poll_header_abi_probe.cpp", "compat/x86_64/run_poll_header_abi.sh", "compat/x86_64/fcntl_header_abi_probe.c", "compat/x86_64/fcntl_header_abi_probe.cpp", "compat/x86_64/run_fcntl_header_abi.sh", "compat/x86_64/x86_syscall_header_probe.c", "compat/x86_64/run_x86_syscall_header.sh", "compat/x86_64/signal_header_abi_probe.c", "compat/x86_64/signal_header_posix_abi_probe.c", "compat/x86_64/run_signal_header_abi.sh", "compat/x86_64/mman_header_abi_probe.c", "compat/x86_64/mman_header_abi_probe.cpp", "compat/x86_64/run_mman_header_abi.sh", "compat/x86_64/libc_setjmp_probe.c", "compat/x86_64/libc_setjmp_probe.rs", "compat/x86_64/run_libc_setjmp.sh", "libc/src/c_abi/x86_64/setjmp.rs", "libc/src/c_abi.rs", "libc/src/lib.rs"]
+source_owners = ["include", "include/bits/alltypes.h", "include/bits/fcntl.h", "include/bits/mman.h", "include/bits/reg.h", "include/bits/setjmp.h", "include/bits/stat.h", "include/bits/syscall.h", "include/fcntl.h", "include/fenv.h", "include/float.h", "include/poll.h", "include/setjmp.h", "include/signal.h", "include/time.h", "include/unistd.h", "include/sys/mman.h", "include/sys/stat.h", "include/sys/syscall.h", "include/sys/sysinfo.h", "include/sys/types.h", "include/sys/utsname.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "compat/x86_64/sys_reg_header_abi_probe.c", "compat/x86_64/run_sys_reg_header_abi.sh", "compat/x86_64/types_header_abi_probe.c", "compat/x86_64/types_header_abi_probe.cpp", "compat/x86_64/run_types_header_abi.sh", "compat/x86_64/stat_header_abi_probe.c", "compat/x86_64/stat_header_abi_probe.cpp", "compat/x86_64/run_stat_header_abi.sh", "compat/x86_64/time_header_abi_probe.c", "compat/x86_64/time_header_abi_probe.cpp", "compat/x86_64/run_time_header_abi.sh", "compat/x86_64/poll_header_abi_probe.c", "compat/x86_64/poll_header_abi_probe.cpp", "compat/x86_64/run_poll_header_abi.sh", "compat/x86_64/fcntl_header_abi_probe.c", "compat/x86_64/fcntl_header_abi_probe.cpp", "compat/x86_64/run_fcntl_header_abi.sh", "compat/x86_64/unistd_header_abi_probe.c", "compat/x86_64/unistd_header_abi_probe.cpp", "compat/x86_64/run_unistd_header_abi.sh", "compat/x86_64/system_header_abi_probe.c", "compat/x86_64/system_header_abi_probe.cpp", "compat/x86_64/run_system_header_abi.sh", "compat/x86_64/x86_syscall_header_probe.c", "compat/x86_64/run_x86_syscall_header.sh", "compat/x86_64/signal_header_abi_probe.c", "compat/x86_64/signal_header_posix_abi_probe.c", "compat/x86_64/run_signal_header_abi.sh", "compat/x86_64/mman_header_abi_probe.c", "compat/x86_64/mman_header_abi_probe.cpp", "compat/x86_64/run_mman_header_abi.sh", "compat/x86_64/libc_setjmp_probe.c", "compat/x86_64/libc_setjmp_probe.rs", "compat/x86_64/run_libc_setjmp.sh", "libc/src/c_abi/x86_64/setjmp.rs", "libc/src/c_abi.rs", "libc/src/lib.rs"]
 x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags", "x86 fcntl flags and flock/file-handle record layouts", "x86 144-byte struct stat, LP64 time, and pollfd record layouts", "setjmp's six callee-saved GPRs, post-return stack, instruction pointer, and kernel-sized signal mask"]
-x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; the staged sys/reg.h register indices, C/C++ alltypes/sys/types layouts, C/C++ sys/stat, time, poll, and fcntl layouts/declarations, complete syscall number namespace, GNU/POSIX signal-frame layouts, C/C++ sys/mman declarations, and setjmp public machine/signal-mask record match musl; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
+x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; the staged sys/reg.h register indices, C/C++ alltypes/sys/types layouts, C/C++ sys/stat, time, poll, fcntl, unistd, sys/utsname, and sys/sysinfo layouts/declarations, complete syscall number namespace, GNU/POSIX signal-frame layouts, C/C++ sys/mman declarations, and setjmp public machine/signal-mask record match musl; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh sys-reg-header-abi", scope = "This compile-only ptrace register-index slice is partial evidence." },
@@ -357,6 +361,8 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh time-header-abi", scope = "This compile-only C/C++ time layout and declaration slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh poll-header-abi", scope = "This compile-only C/C++ poll layout and declaration slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh fcntl-header-abi", scope = "This compile-only C/C++ fcntl layout, declaration, flag, and large-file-alias slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh unistd-header-abi", scope = "This compile-only C/C++ x86 LP64 unistd declaration, constant, extension, and large-file-alias slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh system-header-abi", scope = "This compile-only C/C++ sys/utsname and sys/sysinfo public-layout slice is partial evidence; the public sysinfo compatibility tail remains distinct from the Rust kernel-prefix record." },
   { state = "required", command = "./scripts/dev-x86_64.sh syscall-header-abi", scope = "This compile-only complete x86 syscall-number macro slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh signal-header-abi", scope = "This compile-only GNU/POSIX signal-frame layout slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh mman-header-abi", scope = "This compile-only C/C++ sys/mman declaration and value slice is partial evidence." },

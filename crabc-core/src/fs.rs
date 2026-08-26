@@ -454,12 +454,12 @@ pub unsafe fn statx_raw(
     .map(|_| ())
 }
 
-/// Queries the Linux/AArch64 `struct stat` representation for `fd`.
+/// Queries the Linux target's `struct stat` representation for `fd`.
 ///
 /// # Safety
 ///
 /// `buffer` must designate writable storage for the complete target
-/// Linux/AArch64 `struct stat` layout. The descriptor's I/O safety is the
+/// Linux `struct stat` layout selected for this target. The descriptor's I/O safety is the
 /// caller's responsibility.
 #[inline]
 pub unsafe fn fstat_raw(fd: RawFd, buffer: *mut u8) -> Result<()> {

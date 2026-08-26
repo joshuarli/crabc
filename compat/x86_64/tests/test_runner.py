@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|poll-reference|process-identity-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|poll-reference|process-identity-reference|process-session-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -52,6 +52,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_poll_header_abi.sh', source)
         self.assertIn('run_fcntl_header_abi()', source)
         self.assertIn('compat/x86_64/run_fcntl_header_abi.sh', source)
+        self.assertIn('run_unistd_header_abi()', source)
+        self.assertIn('compat/x86_64/run_unistd_header_abi.sh', source)
+        self.assertIn('run_system_header_abi()', source)
+        self.assertIn('compat/x86_64/run_system_header_abi.sh', source)
         self.assertIn('run_syscall_header_abi()', source)
         self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
         self.assertIn('run_signal_header_abi()', source)
@@ -68,6 +72,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_poll_reference.sh', source)
         self.assertIn('run_process_identity_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_identity_reference.sh', source)
+        self.assertIn('run_process_session_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_process_session_reference.sh', source)
+        self.assertIn('run_fstat_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_fstat_reference.sh', source)
+        self.assertIn('run_system_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_system_reference.sh', source)
+        self.assertIn('run_thread_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_thread_reference.sh', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -78,13 +90,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             source,
         )
         self.assertIn('--test x86_64_eventfd', source)
+        self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('--test x86_64_poll', source)
         self.assertIn('--test x86_64_process_identity', source)
+        self.assertIn('--test x86_64_process_session', source)
         self.assertIn('--test x86_64_rand', source)
+        self.assertIn('--test x86_64_system', source)
+        self.assertIn('--test x86_64_thread', source)
         self.assertIn('--test x86_64_time', source)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
@@ -147,6 +163,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         fcntl_header = (ROOT / "compat" / "x86_64" / "run_fcntl_header_abi.sh").read_text(
             encoding="utf-8"
         )
+        unistd_header = (ROOT / "compat" / "x86_64" / "run_unistd_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        system_header = (ROOT / "compat" / "x86_64" / "run_system_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
         time_reference = (ROOT / "compat" / "x86_64" / "run_x86_time_reference.sh").read_text(
             encoding="utf-8"
         )
@@ -156,8 +178,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         process_identity_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_process_identity_reference.sh"
         ).read_text(encoding="utf-8")
+        process_session_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_process_session_reference.sh"
+        ).read_text(encoding="utf-8")
+        fstat_reference = (ROOT / "compat" / "x86_64" / "run_x86_fstat_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        system_reference = (ROOT / "compat" / "x86_64" / "run_x86_system_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        thread_reference = (ROOT / "compat" / "x86_64" / "run_x86_thread_reference.sh").read_text(
+            encoding="utf-8"
+        )
         image = (ROOT / "ldso" / "run-x86_64-image.sh").read_text(encoding="utf-8")
         sys_types = (ROOT / "include" / "sys" / "types.h").read_text(encoding="utf-8")
+        unistd_include = (ROOT / "include" / "unistd.h").read_text(encoding="utf-8")
 
         self.assertIn('ARG MUSL_VERSION=1.2.6', dockerfile)
         self.assertIn('ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a', dockerfile)
@@ -224,6 +259,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('include/bits/fcntl.h', fcntl_header)
         self.assertIn('-fsyntax-only', fcntl_header)
         self.assertNotIn('-p crabc-libc', fcntl_header)
+        self.assertIn('unistd_header_abi_probe.c', unistd_header)
+        self.assertIn('unistd_header_abi_probe.cpp', unistd_header)
+        self.assertIn('include/unistd.h', unistd_header)
+        self.assertIn('-fsyntax-only', unistd_header)
+        self.assertNotIn('-p crabc-libc', unistd_header)
+        self.assertIn('system_header_abi_probe.c', system_header)
+        self.assertIn('system_header_abi_probe.cpp', system_header)
+        self.assertIn('include tree first', system_header)
+        self.assertIn('-fsyntax-only', system_header)
+        self.assertNotIn('-p crabc-libc', system_header)
         self.assertIn('x86_time_reference_probe.c', time_reference)
         self.assertIn('timespec ABI reference', time_reference)
         self.assertNotIn('-p crabc-libc', time_reference)
@@ -233,10 +278,24 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_process_identity_reference_probe.c', process_identity_reference)
         self.assertIn('process-identity reference', process_identity_reference)
         self.assertNotIn('-p crabc-libc', process_identity_reference)
+        self.assertIn('x86_process_session_reference_probe.c', process_session_reference)
+        self.assertIn('process-session reference', process_session_reference)
+        self.assertNotIn('-p crabc-libc', process_session_reference)
+        self.assertIn('x86_fstat_reference_probe.c', fstat_reference)
+        self.assertIn('fstat reference', fstat_reference)
+        self.assertNotIn('-p crabc-libc', fstat_reference)
+        self.assertIn('x86_system_reference_probe.c', system_reference)
+        self.assertIn('uname/sysinfo ABI and behavior reference', system_reference)
+        self.assertNotIn('-p crabc-libc', system_reference)
+        self.assertIn('x86_thread_reference_probe.c', thread_reference)
+        self.assertIn('thread observation/yield reference', thread_reference)
+        self.assertNotIn('-p crabc-libc', thread_reference)
         self.assertIn('x86_64_image.rs', image)
         self.assertIn('--test', image)
         self.assertNotIn('-p crabc-ldso', image)
         self.assertIn('#if defined(__x86_64__) && !defined(__cplusplus)', sys_types)
+        self.assertIn('defined(__x86_64__) && defined(__LP64__)', unistd_include)
+        self.assertNotIn('#if defined(__x86_64__)\n', unistd_include)
 
     def test_x86_parity_ledger_is_a_required_contract_check(self) -> None:
         validator = ROOT / "compat" / "x86_64" / "validate_parity_ledger.py"
@@ -503,6 +562,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test",
                     "x86_64_eventfd",
                     "--test",
+                    "x86_64_fs",
+                    "--test",
                     "x86_64_io",
                     "--test",
                     "x86_64_mm",
@@ -515,7 +576,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test",
                     "x86_64_process_identity",
                     "--test",
+                    "x86_64_process_session",
+                    "--test",
                     "x86_64_rand",
+                    "--test",
+                    "x86_64_system",
+                    "--test",
+                    "x86_64_thread",
                     "--test",
                     "x86_64_time",
                     "--",

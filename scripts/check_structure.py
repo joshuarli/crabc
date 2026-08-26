@@ -31,6 +31,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/lib.rs"),
     Path("crabc-core/src/mm_x86_64.rs"),
     Path("crabc-core/src/signal_x86_64.rs"),
+    Path("crabc-core/src/system_x86_64.rs"),
     Path("crabc-core/src/tests.rs"),
     Path("crabc-core/src/time_x86_64.rs"),
     Path("crabc-core/src/thread.rs"),
@@ -40,20 +41,26 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `lib.rs` exposes only target-record-independent families, `signal.rs` owns
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter plus the exact `pollfd`
-# record seam, `process_x86_64.rs` owns only read-only process identity,
+# record seam, `fs_x86_64.rs` owns only descriptor `fstat`,
+# `process_x86_64.rs` owns read-only identity/session observations,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
-# `mm_x86_64.rs` owns the closed mmap/mprotect/munmap set, and
-# `time_x86_64.rs` owns the separately proved clock-query records. No other
-# facade source inherits this exception.
+# `mm_x86_64.rs` owns the closed mmap/mprotect/munmap set,
+# `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
+# three record-independent task observations, and `time_x86_64.rs` owns the
+# separately proved clock-query records. No other facade source inherits this
+# exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),
     Path("crabc-rs/src/eventfd.rs"),
+    Path("crabc-rs/src/fs_x86_64.rs"),
     Path("crabc-rs/src/lib.rs"),
     Path("crabc-rs/src/mm_x86_64.rs"),
     Path("crabc-rs/src/pipe.rs"),
     Path("crabc-rs/src/process_x86_64.rs"),
     Path("crabc-rs/src/signal.rs"),
+    Path("crabc-rs/src/system_x86_64.rs"),
     Path("crabc-rs/src/time_x86_64.rs"),
+    Path("crabc-rs/src/thread_x86_64.rs"),
 }
 # This source-only loader foundation has no `crabc-ldso` integration or public
 # interpreter boundary. The image parser validates file-facing metadata before

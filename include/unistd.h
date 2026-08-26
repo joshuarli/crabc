@@ -58,7 +58,15 @@ typedef __SIZE_TYPE__ size_t;
 #define X_OK 1
 
 #ifndef NULL
+#if defined(__x86_64__) && defined(__LP64__) && defined(__cplusplus)
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#else
+#define NULL 0L
+#endif
+#else
 #define NULL ((void *)0)
+#endif
 #endif
 
 #define _CS_PATH 0
@@ -78,6 +86,36 @@ typedef __SIZE_TYPE__ size_t;
 #define _CS_POSIX_V7_THREADS_LDFLAGS 1151
 #define _CS_POSIX_V7_WIDTH_RESTRICTED_ENVS 5
 #define _CS_V7_ENV 1149
+
+#if defined(__x86_64__) && defined(__LP64__)
+/* The x86-64 LP64 namespace includes the historical V5/V6 confstr
+ * selectors that musl exposes in addition to the common V7 subset above. */
+#define _CS_POSIX_V6_WIDTH_RESTRICTED_ENVS 1
+#define _CS_GNU_LIBC_VERSION 2
+#define _CS_GNU_LIBPTHREAD_VERSION 3
+#define _CS_POSIX_V5_WIDTH_RESTRICTED_ENVS 4
+#define _CS_POSIX_V6_ILP32_OFF32_CFLAGS 1116
+#define _CS_POSIX_V6_ILP32_OFF32_LDFLAGS 1117
+#define _CS_POSIX_V6_ILP32_OFF32_LIBS 1118
+#define _CS_POSIX_V6_ILP32_OFF32_LINTFLAGS 1119
+#define _CS_POSIX_V6_ILP32_OFFBIG_CFLAGS 1120
+#define _CS_POSIX_V6_ILP32_OFFBIG_LDFLAGS 1121
+#define _CS_POSIX_V6_ILP32_OFFBIG_LIBS 1122
+#define _CS_POSIX_V6_ILP32_OFFBIG_LINTFLAGS 1123
+#define _CS_POSIX_V6_LP64_OFF64_CFLAGS 1124
+#define _CS_POSIX_V6_LP64_OFF64_LDFLAGS 1125
+#define _CS_POSIX_V6_LP64_OFF64_LIBS 1126
+#define _CS_POSIX_V6_LP64_OFF64_LINTFLAGS 1127
+#define _CS_POSIX_V6_LPBIG_OFFBIG_CFLAGS 1128
+#define _CS_POSIX_V6_LPBIG_OFFBIG_LDFLAGS 1129
+#define _CS_POSIX_V6_LPBIG_OFFBIG_LIBS 1130
+#define _CS_POSIX_V6_LPBIG_OFFBIG_LINTFLAGS 1131
+#define _CS_POSIX_V7_ILP32_OFF32_LINTFLAGS 1135
+#define _CS_POSIX_V7_ILP32_OFFBIG_LINTFLAGS 1139
+#define _CS_POSIX_V7_LP64_OFF64_LINTFLAGS 1143
+#define _CS_POSIX_V7_LPBIG_OFFBIG_LINTFLAGS 1147
+#define _CS_V6_ENV 1148
+#endif
 #define F_LOCK 1
 #define F_TEST 3
 #define F_TLOCK 2
@@ -225,11 +263,38 @@ typedef __SIZE_TYPE__ size_t;
 #define _SC_XOPEN_STREAMS 246
 #define _SC_XOPEN_UNIX 91
 #define _SC_XOPEN_VERSION 89
+
+#if defined(__x86_64__) && defined(__LP64__)
+#define _SC_UIO_MAXIOV 60
+#define _SC_PHYS_PAGES 85
+#define _SC_AVPHYS_PAGES 86
+#define _SC_PASS_MAX 88
+#define _SC_NZERO 109
+#define _SC_XOPEN_XCU_VERSION 90
+#define _SC_XOPEN_XPG2 98
+#define _SC_XOPEN_XPG3 99
+#define _SC_XOPEN_XPG4 100
+#define _SC_XBS5_ILP32_OFF32 125
+#define _SC_XBS5_ILP32_OFFBIG 126
+#define _SC_XBS5_LP64_OFF64 127
+#define _SC_XBS5_LPBIG_OFFBIG 128
+#define _SC_XOPEN_LEGACY 129
+#define _SC_STREAMS 174
+#define _SC_V6_ILP32_OFF32 176
+#define _SC_V6_ILP32_OFFBIG 177
+#define _SC_V6_LP64_OFF64 178
+#define _SC_V6_LPBIG_OFFBIG 179
+#define _SC_MINSIGSTKSZ 249
+#define _SC_SIGSTKSZ 250
+#endif
 #define STDERR_FILENO 2
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
 #define _POSIX_VDISABLE 0
 #define _POSIX_V7_LP64_OFF64 1
+#if defined(__x86_64__) && defined(__LP64__)
+#define _POSIX_V6_LP64_OFF64 1
+#endif
 #define POSIX_CLOSE_RESTART 0
 #define SEEK_SET 0
 #define SEEK_CUR 1
@@ -414,6 +479,40 @@ long gethostid(void);
 int lockf(int, int, off_t);
 int nice(int);
 void swab(const void *__restrict, void *__restrict, ssize_t);
+#endif
+
+/* Linux/x86-64's staged header follows the pinned musl extension surface.
+ * Keep these declarations target-local so the established AArch64 header
+ * remains unchanged while the source-only x86 ABI ratchet grows. */
+#if defined(__x86_64__) && defined(__LP64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
+#define L_SET 0
+#define L_INCR 1
+#define L_XTND 2
+int getdtablesize(void);
+int sethostname(const char *, size_t);
+int getdomainname(char *, size_t);
+int setdomainname(const char *, size_t);
+int setgroups(size_t, const gid_t *);
+char *getpass(const char *);
+int daemon(int, int);
+extern int optreset;
+#endif
+
+#if defined(__x86_64__) && defined(__LP64__) && defined(_GNU_SOURCE)
+char *get_current_dir_name(void);
+int syncfs(int);
+ssize_t copy_file_range(int, off_t *, int, off_t *, size_t, unsigned);
+pid_t gettid(void);
+#endif
+
+#if defined(__x86_64__) && defined(__LP64__) && defined(_LARGEFILE64_SOURCE)
+#define lseek64 lseek
+#define pread64 pread
+#define pwrite64 pwrite
+#define truncate64 truncate
+#define ftruncate64 ftruncate
+#define lockf64 lockf
+typedef off_t off64_t;
 #endif
 
 #ifdef __cplusplus

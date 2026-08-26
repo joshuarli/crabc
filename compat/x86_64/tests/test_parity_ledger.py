@@ -60,9 +60,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.pid-observation",
             "process.identity-triples",
             "process.identity",
+            "process.session-observation",
+            "thread.identity",
+            "thread.cpu-observation",
+            "system.load-average",
+            "system.name-observation",
+            "system.identity-info",
         ):
             self.assertIn(capability, direct["capabilities"])
             self.assertNotIn(capability, remaining["capabilities"])
+        self.assertNotIn("filesystem.path-core", direct["capabilities"])
+        self.assertIn("filesystem.path-core", remaining["capabilities"])
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()

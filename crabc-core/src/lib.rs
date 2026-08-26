@@ -132,6 +132,10 @@ pub mod process;
 pub mod thread;
 
 /// Direct Linux system-information operations.
+#[cfg(target_arch = "aarch64")]
+pub mod system;
+#[cfg(target_arch = "x86_64")]
+#[path = "system_x86_64.rs"]
 pub mod system;
 
 /// Direct Linux POSIX message-queue operations.
