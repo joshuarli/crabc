@@ -41,7 +41,9 @@ pub mod collections;
 // CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, direct caller-buffer and
 // alloc-gated `process::getcwd` observations, and
 // caller-buffer-only `fs::readlinkat_raw` slices,
-// `fd`, `fenv`, `ffi`, `io`, `ioctl`, bounded `mm` mapping/remapping,
+// `fd`, `fenv`, `ffi`, direct `io::{sync_file_range, SyncFileRangeFlags}`
+// range-writeback requests, remaining `io`, `ioctl`, bounded `mm`
+// mapping/remapping,
 // `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
 // and supplementary-group query/fill plus pidfd creation and resource-limit
 // query/mutation, `rand`, `signal`,

@@ -149,16 +149,18 @@ pub fn fcntl_dupfd_cloexec(fd: RawFd, minimum: RawFd) -> Result<RawFd> {
     unsafe { fcntl_raw(fd, F_DUPFD_CLOEXEC, minimum as u32 as usize as *mut u8) }
 }
 
-/// Synchronizes a byte range through AArch64's Linux `sync_file_range`
-/// syscall without using libc or TLS `errno`.
+/// Issues Linux's `sync_file_range` writeback request for a byte range without
+/// using libc or TLS `errno`.
 ///
 /// The public operation calls this seam with the kernel's signed `loff_t`
-/// values. AArch64 uses the generic argument order `(fd, offset, nbytes,
-/// flags)` for this syscall.
+/// values. Linux passes the scalar arguments as `(fd, offset, nbytes, flags)`;
+/// the target syscall layer owns the architecture-specific register placement.
+/// This request does not itself establish metadata or storage-cache durability.
 #[inline]
 pub fn sync_file_range(fd: RawFd, offset: i64, nbytes: i64, flags: u32) -> Result<()> {
     // SAFETY: The kernel validates the descriptor, flags, and signed byte
-    // range. All four arguments are scalar AArch64 syscall registers.
+    // range. The target syscall layer places all four scalar arguments in the
+    // architecture-specific registers.
     decode(unsafe {
         syscall4(
             SYS_SYNC_FILE_RANGE,

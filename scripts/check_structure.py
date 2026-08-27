@@ -464,6 +464,44 @@ def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_sync_file_range_boundary(errors: list[str]) -> None:
+    """Keep the admitted x86 range-writeback operation closed and typed."""
+
+    io_source = ROOT / "crabc-rs" / "src" / "io.rs"
+    io_text = io_source.read_text(errors="replace")
+    for required in (
+        "pub struct SyncFileRangeFlags: u32",
+        "const WAIT_BEFORE = 0x01",
+        "const WRITE = 0x02",
+        "const WAIT_AFTER = 0x04",
+        "pub fn sync_file_range(",
+        "checked_add(length)",
+    ):
+        if required not in io_text:
+            errors.append(
+                "crabc-rs/src/io.rs: admitted x86 sync_file_range slice is missing "
+                f"{required}"
+            )
+
+    if "pub fn sync_file_range2" in io_text:
+        errors.append(
+            "crabc-rs/src/io.rs: admitted x86 sync_file_range slice must not grow "
+            "a second range-writeback API"
+        )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for required in (
+        "pub(crate) const SYS_SYNC_FILE_RANGE: usize = 277",
+        'in("r10") arg3',
+    ):
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 sync_file_range "
+                f"ABI proof is missing {required}"
+            )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
 
@@ -669,6 +707,7 @@ def main() -> int:
     check_x86_setitimer_boundary(errors)
     check_x86_access_boundary(errors)
     check_x86_fcntl_status_flags_boundary(errors)
+    check_x86_sync_file_range_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):

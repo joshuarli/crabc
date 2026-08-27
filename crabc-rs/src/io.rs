@@ -252,13 +252,15 @@ pub fn fcntl_dupfd_cloexec<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> 
     unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
 }
 
-/// Synchronizes a checked byte range of an open regular file.
+/// Issues a checked Linux range-writeback request for an open regular file.
 ///
 /// `offset` and `length` are unsigned at this Rust boundary and describe the
 /// half-open range `[offset, offset + length)`. Before entering Linux's signed
 /// `loff_t` ABI, both values and their checked sum must fit in `i64`; failure
 /// returns `EINVAL` without making a syscall. `length == 0` is supported and
-/// has Linux's precise meaning: synchronize from `offset` through end of file.
+/// has Linux's precise meaning: request writeback from `offset` through end of
+/// file. This request does not itself establish metadata or storage-cache
+/// durability.
 /// The descriptor is borrowed for the direct operation and is never closed or
 /// otherwise transferred by this function.
 ///

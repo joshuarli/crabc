@@ -3,7 +3,9 @@
 This closed, native Linux/x86_64 lane is foundation evidence named by
 [`x86-64.md`](../../x86-64.md). It runs the fixed `crabc-core` lib suite and
 the separately admitted direct `crabc-rs` subset for the
-`x86_64-unknown-linux-musl` target; it is not public x86_64 runtime support.
+`x86_64-unknown-linux-musl` target, including only the proved
+`io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
+public x86_64 runtime support.
 
 Run it only on a native Linux x86_64 host:
 
@@ -31,6 +33,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fs-advice-reference
 ./scripts/dev-x86_64.sh ftruncate-reference
 ./scripts/dev-x86_64.sh file-position-reference
+./scripts/dev-x86_64.sh sync-file-range-reference
 ./scripts/dev-x86_64.sh memfd-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
@@ -213,6 +216,21 @@ position-preserving sync calls, and direct oversized-offset `SEEK_SET:EINVAL` an
 `SEEK_DATA`/`SEEK_HOLE:ENXIO`, pipe `ESPIPE`, and invalid-descriptor
 `EBADF` errors. It completes only the typed Rust file-position family, not a
 C filesystem API, pathname behavior, or host-filesystem durability claim.
+
+`sync-file-range-reference` executes pinned-musl/raw x86
+`sync_file_range` evidence plus its focused Rust regression. It pins syscall
+`277`, the `rdi`/`rsi`/`rdx`/`r10` scalar argument placement, signed
+64-bit `loff_t`, and the closed `WAIT_BEFORE`/`WRITE`/`WAIT_AFTER` values
+`1`/`2`/`4`. A regular-file zero-length request through EOF may succeed or
+report direct `EOPNOTSUPP`, while preserving the current position in either
+case; raw and musl agree on unknown-flag `EINVAL`, pipe `ESPIPE`, and invalid
+descriptor `EBADF`. The typed Rust boundary rejects unknown flags and unsigned
+ranges that cannot fit Linux's signed ABI; its raw core seam separately proves
+invalid flags reach the x86 fourth syscall argument. The closed-descriptor
+check intentionally uses that raw seam because a safe `BorrowedFd` cannot
+outlive an open descriptor. This establishes a writeback request only, not
+metadata or storage-cache durability, a C filesystem API, pathname opening, or
+broader filesystem behavior.
 
 `memfd-reference` executes the direct typed x86 `memfd_create`/seal lifecycle.
 It pins `memfd_create=319`, raw `fcntl=72`, `MFD_CLOEXEC`,
@@ -626,7 +644,8 @@ selected `crabc-libc` artifact.
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`,
 `x86_64_fcntl_getlk`, `x86_64_fcntl_flags`, `x86_64_fs`, `x86_64_fs_advice`,
-`x86_64_file_position`, `x86_64_ftruncate`, `x86_64_fs_credentials`,
+`x86_64_file_position`, `x86_64_sync_file_range`, `x86_64_ftruncate`,
+`x86_64_fs_credentials`,
 `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
 `x86_64_memfd`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`,
 `x86_64_poll`, `x86_64_pselect`, `x86_64_priority`, `x86_64_setpriority`,
@@ -647,6 +666,10 @@ and Linux's reserved all-ones counter error through direct kernel seams. The
 status-flags regression proves that `F_GETFL`/`F_SETFL` state is shared across
 duplicates, preserves access/creation/per-descriptor bits, restores exactly,
 and returns `EBADF` for a closed descriptor. The
+range-sync regression proves the closed flag vocabulary and signed-range
+boundary, a zero-length-through-EOF writeback request with stable position,
+and raw-core invalid-flag/closed-descriptor errors without manufacturing an
+invalid safe descriptor borrow. The
 futex regression proves borrowed-`AtomicU32` mismatch, relative-timeout,
 no-waiter wake-count, race-safe wait/wake exchange behavior, and the native
 `FUTEX_WAIT | FUTEX_CLOCK_REALTIME` `ENOSYS` boundary through the six-word

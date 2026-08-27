@@ -138,6 +138,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.cwd",
             "filesystem.path-metadata",
             "io.file-position",
+            "io.range-sync",
             "io.status-flags",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
@@ -164,6 +165,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
+            "crabc-rs/tests/x86_64_sync_file_range.rs",
             "crabc-rs/tests/x86_64_memfd.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
             "crabc-rs/tests/x86_64_fs_credentials.rs",
@@ -193,6 +195,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_memfd_reference_probe.c",
             "compat/x86_64/run_x86_file_position_reference.sh",
             "compat/x86_64/x86_file_position_reference_probe.c",
+            "compat/x86_64/run_x86_sync_file_range_reference.sh",
+            "compat/x86_64/x86_sync_file_range_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
             "compat/x86_64/x86_thread_credentials_reference_probe.c",
             "compat/x86_64/run_x86_fs_credentials_reference.sh",
@@ -238,6 +242,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh memfd-reference", direct_commands)
         self.assertIn(
             "./scripts/dev-x86_64.sh file-position-reference", direct_commands
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh sync-file-range-reference", direct_commands
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct sync_file_range=277")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
         )
         self.assertIn(
             "./scripts/dev-x86_64.sh thread-credentials-reference",
@@ -294,6 +307,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "compat/x86_64/x86_epoll_reference_probe.c", remaining["source_owners"]
         )
+        for source_owner in (
+            "crabc-rs/tests/x86_64_sync_file_range.rs",
+            "compat/x86_64/run_x86_sync_file_range_reference.sh",
+            "compat/x86_64/x86_sync_file_range_reference_probe.c",
+        ):
+            self.assertNotIn(source_owner, remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_timerfd.rs", direct["source_owners"])
         self.assertNotIn(
             "crabc-rs/tests/x86_64_timerfd.rs", remaining["source_owners"]
