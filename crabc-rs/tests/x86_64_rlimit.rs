@@ -1,7 +1,6 @@
 #![cfg(target_arch = "x86_64")]
 
 use crabc_rs::process::{self, Resource, Rlimit};
-use crabc_rs::Errno;
 
 const RESOURCES: &[Resource] = &[
     Resource::Cpu,
@@ -45,26 +44,9 @@ fn x86_64_getrlimit_reads_all_pinned_resources_with_valid_ordering() {
 }
 
 #[test]
-fn x86_64_getrlimit_is_read_only_and_explicit_current_pid_matches_zero() {
+fn x86_64_getrlimit_is_read_only_and_stable() {
     let first = process::getrlimit(Resource::Nofile).expect("read open-file limit");
     let second = process::getrlimit(Resource::Nofile).expect("read open-file limit again");
     assert_eq!(first, second);
     assert_limit_invariant(Resource::Nofile, first);
-
-    let implicit = process::getrlimit_for(None, Resource::Nofile)
-        .expect("read current open-file limit through implicit PID");
-    assert_eq!(implicit, first);
-
-    let explicit = process::getrlimit_for(Some(process::getpid()), Resource::Nofile)
-        .expect("read current open-file limit through explicit PID");
-    assert_eq!(explicit, first);
-}
-
-#[test]
-fn x86_64_getrlimit_for_missing_pid_preserves_esrch() {
-    let missing = process::Pid::from_raw(i32::MAX).expect("i32::MAX is non-zero");
-    assert_eq!(
-        process::getrlimit_for(Some(missing), Resource::Nofile),
-        Err(Errno::SRCH),
-    );
 }

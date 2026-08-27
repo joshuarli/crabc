@@ -3,10 +3,10 @@
 //! This module intentionally admits only scalar identity queries, a
 //! caller-buffer current-working-directory observation, the kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
-//! query/fill protocol, pidfd creation, resource-limit observations plus a
-//! bounded calling-process resource-limit mutation, resource-usage, and
-//! process-accounting observations, scheduling-priority observations, bounds,
-//! and bounded target mutation, and the read-only typed
+//! query/fill protocol, pidfd creation, typed calling-process resource-limit
+//! query/mutation, typed read-only process accounting, resource-usage,
+//! scheduling-priority observations, bounds, and bounded target mutation, and
+//! the read-only typed
 //! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.
 //! The larger process facade remains AArch64-only until each of its
 //! target-sized records and state transitions has an independent x86-64

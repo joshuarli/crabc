@@ -55,6 +55,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh setpriority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
+./scripts/dev-x86_64.sh rlimit-targeted-private
 ./scripts/dev-x86_64.sh setrlimit-reference
 ./scripts/dev-x86_64.sh umask-reference
 ./scripts/dev-x86_64.sh rusage-reference
@@ -394,9 +395,12 @@ lifecycle. It pins the 16-byte, align-8 `rlimit`/`rlimit64` record
 (current/maximum offsets zero and eight), `prlimit64=302`,
 `RLIM_INFINITY=UINT64_MAX`, the complete selectors zero through 15, repeated
 and explicit-self reads, and invalid-selector/missing-target errors. It is
-private evidence for one record-owning x86 vertical slice only; it does not by
-itself select resource-limit mutation, C process APIs, or a general x86
-facade.
+evidence for typed calling-process `process::getrlimit` only. Its
+explicit-self and missing-target observations do not select targeted queries,
+mutation beyond `setrlimit`, C process APIs, or a general x86 facade.
+`rlimit-targeted-private` retains native Rust self/implicit and missing-PID
+`getrlimit_for` regression coverage only. It has no live distinct-target
+success proof or C differential, so targeted queries remain unselectable.
 
 `rusage-reference` executes a pinned-musl x86 read-only resource-usage
 lifecycle. It pins the 16-byte, align-8 `timeval`, the 144-byte, align-8
@@ -413,9 +417,8 @@ lifecycle. It pins signed 64-bit `clock_t`, the 32-byte, align-8 `tms` record
 (field offsets zero, eight, 16, and 24), `times=100`, nonnegative process
 ticks, a normal nondecreasing observation sequence, and direct syscall
 observations. The independent elapsed tick return remains signed because it
-may wrap. It is private evidence for one record-owning x86 vertical slice
-only; it does not select C `times`/`struct tms` support or a general x86
-facade.
+may wrap. It admits typed read-only `process::times` only; it does not select
+C `times`/`struct tms` support, tick-rate conversion, or a general x86 facade.
 
 `fstat-reference` records the pinned-musl x86 144-byte `fstat` record and
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
@@ -581,15 +584,16 @@ rejection. It remains a privately evidenced record-owning slice. The filesystem 
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
 metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 `fadvise64`/`readahead` behavior. The
-process regressions prove typed PID/identity/session observations, the
-child-contained calling-process resource-limit mutation and process-global
-umask exchange with restore safety, read-only
+process regressions prove typed PID/identity/session observations, typed
+calling-process resource-limit query plus child-contained mutation and
+process-global umask exchange with restore safety, typed read-only process
+accounting, read-only
 supplementary-group query/fill, private interval-timer query plus contained
 control,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
 scheduling-priority mutation, private read-only
-targeted resource-limit queries, private read-only
-resource-usage and process-accounting observations, conflicting-lock `F_GETLK`
+resource-usage observations,
+conflicting-lock `F_GETLK`
 records, and scheduler-priority bounds; the system and thread regressions prove
 the named bounded kernel observations. It verifies the
 explicitly admitted Rust subset only; it does not make broader pselect/select

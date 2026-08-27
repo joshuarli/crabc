@@ -66,6 +66,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   priority-reference  verify pinned-musl x86 getpriority ABI and behavior
   setpriority-reference  verify pinned-musl x86 contained scheduling-priority mutation
   rlimit-reference  verify pinned-musl x86 read-only resource-limit ABI and behavior
+  rlimit-targeted-private  run private native x86 targeted-resource-limit regressions
   setrlimit-reference  verify pinned-musl x86 contained resource-limit mutation
   umask-reference  verify pinned-musl x86 process-mask exchange ABI and behavior
   rusage-reference  verify pinned-musl x86 read-only resource-usage ABI and behavior
@@ -96,12 +97,12 @@ an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset, including borrowed-atomic futex wait/wake and the complete typed
 `seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family, typed
-calling-process `setrlimit`, and typed process-global `umask` exchange,
+calling-process `getrlimit`/`setrlimit`, typed read-only `times` accounting,
+and typed process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus privately evidenced packed-epoll, clock-nanosleep, read-only
-interval-timer query and contained interval-timer control, timerfd, pselect, targeted resource-limit query, resource-usage,
-process-accounting, and
+interval-timer query and contained interval-timer control, timerfd, pselect, resource-usage, and
 supplementary-group, private statat path-metadata, caller-buffer-only getcwd,
 caller-buffer-only readlinkat, and private CPU-affinity observation and bounded
 mutation slices; none makes the record-owning family selectable.
@@ -153,6 +154,9 @@ API, pathname behavior, or broader filesystem semantics.
 `readlinkat-reference`, `system-reference`, and
 `thread-reference` establish only their named
 pinned-musl kernel boundaries for separately admitted Rust slices.
+`rlimit-targeted-private` is a separate native Rust regression for the
+unpromoted self/missing-target query cases; it is not a pinned-musl differential
+or a target-query promotion gate.
 `thread-credentials-reference` establishes only the typed direct
 calling-thread `setresuid`/`setresgid` no-change boundary: it does not
 emulate musl's process-wide credential synchronization or select C credential
@@ -214,9 +218,15 @@ boundary; it does not by itself select scheduling mutation or a C process API.
 with child-contained raw/musl set/read/no-op exchange plus invalid-selector
 `EINVAL` and missing process/group/user target `ESRCH`. It does not select scheduler-policy
 mutation or a C process API.
-`rlimit-reference` proves only the x86 `rlimit64` record and focused read-only
-resource-limit query lifecycle; it does not by itself select resource-limit
-mutation or a C process API.
+`rlimit-reference` proves the direct typed calling-process `getrlimit`
+boundary: `prlimit64=302`, a 16-byte `rlimit64`, PID zero/null-new-limit
+query placement, closed selectors, and infinity mapping. Its explicit-self and
+missing-target observations do not select targeted resource-limit queries,
+resource-limit mutation beyond `setrlimit`, or a C process API.
+`rlimit-targeted-private` runs only the native Rust self/implicit and
+missing-PID `getrlimit_for` regressions. It has no live distinct-target success
+proof or C differential, so it does not make targeted resource-limit queries
+selectable.
 `setrlimit-reference` proves only typed calling-process resource-limit
 mutation: `prlimit64=302`, a 16-byte `rlimit64`, child-contained raw/musl
 set/query/restore exchange, and pre-syscall inverted-limit `EINVAL`. It does
@@ -227,9 +237,10 @@ It does not select a C process API or pathname-creation support.
 `rusage-reference` proves only the x86 initialized `rusage` kernel prefix and
 focused read-only resource-usage observations; it does not select a C process
 API or the broader record-owning facade family.
-`times-reference` proves only the x86 `tms` record and focused read-only
-process-accounting observations; it does not select a C process API or the
-broader record-owning facade family.
+`times-reference` proves the direct typed read-only `process::times` boundary:
+the x86 `tms` record, nonnegative process-accounting fields, and a separately
+preserved signed elapsed-tick return. It does not select a C `times`/`struct
+tms` API, tick-rate conversion, or broader process-accounting policy.
 `getgroups-reference` proves only the x86 `gid_t` query/fill protocol and
 focused read-only supplementary-group observations; it does not select a C
 process API or the broader record-owning facade family.
@@ -523,6 +534,11 @@ run_rlimit_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rlimit_reference.sh
 }
 
+run_rlimit_targeted_private() {
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --test x86_64_rlimit_targeted -- --test-threads=1
+}
+
 run_setrlimit_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_setrlimit_reference.sh
 }
@@ -642,7 +658,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-private|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -875,6 +891,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "rlimit-reference takes no arguments"
         ensure_image
         run_rlimit_reference
+        ;;
+    rlimit-targeted-private)
+        [ "$#" -eq 0 ] || fail "rlimit-targeted-private takes no arguments"
+        ensure_image
+        run_rlimit_targeted_private
         ;;
     setrlimit-reference)
         [ "$#" -eq 0 ] || fail "setrlimit-reference takes no arguments"

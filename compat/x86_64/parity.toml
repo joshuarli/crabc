@@ -98,7 +98,7 @@ id = "facade.direct"
 order = 20
 depends_on = ["oracle.musl-toolchain", "core.architecture"]
 category = "rust-facade"
-description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, typed calling-process setrlimit plus the process-global umask exchange, getpriority plus typed scheduling-priority mutation and scheduler-priority bounds, fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield plus direct calling-thread setresuid/setresgid and borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus typed fadvise64/readahead whose broader filesystem.path-core capability remains planned, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation and typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary. The separately evidenced private clock_nanosleep slice remains under facade.record-owning."
+description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, typed calling-process resource-limit query/mutation plus the process-global umask exchange, typed read-only process accounting in opaque clock ticks, getpriority plus typed scheduling-priority mutation and scheduler-priority bounds, fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield plus direct calling-thread setresuid/setresgid and borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus typed fadvise64/readahead whose broader filesystem.path-core capability remains planned, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation and typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary. The separately evidenced private clock_nanosleep slice remains under facade.record-owning."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -138,6 +138,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_setpriority.rs",
   "crabc-rs/tests/x86_64_process_identity.rs",
   "crabc-rs/tests/x86_64_process_session.rs",
+  "crabc-rs/tests/x86_64_rlimit.rs",
   "crabc-rs/tests/x86_64_setrlimit.rs",
   "crabc-rs/tests/x86_64_umask.rs",
   "crabc-rs/tests/x86_64_rand.rs",
@@ -147,6 +148,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_thread.rs",
   "crabc-rs/tests/x86_64_thread_credentials.rs",
   "crabc-rs/tests/x86_64_time.rs",
+  "crabc-rs/tests/x86_64_times.rs",
   "compat/x86_64/run_x86_fcntl_getlk_reference.sh",
   "compat/x86_64/run_x86_fs_advice_reference.sh",
   "compat/x86_64/run_x86_ftruncate_reference.sh",
@@ -162,6 +164,7 @@ source_owners = [
   "compat/x86_64/run_x86_ppoll_reference.sh",
   "compat/x86_64/run_x86_process_identity_reference.sh",
   "compat/x86_64/run_x86_process_session_reference.sh",
+  "compat/x86_64/run_x86_rlimit_reference.sh",
   "compat/x86_64/run_x86_setrlimit_reference.sh",
   "compat/x86_64/run_x86_umask_reference.sh",
   "compat/x86_64/run_x86_rand_reference.sh",
@@ -174,6 +177,7 @@ source_owners = [
   "compat/x86_64/run_x86_thread_credentials_reference.sh",
   "compat/x86_64/run_x86_time_reference.sh",
   "compat/x86_64/run_x86_time_observation_reference.sh",
+  "compat/x86_64/run_x86_times_reference.sh",
   "compat/x86_64/x86_fcntl_getlk_reference_probe.c",
   "compat/x86_64/x86_fs_advice_reference_probe.c",
   "compat/x86_64/x86_ftruncate_reference_probe.c",
@@ -189,6 +193,7 @@ source_owners = [
   "compat/x86_64/x86_ppoll_reference_probe.c",
   "compat/x86_64/x86_process_identity_reference_probe.c",
   "compat/x86_64/x86_process_session_reference_probe.c",
+  "compat/x86_64/x86_rlimit_reference_probe.c",
   "compat/x86_64/x86_setrlimit_reference_probe.c",
   "compat/x86_64/x86_umask_reference_probe.c",
   "compat/x86_64/x86_rand_reference_probe.c",
@@ -201,11 +206,12 @@ source_owners = [
   "compat/x86_64/x86_thread_credentials_reference_probe.c",
   "compat/x86_64/x86_time_reference_probe.c",
   "compat/x86_64/x86_time_observation_reference_probe.c",
+  "compat/x86_64/x86_times_reference_probe.c",
 ]
-x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 umask=95, unsigned 32-bit mode_t, exact prior-mask return, and child-contained process-global exchange", "x86 calling-process setrlimit: prlimit64=302, 16-byte align-8 rlimit64, PID zero, new-limit rdx/old-limit-null r10 placement, RLIM_INFINITY=UINT64_MAX, closed selectors 0 through 15, pre-syscall current <= maximum validation, and child-contained raw/musl set/query/restore", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 SCHED_OTHER/FIFO/RR scalar values plus sched_get_priority_max/min syscall values", "x86 PRIO_PROCESS/PGRP/USER, getpriority=140 with its [1, 40] success encoding, setpriority=141 through syscall3 rdi/rsi/rdx, closed nice values [-20, 19], and child-contained raw/musl set/read/no-op exchange", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 setresuid=117/setresgid=119 through x86 syscall3 rdi/rsi/rdx, unsigned 32-bit uid_t/gid_t, and all-ones no-change words", "x86 futex=202 six-word syscall placement, four-byte AtomicU32 alignment/lifetime, and optional 16-byte align-8 timeout timespec", "x86 144-byte fstat record", "x86 fadvise64=221/readahead=187, POSIX_FADV values, signed loff_t, and size_t", "x86 lseek=8, fsync=74, fdatasync=75, ftruncate=77, signed 64-bit off_t/loff_t, SEEK_SET/CUR/END/DATA/HOLE, direct oversized unsigned-offset conversion with SEEK_SET EINVAL and SEEK_DATA/HOLE ENXIO, and private-memfd position/sync lifecycle", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 msync/mincore/madvise syscall values, MS/MADV values, and 4096-byte residency-vector page unit", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec", "Private clock_nanosleep slice: syscall 230 through x86 syscall4's r10 fourth-argument placement, 16-byte align-8 timespec, relative EINTR initialized remainder, and TIMER_ABSTIME=1 with null absolute remainder; pinned musl returns direct positive errors while the raw syscall uses -1 plus errno"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 umask=95, unsigned 32-bit mode_t, exact prior-mask return, and child-contained process-global exchange", "x86 calling-process getrlimit: prlimit64=302, PID zero, null new-limit in rdx, initialized 16-byte align-8 rlimit64 output in r10, RLIM_INFINITY=UINT64_MAX, and closed selectors 0 through 15", "x86 calling-process setrlimit: prlimit64=302, 16-byte align-8 rlimit64, PID zero, new-limit rdx/old-limit-null r10 placement, RLIM_INFINITY=UINT64_MAX, closed selectors 0 through 15, pre-syscall current <= maximum validation, and child-contained raw/musl set/query/restore", "x86 signed LP64 clock_t, 32-byte align-8 tms with offsets 0/8/16/24, times=100, validated nonnegative process-accounting fields, and a separately preserved signed elapsed-tick result with arbitrary origin that may wrap", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 SCHED_OTHER/FIFO/RR scalar values plus sched_get_priority_max/min syscall values", "x86 PRIO_PROCESS/PGRP/USER, getpriority=140 with its [1, 40] success encoding, setpriority=141 through syscall3 rdi/rsi/rdx, closed nice values [-20, 19], and child-contained raw/musl set/read/no-op exchange", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 setresuid=117/setresgid=119 through x86 syscall3 rdi/rsi/rdx, unsigned 32-bit uid_t/gid_t, and all-ones no-change words", "x86 futex=202 six-word syscall placement, four-byte AtomicU32 alignment/lifetime, and optional 16-byte align-8 timeout timespec", "x86 144-byte fstat record", "x86 fadvise64=221/readahead=187, POSIX_FADV values, signed loff_t, and size_t", "x86 lseek=8, fsync=74, fdatasync=75, ftruncate=77, signed 64-bit off_t/loff_t, SEEK_SET/CUR/END/DATA/HOLE, direct oversized unsigned-offset conversion with SEEK_SET EINVAL and SEEK_DATA/HOLE ENXIO, and private-memfd position/sync lifecycle", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 msync/mincore/madvise syscall values, MS/MADV values, and 4096-byte residency-vector page unit", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec", "Private clock_nanosleep slice: syscall 230 through x86 syscall4's r10 fourth-argument placement, 16-byte align-8 timespec, relative EINTR initialized remainder, and TIMER_ABSTIME=1 with null absolute remainder; pinned musl returns direct positive errors while the raw syscall uses -1 plus errno"]
 x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat plus fadvise64/readahead and the complete seek/tell/ftruncate/fsync/fdatasync file-position family, read-only process identity/session plus pidfd_open, typed calling-process setrlimit and process-global umask exchange, getpriority plus typed scheduling-priority mutation, F_GETLK observation, scheduler-priority bounds, and direct calling-thread setresuid/setresgid no-change/sentinel behavior, gettid/getcpu/sched_yield, borrowed-AtomicU32 futex mismatch/relative-timeout/wake/exchange plus CLOCK_REALTIME-ENOSYS behavior, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, page residency, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations. It also executes privately evidenced packed-epoll, clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, statat path-metadata, and read-only targeted resource-limit/resource-usage/process-accounting regressions owned by the planned record-owning family; the broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat plus fadvise64/readahead and the complete seek/tell/ftruncate/fsync/fdatasync file-position family, read-only process identity/session plus pidfd_open, typed calling-process getrlimit/setrlimit and process-global umask exchange, typed read-only process accounting in opaque clock ticks, getpriority plus typed scheduling-priority mutation, F_GETLK observation, scheduler-priority bounds, and direct calling-thread setresuid/setresgid no-change/sentinel behavior, gettid/getcpu/sched_yield, borrowed-AtomicU32 futex mismatch/relative-timeout/wake/exchange plus CLOCK_REALTIME-ENOSYS behavior, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, page residency, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations. It also executes privately evidenced packed-epoll, clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, statat path-metadata, and read-only resource-usage regressions owned by the planned record-owning family; the separately run targeted resource-limit regression, broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mm-abi-reference", scope = "Pinned-musl x86 mmap/mremap/mprotect/munmap syscall values and the closed mapping/remapping flags admitted by the Rust facade." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mlock-reference", scope = "Pinned-musl x86 mlock/munlock/mlock2 syscall values, MLOCK_ONFAULT, constrained-memlock outcomes, and invalid-range/flag behavior for only the typed per-range Rust locking slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh msync-reference", scope = "Pinned-musl x86 msync syscall value, MS flag combinations, and direct mapping-synchronization behavior for only the typed Rust slice." },
@@ -217,11 +223,13 @@ native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh rand-reference", scope = "Pinned-musl x86 getrandom constants and initialized-length behavior for the admitted Rust random-source boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-abi-reference", scope = "Pinned-musl x86 timespec layout, admitted realtime/monotonic/monotonic-raw/process-CPU clock values, and clock_gettime/clock_getres syscall constants for the bounded Rust clock boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-observation-reference", scope = "Pinned-musl x86 normalized realtime, C time whole-second/tloc equality behavior, and nondecreasing process-CPU clock behavior for the bounded typed time/timespec-get/realtime-millis/process-CPU observations." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh times-reference", scope = "Pinned-musl x86 times=100, signed clock_t, exact tms layout, nonnegative process fields, ordinary non-wrapping observation monotonicity, and direct-syscall observations for typed Rust process::times only; C times()/struct tms support and tick-rate conversion remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh relative-sleep-reference", scope = "Pinned-musl x86 nanosleep zero-duration, invalid-request, and EINTR-positive-remainder behavior for only the typed Rust relative-sleep slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh poll-reference", scope = "Pinned-musl x86 poll readiness and hangup behavior for the typed Rust poll boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh ppoll-reference", scope = "Pinned-musl x86 ppoll readiness, temporary signal-mask restoration, and pause EINTR behavior for the typed Rust readiness boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-identity-reference", scope = "Pinned-musl x86 scalar and real/effective/saved process identity behavior for the typed Rust observation boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-session-reference", scope = "Pinned-musl x86 process-group/session behavior for typed optional-Pid observations." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh rlimit-reference", scope = "Pinned-musl x86 prlimit64=302, exact rlimit64 layout, PID-zero/null-new-limit query placement, closed selectors, infinity mapping, and read-only current-process observations for typed Rust process::getrlimit only; target-process queries and C process APIs remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh setrlimit-reference", scope = "Pinned-musl x86 prlimit64=302, exact rlimit64 layout, child-contained raw/musl calling-process set/query/restore exchange, and inverted-limit EINVAL for the typed Rust setrlimit operation only; it excludes target-process mutation and C process APIs." },
   { state = "verified", command = "./scripts/dev-x86_64.sh umask-reference", scope = "Pinned-musl x86 umask=95, unsigned mode_t, and child-contained raw/musl mask exchange and restoration for the typed Rust process::umask operation only." },
   { state = "verified", command = "./scripts/dev-x86_64.sh pidfd-open-reference", scope = "Pinned-musl x86 pidfd_open descriptor ownership, nonblocking flag, and direct kernel error behavior." },
@@ -284,6 +292,7 @@ capabilities = [
   "process.identity",
   "process.session-observation",
   "process.pidfd-open",
+  "process.resource-limits",
   "process.resource-limit-mutation",
   "process.umask",
   "thread.futex-basic",
@@ -314,6 +323,7 @@ capabilities = [
   "time.realtime-millis",
   "time.timespec-get",
   "time.process-cpu-observation",
+  "time.process-accounting",
   "time.relative-sleep",
   "time.sleep-aliases",
 ]
@@ -324,7 +334,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, private clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, read-only targeted resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd and readlinkat observations, bounded anonymous memory-file plus seal-observation/seal-mutation slices, the read-only current/missing-PID round-robin interval query, and bounded CPU-affinity observation plus mutation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, private clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, read-only targeted resource-limit/resource-usage/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd and readlinkat observations, bounded anonymous memory-file plus seal-observation/seal-mutation slices, the read-only current/missing-PID round-robin interval query, and bounded CPU-affinity observation plus mutation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -348,9 +358,8 @@ source_owners = [
   "crabc-core/src/time_x86_64.rs",
   "crabc-rs/tests/x86_64_epoll.rs",
   "crabc-rs/tests/x86_64_pselect.rs",
-  "crabc-rs/tests/x86_64_rlimit.rs",
+  "crabc-rs/tests/x86_64_rlimit_targeted.rs",
   "crabc-rs/tests/x86_64_rusage.rs",
-  "crabc-rs/tests/x86_64_times.rs",
   "crabc-rs/tests/x86_64_getgroups.rs",
   "crabc-rs/tests/x86_64_getitimer.rs",
   "crabc-rs/tests/x86_64_setitimer.rs",
@@ -363,9 +372,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_timerfd.rs",
   "compat/x86_64/run_x86_epoll_reference.sh",
   "compat/x86_64/run_x86_pselect_reference.sh",
-  "compat/x86_64/run_x86_rlimit_reference.sh",
   "compat/x86_64/run_x86_rusage_reference.sh",
-  "compat/x86_64/run_x86_times_reference.sh",
   "compat/x86_64/run_x86_getgroups_reference.sh",
   "compat/x86_64/run_x86_getitimer_reference.sh",
   "compat/x86_64/run_x86_setitimer_reference.sh",
@@ -373,9 +380,7 @@ source_owners = [
   "compat/x86_64/run_x86_timerfd_reference.sh",
   "compat/x86_64/x86_epoll_reference_probe.c",
   "compat/x86_64/x86_pselect_reference_probe.c",
-  "compat/x86_64/x86_rlimit_reference_probe.c",
   "compat/x86_64/x86_rusage_reference_probe.c",
-  "compat/x86_64/x86_times_reference_probe.c",
   "compat/x86_64/x86_getgroups_reference_probe.c",
   "compat/x86_64/x86_getitimer_reference_probe.c",
   "compat/x86_64/x86_setitimer_reference_probe.c",
@@ -412,7 +417,6 @@ x86_abi_prerequisites = [
   "Private pselect slice: 1024-bit, 128-byte fd_set representation with eight-byte words, pselect6=270, x86 six-register placement, and the private mask-pointer/size argument-six record",
   "Private targeted resource-limit-query slice: 16-byte, align-8 rlimit64 with current/maximum offsets 0/8, prlimit64=302, RLIM_INFINITY=UINT64_MAX, and selectors 0 through 15",
   "Private resource-usage slice: 16-byte, align-8 timeval and 144-byte, align-8 initialized rusage prefix with offsets 0/16/32/136; pinned-musl's 272-byte public rusage record has a reserved tail at 144; getrusage=98 and RUSAGE_SELF/CHILDREN/THREAD=0/-1/1",
-  "Private process-accounting slice: signed 64-bit clock_t, 32-byte, align-8 tms with offsets 0/8/16/24, times=100, nonnegative process fields, and a separately preserved signed elapsed-tick return that may wrap",
   "Private supplementary-group slice: unsigned 32-bit, align-4 gid_t, getgroups=115, zero-count query, count/fill equivalence, and undersized-buffer EINVAL",
   "Private read-only interval-timer slice: signed 16-byte, align-8 timeval and 32-byte, align-8 itimerval with timeval offsets 0/8 and interval/value offsets 0/16; getitimer=36 and ITIMER_REAL/VIRTUAL/PROF=0/1/2",
   "Private contained interval-timer-control slice: setitimer=38 over the same timeval/itimerval records; validated Rust settings retain only nonnegative microsecond precision and signed-64-bit seconds, return the prior complete setting, and child-contained musl/raw exchange and malformed-tv_usec EINVAL evidence leave no parent timer state; alarm/ualarm aliases remain excluded",
@@ -423,9 +427,8 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh epoll-reference", scope = "Private pinned-musl x86 packed epoll ABI and lifecycle evidence only; it does not make io.readiness-epoll or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh timerfd-reference", scope = "Private pinned-musl x86 timerfd ABI and lifecycle evidence only; it does not make time.timerfd or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh pselect-reference", scope = "Private pinned-musl x86 pselect ABI and readiness/mask lifecycle evidence only; it does not make io.readiness or the record-owning family selectable." },
-  { state = "required", command = "./scripts/dev-x86_64.sh rlimit-reference", scope = "Private pinned-musl x86 rlimit64 ABI and read-only getrlimit/prlimit lifecycle evidence only; it does not make process.resource-limits, process.resource-limits-targeted, or the record-owning family selectable." },
+  { state = "required", command = "./scripts/dev-x86_64.sh rlimit-targeted-private", scope = "Private native-Rust x86 self/implicit and missing-PID getrlimit_for regressions only; it has no live distinct-target success proof or C differential and does not make process.resource-limits-targeted or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh rusage-reference", scope = "Private pinned-musl x86 initialized-rusage-prefix ABI, all-selector direct observations, and stable children-prefix equivalence for read-only getrusage only; it does not make process.resource-usage or the record-owning family selectable." },
-  { state = "required", command = "./scripts/dev-x86_64.sh times-reference", scope = "Private pinned-musl x86 tms ABI and read-only times process-accounting observations only; it does not make time.process-accounting or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh getgroups-reference", scope = "Private pinned-musl x86 gid_t query/fill ABI and read-only supplementary-group observations only; it does not make process.supplementary-groups or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh getitimer-reference", scope = "Private pinned-musl x86 itimerval ABI and read-only getitimer observations for all three selectors only; it does not make time.interval-timer-query, time.process-interval-control, or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh setitimer-reference", scope = "Private pinned-musl x86 setitimer behavior: syscall 38 over the established timeval/itimerval records, child-contained old/new/disarm exchange, and invalid-tv_usec EINVAL for both musl and raw calls; alarm/ualarm aliases, C time APIs, capability promotion, and record-owning family selection remain excluded." },
@@ -485,7 +488,6 @@ capabilities = [
   "time.clock-set",
   "time.calendar-utc",
   "time.interval-timer-query",
-  "time.process-accounting",
   "time.clock-sleep",
   "time.wall-clock",
   "time.clock-query",
@@ -524,7 +526,6 @@ capabilities = [
   "thread.scheduler-rr-interval",
   "process.supplementary-groups",
   "process.resource-usage",
-  "process.resource-limits",
   "process.thread-kill",
   "ipc",
   "ipc.posix-shm",

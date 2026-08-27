@@ -33,5 +33,8 @@ fn x86_64_times_reads_validated_tick_accounting_without_a_clock_rate() {
     assert!(ticks(second.system_time()) >= ticks(first.system_time()));
     assert!(ticks(second.children_user_time()) >= ticks(first.children_user_time()));
     assert!(ticks(second.children_system_time()) >= ticks(first.children_system_time()));
+    // This short native observation cannot cross the kernel's eventual
+    // arbitrary-origin elapsed counter wrap. The public API therefore keeps
+    // elapsed ticks signed instead of promising global monotonicity.
     assert!(ticks(second.elapsed_ticks()) >= ticks(first.elapsed_ticks()));
 }
