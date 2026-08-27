@@ -51,7 +51,8 @@ pub mod collections;
 // read-only `sched_rr_get_interval`, direct bounded typed CPU-affinity
 // observation/mutation, and bounded `time`
 // clock-query, whole-second, and observation APIs plus direct read-only
-// interval-timer query, direct clock-sleep, and contained interval-timer-control slices,
+// interval-timer query, direct clock-sleep and complete timerfd-descriptor slices, and
+// contained interval-timer-control slices,
 // and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and

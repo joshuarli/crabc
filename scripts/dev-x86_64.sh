@@ -108,11 +108,12 @@ process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus bounded typed clock-nanosleep with its relative-remainder and
-absolute-no-remainder modes, direct select/pselect and packed epoll readiness
-with masked waits, and caller-buffer current-working-directory observation. The
-dedicated `getcwd-reference` gate also covers its alloc-gated retry; contained
-interval-timer control, timerfd, private statat path-metadata, and
-caller-buffer-only readlinkat remain privately evidenced. None makes the
+absolute-no-remainder modes, direct typed timer descriptors, direct
+select/pselect and packed epoll readiness with masked waits, and caller-buffer
+current-working-directory observation. The dedicated `getcwd-reference` gate
+also covers its alloc-gated retry; contained interval-timer control, private
+statat path-metadata, and caller-buffer-only readlinkat remain privately
+evidenced. None makes the
 record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
@@ -184,9 +185,14 @@ close-on-exec and legacy creation, null and borrowed eight-byte signal masks,
 future-bit forwarding for Linux validation, add/modify/delete, initialized-prefix
 readiness output, and temporary mask installation/restoration through raw and
 pinned-musl waits. C facades and errno TLS remain excluded.
-`timerfd-reference` proves only the x86 `itimerspec` record and focused
-timer-descriptor lifecycle; it does not promote the broader record-owning
-facade family.
+`timerfd-reference` proves the direct typed x86
+`time::{timerfd_create, timerfd_settime, timerfd_gettime}` boundary: the
+32-byte, align-8 `itimerspec` record with offsets 0/16, syscall numbers
+283/286/287, all five named Linux timer clocks with alarm-clock capability
+results, known and future-bit kernel validation, and raw/pinned-musl
+relative/absolute behavior, `CANCEL_ON_SET` acceptance, periodic-setting,
+disarm, and expiration-read behavior.
+C facades, errno TLS, and broader timer policy remain excluded.
 `getitimer-reference` proves the direct typed read-only interval-timer query:
 the x86 `itimerval` record, closed selectors, canonical transient output, and
 invalid-selector `EINVAL`. It does not select `setitimer`, `alarm`/`ualarm`,

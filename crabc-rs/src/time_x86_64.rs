@@ -600,6 +600,8 @@ bitflags! {
         const NONBLOCK = 0x0000_0800;
         /// `TFD_CLOEXEC`.
         const CLOEXEC = 0x0008_0000;
+        /// Preserve future Linux-defined bits for kernel validation.
+        const _ = !0;
     }
 }
 
@@ -612,14 +614,12 @@ bitflags! {
         const ABSTIME = 0x0000_0001;
         /// `TFD_TIMER_CANCEL_ON_SET`.
         const CANCEL_ON_SET = 0x0000_0002;
+        /// Preserve future Linux-defined bits for kernel validation.
+        const _ = !0;
     }
 }
 
-/// Clocks admitted by the Linux/x86-64 timerfd descriptor slice.
-///
-/// `CLOCK_REALTIME` and `CLOCK_MONOTONIC` cover ordinary wall-clock and
-/// monotonic descriptor timers. Wake-alarm and boot-time timer policies remain
-/// deferred because they carry separate suspend and capability behavior.
+/// Clocks accepted by Linux `timerfd_create`.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(i32)]
 #[non_exhaustive]
@@ -628,6 +628,12 @@ pub enum TimerfdClockId {
     Realtime = 0,
     /// `CLOCK_MONOTONIC`.
     Monotonic = 1,
+    /// `CLOCK_BOOTTIME`.
+    Boottime = 7,
+    /// `CLOCK_REALTIME_ALARM`.
+    RealtimeAlarm = 8,
+    /// `CLOCK_BOOTTIME_ALARM`.
+    BoottimeAlarm = 9,
 }
 
 /// Linux/x86-64 `struct itimerspec` used by timerfd operations.

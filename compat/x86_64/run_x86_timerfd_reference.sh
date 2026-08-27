@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 pinned-musl timerfd ABI and lifecycle reference.
+# Native Linux/x86-64 pinned-musl/raw timerfd ABI and lifecycle reference.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,7 +26,7 @@ probe="$work_dir/x86-timerfd-reference"
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_timerfd_reference_probe.c" \
     -o "$probe"
-expected='layout=size32 align8 offsets=0,16 syscalls=283,286,287 flags=checked cloexec=enabled disarmed=zero arm=readable expirations=u64 disarm=zero errors=EINVAL,EAGAIN'
+expected='layout=size32 align8 offsets=0,16 syscalls=283,286,287 clocks=all-linux flags=known+future-forwarded lifecycle=musl+raw-relative,absolute,cancel-flag,periodic-setting expirations=u64 errors=EINVAL,EAGAIN,EPERM'
 actual="$("$probe")"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 timerfd reference output mismatch\nexpected: %s\nactual: %s\n' \

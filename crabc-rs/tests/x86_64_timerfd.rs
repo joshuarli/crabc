@@ -14,6 +14,19 @@ fn one_shot(nanoseconds: i64) -> time::Itimerspec {
     }
 }
 
+fn deadline_after(now: time::Timespec, nanoseconds: i64) -> time::Timespec {
+    let mut seconds = now.tv_sec;
+    let mut nanoseconds = now.tv_nsec + nanoseconds;
+    if nanoseconds >= i64::from(time::NANOS_PER_SECOND) {
+        seconds += 1;
+        nanoseconds -= i64::from(time::NANOS_PER_SECOND);
+    }
+    time::Timespec {
+        tv_sec: seconds,
+        tv_nsec: nanoseconds,
+    }
+}
+
 #[test]
 fn x86_64_timerfd_records_and_constants_match_linux() {
     assert_eq!(size_of::<time::Itimerspec>(), 32);
@@ -26,12 +39,53 @@ fn x86_64_timerfd_records_and_constants_match_linux() {
     assert_eq!(time::TimerfdTimerFlags::CANCEL_ON_SET.bits(), 0x0000_0002);
     assert_eq!(time::TimerfdClockId::Realtime as i32, 0);
     assert_eq!(time::TimerfdClockId::Monotonic as i32, 1);
-    assert!(time::TimerfdFlags::from_bits(1).is_none());
-    assert!(time::TimerfdTimerFlags::from_bits(4).is_none());
+    assert_eq!(time::TimerfdClockId::Boottime as i32, 7);
+    assert_eq!(time::TimerfdClockId::RealtimeAlarm as i32, 8);
+    assert_eq!(time::TimerfdClockId::BoottimeAlarm as i32, 9);
+    assert!(time::TimerfdFlags::from_bits(1).is_some());
+    assert!(time::TimerfdTimerFlags::from_bits(4).is_some());
     assert_eq!(time::Itimerspec::default(), time::Itimerspec {
         it_interval: time::Timespec { tv_sec: 0, tv_nsec: 0 },
         it_value: time::Timespec { tv_sec: 0, tv_nsec: 0 },
     });
+}
+
+#[test]
+fn x86_64_timerfd_forwards_unknown_flags_and_exposes_linux_clock_selection() {
+    let future_create = time::TimerfdFlags::from_bits(0x0000_0001)
+        .expect("unknown creation bits must remain representable for Linux");
+    assert!(matches!(
+        time::timerfd_create(time::TimerfdClockId::Monotonic, future_create),
+        Err(Errno::INVAL)
+    ));
+
+    for clock in [
+        time::TimerfdClockId::Realtime,
+        time::TimerfdClockId::Monotonic,
+        time::TimerfdClockId::Boottime,
+    ] {
+        time::timerfd_create(clock, time::TimerfdFlags::CLOEXEC)
+            .expect("ordinary Linux timerfd clock must create a descriptor");
+    }
+
+    for clock in [
+        time::TimerfdClockId::RealtimeAlarm,
+        time::TimerfdClockId::BoottimeAlarm,
+    ] {
+        match time::timerfd_create(clock, time::TimerfdFlags::CLOEXEC) {
+            Ok(_) | Err(Errno::PERM) => {}
+            Err(error) => panic!("unexpected alarm-clock timerfd error: {error:?}"),
+        }
+    }
+
+    let timer = time::timerfd_create(time::TimerfdClockId::Monotonic, time::TimerfdFlags::empty())
+        .expect("create timerfd for future settime flags");
+    let future_settime = time::TimerfdTimerFlags::from_bits(0x0000_0004)
+        .expect("unknown settime bits must remain representable for Linux");
+    assert_eq!(
+        time::timerfd_settime(&timer, future_settime, &time::Itimerspec::default()),
+        Err(Errno::INVAL),
+    );
 }
 
 #[test]
@@ -115,18 +169,9 @@ fn x86_64_timerfd_accepts_monotonic_absolute_deadlines() {
     let timer = time::timerfd_create(time::TimerfdClockId::Monotonic, time::TimerfdFlags::empty())
         .expect("create timerfd");
     let now = time::clock_gettime(time::ClockId::Monotonic).expect("read monotonic clock");
-    let mut seconds = now.tv_sec;
-    let mut nanoseconds = now.tv_nsec + 1_000_000;
-    if nanoseconds >= i64::from(time::NANOS_PER_SECOND) {
-        seconds += 1;
-        nanoseconds -= i64::from(time::NANOS_PER_SECOND);
-    }
     let deadline = time::Itimerspec {
         it_interval: time::Timespec { tv_sec: 0, tv_nsec: 0 },
-        it_value: time::Timespec {
-            tv_sec: seconds,
-            tv_nsec: nanoseconds,
-        },
+        it_value: deadline_after(now, 1_000_000),
     };
     time::timerfd_settime(&timer, time::TimerfdTimerFlags::ABSTIME, &deadline)
         .expect("arm monotonic absolute timer");
@@ -153,6 +198,58 @@ fn x86_64_timerfd_accepts_monotonic_absolute_deadlines() {
     let mut expirations = [0_u8; 8];
     assert_eq!(io::read(&timer, &mut expirations).expect("consume expiration"), 8);
     assert!(u64::from_ne_bytes(expirations) >= 1);
+}
+
+#[test]
+fn x86_64_timerfd_preserves_periodic_settings_and_accepts_realtime_cancel_on_set() {
+    let periodic_timer = time::timerfd_create(
+        time::TimerfdClockId::Monotonic,
+        time::TimerfdFlags::empty(),
+    )
+    .expect("create periodic timerfd");
+    let periodic = time::Itimerspec {
+        it_interval: time::Timespec { tv_sec: 2, tv_nsec: 0 },
+        it_value: time::Timespec { tv_sec: 5, tv_nsec: 0 },
+    };
+    assert_eq!(
+        time::timerfd_settime(
+            &periodic_timer,
+            time::TimerfdTimerFlags::empty(),
+            &periodic,
+        )
+        .expect("arm periodic timer"),
+        time::Itimerspec::default(),
+    );
+    let current = time::timerfd_gettime(&periodic_timer).expect("read periodic timer");
+    assert_eq!(current.it_interval, periodic.it_interval);
+    assert!(current.it_value.tv_sec >= 0);
+    assert!((0..i64::from(time::NANOS_PER_SECOND)).contains(&current.it_value.tv_nsec));
+
+    let realtime_timer = time::timerfd_create(
+        time::TimerfdClockId::Realtime,
+        time::TimerfdFlags::empty(),
+    )
+    .expect("create realtime timerfd");
+    let now = time::clock_gettime(time::ClockId::Realtime).expect("read realtime clock");
+    let absolute = time::Itimerspec {
+        it_interval: time::Timespec { tv_sec: 0, tv_nsec: 0 },
+        it_value: deadline_after(now, 1_000_000_000),
+    };
+    time::timerfd_settime(
+        &realtime_timer,
+        time::TimerfdTimerFlags::ABSTIME | time::TimerfdTimerFlags::CANCEL_ON_SET,
+        &absolute,
+    )
+    .expect("arm realtime absolute cancellation-aware timer");
+    let previous = time::timerfd_settime(
+        &realtime_timer,
+        time::TimerfdTimerFlags::empty(),
+        &time::Itimerspec::default(),
+    )
+    .expect("disarm realtime timer");
+    assert_eq!(previous.it_interval, time::Timespec { tv_sec: 0, tv_nsec: 0 });
+    assert!(previous.it_value.tv_sec >= 0);
+    assert!((0..i64::from(time::NANOS_PER_SECOND)).contains(&previous.it_value.tv_nsec));
 }
 
 #[test]

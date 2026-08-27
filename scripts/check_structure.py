@@ -63,8 +63,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the direct read-only round-robin interval and bounded CPU-affinity
 # observation/mutation operations,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
-# direct clock-nanosleep seams, direct read-only interval-timer query, private
-# contained-control slice, and timerfd seams. No other facade
+# direct clock-nanosleep seams, direct read-only interval-timer query and timerfd
+# seams, and the private contained-control slice. No other facade
 # source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),

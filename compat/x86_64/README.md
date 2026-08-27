@@ -282,13 +282,16 @@ validated microsecond settings and returns the complete prior setting. It does
 not select `alarm`, `ualarm`, C time APIs, broader timer policy, or a
 general x86 facade.
 
-`timerfd-reference` executes a pinned-musl x86 timer-descriptor lifecycle. It
-pins the 32-byte, align-8 `itimerspec` layout (interval/value offsets zero and
-16), timerfd syscall numbers and flags, close-on-exec/nonblocking creation,
-arm/read/disarm behavior, exact eight-byte expiration reads, and representative
-invalid cases. It is private evidence for the bounded x86 timerfd vertical
-slice only; it does not make broader timer policy, C time APIs, or a general
-x86 facade selectable.
+`timerfd-reference` executes pinned-musl and raw x86 proofs for the direct
+typed `time::{timerfd_create, timerfd_settime, timerfd_gettime}` slice. It pins
+the 32-byte, align-8 `itimerspec` layout (interval/value offsets zero and 16),
+syscalls 283/286/287, all five named Linux timer clocks (with the alarm-clock
+capability result preserved), known and future-bit kernel validation,
+close-on-exec/nonblocking creation, relative/absolute settings,
+`CANCEL_ON_SET` acceptance, periodic-setting inspection, exact eight-byte
+expiration reads, disarming, and invalid
+cases. It does not select broader timer policy, C time APIs, or a general x86
+facade.
 
 `pselect-reference` executes pinned-musl and raw x86 descriptor-bit-vector
 proofs for the direct typed `event::{select, pselect}` slice. It pins
@@ -627,10 +630,12 @@ through raw and pinned-musl probes. It also proves the 1024-bit `fd_set`, direct
 select/pselect empty/readable and invalid-`nfds` behavior, raw `pselect6`
 argument-six mask-pointer/size placement, and raw/pinned-musl pselect mask
 restoration. This completes the bounded `io.readiness` capability, not C
-polling support. The timerfd regression proves the x86 32-byte timer record,
-close-on-exec/nonblocking creation, relative and absolute arming, epoll
-readiness, exact expiration reads, disarming, and invalid record/flag/descriptor
-handling. It remains a privately evidenced record-owning slice. The filesystem
+polling support. The timerfd regression completes direct typed
+`time::{timerfd_create, timerfd_settime, timerfd_gettime}`: the x86 32-byte
+timer record, all five named clock values with alarm-clock capability results,
+known and future flag forwarding, relative/absolute settings, `CANCEL_ON_SET`
+acceptance, periodic-setting inspection, epoll readiness, exact expiration reads, disarming, and
+invalid record/flag/descriptor handling. The filesystem
 regression proves a
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
 metadata slice, caller-buffer and alloc-gated `getcwd` plus caller-buffer-only
@@ -649,8 +654,8 @@ records, scheduler-priority bounds, and direct typed round-robin interval
 observations; the system and thread regressions prove the named bounded kernel
 observations. It verifies the
 explicitly admitted Rust subset only; it does not make readiness policy beyond
-the named select/pselect and epoll operations, timerfd clock/policy variants
-beyond the named descriptor slice,
+the named select/pselect and epoll operations, timerfd policy beyond the named
+typed descriptor operations,
 signalfd, target resource-limit mutation, C `struct rusage` or `struct tms` support, broader
 filesystem path-core behavior, CWD mutation or allocation-backed path-core helpers,
 global locking policy, wider mapping policy, other
