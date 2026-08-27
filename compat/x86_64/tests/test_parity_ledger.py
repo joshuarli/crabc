@@ -135,6 +135,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "time.timespec-get",
             "time.process-cpu-observation",
             "time.process-accounting",
+            "time.interval-timer-query",
             "time.relative-sleep",
             "time.sleep-aliases",
         ):
@@ -148,6 +149,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_thread_credentials.rs",
             "crabc-rs/tests/x86_64_fs_credentials.rs",
             "crabc-rs/tests/x86_64_getgroups.rs",
+            "crabc-rs/tests/x86_64_getitimer.rs",
             "crabc-rs/tests/x86_64_setpriority.rs",
             "crabc-rs/tests/x86_64_rlimit.rs",
             "crabc-rs/tests/x86_64_setrlimit.rs",
@@ -162,6 +164,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_fs_credentials_reference_probe.c",
             "compat/x86_64/run_x86_getgroups_reference.sh",
             "compat/x86_64/x86_getgroups_reference_probe.c",
+            "compat/x86_64/run_x86_getitimer_reference.sh",
+            "compat/x86_64/x86_getitimer_reference_probe.c",
             "compat/x86_64/run_x86_setpriority_reference.sh",
             "compat/x86_64/x86_setpriority_reference_probe.c",
             "compat/x86_64/run_x86_rlimit_reference.sh",
@@ -194,6 +198,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             direct_commands,
         )
         self.assertIn("./scripts/dev-x86_64.sh getgroups-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh getitimer-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh setpriority-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rusage-reference", direct_commands)
@@ -240,7 +245,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "crabc-rs/tests/x86_64_getgroups.rs", remaining["source_owners"]
         )
-        self.assertIn(
+        self.assertNotIn(
             "crabc-rs/tests/x86_64_getitimer.rs", remaining["source_owners"]
         )
         self.assertIn(
@@ -264,7 +269,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "compat/x86_64/run_x86_getgroups_reference.sh", remaining["source_owners"]
         )
-        self.assertIn(
+        self.assertNotIn(
             "compat/x86_64/run_x86_getitimer_reference.sh", remaining["source_owners"]
         )
         self.assertIn(
@@ -280,7 +285,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "compat/x86_64/x86_getgroups_reference_probe.c", remaining["source_owners"]
         )
-        self.assertIn(
+        self.assertNotIn(
             "compat/x86_64/x86_getitimer_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn(
@@ -333,46 +338,42 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             remaining["native_evidence"][4]["command"],
-            "./scripts/dev-x86_64.sh getitimer-reference",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][5]["command"],
             "./scripts/dev-x86_64.sh setitimer-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][6]["command"],
+            remaining["native_evidence"][5]["command"],
             "./scripts/dev-x86_64.sh statat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][7]["command"],
+            remaining["native_evidence"][6]["command"],
             "./scripts/dev-x86_64.sh getcwd-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][8]["command"],
+            remaining["native_evidence"][7]["command"],
             "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][9]["command"],
+            remaining["native_evidence"][8]["command"],
             "./scripts/dev-x86_64.sh rr-interval-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][10]["command"],
+            remaining["native_evidence"][9]["command"],
             "./scripts/dev-x86_64.sh sched-affinity-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][11]["command"],
+            remaining["native_evidence"][10]["command"],
             "./scripts/dev-x86_64.sh sched-affinity-set-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][12]["command"],
+            remaining["native_evidence"][11]["command"],
             "./scripts/dev-x86_64.sh clock-nanosleep-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][13]["command"],
+            remaining["native_evidence"][12]["command"],
             "./scripts/dev-x86_64.sh memfd-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][14]["command"],
+            remaining["native_evidence"][13]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
@@ -394,8 +395,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("process.resource-usage", remaining["capabilities"])
         self.assertIn("time.process-accounting", direct["capabilities"])
         self.assertNotIn("time.process-accounting", remaining["capabilities"])
-        self.assertNotIn("time.interval-timer-query", direct["capabilities"])
-        self.assertIn("time.interval-timer-query", remaining["capabilities"])
+        self.assertIn("time.interval-timer-query", direct["capabilities"])
+        self.assertNotIn("time.interval-timer-query", remaining["capabilities"])
         self.assertIn("process.supplementary-groups", direct["capabilities"])
         self.assertNotIn("process.supplementary-groups", remaining["capabilities"])
         pthread_tls = self.family(data, "libc.pthread-tls")

@@ -63,8 +63,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the private read-only round-robin interval query, and bounded CPU-affinity
 # observation/mutation,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
-# private clock-nanosleep seams, privately evidenced interval-timer query and
-# contained-control slices, and timerfd seams. No other facade
+# private clock-nanosleep seams, direct read-only interval-timer query, private
+# contained-control slice, and timerfd seams. No other facade
 # source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),
@@ -363,13 +363,13 @@ def check_x86_setitimer_boundary(errors: list[str]) -> None:
     for required in ("pub const fn new", "pub fn setitimer"):
         if required not in text:
             errors.append(
-                "crabc-rs/src/time_x86_64.rs: private x86 interval-timer slice is missing "
+                "crabc-rs/src/time_x86_64.rs: private x86 interval-timer-control slice is missing "
                 f"{required}"
             )
     for forbidden in ("pub fn alarm", "pub fn ualarm", "pub struct PosixTimer"):
         if forbidden in text:
             errors.append(
-                "crabc-rs/src/time_x86_64.rs: private x86 interval-timer slice must defer "
+                "crabc-rs/src/time_x86_64.rs: private x86 interval-timer-control slice must defer "
                 f"{forbidden}"
             )
 

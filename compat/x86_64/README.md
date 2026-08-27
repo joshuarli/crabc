@@ -256,15 +256,14 @@ uses its direct syscall error boundary. It remains private evidence under the
 planned record-owning family: C sleep APIs, clock mutation, and general x86
 facade promotion remain excluded.
 
-`getitimer-reference` executes pinned-musl x86 read-only interval-timer
-queries. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
+`getitimer-reference` executes the direct typed x86 read-only interval-timer
+query. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
 `itimerval` records (nested offsets zero/eight and interval/value offsets
 zero/16), `getitimer=36`, all three `ITIMER_*` selectors, canonical results
-from musl and the direct syscall, and invalid-selector `EINVAL`. It does not
-compare separately read values because a real timer can decrement. It is
-private evidence for the bounded query slice only; it does not itself select
-interval-timer control, `alarm`, `ualarm`, C time APIs, or a general x86
-facade.
+from musl and the direct syscall, and invalid-selector `EINVAL`. A result is
+a transient snapshot, so it does not compare separately read values that can
+decrement. It admits only `time::getitimer`; `setitimer`, `alarm`, `ualarm`, C
+time APIs, and timer/signal delivery policy remain excluded.
 
 `setitimer-reference` executes the private x86 contained interval-timer
 control slice. It pins syscall 38 over the established 16-byte `timeval` and
@@ -611,8 +610,8 @@ metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 process regressions prove typed PID/identity/session observations, typed
 calling-process resource-limit query plus child-contained mutation and
 process-global umask exchange with restore safety, typed read-only process
-accounting, typed supplementary-group query/fill, private interval-timer query
-plus contained control,
+accounting, typed supplementary-group query/fill, direct read-only
+interval-timer query plus private contained control,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
 scheduling-priority mutation, typed read-only resource-usage observations,
 conflicting-lock `F_GETLK`
@@ -638,10 +637,11 @@ realtime-millisecond observations, nondecreasing CPU-time observations, and
 typed relative `nanosleep` completion/interruption with an explicit remainder
 through the validated vDSO/direct-syscall seam. The separately private
 `clock_nanosleep` regression additionally proves relative and absolute
-mode-specific pointer contracts and direct error handling. The private
-interval-timer regressions prove closed `getitimer` selectors plus
-child-contained `setitimer` exchange/disarm behavior over validated
-microsecond settings. Calendar, broader interval-timer/other timer policy,
+mode-specific pointer contracts and direct error handling. The direct
+`getitimer` regression proves closed selectors and canonical transient query
+results. The private `setitimer` regression proves child-contained
+exchange/disarm behavior over validated microsecond settings. Calendar,
+broader interval-timer/other timer policy,
 timezone, broader clock sleep, clock mutation, and C sleep APIs remain outside
 this direct slice.
 

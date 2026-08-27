@@ -101,11 +101,11 @@ subset, including borrowed-atomic futex wait/wake and the complete typed
 `seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family, typed
 calling-process `getrlimit`/`setrlimit`, typed supplementary-group query/fill,
 typed read-only `getrusage` observations, typed read-only `times` accounting,
-and typed process-global `umask` exchange,
+typed read-only interval-timer query, and typed process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
-plus privately evidenced packed-epoll, clock-nanosleep, read-only
-interval-timer query and contained interval-timer control, timerfd, pselect,
+plus privately evidenced packed-epoll, clock-nanosleep, contained
+interval-timer control, timerfd, pselect,
 private statat path-metadata, caller-buffer-only getcwd,
 caller-buffer-only readlinkat, and private CPU-affinity observation and bounded
 mutation slices; none makes the record-owning family selectable.
@@ -175,9 +175,10 @@ facade family.
 `timerfd-reference` proves only the x86 `itimerspec` record and focused
 timer-descriptor lifecycle; it does not promote the broader record-owning
 facade family.
-`getitimer-reference` proves only the x86 `itimerval` record and focused
-read-only interval-timer query; it does not select interval-timer control or
-promote the broader record-owning facade family.
+`getitimer-reference` proves the direct typed read-only interval-timer query:
+the x86 `itimerval` record, closed selectors, canonical transient output, and
+invalid-selector `EINVAL`. It does not select `setitimer`, `alarm`/`ualarm`,
+C time APIs, timer/signal delivery policy, or a broader process API.
 `setitimer-reference` proves only the private x86 contained interval-timer
 control boundary: syscall 38, validated microsecond settings, old-setting
 exchange, and malformed-`timeval` `EINVAL` behavior in short-lived child

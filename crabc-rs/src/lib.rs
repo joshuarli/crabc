@@ -46,8 +46,8 @@ pub mod collections;
 // set_thread_res_gid}` plus borrowed `AtomicU32` futex wait/wake, the private
 // read-only `sched_rr_get_interval`,
 // CPU-affinity observation and bounded typed mutation, and bounded `time`
-// clock-query, whole-second, and observation APIs plus private clock-sleep
-// and contained interval-timer query/control slices,
+// clock-query, whole-second, and observation APIs plus direct read-only
+// interval-timer query, private clock-sleep, and contained interval-timer-control slices,
 // and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and
