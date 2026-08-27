@@ -56,7 +56,17 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/foundation.rs", errno_tls["source_owners"]
         )
         self.assertIn(
+            "libc/src/c_abi/x86_64/thread_pointer.rs", errno_tls["source_owners"]
+        )
+        self.assertTrue(
+            any("pthread_arch.h::__get_tp" in item for item in errno_tls["x86_abi_prerequisites"])
+        )
+        self.assertIn(
             "./scripts/dev-x86_64.sh libc-foundation",
+            {evidence["command"] for evidence in errno_tls["native_evidence"]},
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-thread-pointer",
             {evidence["command"] for evidence in errno_tls["native_evidence"]},
         )
         self.assertEqual(self.family(data, "ldso.relative-relocation")["status"], "foundation-verified")

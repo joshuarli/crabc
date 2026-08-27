@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-private|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-private|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -213,6 +213,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_libc_errno_tls_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_errno_tls.sh', source)
+        self.assertIn('run_libc_thread_pointer_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_thread_pointer.sh', source)
         self.assertIn('run_libc_foundation_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_foundation.sh', source)
         self.assertIn('run_libc_fenv_probe()', source)
@@ -720,6 +722,41 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('__tls_get_addr', script)
         self.assertIn('-no-pie -pthread', script)
         self.assertNotIn('--allow-multiple-definition', script)
+        self.assertNotIn('crabc_libc', rust_probe)
+
+    def test_libc_thread_pointer_probe_stays_a_private_opaque_fs_leaf(self) -> None:
+        rust_probe = (
+            ROOT / "compat" / "x86_64" / "libc_thread_pointer_probe.rs"
+        ).read_text(encoding="utf-8")
+        thread_pointer = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "thread_pointer.rs"
+        ).read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "libc_thread_pointer_probe.c"
+        ).read_text(encoding="utf-8")
+        script = (
+            ROOT / "compat" / "x86_64" / "run_libc_thread_pointer.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('libc/src/c_abi/x86_64/thread_pointer.rs', rust_probe)
+        self.assertIn('pthread_arch.h::__get_tp()', thread_pointer)
+        self.assertIn('9fa28ece75d8a2191de7c5bb53bed224c5947417', thread_pointer)
+        self.assertIn("musl's MIT license", thread_pointer)
+        self.assertIn('pub(crate) unsafe fn thread_pointer_identity()', thread_pointer)
+        self.assertIn('options(readonly, nostack, preserves_flags)', thread_pointer)
+        self.assertNotIn('#[no_mangle]', thread_pointer)
+        self.assertIn('crabc_x86_64_thread_pointer_probe', c_probe)
+        self.assertIn('inline_fs0', c_probe)
+        self.assertIn('pthread_create', c_probe)
+        self.assertNotIn('pthread_self', c_probe)
+        self.assertIn('run_musl_oracle.sh', script)
+        self.assertIn('/usr/local/bin/crabc-x86_64-musl-gcc', script)
+        self.assertIn('%fs:0x0', script)
+        self.assertIn('R_X86_64_(TPOFF', script)
+        self.assertIn('__tls_get_addr', script)
+        self.assertIn('-no-pie -pthread', script)
+        self.assertNotIn('-I"$ROOT_DIR/include"', script)
+        self.assertNotIn('-p crabc-libc', script)
         self.assertNotIn('crabc_libc', rust_probe)
 
     def test_libc_foundation_probe_composes_only_the_narrow_x86_primitives(self) -> None:
