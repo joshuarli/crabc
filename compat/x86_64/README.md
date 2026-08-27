@@ -53,6 +53,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sched-affinity-reference
 ./scripts/dev-x86_64.sh sched-affinity-set-reference
 ./scripts/dev-x86_64.sh priority-reference
+./scripts/dev-x86_64.sh setpriority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
 ./scripts/dev-x86_64.sh setrlimit-reference
 ./scripts/dev-x86_64.sh umask-reference
@@ -377,8 +378,16 @@ remain excluded.
 `priority-reference` executes a pinned-musl x86 probe for
 `PRIO_PROCESS`/`PRIO_PGRP`/`PRIO_USER`, `getpriority` syscall 140, the
 non-negative `[1, 40]` raw success encoding, and missing-process `ESRCH`.
-It establishes only the typed Rust read-only `getpriority` boundary, not
-priority mutation or C process support.
+It establishes only the typed Rust read-only `getpriority` boundary; it does
+not by itself select priority mutation or C process support.
+
+`setpriority-reference` executes a child-contained pinned-musl x86
+scheduling-priority exchange. It pins `setpriority=141`, the existing closed
+`PRIO_*`/nice-value vocabulary, raw set plus musl read, musl no-op set plus raw
+read, invalid-selector `EINVAL`, and missing process/group/user target `ESRCH`
+for the typed Rust
+`process::{setpriority_process, setpriority_process_group, setpriority_user}`
+operations. It does not select scheduler-policy mutation or C process support.
 
 `rlimit-reference` executes a pinned-musl x86 read-only resource-limit
 lifecycle. It pins the 16-byte, align-8 `rlimit`/`rlimit64` record
@@ -530,7 +539,7 @@ selected `crabc-libc` artifact.
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
-`x86_64_process_session`,
+`x86_64_process_session`, `x86_64_setpriority`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`, `x86_64_setrlimit`, `x86_64_umask`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
 `x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_readlink`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
@@ -577,7 +586,8 @@ child-contained calling-process resource-limit mutation and process-global
 umask exchange with restore safety, read-only
 supplementary-group query/fill, private interval-timer query plus contained
 control,
-owned nonblocking pidfds, read-only `getpriority`, private read-only
+owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
+scheduling-priority mutation, private read-only
 targeted resource-limit queries, private read-only
 resource-usage and process-accounting observations, conflicting-lock `F_GETLK`
 records, and scheduler-priority bounds; the system and thread regressions prove

@@ -115,6 +115,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.file-position",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
+            "process.scheduling-priority-mutation",
             "process.scheduler-priority-bounds",
             "time.realtime-millis",
             "time.timespec-get",
@@ -130,6 +131,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
+            "crabc-rs/tests/x86_64_setpriority.rs",
             "crabc-rs/tests/x86_64_setrlimit.rs",
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
@@ -138,6 +140,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_file_position_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
             "compat/x86_64/x86_thread_credentials_reference_probe.c",
+            "compat/x86_64/run_x86_setpriority_reference.sh",
+            "compat/x86_64/x86_setpriority_reference_probe.c",
             "compat/x86_64/run_x86_setrlimit_reference.sh",
             "compat/x86_64/x86_setrlimit_reference_probe.c",
             "compat/x86_64/run_x86_umask_reference.sh",
@@ -155,6 +159,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh thread-credentials-reference",
             direct_commands,
         )
+        self.assertIn("./scripts/dev-x86_64.sh setpriority-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh setrlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh umask-reference", direct_commands)
         for capability in (
@@ -374,6 +379,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("thread.scheduler-rr-interval", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
         self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
+        self.assertNotIn("process.scheduling-priority-mutation", remaining["capabilities"])
         self.assertNotIn("process.resource-limits", direct["capabilities"])
         self.assertIn("process.resource-limits", remaining["capabilities"])
         self.assertNotIn("process.resource-limit-mutation", remaining["capabilities"])

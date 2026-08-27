@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -118,6 +118,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh', source)
         self.assertIn('run_priority_reference()', source)
         self.assertIn('compat/x86_64/run_x86_priority_reference.sh', source)
+        self.assertIn('run_setpriority_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_setpriority_reference.sh', source)
         self.assertIn('run_rlimit_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rlimit_reference.sh', source)
         self.assertIn('run_setrlimit_reference()', source)
@@ -177,6 +179,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('--test x86_64_poll', source)
         self.assertIn('--test x86_64_priority', source)
+        self.assertIn('--test x86_64_setpriority', source)
         self.assertIn('--test x86_64_process_identity', source)
         self.assertIn('--test x86_64_process_session', source)
         self.assertIn('--test x86_64_pidfd_open', source)
@@ -366,6 +369,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         priority_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_priority_reference.sh"
+        ).read_text(encoding="utf-8")
+        setpriority_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_setpriority_reference.sh"
         ).read_text(encoding="utf-8")
         rlimit_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_rlimit_reference.sh"
@@ -607,6 +613,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_priority_reference_probe.c', priority_reference)
         self.assertIn('getpriority reference', priority_reference)
         self.assertNotIn('-p crabc-libc', priority_reference)
+        self.assertIn('x86_setpriority_reference_probe.c', setpriority_reference)
+        self.assertIn('setpriority ABI and behavior reference', setpriority_reference)
+        self.assertIn('run_musl_oracle.sh', setpriority_reference)
+        self.assertNotIn('-p crabc-libc', setpriority_reference)
         self.assertIn('x86_rlimit_reference_probe.c', rlimit_reference)
         self.assertIn('getrlimit/prlimit64 reference', rlimit_reference)
         self.assertIn('run_musl_oracle.sh', rlimit_reference)
@@ -760,6 +770,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         setrlimit_test = (
             ROOT / "crabc-rs" / "tests" / "x86_64_setrlimit.rs"
         ).read_text(encoding="utf-8")
+        setpriority_probe = (
+            ROOT / "compat" / "x86_64" / "x86_setpriority_reference_probe.c"
+        ).read_text(encoding="utf-8")
+        setpriority_runner = (
+            ROOT / "compat" / "x86_64" / "run_x86_setpriority_reference.sh"
+        ).read_text(encoding="utf-8")
+        setpriority_test = (
+            ROOT / "crabc-rs" / "tests" / "x86_64_setpriority.rs"
+        ).read_text(encoding="utf-8")
         umask_probe = (
             ROOT / "compat" / "x86_64" / "x86_umask_reference_probe.c"
         ).read_text(encoding="utf-8")
@@ -799,6 +818,20 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("#[ignore", setrlimit_test)
         self.assertIn('"--ignored"', setrlimit_test)
         self.assertNotIn("CRABC_RS_X86_64_SETRLIMIT_CHILD", setrlimit_test)
+
+        self.assertIn("SYS_setpriority == 141", setpriority_probe)
+        self.assertIn("run_in_child", setpriority_probe)
+        self.assertIn("raw-set:musl-read:musl-noop:raw-read", setpriority_probe)
+        self.assertIn("raw_setpriority(PRIO_PGRP", setpriority_probe)
+        self.assertIn("raw_setpriority(PRIO_USER", setpriority_probe)
+        self.assertIn("run_musl_oracle.sh", setpriority_runner)
+        self.assertNotIn("-p crabc-libc", setpriority_runner)
+        self.assertIn("process::setpriority_process", setpriority_test)
+        self.assertIn("process::setpriority_process_group", setpriority_test)
+        self.assertIn("process::setpriority_user", setpriority_test)
+        self.assertIn("x86_64_setpriority_child_mutates_only_the_calling_process", setpriority_test)
+        self.assertIn("#[ignore", setpriority_test)
+        self.assertIn('"--ignored"', setpriority_test)
 
         self.assertIn("SYS_umask == 95", umask_probe)
         self.assertIn("run_in_child", umask_probe)
@@ -1138,6 +1171,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_pselect",
                     "--test",
                     "x86_64_priority",
+                    "--test",
+                    "x86_64_setpriority",
                     "--test",
                     "x86_64_process_identity",
                     "--test",

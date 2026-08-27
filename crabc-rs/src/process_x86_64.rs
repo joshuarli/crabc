@@ -5,8 +5,8 @@
 //! three-word real/effective/saved credential observations, supplementary-group
 //! query/fill protocol, pidfd creation, resource-limit observations plus a
 //! bounded calling-process resource-limit mutation, resource-usage, and
-//! process-accounting observations, read-only
-//! scheduling-priority observations and bounds, and the read-only typed
+//! process-accounting observations, scheduling-priority observations, bounds,
+//! and bounded target mutation, and the read-only typed
 //! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.
 //! The larger process facade remains AArch64-only until each of its
 //! target-sized records and state transitions has an independent x86-64
@@ -421,7 +421,7 @@ pub fn getcwd<Buf: Buffer<u8>>(mut buffer: Buf) -> Result<Buf::Output> {
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
-/// A Linux nice value returned by the native `getpriority` facade.
+/// A Linux nice value observed or supplied through the native priority facade.
 ///
 /// Linux's scheduler accepts values from `-20` through `19`, inclusive. The
 /// wrapper keeps that range closed so an arbitrary integer cannot cross this
@@ -470,7 +470,7 @@ impl Priority {
     }
 }
 
-/// Which Linux process set `getpriority` should observe.
+/// Which Linux process set the native scheduling-priority operations target.
 ///
 /// `Process(None)` and `ProcessGroup(None)` select the caller's process and
 /// process group respectively. `User` transmits Linux's raw user selector:
@@ -901,6 +901,43 @@ pub fn getpriority_process_group(pgid: Option<Pid>) -> Result<Priority> {
 #[inline]
 pub fn getpriority_user(uid: Uid) -> Result<Priority> {
     getpriority(PriorityTarget::User(uid))
+}
+
+/// Sets the priority of an optional process identifier.
+///
+/// `None` selects the calling process. This is a process-scheduling side
+/// effect rather than a memory-safety boundary: callers should coordinate
+/// with other code that intentionally changes the same task's priority.
+/// Kernel permission and target failures remain ordinary [`crate::Errno`]
+/// values; this operation does not use libc's TLS `errno` channel.
+#[inline]
+pub fn setpriority_process(pid: Option<Pid>, priority: Priority) -> Result<()> {
+    setpriority(PriorityTarget::Process(pid), priority)
+}
+
+/// Sets the priority of an optional process-group identifier.
+///
+/// `None` selects the calling process group. The kernel may affect more than
+/// one task when a process-group target is selected.
+#[inline]
+pub fn setpriority_process_group(pgid: Option<Pid>, priority: Priority) -> Result<()> {
+    setpriority(PriorityTarget::ProcessGroup(pgid), priority)
+}
+
+/// Sets the priority of all processes matching a Linux user identifier.
+///
+/// This may affect multiple processes and requires the permissions enforced by
+/// Linux's `setpriority` syscall. [`Uid::ROOT`] transmits Linux's zero
+/// selector, which instead targets the calling process's effective user.
+#[inline]
+pub fn setpriority_user(uid: Uid, priority: Priority) -> Result<()> {
+    setpriority(PriorityTarget::User(uid), priority)
+}
+
+#[inline]
+fn setpriority(target: PriorityTarget, priority: Priority) -> Result<()> {
+    let (which, who) = target.as_raw();
+    crabc_core::process::setpriority_raw(which, who, priority.as_raw())
 }
 
 /// Returns the caller's real Linux user ID.
