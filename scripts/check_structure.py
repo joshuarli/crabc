@@ -48,7 +48,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `process_x86_64.rs` owns only the strict
 # caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
 # remain deferred. It also owns read-only identity/session and
-# supplementary-group observations plus proved calling-task filesystem-credential
+# supplementary-group query/fill plus proved calling-task filesystem-credential
 # query/current-effective-ID requests, calling-process resource-limit
 # query/mutation, typed resource usage/process accounting, privately evidenced targeted
 # resource-limit, getpriority/scheduler-priority observations plus typed

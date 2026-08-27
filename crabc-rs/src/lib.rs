@@ -39,7 +39,7 @@ pub mod collections;
 // `fs::readlinkat_raw` slices,
 // `fd`, `fenv`, `ffi`, `io`, `ioctl`, bounded `mm` mapping/remapping,
 // `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
-// and supplementary-group observations plus pidfd creation, `rand`, `signal`,
+// and supplementary-group query/fill plus pidfd creation, `rand`, `signal`,
 // `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
 // `thread::{gettid, sched_getcpu, sched_yield, set_thread_res_uid,

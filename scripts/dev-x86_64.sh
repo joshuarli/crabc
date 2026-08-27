@@ -99,14 +99,14 @@ an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset, including borrowed-atomic futex wait/wake and the complete typed
 `seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family, typed
-calling-process `getrlimit`/`setrlimit`, typed read-only `getrusage`
-observations, typed read-only `times` accounting,
+calling-process `getrlimit`/`setrlimit`, typed supplementary-group query/fill,
+typed read-only `getrusage` observations, typed read-only `times` accounting,
 and typed process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus privately evidenced packed-epoll, clock-nanosleep, read-only
-interval-timer query and contained interval-timer control, timerfd, pselect, and
-supplementary-group, private statat path-metadata, caller-buffer-only getcwd,
+interval-timer query and contained interval-timer control, timerfd, pselect,
+private statat path-metadata, caller-buffer-only getcwd,
 caller-buffer-only readlinkat, and private CPU-affinity observation and bounded
 mutation slices; none makes the record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
@@ -251,9 +251,11 @@ uninitialized reserved tail, or broader process-accounting policy.
 the x86 `tms` record, nonnegative process-accounting fields, and a separately
 preserved signed elapsed-tick return. It does not select a C `times`/`struct
 tms` API, tick-rate conversion, or broader process-accounting policy.
-`getgroups-reference` proves only the x86 `gid_t` query/fill protocol and
-focused read-only supplementary-group observations; it does not select a C
-process API or the broader record-owning facade family.
+`getgroups-reference` proves the direct typed supplementary-group query/fill
+boundary: x86 `gid_t`, the null count query, caller-owned initialized-prefix
+output, and the retry-after-`EINVAL` count-to-fill snapshot race. It does not
+select C `getgroups`/`setgroups`, credential mutation or synchronization, or a
+broader process API.
 `libc-syscall` compiles only the unintegrated raw syscall module.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
 `libc-thread-pointer` compiles only the private musl-shaped `%fs:0` identity

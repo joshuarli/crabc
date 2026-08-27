@@ -315,9 +315,11 @@ typed Rust read-only identity facade, not C process API support.
 `getgroups-reference` executes a pinned-musl x86 supplementary-group
 query/fill lifecycle. It pins unsigned 32-bit, align-4 `gid_t`,
 `getgroups=115`, null zero-count queries, musl/direct fill equivalence, and
-the conditional undersized-buffer `EINVAL` result. It is private evidence for
-one read-only record-owning slice only; it does not select C `getgroups`
-support or a general x86 facade.
+the conditional undersized-buffer `EINVAL` result. It admits only typed Rust
+`process::{getgroups_count, getgroups}`: the count is a sizing observation,
+not a reservation, so callers retry after an `EINVAL` count-to-fill race. It
+does not select C `getgroups`/`setgroups`, credential mutation or
+synchronization, or a broader process API.
 
 `process-session-reference` executes pinned-musl `getpgid`, `getpgrp`, and
 `getsid` observations. It is an oracle for the typed read-only process
@@ -609,9 +611,8 @@ metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 process regressions prove typed PID/identity/session observations, typed
 calling-process resource-limit query plus child-contained mutation and
 process-global umask exchange with restore safety, typed read-only process
-accounting, read-only
-supplementary-group query/fill, private interval-timer query plus contained
-control,
+accounting, typed supplementary-group query/fill, private interval-timer query
+plus contained control,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
 scheduling-priority mutation, typed read-only resource-usage observations,
 conflicting-lock `F_GETLK`
