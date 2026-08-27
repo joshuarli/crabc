@@ -61,6 +61,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   times-reference  verify pinned-musl x86 process-accounting ABI and behavior
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
   statat-reference  verify pinned-musl x86 private statat ABI and behavior reference
+  getcwd-reference  verify pinned-musl x86 private caller-buffer getcwd behavior reference
   system-reference  verify pinned-musl x86 uname/sysinfo ABI and behavior reference
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
@@ -77,8 +78,8 @@ an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset plus privately evidenced packed-epoll, read-only interval-timer query,
 timerfd, pselect, resource-limit, resource-usage, process-accounting, and
-supplementary-group and private statat path-metadata slices; none makes the
-record-owning family selectable.
+supplementary-group, private statat path-metadata, and caller-buffer-only
+getcwd slices; none makes the record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
@@ -121,6 +122,9 @@ promote the broader record-owning facade family.
 `statat-reference` proves only the x86 `newfstatat` record with CWD and
 `AT_SYMLINK_NOFOLLOW`; it does not select `AT_EMPTY_PATH`, general path APIs,
 filesystem mutation, or promote the broader record-owning facade family.
+`getcwd-reference` proves only the private x86 caller-buffer-only `getcwd`
+contract; it does not select allocation helpers, `chdir`/`fchdir`, filesystem
+mutation, or promote the broader record-owning facade family.
 `pselect-reference` proves only the x86 descriptor-bit-vector ABI and focused
 readiness/mask lifecycle; it does not promote the broader record-owning
 facade family.
@@ -406,6 +410,10 @@ run_statat_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_statat_reference.sh
 }
 
+run_getcwd_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_getcwd_reference.sh
+}
+
 run_system_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_system_reference.sh
 }
@@ -457,7 +465,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -681,6 +689,11 @@ case "$command" in
         ensure_image
         run_statat_reference
         ;;
+    getcwd-reference)
+        [ "$#" -eq 0 ] || fail "getcwd-reference takes no arguments"
+        ensure_image
+        run_getcwd_reference
+        ;;
     system-reference)
         [ "$#" -eq 0 ] || fail "system-reference takes no arguments"
         ensure_image
@@ -701,7 +714,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_getgroups --test x86_64_getitimer --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_statat --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_getgroups --test x86_64_getitimer --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_statat --test x86_64_getcwd --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)

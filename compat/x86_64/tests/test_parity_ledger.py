@@ -160,6 +160,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_getitimer_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn("compat/x86_64/x86_statat_reference_probe.c", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
+        self.assertIn("compat/x86_64/run_x86_getcwd_reference.sh", remaining["source_owners"])
+        self.assertIn("compat/x86_64/x86_getcwd_reference_probe.c", remaining["source_owners"])
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh epoll-reference",
@@ -205,8 +208,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh statat-reference",
         )
         self.assertEqual(remaining["native_evidence"][8]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][9]["command"],
+            "./scripts/dev-x86_64.sh getcwd-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][9]["state"], "required")
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
+        self.assertNotIn("filesystem.cwd", direct["capabilities"])
+        self.assertIn("filesystem.cwd", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
         self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
         self.assertNotIn("process.resource-limits", direct["capabilities"])

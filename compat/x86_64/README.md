@@ -50,6 +50,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh times-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh statat-reference
+./scripts/dev-x86_64.sh getcwd-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
 ./scripts/dev-x86_64.sh core
@@ -306,6 +307,15 @@ not complete the broader filesystem path-core capability.
 `CWD`, with only `AT_SYMLINK_NOFOLLOW`. It does not expose `AT_EMPTY_PATH`,
 general pathname APIs, filesystem mutation, or promote `filesystem.path-metadata`.
 
+`getcwd-reference` executes the strict private x86 caller-buffer-only
+`getcwd(2)` slice. It checks the direct syscall's initialized,
+NUL-terminated prefix and undersized-buffer `ERANGE` behavior, including a
+zero-length buffer. The pinned-musl C wrapper instead returns `EINVAL` for its
+zero-size input; the direct Rust facade retains the raw kernel result rather
+than emulating that wrapper policy. There is no allocation helper or
+process-CWD mutation. `getcwd_alloc`, `chdir`, and `fchdir` remain explicitly
+deferred, as do general pathname APIs and public support for `filesystem.cwd`.
+
 `system-reference` records the pinned-musl `uname` and `sysinfo` behavior used
 by bounded typed system name/status/load observations. It does not select
 `crabc-libc` or establish C system-information behavior.
@@ -356,7 +366,7 @@ establish pthread, TLS, or C ABI parity.
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`,
-`x86_64_sleep`, `x86_64_statat`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
+`x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
 `x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
 positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
@@ -387,7 +397,8 @@ regression proves x86 descriptor-bit-vector helpers, empty/readable pipe
 readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves a
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
-metadata slice, plus `fadvise64`/`readahead` behavior. The
+metadata slice, caller-buffer-only `getcwd` output, plus
+`fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, read-only
 supplementary-group query/fill, private read-only interval-timer queries,
 owned nonblocking pidfds, read-only `getpriority`, private read-only
@@ -399,7 +410,8 @@ explicitly admitted Rust subset only; it does not make broader pselect/select
 semantics, epoll signal-mask
 variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,
 signalfd, resource-limit mutation, C `struct rusage` or `struct tms` support, broader
-filesystem path-core behavior, global locking policy, wider mapping policy, other
+filesystem path-core behavior, CWD mutation or allocation-backed path helpers,
+global locking policy, wider mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.
 

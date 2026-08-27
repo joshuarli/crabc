@@ -1,11 +1,12 @@
 //! Bounded Linux/x86-64 process and record-lock observations.
 //!
-//! This module intentionally admits only scalar identity queries, the
-//! kernel's three-word real/effective/saved credential observations,
-//! supplementary-group query/fill protocol, pidfd creation, read-only
-//! resource-limit, resource-usage, and process-accounting observations,
-//! read-only scheduling-priority observations and bounds, and the read-only
-//! typed `fcntl(F_GETLK)` record-lock query. The larger process facade remains
+//! This module intentionally admits only scalar identity queries, a
+//! caller-buffer current-working-directory observation, the kernel's
+//! three-word real/effective/saved credential observations, supplementary-group
+//! query/fill protocol, pidfd creation, read-only resource-limit,
+//! resource-usage, and process-accounting observations, read-only
+//! scheduling-priority observations and bounds, and the read-only typed
+//! `fcntl(F_GETLK)` record-lock query. The larger process facade remains
 //! AArch64-only until each of its target-sized records and state transitions
 //! has an independent x86-64 contract.
 
@@ -378,6 +379,30 @@ pub struct GidTriple {
     pub effective: Gid,
     /// The saved-set group ID.
     pub saved: Gid,
+}
+
+/// Copies the calling process's current working directory into caller-owned
+/// storage through Linux's direct `getcwd` syscall.
+///
+/// The returned `Buffer::Output` contains exactly the initialized prefix. On
+/// success Linux includes the terminating NUL in that prefix, so a
+/// `MaybeUninit` result can be passed to
+/// [`core::ffi::CStr::from_bytes_with_nul`] without reading the untouched
+/// suffix. The borrow carried by the output keeps that initialized prefix
+/// tied to the caller's storage. An undersized buffer is reported as
+/// [`crate::Errno::RANGE`], including an empty buffer at this direct syscall
+/// boundary. This operation only observes the current working directory; it
+/// does not change it.
+#[inline]
+#[allow(private_interfaces)]
+pub fn getcwd<Buf: Buffer<u8>>(mut buffer: Buf) -> Result<Buf::Output> {
+    let (pointer, length) = buffer.parts_mut();
+    // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes.
+    // Linux initializes exactly the returned successful prefix, including the
+    // trailing NUL byte.
+    let initialized = unsafe { crabc_core::process::getcwd_raw(pointer, length)? };
+    // SAFETY: A successful getcwd initialized exactly the returned prefix.
+    unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
 /// A Linux nice value returned by the native `getpriority` facade.

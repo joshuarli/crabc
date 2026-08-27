@@ -42,8 +42,11 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter, exact `pollfd` record seam,
 # and privately evidenced packed `epoll_event` and pselect descriptor-bit-vector
-# seams which remain under the planned record-owning family, `fs_x86_64.rs` owns descriptor `fstat`, private CWD/statat path metadata, plus file-access advice
-# and readahead, `process_x86_64.rs` owns read-only identity/session and
+# seams which remain under the planned record-owning family. `fs_x86_64.rs`
+# owns descriptor `fstat`, private CWD/statat path metadata, plus file-access
+# advice and readahead. `process_x86_64.rs` owns only the strict
+# caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
+# remain deferred. It also owns read-only identity/session and
 # supplementary-group observations plus privately evidenced resource-limit/
 # resource-usage/process-accounting, getpriority/scheduler-priority, and
 # record-lock observations,
@@ -241,6 +244,21 @@ def is_authorized_x86_branch(relative: Path, line: str) -> bool:
     return relative in X86_ALLOCATOR_EVIDENCE_MIMALLOC_SOURCES
 
 
+def check_x86_getcwd_boundary(errors: list[str]) -> None:
+    """Keep the private x86 getcwd slice caller-buffer-only and read-only."""
+
+    process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
+    text = process_source.read_text(errors="replace")
+    if "pub fn getcwd<" not in text:
+        errors.append("crabc-rs/src/process_x86_64.rs: private x86 getcwd slice is missing")
+    for forbidden in ("getcwd_alloc", "pub fn chdir", "pub fn fchdir"):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: private x86 getcwd slice must defer "
+                f"{forbidden}"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     root_manifest = (ROOT / "Cargo.toml").read_text()
@@ -378,6 +396,7 @@ def main() -> int:
         "machine-readable/source documentation must name the extracted core module",
     )
     check_root_c_link_boundaries(errors)
+    check_x86_getcwd_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):
