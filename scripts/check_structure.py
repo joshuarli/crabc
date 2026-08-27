@@ -431,6 +431,39 @@ def check_x86_access_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
+    """Keep direct x86 status flags narrower than pathname or generic fcntl APIs."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub struct OFlags: u32",
+        "pub fn fcntl_getfl<",
+        "pub fn fcntl_setfl<",
+        "const ACCMODE = 0x0020_0003",
+        "const RWMODE = 0x0000_0003",
+        "const NONBLOCK = 0x0000_0800",
+        "const DIRECT = 0x0000_4000",
+        "const NOATIME = 0x0004_0000",
+    ):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 fcntl status-flag slice "
+                f"is missing {required}"
+            )
+
+    for forbidden in (
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+open(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+openat(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+fcntl(?:<|\s*\()",
+    ):
+        if re.search(forbidden, text):
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 fcntl status-flag slice "
+                "must defer pathname opening and generic fcntl"
+            )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
 
@@ -635,6 +668,7 @@ def main() -> int:
     check_x86_clock_nanosleep_boundary(errors)
     check_x86_setitimer_boundary(errors)
     check_x86_access_boundary(errors)
+    check_x86_fcntl_status_flags_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):

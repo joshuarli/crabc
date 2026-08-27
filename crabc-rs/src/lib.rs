@@ -36,7 +36,8 @@ pub mod collections;
 // (eventfd counters plus bounded poll/ppoll/pause, select/pselect, and packed
 // epoll readiness with temporary signal masks),
 // descriptor `fs::fstat`,
-// direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}`, plus private
+// direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}` and direct
+// `fs::{OFlags, fcntl_getfl, fcntl_setfl}` status flags, plus private
 // CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, direct caller-buffer and
 // alloc-gated `process::getcwd` observations, and
 // caller-buffer-only `fs::readlinkat_raw` slices,

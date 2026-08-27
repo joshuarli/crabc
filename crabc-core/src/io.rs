@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 I/O operations.
+//! Stateless Linux I/O operations.
 
 use crate::{RawFd, Result};
 use crate::syscall::{decode, decode_i32, syscall1, syscall3, syscall4, syscall5, syscall6, SYS_CLOSE, SYS_DUP, SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_PREAD64, SYS_PREADV, SYS_PREADV2, SYS_PWRITE64, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ, SYS_READV, SYS_SENDFILE, SYS_SYNC_FILE_RANGE, SYS_WRITE, SYS_WRITEV};
@@ -90,6 +90,9 @@ pub fn fcntl_setfd(fd: RawFd, flags: u32) -> Result<()> {
 }
 
 /// Reads the open-file-description status flags through `fcntl(F_GETFL)`.
+///
+/// The returned word belongs to the open file description, so duplicate file
+/// descriptors observe the same state.
 #[inline]
 pub fn fcntl_getfl(fd: RawFd) -> Result<u32> {
     // SAFETY: F_GETFL ignores its third argument; zero is the canonical
@@ -120,6 +123,9 @@ pub fn fcntl_add_seals(fd: RawFd, seals: u32) -> Result<()> {
 
 /// Replaces the open-file-description status flags through
 /// `fcntl(F_SETFL)`.
+///
+/// Linux accepts the request at the descriptor boundary and applies only the
+/// mutable status bits supported by the underlying open file description.
 #[inline]
 pub fn fcntl_setfl(fd: RawFd, flags: u32) -> Result<()> {
     // SAFETY: F_SETFL takes an immediate integer in the third syscall

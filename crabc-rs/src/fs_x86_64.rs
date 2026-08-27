@@ -3,7 +3,8 @@
 //! This module admits descriptor-based `fstat(2)`, a deliberately narrow
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
 //! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
-//! checks, file-access advice, file readahead,
+//! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
+//! mutation, file-access advice, file readahead,
 //! descriptor-based file-length mutation, file-position and synchronization
 //! operations, and direct anonymous memory-file creation with bounded sealing.
 //! The
@@ -42,6 +43,74 @@ bitflags! {
         const EXEC_OK = 0x1;
         /// Test only whether the path exists.
         const EXISTS = 0;
+    }
+}
+
+bitflags! {
+    /// Known Linux/x86-64 `O_*` values for [`fcntl_getfl`] and
+    /// [`fcntl_setfl`].
+    ///
+    /// This type is deliberately admitted only for direct open-file-
+    /// description status-flag observation and mutation. It is not an
+    /// admission of x86-64 `open(2)`, `openat(2)`, pathname resolution, or a
+    /// general C `fcntl` facade. Unknown bits are retained so callers can
+    /// faithfully observe and forward future kernel-defined status bits.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct OFlags: u32 {
+        /// `O_ACCMODE` on Linux/x86-64, including the `O_PATH` selection bit.
+        const ACCMODE = 0x0020_0003;
+        /// The read/write-only portion of [`Self::ACCMODE`].
+        ///
+        /// On x86-64, `O_PATH` is part of `O_ACCMODE` but is not a read/write
+        /// mode bit.
+        const RWMODE = 0x0000_0003;
+        /// `O_RDONLY`. This bit pattern is zero.
+        const RDONLY = 0;
+        /// `O_WRONLY`.
+        const WRONLY = 0x0000_0001;
+        /// `O_RDWR`.
+        const RDWR = 0x0000_0002;
+        /// `O_CREAT`.
+        const CREATE = 0x0000_0040;
+        /// `O_EXCL`.
+        const EXCL = 0x0000_0080;
+        /// `O_NOCTTY`.
+        const NOCTTY = 0x0000_0100;
+        /// `O_TRUNC`.
+        const TRUNC = 0x0000_0200;
+        /// `O_APPEND`.
+        const APPEND = 0x0000_0400;
+        /// `O_NONBLOCK`.
+        const NONBLOCK = 0x0000_0800;
+        /// `O_DSYNC`.
+        const DSYNC = 0x0000_1000;
+        /// `O_ASYNC`/`FASYNC`.
+        const ASYNC = 0x0000_2000;
+        /// `O_DIRECT`.
+        const DIRECT = 0x0000_4000;
+        /// `O_LARGEFILE`.
+        const LARGEFILE = 0x0000_8000;
+        /// `O_DIRECTORY`.
+        const DIRECTORY = 0x0001_0000;
+        /// `O_NOFOLLOW`.
+        const NOFOLLOW = 0x0002_0000;
+        /// `O_NOATIME`.
+        const NOATIME = 0x0004_0000;
+        /// `O_CLOEXEC`.
+        const CLOEXEC = 0x0008_0000;
+        /// `O_SYNC`.
+        const SYNC = 0x0010_1000;
+        /// `O_FSYNC`, an alias of [`Self::SYNC`].
+        const FSYNC = Self::SYNC.bits();
+        /// `O_RSYNC`, an alias of [`Self::SYNC`].
+        const RSYNC = Self::SYNC.bits();
+        /// `O_PATH`.
+        const PATH = 0x0020_0000;
+        /// `O_TMPFILE`.
+        const TMPFILE = 0x0041_0000;
+        /// Preserve future kernel-defined bits.
+        const _ = !0;
     }
 }
 
@@ -218,6 +287,30 @@ pub fn accessat<P: PathArg, Fd: AsFd>(
             flags.bits(),
         )
     })
+}
+
+/// Reads the open-file-description status flags through `fcntl(F_GETFL)`.
+///
+/// The returned [`OFlags`] includes the access mode and status flags reported
+/// by Linux. Unknown kernel bits are retained. These flags are shared by
+/// duplicate descriptors; per-descriptor close-on-exec state remains the
+/// separate [`crate::io::fcntl_getfd`] contract.
+#[inline]
+#[doc(alias = "F_GETFL")]
+pub fn fcntl_getfl<Fd: AsFd>(fd: Fd) -> Result<OFlags> {
+    crabc_core::io::fcntl_getfl(fd.as_fd().as_raw_fd()).map(OFlags::from_bits_retain)
+}
+
+/// Replaces the open-file-description status flags through `fcntl(F_SETFL)`.
+///
+/// Linux changes only status bits supported for the open file. Access,
+/// creation, and per-descriptor flags are not promised to change. The
+/// descriptor is borrowed and the operation affects all descriptors referring
+/// to the same open file description.
+#[inline]
+#[doc(alias = "F_SETFL")]
+pub fn fcntl_setfl<Fd: AsFd>(fd: Fd, flags: OFlags) -> Result<()> {
+    crabc_core::io::fcntl_setfl(fd.as_fd().as_raw_fd(), flags.bits())
 }
 
 /// The six POSIX filesystem access-pattern policies accepted by Linux

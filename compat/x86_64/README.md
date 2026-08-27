@@ -48,6 +48,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh process-session-reference
 ./scripts/dev-x86_64.sh pidfd-open-reference
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
+./scripts/dev-x86_64.sh fcntl-status-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh rr-interval-reference
 ./scripts/dev-x86_64.sh sched-affinity-reference
@@ -362,6 +363,13 @@ the `struct flock` record shape, unlocked queries, and a forked conflicting-lock
 observation. It establishes only the typed read-only Rust lock-query boundary,
 not lock mutation, general `fcntl`, or C process support.
 
+`fcntl-status-reference` executes pinned-musl and raw x86
+`fcntl(F_GETFL/F_SETFL)` calls. It pins `fcntl=72`, commands `3`/`4`, x86
+status values, shared open-file-description mutation through `dup`, immutable
+access/creation/per-descriptor bits, exact restoration, and direct `EBADF`.
+It establishes only typed Rust `fs::{OFlags, fcntl_getfl, fcntl_setfl}` status
+flags—not pathname opening, generic C `fcntl`, or errno-TLS support.
+
 `scheduler-priority-bounds-reference` executes a pinned-musl x86 probe for the
 `SCHED_OTHER`/`SCHED_FIFO`/`SCHED_RR` priority minima and maxima, raw syscall
 values, and invalid-policy behavior. It establishes only the typed Rust
@@ -617,7 +625,7 @@ selected `crabc-libc` artifact.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`,
-`x86_64_fcntl_getlk`, `x86_64_fs`, `x86_64_fs_advice`,
+`x86_64_fcntl_getlk`, `x86_64_fcntl_flags`, `x86_64_fs`, `x86_64_fs_advice`,
 `x86_64_file_position`, `x86_64_ftruncate`, `x86_64_fs_credentials`,
 `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
 `x86_64_memfd`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`,
@@ -636,6 +644,9 @@ positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
 sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
 proves `NONBLOCK`/`CLOEXEC`, counter accumulation and reset, semaphore reads,
 and Linux's reserved all-ones counter error through direct kernel seams. The
+status-flags regression proves that `F_GETFL`/`F_SETFL` state is shared across
+duplicates, preserves access/creation/per-descriptor bits, restores exactly,
+and returns `EBADF` for a closed descriptor. The
 futex regression proves borrowed-`AtomicU32` mismatch, relative-timeout,
 no-waiter wake-count, race-safe wait/wake exchange behavior, and the native
 `FUTEX_WAIT | FUTEX_CLOCK_REALTIME` `ENOSYS` boundary through the six-word

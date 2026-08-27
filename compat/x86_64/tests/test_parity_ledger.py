@@ -138,6 +138,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.cwd",
             "filesystem.path-metadata",
             "io.file-position",
+            "io.status-flags",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
             "process.scheduling-priority-mutation",
@@ -159,6 +160,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-core/src/io.rs", direct["source_owners"])
         for source_owner in (
             "crabc-rs/tests/x86_64_ftruncate.rs",
+            "crabc-rs/tests/x86_64_fcntl_flags.rs",
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
@@ -181,6 +183,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
+            "compat/x86_64/run_x86_fcntl_status_reference.sh",
+            "compat/x86_64/x86_fcntl_status_reference_probe.c",
             "compat/x86_64/run_x86_epoll_reference.sh",
             "compat/x86_64/x86_epoll_reference_probe.c",
             "compat/x86_64/run_x86_pselect_reference.sh",
@@ -249,6 +253,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh timerfd-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh getcwd-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh access-reference", direct_commands)
+        self.assertIn(
+            "./scripts/dev-x86_64.sh fcntl-status-reference", direct_commands
+        )
         self.assertIn("./scripts/dev-x86_64.sh clock-nanosleep-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rr-interval-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sched-affinity-reference", direct_commands)
@@ -543,6 +550,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct access/accessat: access=21")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct fcntl status flags: fcntl=72")
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
