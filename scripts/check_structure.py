@@ -61,8 +61,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
 # three record-independent task observations, borrowed-atomic futex wait/wake,
-# the direct read-only round-robin interval and CPU-affinity observation
-# queries, plus separately private bounded CPU-affinity mutation,
+# the direct read-only round-robin interval and bounded CPU-affinity
+# observation/mutation operations,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
 # direct clock-nanosleep seams, direct read-only interval-timer query, private
 # contained-control slice, and timerfd seams. No other facade
@@ -297,15 +297,14 @@ def check_x86_rr_interval_boundary(errors: list[str]) -> None:
 
 
 def check_x86_sched_affinity_boundary(errors: list[str]) -> None:
-    """Keep direct x86 affinity observation separate from private mutation."""
+    """Keep direct x86 affinity operations bounded."""
 
     thread_source = ROOT / "crabc-rs" / "src" / "thread_x86_64.rs"
     text = thread_source.read_text(errors="replace")
     for required in ("pub fn sched_getaffinity", "pub fn sched_setaffinity"):
         if required not in text:
             errors.append(
-                "crabc-rs/src/thread_x86_64.rs: direct affinity observation/private "
-                "mutation boundary is missing "
+                "crabc-rs/src/thread_x86_64.rs: direct affinity boundary is missing "
                 f"{required}"
             )
     for forbidden in (
@@ -318,8 +317,7 @@ def check_x86_sched_affinity_boundary(errors: list[str]) -> None:
     ):
         if forbidden in text:
             errors.append(
-                "crabc-rs/src/thread_x86_64.rs: direct affinity observation/private "
-                "mutation boundary must defer "
+                "crabc-rs/src/thread_x86_64.rs: direct affinity boundary must defer "
                 f"{forbidden}"
             )
 

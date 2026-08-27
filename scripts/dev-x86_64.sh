@@ -62,7 +62,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   scheduler-priority-bounds-reference  verify pinned-musl x86 scheduler-priority bounds
   rr-interval-reference  verify pinned-musl x86 read-only round-robin interval behavior
   sched-affinity-reference  verify pinned-musl x86 direct typed CPU-affinity observation
-  sched-affinity-set-reference  verify pinned-musl x86 controlled CPU-affinity mutation
+  sched-affinity-set-reference  verify pinned-musl x86 direct typed CPU-affinity mutation
   priority-reference  verify pinned-musl x86 getpriority ABI and behavior
   setpriority-reference  verify pinned-musl x86 contained scheduling-priority mutation
   rlimit-reference  verify pinned-musl x86 read-only resource-limit ABI and behavior
@@ -102,15 +102,16 @@ subset, including borrowed-atomic futex wait/wake and the complete typed
 anonymous memory-file creation plus bounded seal observation/mutation,
 calling-process `getrlimit`/`setrlimit`, typed supplementary-group query/fill,
 typed read-only `getrusage` observations, typed read-only `times` accounting,
-typed read-only interval-timer, round-robin interval, and CPU-affinity queries, and typed
+typed read-only interval-timer and round-robin interval, plus direct typed
+CPU-affinity observation/mutation, and typed
 process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus bounded typed clock-nanosleep with its relative-remainder and
 absolute-no-remainder modes, and privately evidenced packed-epoll, contained
 interval-timer control, timerfd, pselect,
-private statat path-metadata, caller-buffer-only getcwd,
-caller-buffer-only readlinkat, and private bounded CPU-affinity mutation;
+private statat path-metadata, caller-buffer-only getcwd, and
+caller-buffer-only readlinkat;
 none makes the record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
@@ -226,15 +227,15 @@ broader time policy.
 CPU-affinity observation: PID zero, explicit calling and live non-leader task
 IDs, raw dynamic-length/untouched-tail behavior, and musl's
 zero-success/zero-tail C wrapper. Its pinned-musl pthread worker is oracle
-harness machinery only; it excludes affinity mutation, scheduler policy, C or
+harness machinery only; this observation gate excludes scheduler policy, C or
 pthread facades, errno TLS, and the broader record-owning family.
-`sched-affinity-set-reference` proves only the private x86 explicit affinity
-mutation. Its parent probe reapplies the observed current mask, while its
-short-lived child narrows itself to one observed CPU and exits; together they
-record raw and musl syscall success, empty-mask `EINVAL`, missing-PID
-`ESRCH`, and a no-broaden postcondition without leaving the evidence task
-restricted. It does not select wider scheduler policy, pthread support, or
-promote the broader record-owning facade family.
+`sched-affinity-set-reference` proves the direct typed x86 explicit affinity
+mutation: PID zero and a live non-leader task ID, raw and musl success, current
+mask reapplication without broadening, and a contained worker singleton. It
+also records empty-mask `EINVAL` and missing-task `ESRCH`. Its pinned-musl
+pthread worker is oracle harness machinery only; wider scheduler policy, C or
+pthread facades, errno TLS, and the broader record-owning family remain
+excluded.
 `pselect-reference` proves only the x86 descriptor-bit-vector ABI and focused
 readiness/mask lifecycle; it does not promote the broader record-owning
 facade family.
