@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -120,6 +120,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_priority_reference.sh', source)
         self.assertIn('run_rlimit_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rlimit_reference.sh', source)
+        self.assertIn('run_setrlimit_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_setrlimit_reference.sh', source)
         self.assertIn('run_umask_reference()', source)
         self.assertIn('compat/x86_64/run_x86_umask_reference.sh', source)
         self.assertIn('run_rusage_reference()', source)
@@ -180,6 +182,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_pidfd_open', source)
         self.assertIn('--test x86_64_rand', source)
         self.assertIn('--test x86_64_rlimit', source)
+        self.assertIn('--test x86_64_setrlimit', source)
         self.assertIn('--test x86_64_umask', source)
         self.assertIn('--test x86_64_rusage', source)
         self.assertIn('--test x86_64_times', source)
@@ -748,6 +751,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         signal_runner = (
             ROOT / "compat" / "x86_64" / "run_libc_signal_foundation.sh"
         ).read_text(encoding="utf-8")
+        setrlimit_probe = (
+            ROOT / "compat" / "x86_64" / "x86_setrlimit_reference_probe.c"
+        ).read_text(encoding="utf-8")
+        setrlimit_runner = (
+            ROOT / "compat" / "x86_64" / "run_x86_setrlimit_reference.sh"
+        ).read_text(encoding="utf-8")
+        setrlimit_test = (
+            ROOT / "crabc-rs" / "tests" / "x86_64_setrlimit.rs"
+        ).read_text(encoding="utf-8")
         umask_probe = (
             ROOT / "compat" / "x86_64" / "x86_umask_reference_probe.c"
         ).read_text(encoding="utf-8")
@@ -775,6 +787,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("run_signal_header_abi.sh", signal_runner)
         self.assertIn("run_musl_oracle.sh", signal_runner)
         self.assertNotIn("-p crabc-libc", signal_runner)
+
+        self.assertIn("SYS_prlimit64 == 302", setrlimit_probe)
+        self.assertIn("run_in_child", setrlimit_probe)
+        self.assertIn("raw-set:musl-read:musl-restore:raw-read", setrlimit_probe)
+        self.assertIn("run_musl_oracle.sh", setrlimit_runner)
+        self.assertNotIn("-p crabc-libc", setrlimit_runner)
+        self.assertIn("RestoreRlimit", setrlimit_test)
+        self.assertIn("process::setrlimit", setrlimit_test)
+        self.assertIn("x86_64_setrlimit_child_mutates_and_restores", setrlimit_test)
+        self.assertIn("#[ignore", setrlimit_test)
+        self.assertIn('"--ignored"', setrlimit_test)
+        self.assertNotIn("CRABC_RS_X86_64_SETRLIMIT_CHILD", setrlimit_test)
 
         self.assertIn("SYS_umask == 95", umask_probe)
         self.assertIn("run_in_child", umask_probe)
@@ -1124,6 +1148,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_rand",
                     "--test",
                     "x86_64_rlimit",
+                    "--test",
+                    "x86_64_setrlimit",
                     "--test",
                     "x86_64_umask",
                     "--test",

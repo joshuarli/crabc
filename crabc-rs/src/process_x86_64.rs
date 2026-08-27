@@ -3,8 +3,9 @@
 //! This module intentionally admits only scalar identity queries, a
 //! caller-buffer current-working-directory observation, the kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
-//! query/fill protocol, pidfd creation, read-only resource-limit,
-//! resource-usage, and process-accounting observations, read-only
+//! query/fill protocol, pidfd creation, resource-limit observations plus a
+//! bounded calling-process resource-limit mutation, resource-usage, and
+//! process-accounting observations, read-only
 //! scheduling-priority observations and bounds, and the read-only typed
 //! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.
 //! The larger process facade remains AArch64-only until each of its
@@ -82,8 +83,8 @@ impl Resource {
 /// Current and maximum values for one Linux process resource.
 ///
 /// Linux's `RLIM_INFINITY` is represented as `None`; every finite kernel
-/// value is preserved exactly. This type is returned only by read-only
-/// queries in the staged x86-64 facade.
+/// value is preserved exactly. The staged x86-64 facade uses this type for
+/// queries and its bounded calling-process `setrlimit` operation only.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Rlimit {
     /// Soft/current limit. `None` means unlimited.
@@ -99,6 +100,19 @@ impl Rlimit {
             current: (limit.rlim_cur != u64::MAX).then_some(limit.rlim_cur),
             maximum: (limit.rlim_max != u64::MAX).then_some(limit.rlim_max),
         }
+    }
+
+    #[inline]
+    fn into_kernel(self) -> Result<crabc_core::process::KernelRlimit64> {
+        let current = self.current.unwrap_or(u64::MAX);
+        let maximum = self.maximum.unwrap_or(u64::MAX);
+        if current > maximum {
+            return Err(crate::Errno::INVAL);
+        }
+        Ok(crabc_core::process::KernelRlimit64 {
+            rlim_cur: current,
+            rlim_max: maximum,
+        })
     }
 }
 
@@ -722,6 +736,20 @@ pub fn umask(mask: Mode) -> Mode {
     Mode::from_bits_retain(crabc_core::process::umask_raw(mask.bits()))
 }
 
+/// Changes the calling process's current and maximum resource limits through
+/// Linux `prlimit64`.
+///
+/// `None` represents Linux `RLIM64_INFINITY`. An unlimited current limit with
+/// a finite maximum is rejected before the syscall because it cannot satisfy
+/// Linux's `current <= maximum` invariant. The operation changes process-wide
+/// state and therefore must be coordinated with other limit users. It neither
+/// changes another process nor selects a public C resource-limit API.
+#[inline]
+pub fn setrlimit(resource: Resource, limit: Rlimit) -> Result<()> {
+    let kernel_limit = limit.into_kernel()?;
+    crabc_core::process::setrlimit_raw(resource.as_raw(), &kernel_limit)
+}
+
 /// Reads a target process's resource limits through Linux `prlimit64` without
 /// using libc, a public C ABI, or TLS `errno`.
 ///
@@ -1082,6 +1110,13 @@ mod tests {
         });
         assert_eq!(finite.current, Some(7));
         assert_eq!(finite.maximum, Some(11));
+        assert_eq!(
+            finite.into_kernel(),
+            Ok(crabc_core::process::KernelRlimit64 {
+                rlim_cur: 7,
+                rlim_max: 11,
+            })
+        );
 
         let unlimited = Rlimit::from_kernel(crabc_core::process::KernelRlimit64 {
             rlim_cur: u64::MAX,
@@ -1089,6 +1124,29 @@ mod tests {
         });
         assert_eq!(unlimited.current, None);
         assert_eq!(unlimited.maximum, None);
+        assert_eq!(
+            unlimited.into_kernel(),
+            Ok(crabc_core::process::KernelRlimit64 {
+                rlim_cur: u64::MAX,
+                rlim_max: u64::MAX,
+            })
+        );
+        assert_eq!(
+            Rlimit {
+                current: Some(1),
+                maximum: Some(0),
+            }
+            .into_kernel(),
+            Err(crate::Errno::INVAL),
+        );
+        assert_eq!(
+            Rlimit {
+                current: None,
+                maximum: Some(7),
+            }
+            .into_kernel(),
+            Err(crate::Errno::INVAL),
+        );
 
         assert_eq!(Resource::Nofile.as_raw(), 7);
         assert_eq!(Resource::Rttime.as_raw(), 15);

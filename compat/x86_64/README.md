@@ -54,6 +54,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sched-affinity-set-reference
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
+./scripts/dev-x86_64.sh setrlimit-reference
 ./scripts/dev-x86_64.sh umask-reference
 ./scripts/dev-x86_64.sh rusage-reference
 ./scripts/dev-x86_64.sh times-reference
@@ -318,6 +319,12 @@ support or a general x86 facade.
 `getsid` observations. It is an oracle for the typed read-only process
 group/session slice, not process control support.
 
+`setrlimit-reference` executes a child-contained pinned-musl x86
+calling-process resource-limit exchange. It pins `prlimit64=302`, the
+16-byte `rlimit64` record, raw set plus musl read, musl restore plus raw read,
+and inverted-limit `EINVAL` for the typed Rust `process::setrlimit` API. It
+does not select target-process mutation or C process support.
+
 `umask-reference` executes a child-contained pinned-musl process-mask
 exchange. It pins x86 `umask=95`, unsigned 32-bit `mode_t`, and raw/musl
 old-mask exchange plus restoration for the typed Rust `process::umask` API.
@@ -378,8 +385,9 @@ lifecycle. It pins the 16-byte, align-8 `rlimit`/`rlimit64` record
 (current/maximum offsets zero and eight), `prlimit64=302`,
 `RLIM_INFINITY=UINT64_MAX`, the complete selectors zero through 15, repeated
 and explicit-self reads, and invalid-selector/missing-target errors. It is
-private evidence for one record-owning x86 vertical slice only; it does not
-select resource-limit mutation, C process APIs, or a general x86 facade.
+private evidence for one record-owning x86 vertical slice only; it does not by
+itself select resource-limit mutation, C process APIs, or a general x86
+facade.
 
 `rusage-reference` executes a pinned-musl x86 read-only resource-usage
 lifecycle. It pins the 16-byte, align-8 `timeval`, the 144-byte, align-8
@@ -523,7 +531,7 @@ selected `crabc-libc` artifact.
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
-`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`, `x86_64_umask`,
+`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`, `x86_64_setrlimit`, `x86_64_umask`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
 `x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_readlink`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
 `x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
@@ -565,18 +573,19 @@ typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
 metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, the
-process-global umask exchange with restore safety, read-only
+child-contained calling-process resource-limit mutation and process-global
+umask exchange with restore safety, read-only
 supplementary-group query/fill, private interval-timer query plus contained
 control,
 owned nonblocking pidfds, read-only `getpriority`, private read-only
-resource-limit queries, private read-only
+targeted resource-limit queries, private read-only
 resource-usage and process-accounting observations, conflicting-lock `F_GETLK`
 records, and scheduler-priority bounds; the system and thread regressions prove
 the named bounded kernel observations. It verifies the
 explicitly admitted Rust subset only; it does not make broader pselect/select
 semantics, epoll signal-mask
 variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,
-signalfd, resource-limit mutation, C `struct rusage` or `struct tms` support, broader
+signalfd, target resource-limit mutation, C `struct rusage` or `struct tms` support, broader
 filesystem path-core behavior, CWD mutation or allocation-backed path helpers,
 global locking policy, wider mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or

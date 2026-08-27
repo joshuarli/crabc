@@ -48,10 +48,11 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `process_x86_64.rs` owns only the strict
 # caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
 # remain deferred. It also owns read-only identity/session and
-# supplementary-group observations plus privately evidenced resource-limit/
-# resource-usage/process-accounting, getpriority/scheduler-priority, and
-# record-lock observations, and the explicitly proved process-global umask
-# exchange without admitting pathname creation,
+# supplementary-group observations plus one proved calling-process resource-
+# limit mutation, privately evidenced targeted resource-limit/resource-usage/
+# process-accounting, getpriority/scheduler-priority, and record-lock
+# observations, and the explicitly proved process-global umask exchange
+# without admitting pathname creation,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,

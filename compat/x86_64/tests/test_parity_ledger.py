@@ -96,6 +96,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.identity",
             "process.session-observation",
             "process.pidfd-open",
+            "process.resource-limit-mutation",
             "process.umask",
             "thread.futex-basic",
             "thread.identity",
@@ -129,6 +130,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
+            "crabc-rs/tests/x86_64_setrlimit.rs",
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
@@ -136,6 +138,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_file_position_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
             "compat/x86_64/x86_thread_credentials_reference_probe.c",
+            "compat/x86_64/run_x86_setrlimit_reference.sh",
+            "compat/x86_64/x86_setrlimit_reference_probe.c",
             "compat/x86_64/run_x86_umask_reference.sh",
             "compat/x86_64/x86_umask_reference_probe.c",
         ):
@@ -151,6 +155,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh thread-credentials-reference",
             direct_commands,
         )
+        self.assertIn("./scripts/dev-x86_64.sh setrlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh umask-reference", direct_commands)
         for capability in (
             "io.readiness",
@@ -371,6 +376,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
         self.assertNotIn("process.resource-limits", direct["capabilities"])
         self.assertIn("process.resource-limits", remaining["capabilities"])
+        self.assertNotIn("process.resource-limit-mutation", remaining["capabilities"])
         self.assertNotIn("process.umask", remaining["capabilities"])
         self.assertIn("process.resource-limits-targeted", remaining["capabilities"])
         self.assertNotIn("process.resource-usage", direct["capabilities"])
