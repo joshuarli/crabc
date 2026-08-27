@@ -43,9 +43,10 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `event_x86_64.rs` owns the scalar event-counter, exact `pollfd` record seam,
 # direct select/pselect descriptor-bit-vector seam, and packed `epoll_event`
 # readiness with temporary signal masks. `fs_x86_64.rs`
-# owns descriptor `fstat`, private CWD/statat path metadata,
-# caller-buffer-only readlinkat, plus file-access advice and readahead, and
-# direct bounded anonymous memory-file/seal operations.
+# owns descriptor `fstat`, direct access/accessat permission observation,
+# private CWD/statat path metadata, caller-buffer-only readlinkat, plus
+# file-access advice and readahead, and direct bounded anonymous memory-file/
+# seal operations.
 # `process_x86_64.rs` owns caller-buffer and alloc-gated `getcwd`
 # observations; CWD mutation remains deferred. It also owns read-only identity/session and
 # supplementary-group query/fill plus proved calling-task filesystem-credential
@@ -392,6 +393,44 @@ def check_x86_setitimer_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_access_boundary(errors: list[str]) -> None:
+    """Keep the admitted x86 access slice flag-specific and read-only."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub struct Access:",
+        "pub struct AccessAtFlags:",
+        "pub fn access<",
+        "pub fn accessat<",
+        "const EACCESS",
+        "const SYMLINK_NOFOLLOW",
+    ):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 access slice is missing "
+                f"{required}"
+            )
+
+    stat_flags = re.search(
+        r"pub struct AtFlags: u32 \{(?P<body>.*?)^    \}", text, re.MULTILINE | re.DOTALL
+    )
+    if stat_flags is None:
+        errors.append("crabc-rs/src/fs_x86_64.rs: private x86 statat flags are missing")
+    elif "const EACCESS" in stat_flags.group("body"):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: private x86 statat flags must not inherit "
+            "the access-only EACCESS bit"
+        )
+
+    for forbidden in ("pub fn euidaccess", "pub fn eaccess"):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 access slice must defer "
+                f"{forbidden}"
+            )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
 
@@ -595,6 +634,7 @@ def main() -> int:
     check_x86_futex_boundary(errors)
     check_x86_clock_nanosleep_boundary(errors)
     check_x86_setitimer_boundary(errors)
+    check_x86_access_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):

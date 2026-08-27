@@ -460,6 +460,20 @@ general stat/path APIs, or filesystem mutation. It is the narrow
 `st_dev`/`st_ino` identity foundation for the separately admitted logical
 current-directory name.
 
+`access-reference` completes the record-free direct
+`fs::{access, accessat}` permission-observation slice. It pins x86
+`access=21`, legacy `faccessat=269`, and flags-bearing `faccessat2=439`; Rust
+uses the legacy `faccessat(AT_FDCWD, path, mode)` seam for `access`. Its closed
+`Access` modes and distinct `AccessAtFlags` prevent access-specific
+`AT_EACCESS`/`AT_SYMLINK_NOFOLLOW` policy from widening the private `statat`
+flag type. Raw and pinned-musl calls agree on ordinary and descriptor-relative
+checks, missing-path `ENOENT`, dangling-final-symlink follow versus nofollow,
+and invalid mode/flag `EINVAL`. A child-contained differing-real/effective-ID
+fixture proves the effective-credential form. The fixed-stack Rust path input
+rejects interior NULs and 256-byte inputs before the kernel. This does not
+admit pathname mutation, allocation-backed path helpers, C APIs/errno TLS, or
+the broader `filesystem.path-core` family.
+
 `getcwd-reference` completes x86 `filesystem.cwd` and the contained
 `filesystem.path-metadata` logical-name slice. Direct syscall 79 and pinned
 musl agree on the exact initialized NUL-terminated caller-buffer prefix and
@@ -612,7 +626,7 @@ selected `crabc-libc` artifact.
 `x86_64_rand`, `x86_64_rlimit`, `x86_64_rlimit_targeted`,
 `x86_64_setrlimit`, `x86_64_umask`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sleep`,
-`x86_64_clock_nanosleep`, `x86_64_statat`, `x86_64_getcwd`,
+`x86_64_clock_nanosleep`, `x86_64_statat`, `x86_64_access`, `x86_64_getcwd`,
 `x86_64_readlink`, `x86_64_sched_rr_interval`, `x86_64_sched_affinity`,
 `x86_64_sched_setaffinity`, `x86_64_system`, `x86_64_thread`,
 `x86_64_thread_credentials`, `x86_64_time`, `x86_64_timerfd`, and
@@ -657,7 +671,8 @@ acceptance, periodic-setting inspection, epoll readiness, exact expiration reads
 invalid record/flag/descriptor handling. The filesystem
 regression proves a
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
-metadata slice, caller-buffer and alloc-gated `getcwd` plus caller-buffer-only
+metadata slice, direct `access`/`accessat` real/effective-credential
+observations, caller-buffer and alloc-gated `getcwd` plus caller-buffer-only
 `readlinkat` output, plus
 `fadvise64`/`readahead` behavior and direct bounded anonymous memory-file
 creation plus seal observation/mutation. The

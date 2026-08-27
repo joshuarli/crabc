@@ -2,19 +2,20 @@
 //!
 //! This module admits descriptor-based `fstat(2)`, a deliberately narrow
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
-//! `readlinkat(2)` target reads, file-access advice, file readahead,
+//! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
+//! checks, file-access advice, file readahead,
 //! descriptor-based file-length mutation, file-position and synchronization
 //! operations, and direct anonymous memory-file creation with bounded sealing.
 //! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
-//! has a distinct 144-byte layout. The private path slice within this module
-//! admits only `CWD`
-//! and `AT_SYMLINK_NOFOLLOW` for metadata, plus the direct caller-buffer
-//! readlink target boundary; `AT_EMPTY_PATH`, a general path module, `statx`,
-//! filesystem statistics, allocation-backed path helpers, and mutating
-//! pathname operations remain outside this staged target boundary until they
-//! have their own x86-64 evidence.
+//! has a distinct 144-byte layout. The private metadata path slice admits only
+//! `CWD` and `AT_SYMLINK_NOFOLLOW`, while the direct permission-observation
+//! slice has its own closed access mode and flag types. The caller-buffer
+//! readlink target boundary remains private. `AT_EMPTY_PATH`, a general path
+//! module, `statx`, filesystem statistics, allocation-backed path helpers,
+//! and mutating pathname operations remain outside this staged target boundary
+//! until they have their own x86-64 evidence.
 
 use bitflags::bitflags;
 use crate::buffer::Buffer;
@@ -24,6 +25,26 @@ use core::num::NonZeroU64;
 
 use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
+bitflags! {
+    /// Permission checks accepted by [`access`] and [`accessat`].
+    ///
+    /// This closed set mirrors Linux's `R_OK`, `W_OK`, `X_OK`, and `F_OK`
+    /// vocabulary. Unknown bits are rejected before a syscall;
+    /// [`Access::EXISTS`] deliberately has the zero value used by `F_OK`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct Access: u32 {
+        /// Test read permission.
+        const READ_OK = 0x4;
+        /// Test write permission.
+        const WRITE_OK = 0x2;
+        /// Test execute/search permission.
+        const EXEC_OK = 0x1;
+        /// Test only whether the path exists.
+        const EXISTS = 0;
+    }
+}
+
 /// The largest byte pathname accepted by the fixed-stack [`PathArg`] boundary.
 ///
 /// One byte is reserved for the terminating NUL. This fixed-stack x86-64
@@ -31,8 +52,8 @@ use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 /// [`Errno::NAMETOOLONG`] before a syscall instead.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
-/// A pathname or memory-file name input accepted by [`statat`], [`stat`],
-/// [`readlinkat_raw`], and [`memfd_create`].
+/// A pathname or memory-file name input accepted by [`access`], [`accessat`],
+/// [`statat`], [`stat`], [`readlinkat_raw`], and [`memfd_create`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
 /// buffer. The callback is invoked while that C string remains live, so the
@@ -115,9 +136,8 @@ impl PathArg for &str {
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
-/// accepted only as the directory argument to [`statat`] and
-/// [`readlinkat_raw`] in this private x86-64 path slice and can never become
-/// an owned descriptor.
+/// accepted only as the directory argument to [`accessat`], [`statat`], and
+/// [`readlinkat_raw`], and can never become an owned descriptor.
 pub const CWD: BorrowedFd<'static> =
     // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
     // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
@@ -135,6 +155,69 @@ bitflags! {
         /// `AT_SYMLINK_NOFOLLOW`.
         const SYMLINK_NOFOLLOW = 0x0000_0100;
     }
+}
+
+bitflags! {
+    /// Flags accepted by [`accessat`].
+    ///
+    /// This operation-specific type is intentionally distinct from
+    /// [`AtFlags`], whose closed vocabulary belongs to the private `statat`
+    /// metadata boundary. Linux reuses these flag bits across unrelated
+    /// `*at` syscalls; keeping the types separate prevents an access flag from
+    /// silently becoming a valid metadata flag. Unknown bits are rejected
+    /// before entering the kernel.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct AccessAtFlags: u32 {
+        /// Check using effective rather than real credentials.
+        const EACCESS = 0x0000_0200;
+        /// Check the final symbolic link itself rather than its target.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+/// Tests a pathname using Linux's standard `access()` behavior.
+///
+/// The pathname is resolved relative to the process current working
+/// directory and the permission check uses the real UID and GID. This direct
+/// x86-64 facade reaches the shared `faccessat(AT_FDCWD, path, mode)` seam;
+/// it does not consult libc or thread-local `errno`. Unknown [`Access`] bits
+/// are rejected before the pathname is converted or the syscall is issued.
+#[inline]
+pub fn access<P: PathArg>(path: P, access: Access) -> Result<()> {
+    let access = Access::from_bits(access.bits()).ok_or(Errno::INVAL)?;
+    path.into_with_c_str(|path| crabc_core::fs::access(path, access.bits()))
+}
+
+/// Tests a pathname relative to `dirfd` using Linux's `faccessat` and
+/// `faccessat2` contracts.
+///
+/// Empty [`AccessAtFlags`] uses the three-argument `faccessat` syscall.
+/// Either supported nonempty flag uses direct `faccessat2`, preserving its
+/// kernel availability and error result without an emulated fallback. The
+/// descriptor is borrowed only for the syscall, and [`PathArg`] keeps any
+/// fixed-stack pathname representation live until Linux has consumed it.
+/// Unknown access modes and flags are rejected before that boundary.
+#[inline]
+#[doc(alias = "faccessat")]
+#[doc(alias = "faccessat2")]
+pub fn accessat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    access: Access,
+    flags: AccessAtFlags,
+) -> Result<()> {
+    let access = Access::from_bits(access.bits()).ok_or(Errno::INVAL)?;
+    let flags = AccessAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::accessat(
+            dirfd.as_raw_fd(),
+            path,
+            access.bits(),
+            flags.bits(),
+        )
+    })
 }
 
 /// The six POSIX filesystem access-pattern policies accepted by Linux

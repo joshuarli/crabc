@@ -244,15 +244,14 @@ pub fn fallocate(fd: RawFd, mode: u32, offset: i64, length: i64) -> Result<()> {
     .map(|_| ())
 }
 
-/// Tests a pathname using Linux's standard `access()` behavior.
+/// Tests a pathname using Linux's standard `access(2)` behavior.
 ///
-/// AArch64 has no separate `access` syscall, so musl's public wrapper
-/// selects `faccessat(AT_FDCWD, path, mode, 0)`. The Linux/AArch64 kernel
-/// syscall itself has only the three arguments `(dirfd, path, mode)`; the
-/// public wrapper's trailing zero is not a kernel flags argument. The
-/// kernel resolves `path` from the process current working directory and
-/// checks permissions using the real (not effective) UID and GID. This
-/// seam does not expose the distinct `faccessat2` flags contract.
+/// Both supported Linux architectures expose the legacy three-argument
+/// `faccessat(AT_FDCWD, path, mode)` kernel boundary for an ordinary access
+/// check. The kernel resolves `path` from the process current working
+/// directory and checks permissions using the real (not effective) UID and
+/// GID. This seam does not expose the distinct `faccessat2` flags contract;
+/// use [`accessat`] for its explicitly supplied flag word.
 #[inline]
 pub fn access(path: &CStr, mode: u32) -> Result<()> {
     // SAFETY: `CStr` guarantees a readable NUL-terminated pathname. The
@@ -271,12 +270,12 @@ pub fn access(path: &CStr, mode: u32) -> Result<()> {
 /// Tests a pathname relative to `dirfd` using Linux's flags-bearing
 /// `faccessat2` contract when `flags` is nonzero.
 ///
-/// An empty flag word uses AArch64's three-argument `faccessat` syscall.
-/// A nonempty flag word uses `faccessat2` directly and therefore preserves
-/// `NOSYS` on kernels predating that syscall; this seam performs no
-/// fallback, credential emulation, or availability caching. The safe
-/// facade restricts the flag word to `AT_EACCESS` and
-/// `AT_SYMLINK_NOFOLLOW`.
+/// An empty flag word uses the legacy three-argument `faccessat` syscall on
+/// either supported architecture. A nonempty flag word uses `faccessat2`
+/// directly and therefore preserves `NOSYS` on kernels predating that
+/// syscall; this seam performs no fallback, credential emulation, or
+/// availability caching. The safe facade restricts the flag word to
+/// `AT_EACCESS` and `AT_SYMLINK_NOFOLLOW`.
 #[inline]
 pub fn accessat(dirfd: RawFd, path: &CStr, mode: u32, flags: u32) -> Result<()> {
     // SAFETY: `CStr` guarantees a readable NUL-terminated pathname. The

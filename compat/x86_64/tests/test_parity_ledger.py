@@ -248,6 +248,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh setitimer-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh timerfd-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh getcwd-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh access-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh clock-nanosleep-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rr-interval-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sched-affinity-reference", direct_commands)
@@ -422,6 +423,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
+        for capability in (
+            "filesystem.access-check",
+            "filesystem.directory-relative-access-check",
+            "filesystem.effective-access",
+        ):
+            self.assertIn(capability, direct["capabilities"])
+            self.assertNotIn(capability, remaining["capabilities"])
         self.assertIn("filesystem.cwd", direct["capabilities"])
         self.assertNotIn("filesystem.cwd", remaining["capabilities"])
         self.assertIn("filesystem.path-metadata", direct["capabilities"])
@@ -529,6 +537,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct getcwd=79")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct access/accessat: access=21")
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
