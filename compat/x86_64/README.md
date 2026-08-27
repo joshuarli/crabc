@@ -310,10 +310,10 @@ readiness slice, not C polling support or `crabc-libc` selection.
 `epoll-reference` executes a pinned-musl x86 lifecycle fixture and pins the
 packed 12-byte, align-1 `epoll_event` layout (event bits at offset zero and the
 64-bit data union at offset four), the `epoll_create1`/`epoll_ctl`/
-`epoll_pwait` syscall numbers, and create/add/modify/delete readiness behavior.
-It is private evidence for one record-owning x86 vertical slice only; it does
-not make the broader epoll family, C polling support, or a general x86 facade
-selectable.
+`epoll_pwait` syscall numbers, future-bit forwarding for Linux validation, and
+create/add/modify/delete readiness behavior. It admits only the direct typed
+Rust epoll lifecycle; masked epoll waits, broader `io.readiness`, C polling
+support, and a general x86 facade remain excluded.
 
 `process-identity-reference` executes pinned-musl scalar and
 real/effective/saved UID/GID observations. It is an oracle for the bounded
@@ -610,10 +610,12 @@ page-residency output/rounding, including a sparse 4 GiB file offset; it permits
 borrowed-record empty/readable/hangup pipe behavior, temporary `ppoll`
 signal-mask restoration, signal-only `pause` completion, requested-flag
 retention, and timeout-range rejection. The packed epoll regression proves the
-x86 12-byte event record, close-on-exec creation, legacy-size validation, empty
-and pipe readiness, caller token preservation, modification, deletion, and
-initialized-prefix handling. It remains a privately evidenced record-owning
-slice. The timerfd regression proves the x86 32-byte timer record,
+x86 12-byte event record, close-on-exec creation, legacy-size validation,
+future-bit forwarding for Linux validation, empty and pipe readiness, caller
+token preservation, modification, deletion, and initialized-prefix handling.
+It is direct typed `io.readiness-epoll` evidence only; masked epoll waits and
+broader `io.readiness` remain excluded. The timerfd regression proves the x86
+32-byte timer record,
 close-on-exec/nonblocking creation, relative and absolute arming, epoll
 readiness, exact expiration reads, disarming, and invalid record/flag/descriptor
 handling. It remains a privately evidenced record-owning slice. The pselect
@@ -636,8 +638,8 @@ records, scheduler-priority bounds, and direct typed round-robin interval
 observations; the system and thread regressions prove the named bounded kernel
 observations. It verifies the
 explicitly admitted Rust subset only; it does not make broader pselect/select
-semantics, epoll signal-mask
-variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,
+semantics, epoll signal-mask variants or broader `io.readiness`, timerfd
+clock/policy variants beyond the named descriptor slice,
 signalfd, target resource-limit mutation, C `struct rusage` or `struct tms` support, broader
 filesystem path-core behavior, CWD mutation or allocation-backed path helpers,
 global locking policy, wider mapping policy, other

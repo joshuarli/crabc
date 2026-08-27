@@ -33,7 +33,8 @@ pub mod buffer;
 pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
-// (eventfd counters plus bounded poll/ppoll/pause), descriptor `fs::fstat`,
+// (eventfd counters plus bounded poll/ppoll/pause and packed epoll lifecycle),
+// descriptor `fs::fstat`,
 // direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}`, plus the
 // private CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, strict
 // caller-buffer-only `process::getcwd`, and caller-buffer-only

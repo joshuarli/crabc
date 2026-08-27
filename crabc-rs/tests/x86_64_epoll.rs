@@ -14,8 +14,12 @@ fn x86_64_epoll_event_uses_the_packed_kernel_layout_and_exact_tokens() {
     );
     assert_eq!(event::epoll::EventFlags::IN.bits(), 0x0000_0001);
     assert_eq!(event::epoll::EventFlags::NVAL.bits(), 0x0000_0020);
-    assert!(event::epoll::CreateFlags::from_bits(1).is_none());
-    assert!(event::epoll::EventFlags::from_bits(1 << 11).is_none());
+    let future_create = event::epoll::CreateFlags::from_bits(0x0000_0800)
+        .expect("unknown creation bits must remain representable for Linux");
+    assert_eq!(future_create.bits(), 0x0000_0800);
+    let future_event = event::epoll::EventFlags::from_bits(1 << 11)
+        .expect("unknown event bits must remain representable for Linux");
+    assert_eq!(future_event.bits(), 1 << 11);
 
     let token = 0xfeed_face_dead_beef;
     let data = event::epoll::EventData::new_u64(token);
@@ -32,6 +36,15 @@ fn x86_64_epoll_create_and_legacy_constructor_honor_their_contracts() {
         event::epoll::create_legacy(0),
         Err(Errno::INVAL)
     ));
+    let future_create = event::epoll::CreateFlags::from_bits(0x0000_0800)
+        .expect("unknown creation bits must remain representable for Linux");
+    assert!(
+        matches!(
+            event::epoll::create(future_create),
+            Err(Errno::INVAL)
+        ),
+        "unknown creation bits must reach Linux unchanged",
+    );
 
     let cloexec = event::epoll::create(event::epoll::CreateFlags::CLOEXEC)
         .expect("create close-on-exec epoll descriptor");
@@ -63,13 +76,21 @@ fn x86_64_epoll_pipe_lifecycle_preserves_flags_and_tokens() {
     let epoll = event::epoll::create(event::epoll::CreateFlags::empty())
         .expect("create epoll descriptor");
     let first = 0x1234_5678_9abc_def0;
+    let future_event = event::epoll::EventFlags::from_bits(0x0000_0800)
+        .expect("unknown event bits must remain representable for Linux");
+    let first_flags = event::epoll::EventFlags::IN | future_event;
+    assert_eq!(
+        event::epoll::Event::new(first_flags, event::epoll::EventData::new_u64(first)).flags(),
+        first_flags,
+        "the packed event record must retain future bits until the syscall",
+    );
     event::epoll::add(
         &epoll,
         &reader,
         event::epoll::EventData::new_u64(first),
-        event::epoll::EventFlags::IN,
+        first_flags,
     )
-    .expect("register pipe reader");
+    .expect("forward unknown event bits through epoll registration");
 
     let timeout = Timespec { tv_sec: 0, tv_nsec: 0 };
     let mut empty = [MaybeUninit::uninit(); 1];

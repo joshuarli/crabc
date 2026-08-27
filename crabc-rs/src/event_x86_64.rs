@@ -137,17 +137,19 @@ pub mod epoll {
     use super::*;
 
     bitflags! {
-        /// Closed flags accepted by Linux `epoll_create1`.
+        /// Flags accepted by Linux `epoll_create1`.
         #[repr(transparent)]
         #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
         pub struct CreateFlags: u32 {
             /// `EPOLL_CLOEXEC`.
             const CLOEXEC = 0x0008_0000;
+            /// Preserve future Linux-defined bits for kernel validation.
+            const _ = !0;
         }
     }
 
     bitflags! {
-        /// Closed readiness and behavior flags accepted by Linux epoll.
+        /// Readiness and behavior flags accepted by Linux epoll.
         #[repr(transparent)]
         #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
         pub struct EventFlags: u32 {
@@ -183,6 +185,9 @@ pub mod epoll {
             const WAKEUP = 0x2000_0000;
             /// `EPOLLET`.
             const ET = 0x8000_0000;
+            /// Preserve future Linux-defined bits reported by or forwarded to
+            /// the kernel.
+            const _ = !0;
         }
     }
 

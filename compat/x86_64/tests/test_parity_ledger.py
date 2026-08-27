@@ -119,6 +119,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "thread.scheduler-rr-interval",
             "thread.cpu-affinity-observation",
             "thread.cpu-affinity-mutation",
+            "io.readiness-epoll",
             "system.load-average",
             "system.name-observation",
             "system.identity-info",
@@ -153,6 +154,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-core/src/io.rs", direct["source_owners"])
         for source_owner in (
             "crabc-rs/tests/x86_64_ftruncate.rs",
+            "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
             "crabc-rs/tests/x86_64_memfd.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
@@ -169,6 +171,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
+            "compat/x86_64/run_x86_epoll_reference.sh",
+            "compat/x86_64/x86_epoll_reference_probe.c",
             "compat/x86_64/run_x86_memfd_reference.sh",
             "compat/x86_64/x86_memfd_reference_probe.c",
             "compat/x86_64/run_x86_file_position_reference.sh",
@@ -227,6 +231,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh rr-interval-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sched-affinity-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sched-affinity-set-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh epoll-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh setpriority-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rusage-reference", direct_commands)
@@ -240,7 +245,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("process.supplementary-groups", remaining["capabilities"])
         for capability in (
             "io.readiness",
-            "io.readiness-epoll",
             "memory.vm",
             "time.wall-clock",
             "time.clock-query",
@@ -248,11 +252,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertNotIn(capability, direct["capabilities"])
             self.assertIn(capability, remaining["capabilities"])
-        self.assertIn(
+        self.assertNotIn(
             "crabc-rs/tests/x86_64_epoll.rs", remaining["source_owners"]
         )
-        self.assertIn(
+        self.assertNotIn(
             "compat/x86_64/run_x86_epoll_reference.sh", remaining["source_owners"]
+        )
+        self.assertNotIn(
+            "compat/x86_64/x86_epoll_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn(
             "crabc-rs/tests/x86_64_timerfd.rs", remaining["source_owners"]
@@ -346,41 +353,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("compat/x86_64/x86_sched_setaffinity_reference_probe.c", remaining["source_owners"])
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
-            "./scripts/dev-x86_64.sh epoll-reference",
-        )
-        self.assertEqual(remaining["native_evidence"][0]["state"], "required")
-        self.assertEqual(
-            remaining["native_evidence"][1]["command"],
             "./scripts/dev-x86_64.sh timerfd-reference",
         )
+        self.assertEqual(remaining["native_evidence"][0]["state"], "required")
         self.assertEqual(remaining["native_evidence"][1]["state"], "required")
         self.assertEqual(
-            remaining["native_evidence"][2]["command"],
+            remaining["native_evidence"][1]["command"],
             "./scripts/dev-x86_64.sh pselect-reference",
         )
         self.assertEqual(remaining["native_evidence"][2]["state"], "required")
         self.assertEqual(
-            remaining["native_evidence"][3]["command"],
+            remaining["native_evidence"][2]["command"],
             "./scripts/dev-x86_64.sh rlimit-targeted-private",
         )
         self.assertEqual(
-            remaining["native_evidence"][4]["command"],
+            remaining["native_evidence"][3]["command"],
             "./scripts/dev-x86_64.sh setitimer-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][5]["command"],
+            remaining["native_evidence"][4]["command"],
             "./scripts/dev-x86_64.sh statat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][6]["command"],
+            remaining["native_evidence"][5]["command"],
             "./scripts/dev-x86_64.sh getcwd-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][7]["command"],
+            remaining["native_evidence"][6]["command"],
             "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][8]["command"],
+            remaining["native_evidence"][7]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
@@ -394,6 +397,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("thread.cpu-affinity-observation", remaining["capabilities"])
         self.assertIn("thread.cpu-affinity-mutation", direct["capabilities"])
         self.assertNotIn("thread.cpu-affinity-mutation", remaining["capabilities"])
+        self.assertIn("io.readiness-epoll", direct["capabilities"])
+        self.assertNotIn("io.readiness-epoll", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
         self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
         self.assertNotIn("process.scheduling-priority-mutation", remaining["capabilities"])
@@ -446,6 +451,12 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct epoll lifecycle")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
         self.assertFalse(
             any(
                 prerequisite.startswith("Private CPU-affinity observation")
@@ -455,6 +466,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertFalse(
             any(
                 prerequisite.startswith("Private CPU-affinity mutation")
+                for prerequisite in remaining["x86_abi_prerequisites"]
+            )
+        )
+        self.assertFalse(
+            any(
+                prerequisite.startswith("Private epoll slice")
                 for prerequisite in remaining["x86_abi_prerequisites"]
             )
         )

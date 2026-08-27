@@ -83,10 +83,14 @@ int main(void)
 
     if (pipe(pipe_fds) != 0)
         return 14;
-    interest.events = EPOLLIN;
+    /* Linux accepts unassigned event-mask bits; retain them for the kernel. */
+    interest.events = EPOLLIN | UINT32_C(0x00000800);
     interest.data.u64 = added_data;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, pipe_fds[0], &interest) != 0)
         return 15;
+    if (syscall(SYS_epoll_ctl, epoll_fd, EPOLL_CTL_MOD, pipe_fds[0],
+                &interest) != 0)
+        return 31;
     if (epoll_pwait(epoll_fd, &observed, 1, 0, NULL) != 0)
         return 16;
 
@@ -136,6 +140,6 @@ int main(void)
         close(epoll_fd) != 0)
         return 30;
 
-    puts("layout=size12 align1 offsets=0,4 syscalls=291,233,281 cloexec=enabled empty=0 add=readable data=u64-preserved modify=updated delete=removed errors=EINVAL,EBADF,ENOENT");
+    puts("layout=size12 align1 offsets=0,4 syscalls=291,233,281 cloexec=enabled future-event=musl+raw-accepted empty=0 add=readable data=u64-preserved modify=updated delete=removed errors=EINVAL,EBADF,ENOENT");
     return 0;
 }

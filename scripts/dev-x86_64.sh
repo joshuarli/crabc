@@ -53,7 +53,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   pselect-reference  verify pinned-musl x86 pselect ABI and behavior
   poll-reference  verify pinned-musl x86 poll ABI and behavior reference
   ppoll-reference  verify pinned-musl x86 ppoll/pause signal-mask behavior
-  epoll-reference  verify pinned-musl x86 packed epoll ABI and behavior
+  epoll-reference  verify pinned-musl x86 direct typed epoll ABI and behavior
   process-identity-reference  verify pinned-musl x86 process-identity behavior
   getgroups-reference  verify pinned-musl x86 supplementary-group ABI and behavior
   process-session-reference  verify pinned-musl x86 process group/session behavior
@@ -108,8 +108,8 @@ process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus bounded typed clock-nanosleep with its relative-remainder and
-absolute-no-remainder modes, and privately evidenced packed-epoll, contained
-interval-timer control, timerfd, pselect,
+absolute-no-remainder modes, direct packed epoll lifecycle, and privately
+evidenced contained interval-timer control, timerfd, pselect,
 private statat path-metadata, caller-buffer-only getcwd, and
 caller-buffer-only readlinkat;
 none makes the record-owning family selectable.
@@ -181,9 +181,10 @@ calling-task `setfsuid`/`setfsgid` query/current-effective-ID boundary. Linux
 returns the previous identity even when a requested change is denied, so it
 does not claim ordinary failure reporting, process-wide synchronization, or a
 C credential API.
-`epoll-reference` proves only the x86 packed epoll record and the focused
-private readiness lifecycle; it does not promote the broader record-owning
-facade family.
+`epoll-reference` proves the direct typed x86 packed epoll lifecycle:
+close-on-exec and legacy creation, future-bit forwarding for Linux validation,
+add/modify/delete, and initialized-prefix readiness output. It excludes masked
+epoll waits, pselect/select, C facades, errno TLS, and broader `io.readiness`.
 `timerfd-reference` proves only the x86 `itimerspec` record and focused
 timer-descriptor lifecycle; it does not promote the broader record-owning
 facade family.
