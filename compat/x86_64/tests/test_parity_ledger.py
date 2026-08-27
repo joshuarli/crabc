@@ -97,6 +97,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.memory-file",
             "filesystem.seal-observation",
             "filesystem.seal-mutation",
+            "io.file-position",
             "time.wall-clock",
             "time.clock-query",
             "time.clock-sleep",
@@ -201,6 +202,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-rs/tests/x86_64_memfd.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_memfd_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_memfd_reference_probe.c", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_ftruncate.rs", remaining["source_owners"])
+        self.assertIn(
+            "compat/x86_64/run_x86_ftruncate_reference.sh", remaining["source_owners"]
+        )
+        self.assertIn(
+            "compat/x86_64/x86_ftruncate_reference_probe.c", remaining["source_owners"]
+        )
         self.assertIn("crabc-core/src/thread.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
@@ -296,6 +304,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][16]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][17]["command"],
+            "./scripts/dev-x86_64.sh ftruncate-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][17]["state"], "required")
+        self.assertIn(
+            "io.file-position",
+            remaining["native_evidence"][17]["scope"],
+        )
+        self.assertEqual(
+            remaining["native_evidence"][18]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])

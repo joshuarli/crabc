@@ -3,15 +3,16 @@
 //! This module admits descriptor-based `fstat(2)`, a deliberately narrow
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
 //! `readlinkat(2)` target reads, file-access advice, file readahead, and
-//! anonymous memory-file creation with bounded sealing. The x86-64 kernel
+//! descriptor-based file-length mutation, and anonymous memory-file creation
+//! with bounded sealing. The x86-64 kernel
 //! record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
 //! has a distinct 144-byte layout. This private path slice admits only `CWD`
 //! and `AT_SYMLINK_NOFOLLOW` for metadata, plus the direct caller-buffer
 //! readlink target boundary; `AT_EMPTY_PATH`, a general path module, `statx`,
 //! filesystem statistics, allocation-backed path helpers, and mutating
-//! filesystem operations remain outside this staged target boundary until
-//! they have their own x86-64 evidence.
+//! pathname operations remain outside this staged target boundary until they
+//! have their own x86-64 evidence.
 
 use bitflags::bitflags;
 use crate::buffer::Buffer;
@@ -244,6 +245,22 @@ pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
 #[doc(alias = "F_ADD_SEALS")]
 pub fn fcntl_add_seals<Fd: AsFd>(fd: Fd, seals: SealFlags) -> Result<()> {
     crabc_core::io::fcntl_add_seals(fd.as_fd().as_raw_fd(), seals.bits())
+}
+
+/// Sets the length of an open file descriptor.
+///
+/// The length is an unsigned byte count at this facade boundary. Values above
+/// Linux's signed loff_t range return [Errno::INVAL](crate::Errno::INVAL)
+/// before the descriptor is borrowed or the direct ftruncate(2) syscall is
+/// issued. Successful extension creates a zero-filled byte range; all
+/// descriptor and filesystem errors remain direct kernel results.
+#[inline]
+pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
+    if length > i64::MAX as u64 {
+        return Err(Errno::INVAL);
+    }
+
+    crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
 }
 
 /// Linux/x86-64 `struct stat` returned by `fstat(2)`.

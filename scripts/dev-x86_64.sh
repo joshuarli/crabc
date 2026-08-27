@@ -40,6 +40,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mincore-reference  verify pinned-musl x86 mapping-residency ABI and behavior
   fs-advice-reference  verify pinned-musl x86 fadvise64/readahead ABI and behavior
   memfd-reference  verify pinned-musl x86 memfd/sealing ABI and lifecycle
+  ftruncate-reference  verify pinned-musl x86 descriptor-length ABI and lifecycle
   rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
   time-observation-reference  verify pinned-musl x86 realtime observation behavior
@@ -113,6 +114,12 @@ readahead boundary; it does not select a C filesystem API.
 `memfd-reference` establishes only the pinned-musl x86 named anonymous
 memfd, descriptor-ownership, and seal lifecycle boundary; it does not select
 a C filesystem API or wider record-owning facade family.
+`ftruncate-reference` establishes only the pinned-musl x86 direct
+descriptor-length boundary: syscall 77, the signed 64-bit `loff_t` maximum,
+extend-with-zero-fill and shrink behavior for a private memfd, unchanged file
+position, and direct `EINVAL`/`EBADF` errors. It does not select a C
+filesystem API, pathname truncation, allocation, or the broader
+record-owning facade family.
 `rand-reference`, `time-abi-reference`, `time-observation-reference`,
 `relative-sleep-reference`, `clock-nanosleep-reference`,
 `getitimer-reference`, `setitimer-reference`, `timerfd-reference`, `pselect-reference`,
@@ -373,6 +380,10 @@ run_memfd_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_memfd_reference.sh
 }
 
+run_ftruncate_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_ftruncate_reference.sh
+}
+
 run_rand_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rand_reference.sh
 }
@@ -540,7 +551,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -658,6 +669,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "memfd-reference takes no arguments"
         ensure_image
         run_memfd_reference
+        ;;
+    ftruncate-reference)
+        [ "$#" -eq 0 ] || fail "ftruncate-reference takes no arguments"
+        ensure_image
+        run_ftruncate_reference
         ;;
     rand-reference)
         [ "$#" -eq 0 ] || fail "rand-reference takes no arguments"
@@ -824,7 +840,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_ftruncate --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)

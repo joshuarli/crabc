@@ -29,6 +29,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh madvise-reference
 ./scripts/dev-x86_64.sh mincore-reference
 ./scripts/dev-x86_64.sh fs-advice-reference
+./scripts/dev-x86_64.sh ftruncate-reference
 ./scripts/dev-x86_64.sh memfd-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
@@ -179,6 +180,15 @@ general VM facade.
 descriptor-position preservation, and direct invalid range/descriptor behavior.
 It establishes only the typed Rust `fs::{fadvise, readahead}` boundary, not C
 filesystem support or broader path-based behavior.
+
+`ftruncate-reference` executes a pinned-musl x86 descriptor-length lifecycle.
+It pins `ftruncate=77` and its signed 64-bit Linux `loff_t` argument, then
+uses a fresh memfd to prove extension with a zero-filled new range and later
+shrink. The typed Rust `u64` facade refuses a length above `i64::MAX` with
+`EINVAL` before it borrows the descriptor or reaches the syscall. This is
+private evidence under the planned `facade.record-owning` family only: it
+does not select `io.file-position`, C `unistd`/header behavior, pathname
+truncation, allocation, durability, or broader filesystem support.
 
 `memfd-reference` executes a pinned-musl x86 `memfd_create`/seal lifecycle.
 It pins `memfd_create=319`; `MFD_CLOEXEC`, `MFD_ALLOW_SEALING`, and
