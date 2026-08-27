@@ -186,11 +186,12 @@ fn checked_gid_word(gid: Option<Gid>) -> Result<u32> {
 
 /// Reads a Linux task's round-robin scheduling interval.
 ///
-/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
+/// `None` selects the calling task; `Some(pid)` forwards a live Linux task ID,
+/// including a distinct non-leader identifier.
 /// The direct syscall writes an x86-64 16-byte `timespec`, which this facade
 /// validates before converting to Rust's canonical [`Duration`]. This
-/// operation only observes scheduler state: it does not select a policy or
-/// mutate a task.
+/// operation only observes one scheduler interval: it does not select or
+/// mutate a policy, or query other scheduler parameters.
 #[inline]
 pub fn sched_rr_get_interval(pid: Option<Pid>) -> Result<Duration> {
     let mut interval = MaybeUninit::<crate::time::Timespec>::uninit();

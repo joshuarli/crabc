@@ -101,7 +101,8 @@ subset, including borrowed-atomic futex wait/wake and the complete typed
 `seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family, typed
 calling-process `getrlimit`/`setrlimit`, typed supplementary-group query/fill,
 typed read-only `getrusage` observations, typed read-only `times` accounting,
-typed read-only interval-timer query, and typed process-global `umask` exchange,
+typed read-only interval-timer and round-robin interval queries, and typed
+process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus privately evidenced packed-epoll, clock-nanosleep, contained
@@ -197,9 +198,13 @@ its truncated prefix. Its direct raw kernel boundary rejects a zero-length
 buffer with `EINVAL`, unlike musl's empty successful C-wrapper result. It does
 not select allocation-backed path APIs, path mutation, or promote the broader
 record-owning facade family.
-`rr-interval-reference` proves only the private x86 read-only current-task and
-missing-PID `sched_rr_get_interval` query; it does not select scheduler policy
-mutation or promote the broader record-owning facade family.
+`rr-interval-reference` proves the direct typed x86 read-only
+`sched_rr_get_interval` query: PID zero and an explicit `gettid` select the
+calling task, and that explicit task ID remains addressable from the initial
+task while the worker is live; a missing task returns `ESRCH`. Its pinned-musl
+C oracle uses the worker only as harness machinery. It excludes scheduler
+policy selection/mutation and parameter-query APIs, a C API or pthread facade,
+errno TLS, affinity, and a broader thread API.
 `clock-nanosleep-reference` proves only the private x86 direct clock-sleep
 boundary: syscall 230 with a 16-byte timespec, relative zero completion and
 signal interruption with a positive remainder, and absolute past-deadline

@@ -60,7 +60,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
 # three record-independent task observations, borrowed-atomic futex wait/wake,
-# the private read-only round-robin interval query, and bounded CPU-affinity
+# the direct read-only round-robin interval query, and bounded CPU-affinity
 # observation/mutation,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
 # private clock-nanosleep seams, direct read-only interval-timer query, private
@@ -274,16 +274,23 @@ def check_x86_getcwd_boundary(errors: list[str]) -> None:
 
 
 def check_x86_rr_interval_boundary(errors: list[str]) -> None:
-    """Keep the private x86 scheduler interval slice read-only."""
+    """Keep the direct x86 scheduler interval slice read-only."""
 
     thread_source = ROOT / "crabc-rs" / "src" / "thread_x86_64.rs"
     text = thread_source.read_text(errors="replace")
     if "pub fn sched_rr_get_interval" not in text:
-        errors.append("crabc-rs/src/thread_x86_64.rs: private RR interval slice is missing")
-    for forbidden in ("pub fn sched_setscheduler", "pub fn sched_setparam"):
+        errors.append("crabc-rs/src/thread_x86_64.rs: direct RR interval slice is missing")
+    for forbidden in (
+        "pub fn sched_setscheduler",
+        "pub fn sched_getscheduler",
+        "pub fn sched_setparam",
+        "pub fn sched_getparam",
+        "pub fn sched_getattr",
+        "pub fn sched_setattr",
+    ):
         if forbidden in text:
             errors.append(
-                "crabc-rs/src/thread_x86_64.rs: private RR interval slice must defer "
+                "crabc-rs/src/thread_x86_64.rs: direct RR interval slice must defer "
                 f"{forbidden}"
             )
 
@@ -299,7 +306,14 @@ def check_x86_sched_affinity_boundary(errors: list[str]) -> None:
                 "crabc-rs/src/thread_x86_64.rs: private affinity slice is missing "
                 f"{required}"
             )
-    for forbidden in ("pub fn sched_setscheduler", "pub fn sched_setparam", "pub fn sched_setattr"):
+    for forbidden in (
+        "pub fn sched_setscheduler",
+        "pub fn sched_getscheduler",
+        "pub fn sched_setparam",
+        "pub fn sched_getparam",
+        "pub fn sched_getattr",
+        "pub fn sched_setattr",
+    ):
         if forbidden in text:
             errors.append(
                 "crabc-rs/src/thread_x86_64.rs: private affinity slice must defer "

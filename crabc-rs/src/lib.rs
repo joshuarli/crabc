@@ -43,7 +43,7 @@ pub mod collections;
 // `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
 // `thread::{gettid, sched_getcpu, sched_yield, set_thread_res_uid,
-// set_thread_res_gid}` plus borrowed `AtomicU32` futex wait/wake, the private
+// set_thread_res_gid}` plus borrowed `AtomicU32` futex wait/wake and direct
 // read-only `sched_rr_get_interval`,
 // CPU-affinity observation and bounded typed mutation, and bounded `time`
 // clock-query, whole-second, and observation APIs plus direct read-only

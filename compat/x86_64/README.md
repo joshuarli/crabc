@@ -351,12 +351,13 @@ values, and invalid-policy behavior. It establishes only the typed Rust
 read-only scheduler-priority bounds query, not scheduling mutation or C process
 support.
 
-`rr-interval-reference` executes a pinned-musl x86 read-only
-`sched_rr_get_interval(2)` query for the current task and a missing PID. It
-pins the x86 16-byte, align-8 `timespec`, syscall 148, canonical duration
-validation, and direct `ESRCH` propagation. The interval query does not select
-or mutate scheduler policy and remains private evidence for the planned
-record-owning family.
+`rr-interval-reference` executes the direct typed x86 read-only
+`sched_rr_get_interval(2)` query. It pins the x86 16-byte, align-8 `timespec`,
+syscall 148, PID-zero and explicit-`gettid` selection for both the calling
+task and a distinct live worker task, canonical duration validation, and
+direct `ESRCH` propagation. Its pinned-musl C oracle uses the worker only as
+harness machinery; the interval query does not select a C API, pthread facade,
+scheduler policy, other scheduler parameters, errno TLS, or CPU affinity.
 
 `sched-affinity-reference` executes the private x86 read-only CPU-affinity
 observation slice. It records the fixed 128-byte mask and syscall 204. The raw
@@ -615,8 +616,9 @@ interval-timer query plus private contained control,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
 scheduling-priority mutation, typed read-only resource-usage observations,
 conflicting-lock `F_GETLK`
-records, and scheduler-priority bounds; the system and thread regressions prove
-the named bounded kernel observations. It verifies the
+records, scheduler-priority bounds, and direct typed round-robin interval
+observations; the system and thread regressions prove the named bounded kernel
+observations. It verifies the
 explicitly admitted Rust subset only; it does not make broader pselect/select
 semantics, epoll signal-mask
 variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,
