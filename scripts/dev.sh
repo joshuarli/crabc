@@ -114,21 +114,28 @@ run_in_container() {
     # The bind-mounted checkout can be owned by the host runner while the
     # container queries it as root. Scope Git's ownership exception to this
     # one mount instead of mutating a shared global config.
-    docker run --rm --init \
-        --platform "$PLATFORM" \
-        --workdir /workspace \
-        --env CARGO_HOME=/opt/cargo \
-        --env LIBC_TEST_DIR=/opt/libc-test \
-        --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
-        --env GIT_CONFIG_COUNT=1 \
-        --env GIT_CONFIG_KEY_0=safe.directory \
-        --env GIT_CONFIG_VALUE_0=/workspace \
-        --volume "$ROOT_DIR:/workspace" \
-        --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/opt/cargo" \
-        "${rustix_mount[@]}" \
-        "${rustybench_mount[@]}" \
-        "$IMAGE" "$@"
+    local -a docker_args=(
+        docker run --rm --init
+        --platform "$PLATFORM"
+        --workdir /workspace
+        --env CARGO_HOME=/opt/cargo
+        --env LIBC_TEST_DIR=/opt/libc-test
+        --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib
+        --env GIT_CONFIG_COUNT=1
+        --env GIT_CONFIG_KEY_0=safe.directory
+        --env GIT_CONFIG_VALUE_0=/workspace
+        --volume "$ROOT_DIR:/workspace"
+        --volume "$TARGET_VOLUME:/workspace/target"
+        --volume "$CARGO_VOLUME:/opt/cargo"
+    )
+    if [ -d "$rustix_source_host" ]; then
+        docker_args+=("${rustix_mount[@]}")
+    fi
+    if [ -d "$rustybench_source_host" ]; then
+        docker_args+=("${rustybench_mount[@]}")
+    fi
+    docker_args+=("$IMAGE" "$@")
+    "${docker_args[@]}"
 }
 
 # Resolver evidence must not inherit Docker's host-derived DNS configuration.
@@ -242,7 +249,8 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        python3 "$ROOT_DIR/scripts/check_structure.py"
+        ensure_image
+        run_in_container python3 scripts/check_structure.py
         ;;
     test)
         ensure_image

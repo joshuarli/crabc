@@ -27,7 +27,7 @@ use core::sync::atomic::Ordering;
 use crate::arena::ArenaAbandonedPages;
 use crate::atomic::{word_cas_weak_release, word_load_relaxed};
 use crate::bitmap::AbandonedBitmapClaim;
-use crate::config::ARENA_BIN_COUNT;
+use crate::config::{ARENA_BIN_COUNT, BIN_FULL};
 use crate::free_list::{self, FreeListError};
 use crate::remote_free::{
     self, AbandonedOwnerClaim, AbandonedOwnerHeadTransition, RemoteFreeError,
@@ -329,12 +329,12 @@ pub(crate) enum FullMediumAbandonedFreeAfterFailedReclaimResult {
     Empty,
 }
 
-/// Result of the one bounded homogeneous full-large aggregate free tail.
+/// Result of one bounded per-member full-large aggregate free tail.
 ///
 /// A member starts as a full source-unmapped page. Its first below-mostly-used
-/// client free can publish the aggregate's one exact static-main bitmap/count
-/// pair; later frees use the mapped half of the same source tail. The caller
-/// owns the registry count and terminal 64-slice PageMap/span release, so this
+/// client free can publish that member's exact static-main bitmap/count pair;
+/// later frees use the mapped half of the same source tail. The caller owns
+/// the registry count and terminal 64-slice PageMap/span release, so this
 /// result intentionally does not expose a reusable page or a reclaim/requeue
 /// edge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -344,7 +344,22 @@ pub(crate) enum FullLargeAbandonedFreeAfterFailedReclaimResult {
     Empty,
 }
 
-/// Result of the one bounded homogeneous full non-direct-small aggregate free
+/// Result of the narrow failed-reclaim tail shared by one bounded mixed
+/// full-medium/full-large aggregate.
+///
+/// The source `BIN_FULL` queue may contain both regular kinds, but neither
+/// member enters small's partial collector or an allocation-time reclaim path.
+/// This helper therefore keeps the common normal-collector tail explicit while
+/// leaving queue traversal, per-member span release, and the eventual mixed
+/// aggregate registry to a separately typed owner-exit boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult {
+    PublishedToExistingOwner,
+    StillLive,
+    Empty,
+}
+
+/// Result of the one bounded full non-direct-small aggregate free
 /// tail.
 ///
 /// This is deliberately distinct from direct small: every member began above
@@ -358,7 +373,7 @@ pub(crate) enum FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult {
     Empty,
 }
 
-/// Result of the one bounded homogeneous full direct-small aggregate free
+/// Result of the one bounded per-member full direct-small aggregate free
 /// tail.
 ///
 /// This is deliberately distinct from non-direct small: every member began at
@@ -797,6 +812,126 @@ pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages 
     }
 }
 
+/// Ports the common normal-collector failed-reclaim tail for one member of a
+/// bounded mixed full-medium/full-large aggregate route.
+///
+/// The pinned source's `BIN_FULL` queue mixes regular page kinds. This helper
+/// admits exactly Medium and Large arena members after `push_abandoned` claims
+/// the low owner bit. It deliberately does not own the queue traversal, a raw
+/// page registry, a terminal release, small/direct-small collection,
+/// allocation-time reclaim, or requeue.
+///
+/// # Safety
+///
+/// `page` and `block` must be one exact live member/allocation of a sequential
+/// owner-exit route. `select_map` runs only after the source low-owner claim
+/// and must return the exact member's arena/bin capability. The caller retains
+/// PageMap, metadata, arena, and terminal span-release ownership across every
+/// result; `Empty` retains the page low owner bit for that release.
+pub(crate) unsafe fn free_full_medium_or_large_after_failed_reclaim_select_map<M, F>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    select_map: F,
+) -> Result<FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages,
+    F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
+{
+    // SAFETY: the route owns this stable abandoned page and exact client
+    // block through the source `allow_collect=true` publication.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner);
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // The successful low-bit claim is the first legal point to select the
+    // member's exact bitmap/count capability from its ordinary state.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    let source_identity = source_thread_identity(&state);
+    if !is_owned(&state) {
+        return Err(AbandonError::NotOwnedAssociated);
+    }
+    if state.reserved <= 1
+        || !matches!(
+            size_class::page_kind_for_block_size(state.block_size),
+            Some(PageKind::Medium | PageKind::Large)
+        )
+    {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    if state.memid.kind() != MemoryKind::Arena {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let map = select_map(state.memid, state.block_size)?;
+    let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
+    if bin >= ARENA_BIN_COUNT || map.bin() != bin || map.page_slice_index(state.memid).is_none() {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    // The source identity, rather than a fresh `used == reserved` check,
+    // selects the tail. `MI_ABANDON` proved the aggregate began full before it
+    // dropped the old owner; a serial client-free route can move unmapped to
+    // mapped once, but never in reverse.
+    match source_identity {
+        THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED => {}
+        _ => return Err(AbandonError::NotAbandoned),
+    }
+
+    // Both regular kinds use the ordinary collector. In particular, this
+    // source-shaped shared tail deliberately excludes direct small's retained
+    // partial head and its distinct cache image.
+    unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
+    if page_is_empty(&state) {
+        if source_identity == THREAD_ID_ABANDONED_MAPPED {
+            unabandon_mapped(&state, Some(&map))?;
+        }
+        return Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::Empty);
+    }
+
+    if source_identity == THREAD_ID_ABANDONED {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, &map)? {
+            return Ok(match result {
+                UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                    FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
+                }
+                UnmappedAbandonedFreeResult::Empty => {
+                    FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::Empty
+                }
+                UnmappedAbandonedFreeResult::ReabandonedMapped
+                | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                    FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::StillLive
+                }
+            });
+        }
+        let mut no_test_hook: Option<fn()> = None;
+        return match unown_unmapped_from_free(page, &state, &map, 0, &mut no_test_hook)? {
+            UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+            }
+            UnmappedAbandonedFreeResult::Empty => {
+                Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::Empty)
+            }
+            UnmappedAbandonedFreeResult::ReabandonedMapped
+            | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::StillLive)
+            }
+        };
+    }
+
+    match unown_mapped_from_free(page, &state, &map, 0)? {
+        MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
+            Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::Empty => {
+            Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::Empty)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
+            Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::StillLive)
+        }
+    }
+}
+
 /// Ports the failed-reclaim tail for one member of a bounded full-medium
 /// aggregate route.
 ///
@@ -919,8 +1054,124 @@ where
     }
 }
 
-/// Ports the failed-reclaim tail for one member of the bounded homogeneous
+/// Ports the failed-reclaim tail for one member of the bounded per-member
 /// full-large aggregate route.
+///
+/// Like the per-member full-medium route, this aggregate retains no mutable
+/// source bin or mapped/unmapped state for a former-Theap member. It claims
+/// the source low owner bit first, then derives that exact large member's
+/// arena bitmap/count capability from its now-readable memory and rounded
+/// block size. Large blocks remain outside `free.c`'s reclaim-on-free branch;
+/// this adds no allocation-time reclaim or requeue authority.
+///
+/// # Safety
+///
+/// `page` and `block` must be one exact live member/allocation of the
+/// aggregate route. `select_map` runs only after the source low-owner claim,
+/// and must return that member's exact arena/bin capability. The caller must
+/// retain PageMap, metadata, arena, and terminal span-release ownership across
+/// every result; `Empty` retains the page low owner bit for that release.
+pub(crate) unsafe fn free_full_large_after_failed_reclaim_select_map<M, F>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    select_map: F,
+) -> Result<FullLargeAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages,
+    F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
+{
+    // SAFETY: the route owns this stable abandoned page and exact client
+    // block through the source `allow_collect=true` publication.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner);
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // The successful low-bit claim is the first legal point to select the
+    // member's exact bitmap/count capability from its ordinary state.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    let source_identity = source_thread_identity(&state);
+    if !is_owned(&state) {
+        return Err(AbandonError::NotOwnedAssociated);
+    }
+    if state.reserved <= 1
+        || size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Large)
+    {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    if state.memid.kind() != MemoryKind::Arena {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let map = select_map(state.memid, state.block_size)?;
+    let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
+    if bin >= ARENA_BIN_COUNT
+        || map.bin() != bin
+        || map.page_slice_index(state.memid).is_none()
+    {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    match source_identity {
+        THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED => {}
+        _ => return Err(AbandonError::NotAbandoned),
+    }
+
+    // Large pages use the ordinary collector. Source `free.c` does not enter
+    // its reclaim-on-free branch for blocks above `MI_MEDIUM_MAX_OBJ_SIZE`.
+    unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
+    if page_is_empty(&state) {
+        if source_identity == THREAD_ID_ABANDONED_MAPPED {
+            unabandon_mapped(&state, Some(&map))?;
+        }
+        return Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::Empty);
+    }
+
+    if source_identity == THREAD_ID_ABANDONED {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, &map)? {
+            return Ok(match result {
+                UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                    FullLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
+                }
+                UnmappedAbandonedFreeResult::Empty => {
+                    FullLargeAbandonedFreeAfterFailedReclaimResult::Empty
+                }
+                UnmappedAbandonedFreeResult::ReabandonedMapped
+                | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                    FullLargeAbandonedFreeAfterFailedReclaimResult::StillLive
+                }
+            });
+        }
+        let mut no_test_hook: Option<fn()> = None;
+        return match unown_unmapped_from_free(page, &state, &map, 0, &mut no_test_hook)? {
+            UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+            }
+            UnmappedAbandonedFreeResult::Empty => {
+                Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::Empty)
+            }
+            UnmappedAbandonedFreeResult::ReabandonedMapped
+            | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::StillLive)
+            }
+        };
+    }
+
+    match unown_mapped_from_free(page, &state, &map, 0)? {
+        MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
+            Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::Empty => {
+            Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::Empty)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
+            Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::StillLive)
+        }
+    }
+}
+
+/// Ports the fixed-geometry failed-reclaim tail retained for one large-page
+/// source substrate test or future homogeneous route.
 ///
 /// Like the full-medium aggregate, this route retains no per-page
 /// unmapped/mapped state. It uses the abandoned identity held after its
@@ -930,11 +1181,13 @@ where
 ///
 /// # Safety
 ///
-/// `page` and `block` must be one exact live member/allocation of the
-/// aggregate route. `expected_block_size` and `map` must be the homogeneous
-/// source preflight's exact large size/bin/arena capability. The caller must
-/// retain PageMap, metadata, arena, and terminal span-release ownership across
-/// every result; `Empty` retains the page low owner bit for that release.
+/// `page` and `block` must be one exact live member/allocation of the fixed
+/// geometry source substrate. `expected_block_size` and `map` must be its
+/// exact large size/bin/arena capability. The caller must retain PageMap,
+/// metadata, arena, and terminal span-release ownership across every result;
+/// `Empty` retains the page low owner bit for that release. The current
+/// per-member aggregate route uses
+/// [`free_full_large_after_failed_reclaim_select_map`] instead.
 pub(crate) unsafe fn free_full_large_after_failed_reclaim<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     block: NonNull<u8>,
@@ -951,7 +1204,7 @@ pub(crate) unsafe fn free_full_large_after_failed_reclaim<M: MappedAbandonedPage
     }
 
     // The successful low-bit claim is the first legal point to read the
-    // member's ordinary state. Keep the homogeneous source proof explicit so
+    // member's ordinary state. Keep the fixed-geometry source proof explicit so
     // an unrelated PageMap entry cannot silently enter this route.
     let state = unsafe { Page::abandonment_state_at(page) };
     let source_identity = source_thread_identity(&state);
@@ -1033,6 +1286,126 @@ pub(crate) unsafe fn free_full_large_after_failed_reclaim<M: MappedAbandonedPage
         }
         MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
             Ok(FullLargeAbandonedFreeAfterFailedReclaimResult::StillLive)
+        }
+    }
+}
+
+/// Ports the failed-reclaim tail for one member of the bounded per-member
+/// full non-direct-small aggregate route.
+///
+/// This is the normal-collector counterpart to the per-member medium and
+/// large routes. A successful low-owner claim is the first legal point to
+/// derive the member's ordinary bin and exact abandoned-pages capability;
+/// direct small remains excluded by the strict `SMALL_SIZE_MAX` boundary.
+///
+/// # Safety
+///
+/// `page` and `block` must be one exact live member/allocation of the
+/// aggregate route. `select_map` runs only after the source low-owner claim,
+/// and must return that member's exact arena/bin capability. The caller must
+/// retain PageMap, metadata, arena, and terminal span-release ownership across
+/// every result; `Empty` retains the page low owner bit for that release.
+pub(crate) unsafe fn free_full_non_direct_small_after_failed_reclaim_select_map<M, F>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    select_map: F,
+) -> Result<FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages,
+    F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
+{
+    // SAFETY: the aggregate route owns this stable abandoned page and exact
+    // client block through the source `allow_collect=true` publication.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(
+                FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner,
+            );
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // The successful low-bit claim is the first legal point to inspect the
+    // member and select its per-member ordinary-bin map.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    let source_identity = source_thread_identity(&state);
+    if !is_owned(&state) {
+        return Err(AbandonError::NotOwnedAssociated);
+    }
+    if state.reserved <= 1
+        || state.block_size <= crate::config::SMALL_SIZE_MAX
+        || state.block_size > crate::config::SMALL_MAX_OBJ_SIZE
+        || size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Small)
+    {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    if state.memid.kind() != MemoryKind::Arena {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let map = select_map(state.memid, state.block_size)?;
+    let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
+    if bin >= ARENA_BIN_COUNT
+        || bin == BIN_FULL
+        || map.bin() != bin
+        || map.page_slice_index(state.memid).is_none()
+    {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    match source_identity {
+        THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED => {}
+        _ => return Err(AbandonError::NotAbandoned),
+    }
+
+    // The source free.c branch is selected by `block_size <=
+    // MI_SMALL_SIZE_MAX`, not by PageKind. This class lies above that direct
+    // threshold and must not retain a partial collector head.
+    unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
+    if page_is_empty(&state) {
+        if source_identity == THREAD_ID_ABANDONED_MAPPED {
+            unabandon_mapped(&state, Some(&map))?;
+        }
+        return Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty);
+    }
+
+    if source_identity == THREAD_ID_ABANDONED {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, &map)? {
+            return Ok(match result {
+                UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                    FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
+                }
+                UnmappedAbandonedFreeResult::Empty => {
+                    FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty
+                }
+                UnmappedAbandonedFreeResult::ReabandonedMapped
+                | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                    FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive
+                }
+            });
+        }
+        let mut no_test_hook: Option<fn()> = None;
+        return match unown_unmapped_from_free(page, &state, &map, 0, &mut no_test_hook)? {
+            UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+            }
+            UnmappedAbandonedFreeResult::Empty => {
+                Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty)
+            }
+            UnmappedAbandonedFreeResult::ReabandonedMapped
+            | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
+            }
+        };
+    }
+
+    match unown_mapped_from_free(page, &state, &map, 0)? {
+        MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
+            Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::Empty => {
+            Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
+            Ok(FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
         }
     }
 }
@@ -1160,7 +1533,7 @@ pub(crate) unsafe fn free_full_non_direct_small_after_failed_reclaim<
     }
 }
 
-/// Ports the failed-reclaim tail for one member of the bounded homogeneous
+/// Ports the failed-reclaim tail for one member of the bounded per-member
 /// full direct-small aggregate route.
 ///
 /// Its small `PageKind` alone is deliberately insufficient: this sealed class
@@ -1172,20 +1545,21 @@ pub(crate) unsafe fn free_full_non_direct_small_after_failed_reclaim<
 /// # Safety
 ///
 /// `page` and `block` must be one exact live member/allocation of the
-/// aggregate route. `expected_block_size` and `map` must be the homogeneous
-/// source preflight's exact direct-small size/bin/arena capability. The caller
-/// retains PageMap, metadata, arena, and terminal span-release ownership
-/// through every result; `Empty` retains the page low owner bit for that
-/// release. This grants no allocation-time reclaim, requeue, or direct-cache
-/// ownership.
-pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
-    M: MappedAbandonedPages + ?Sized,
->(
+/// aggregate route. `select_map` runs only after the source low-owner claim,
+/// and must return that member's exact direct-small arena/bin capability. The
+/// caller retains PageMap, metadata, arena, and terminal span-release
+/// ownership through every result; `Empty` retains the page low owner bit for
+/// that release. This grants no allocation-time reclaim, requeue, or
+/// direct-cache ownership.
+pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim_select_map<M, F>(
     page: NonNull<Page>,
     block: NonNull<u8>,
-    expected_block_size: usize,
-    map: &M,
-) -> Result<FullDirectSmallAbandonedFreeAfterFailedReclaimResult, AbandonError> {
+    select_map: F,
+) -> Result<FullDirectSmallAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages,
+    F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
+{
     // SAFETY: the aggregate route owns this stable abandoned page and exact
     // client block through the source `allow_collect=true` publication.
     match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
@@ -1196,7 +1570,8 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
     }
 
     // A successful low-bit claim is the first legal point to inspect ordinary
-    // state. Keep the direct geometry proof here so a non-direct member cannot
+    // state and select that direct-small member's exact bitmap/count
+    // capability. Keep the class proof here so a non-direct member cannot
     // silently take free.c's partial collector.
     let state = unsafe { Page::abandonment_state_at(page) };
     let source_identity = source_thread_identity(&state);
@@ -1204,7 +1579,6 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
         return Err(AbandonError::NotOwnedAssociated);
     }
     if state.reserved < 16
-        || state.block_size != expected_block_size
         || state.block_size > crate::config::SMALL_SIZE_MAX
         || size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Small)
     {
@@ -1213,8 +1587,10 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
     if state.memid.kind() != MemoryKind::Arena {
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
+    let map = select_map(state.memid, state.block_size)?;
     let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
     if bin >= ARENA_BIN_COUNT
+        || bin == BIN_FULL
         || map.bin() != bin
         || map.page_slice_index(state.memid).is_none()
     {
@@ -1233,13 +1609,13 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
         .map_err(AbandonError::RemoteFree)?;
     if page_is_empty(&state) {
         if source_identity == THREAD_ID_ABANDONED_MAPPED {
-            unabandon_mapped(&state, Some(map))?;
+            unabandon_mapped(&state, Some(&map))?;
         }
         return Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty);
     }
 
     if source_identity == THREAD_ID_ABANDONED {
-        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, map)? {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, &map)? {
             return Ok(match result {
                 UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
                     FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
@@ -1254,7 +1630,7 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
             });
         }
         let mut no_test_hook: Option<fn()> = None;
-        return match unown_unmapped_from_free(page, &state, map, expected_head, &mut no_test_hook)? {
+        return match unown_unmapped_from_free(page, &state, &map, expected_head, &mut no_test_hook)? {
             UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
                 Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
             }
@@ -1268,7 +1644,7 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
         };
     }
 
-    match unown_mapped_from_free(page, &state, map, expected_head)? {
+    match unown_mapped_from_free(page, &state, &map, expected_head)? {
         MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
             Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
         }
@@ -1278,6 +1654,42 @@ pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
         MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
             Ok(FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive)
         }
+    }
+}
+
+/// Ports the failed-reclaim tail for one member of the bounded homogeneous
+/// full direct-small substrate route.
+///
+/// The aggregate route uses
+/// [`free_full_direct_small_after_failed_reclaim_select_map`] so it can select
+/// each member's exact map after its low-owner claim. This fixed-geometry
+/// wrapper preserves the existing sole-page callers and focused substrate
+/// tests without widening their source boundary.
+///
+/// # Safety
+///
+/// `page` and `block` must be one exact live member/allocation of the fixed
+/// source geometry. `expected_block_size` and `map` must be that geometry's
+/// exact direct-small size/bin/arena capability. The caller retains PageMap,
+/// metadata, arena, and terminal span-release ownership through every result.
+pub(crate) unsafe fn free_full_direct_small_after_failed_reclaim<
+    M: MappedAbandonedPages + ?Sized,
+>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    expected_block_size: usize,
+    map: &M,
+) -> Result<FullDirectSmallAbandonedFreeAfterFailedReclaimResult, AbandonError> {
+    // SAFETY: this wrapper preserves the fixed source proof and delegates the
+    // shared low-owner/partial-collector tail to the per-member selector.
+    unsafe {
+        free_full_direct_small_after_failed_reclaim_select_map(page, block, |_, block_size| {
+            if block_size == expected_block_size {
+                Ok(map)
+            } else {
+                Err(AbandonError::InvalidPageGeometry)
+            }
+        })
     }
 }
 
@@ -2282,6 +2694,65 @@ mod tests {
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
         assert_eq!(page.remote_free_test_head(), 0);
         assert_eq!(page.remote_free_test_used(), 13);
+    }
+
+    #[test]
+    fn full_medium_or_large_aggregate_tail_accepts_each_regular_page_kind_after_the_owner_claim() {
+        let medium_block_size =
+            crate::config::SMALL_MAX_OBJ_SIZE + core::mem::size_of::<Block>();
+        let large_block_size =
+            crate::config::MEDIUM_MAX_OBJ_SIZE + core::mem::size_of::<Block>();
+        assert_eq!(
+            size_class::page_kind_for_block_size(medium_block_size),
+            Some(PageKind::Medium),
+            "the first aggregate member has the regular medium source kind"
+        );
+        assert_eq!(
+            size_class::page_kind_for_block_size(large_block_size),
+            Some(PageKind::Large),
+            "the second aggregate member has the regular large source kind"
+        );
+
+        for (block_size, slice_count) in [
+            (medium_block_size, 1usize),
+            (
+                large_block_size,
+                crate::page::regular_page_slice_count(PageKind::Large)
+                    .expect("large pages have their fixed source slice count"),
+            ),
+        ] {
+            let bin = size_class::bin(block_size).expect("the regular member has an arena bin");
+            assert!(bin < ARENA_BIN_COUNT);
+            let mut storage = BitmapStorage::uninit();
+            let mut arena = map_fixture_for_bin(&mut storage, bin);
+            let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+            let mut page = Page::remote_free_test_page(4, 4);
+            page.set_block_size(block_size);
+            assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, slice_count) });
+            let page_raw = abandon_full_unmapped(&mut page);
+            let mut block = TestBlock([0; 16]);
+
+            assert_eq!(
+                unsafe {
+                    free_full_medium_or_large_after_failed_reclaim_select_map(
+                        page_raw,
+                        block.pointer(),
+                        |memory, selected_block_size| {
+                            assert_eq!(memory.kind(), MemoryKind::Arena);
+                            assert_eq!(selected_block_size, block_size);
+                            view.abandoned_pages(bin)
+                                .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                        },
+                    )
+                },
+                Ok(FullMediumOrLargeAbandonedFreeAfterFailedReclaimResult::StillLive),
+                "each member starts source-unmapped then follows free.c's normal collector"
+            );
+            assert!(view.abandoned_pages(bin).unwrap().is_published(17));
+            assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+            assert_eq!(page.remote_free_test_head(), 0);
+            assert_eq!(page.remote_free_test_used(), 3);
+        }
     }
 
     #[test]

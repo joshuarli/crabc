@@ -16,7 +16,10 @@ calloc, realloc, aligned/offset-aligned, usable-size, preservation, and failure
 slice. This includes live arena-backed alignment through 64 KiB and separately
 owned OS-aligned singleton mappings below 256 MiB. The lifecycle is not
 exported and does not imply parity for the absent process/TLS, general remote-free routing,
-teardown, purge, or public-API regions. The private regular-TLS and generic
+teardown, purge, or public-API regions. The bounded ticket-zero and later-main
+page owners now delegate ordinary reallocations to that same live engine; only
+the ticket-zero null case may activate its completed first-arena policy. This
+does not create a public allocator route. The private regular-TLS and generic
 subprocess-attached/no-theap TLD owners record one internal recovery limitation
 in the source map:
 `MetaAllocator::free` may report an error after consuming a capability. The
@@ -278,10 +281,12 @@ result may refine it only when it can prove retained ownership.
 
 ### `CRABC-MI-PROCESS-SHARED-ONE-ARENA-SIDECAR` — accepted incomplete arena boundary
 
-- **Upstream/Rust:** `src/arena.c:1573-1611,1676-1791,1794-1912`, especially
+- **Upstream/Rust:** `src/arena.c:341-406,525-569,1573-1611,1676-1791,1794-1912`,
+  especially `mi_arena_reserve`, its one-at-a-time fresh-arena retry point,
   `mi_arenas_add`, `mi_arena_initialize`, `mi_manage_os_memory_ex2`, and the
   bounded regular-map part of `mi_reserve_os_memory_ex2`;
-  represented by `process_arena::ProcessSharedArenaStorage` and
+  represented by `process_arena::ProcessSharedArenaStorage`,
+  `main_static_page::MainStaticFirstArenaPageAllocator`, and
   `process_owned_mapping_commit` / `ProcessPageArenaLease` over the existing
   `ArenaRegistry`, `ManagedExternalRegion`, `Mapping`, and
   `ProcessPageMapLease` boundaries.
@@ -291,12 +296,22 @@ result may refine it only when it can prove retained ownership.
   sub-arenas) and chooses reservations through live option policy. Rust admits
   exactly one caller-selected, complete aligned external mapping and one
   explicit caller-selected regular OS reservation whose slice-rounded request
-  is exactly one complete arena. The regular path accepts only reserved or
-  committed normal mappings, records `MemoryKind::Os`, and unmaps an
-  unpublished metadata failure before returning COLD; a failed unmap instead
-  retains the exact mapping terminally. The external path still returns a
-  pre-publication rejected `Mapping` to its caller because it remains the lower
-  `mi_manage_os_memory_ex2` boundary. Once published, either map and its
+  is exactly one complete arena. It also preserves the first lazy automatic
+  reservation decision only: source max-page headroom, the 64-bit 1-GiB
+  default, the Linux overcommit eager-map condition, and the 128-MiB retry
+  after an unpublished first attempt returns COLD. The private ticket-zero
+  first-arena owner now invokes it only after a valid empty-Theap ordinary
+  fresh-page miss: it derives the source small/medium/large/singleton span,
+  preflights the zero-page static image, and retains the matching PageMap
+  lifecycle through activation. `ProcessMainThread` is the only
+  production-shaped factory and transfers its retained attachment plus ready
+  immutable map witness without a startup reservation. It does not search an
+  existing arena or reserve a later one. The regular path accepts
+  only reserved or committed normal mappings, records `MemoryKind::Os`, and
+  unmaps an unpublished metadata failure before returning COLD; a failed unmap
+  instead retains the exact mapping terminally. The external path still returns
+  a pre-publication rejected `Mapping` to its caller because it remains the
+  lower `mi_manage_os_memory_ex2` boundary. Once published, either map and its
   in-place arena are process-lived. A reserved mapping enters its final sidecar
   slot before in-place initialization, so its retained callback can commit
   metadata and later selected/page-metadata ranges through the exact `Mapping`;
@@ -310,7 +325,10 @@ result may refine it only when it can prove retained ownership.
   each installs this arena's embedded `pages_main`, registers/releases ordinary
   pages, and retains a joined scoped producer. That does not create general
   arena selection, multiple/sub-arena support, concurrent/general later-thread
-  ownership, root clear, or destruction.
+  ownership, root clear, or destruction. After one separate bounded
+  reservation is already READY, the process owner may reconstruct only that
+  exact immutable matching pair for one subsequent bounded owner; it does not
+  iterate the registry, probe free slices, reserve, or map.
 - **Evidence:**
   `process_arena::tests::shared_owned_arena_binds_to_the_release_published_map_and_selected_subprocess`
   proves exact root/configuration/subprocess pairing, registry publication,
@@ -334,17 +352,28 @@ result may refine it only when it can prove retained ownership.
   and `explicit_os_reservation_retains_the_mapping_when_failed_setup_cannot_unmap`
   prove the bounded regular-map provenance, pre-map refusals, source-shaped
   release/retry, and terminal failed-release ownership.
+  `default_os_reservation_is_lazy_and_uses_the_pinned_first_arena_policy`,
+  `default_os_reservation_retries_the_pinned_smaller_arena_after_its_first_map_failure`,
+  `default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold`,
+  and `default_os_reservation_plan_preserves_headroom_commit_and_retry_boundaries`
+  prove the lazy 1-GiB first-arena policy, source smaller-map retry, COLD
+  failure ownership, max-page headroom, and overcommit access decision.
+  `main_static_page::tests::first_fresh_page_requirement_preserves_the_empty_theap_source_size_branches`
+  and
+  `main_static_page::tests::first_ticket_zero_fresh_page_reserves_the_default_arena_only_after_a_valid_miss`
+  prove the exact empty-Theap span decision and that invalid requests remain
+  side-effect free until the first valid ticket-zero fresh-page miss.
   `main_static_page::tests::reserved_os_arena_reservation_drives_one_static_page_lifecycle`
   proves that reserved regular mapping reaches one normal static page lifecycle.
   `main_static_page::tests::main_static_page_allocator_binds_the_in_place_main_arena_bitmap_before_page_map_publication`
   proves the paired static owner uses the arena's actual embedded bitmap and
   returns its slice after map removal; the later-thread page-engine regression
   proves the same bitmap is selected by the shared main Heap.
-- **Decision/removal:** accepted until automatic source reservation policy and
-  general page-bearing fresh-allocation/owner-exit protocol can connect this
-  exact arena to multiple source owners and shutdown quiescence. It does not
-  authorize eager startup reservation, a fixed reserve size, large-page or
-  NUMA policy, generic arena management, raw page-map access, or process
+- **Decision/removal:** accepted until general existing-arena search, later
+  source reservation/scaling, and the page-bearing fresh-allocation/owner-exit
+  protocol connect the first policy to multiple owners and shutdown quiescence.
+  It does not authorize eager startup reservation, option mutation, large-page
+  or NUMA policy, generic arena management, raw page-map access, or process
   teardown.
 
 ### `CRABC-MI-STATIC-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted bounded page-owner slice
@@ -478,9 +507,9 @@ result may refine it only when it can prove retained ownership.
   PageMap -> main bitmap first-bit -> metadata -> arena-slice order. Sole
   members, non-singletons, OS members, allocation-time adoption/reclaim/
   requeue, scanning, and concurrent routing remain absent. A separate
-  homogeneous full-OS-singleton
-  aggregate route accepts two or more same-rounded-size `MemoryKind::Os`
-  singleton members in `BIN_FULL` only when `reserved == used == 1`, zero
+  full-OS-singleton aggregate route accepts two or more `MemoryKind::Os`
+  singleton members in `BIN_FULL`, each with its own rounded block size, only when
+  `reserved == used == 1`, zero
   retirement countdowns, empty local free lists, valid clipped PageMap/alias
   release images, every direct slot and other queue is empty, and the
   static-main `Heap::os_abandoned_pages` list starts empty. It force- then
@@ -490,8 +519,8 @@ result may refine it only when it can prove retained ownership.
   the page's raw intrusive links until its exact canonical free removes that
   member. That free re-resolves PageMap membership, takes only the raw empty
   failed-reclaim outcome, then releases one member in private-list removal ->
-  clipped PageMap -> aliases -> metadata -> mapping order. Sole or mixed-size
-  OS members, non-OS members, nonempty initial lists, list traversal, retry
+  clipped PageMap -> aliases -> metadata -> mapping order. Sole or non-OS
+  members, nonempty initial lists, list traversal, retry
   after failed `munmap`, adoption, reclaim/requeue, scanning, allocation-time,
   and concurrent routing remain absent; failed mapping release retains the
   exact `OsAlignedPageOwner` terminally. A separate full-medium aggregate route
@@ -505,14 +534,15 @@ result may refine it only when it can prove retained ownership.
   then selects that member's exact bitmap/count capability and source unmapped
   or mapped tail. Each terminal release removes only that member through PageMap
   -> main bitmap -> metadata -> slice; a sole full page rejects before mutation.
-  The separate homogeneous full-large aggregate accepts only the
-  corresponding `PageKind::Large` members, with the same complete preflight
-  plus every member's exact 64-slice arena/PageMap span; terminal release
-  proves and removes that complete span. A fifth homogeneous full
-  non-direct-small aggregate accepts only two or more same-bin ordinary
-  `PageKind::Small` arena members with `SMALL_SIZE_MAX < block_size <=
-  SMALL_MAX_OBJ_SIZE`, every direct slot empty, zero retirement countdowns,
-  empty local free lists, and one paired-arena slice per member. It preserves
+  The separate full-large aggregate accepts only the corresponding
+  `PageKind::Large` members, each with its own rounded bin, with the same
+  complete preflight plus every member's exact 64-slice arena/PageMap span;
+  terminal release proves and removes that complete span. A fifth per-member full
+  non-direct-small aggregate accepts only two or more ordinary `PageKind::Small`
+  arena members, each with its own `SMALL_SIZE_MAX < block_size <=
+  SMALL_MAX_OBJ_SIZE` bin, every direct slot and `BIN_FULL` empty, zero
+  retirement countdown, empty local free list, and one paired-arena slice per
+  member. It preserves
   source force -> false collection -> ordinary-bin removal with the proven
   no-op direct-cache update -> page-count detach -> ordinary unmapped
   abandonment, then uses free.c's normal collector to re-resolve, reabandon,
@@ -705,7 +735,7 @@ aggregate-registry adoption remain absent.
   `later_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`
   proves the aggregate boundary never overlaps the established sole-page
   route. The corresponding
-  `later_thread_exit_full_large_pages_route_reabandons_each_same_bin_page_then_releases`
+  `later_thread_exit_full_large_pages_route_reabandons_each_distinct_bin_page_then_releases`
   proves independent large-member threshold transitions, one-member-at-a-time
   64-slice release, and last-member map closure; its siblings
   `later_thread_exit_full_large_pages_route_rejects_a_sole_full_large_before_mutation`,
@@ -723,8 +753,8 @@ aggregate-registry adoption remain absent.
   `later_thread_exit_full_non_direct_small_pages_route_retains_a_collection_failure`
   prove the aggregate boundary never overlaps the established sole-page route
   and retains its drain terminally after force collection fails; and
-  `later_thread_exit_full_direct_small_pages_route_preserves_partial_head_then_releases_each_member`
-  proves two ordinary-bin full direct-small members retain the exact rounded
+  `later_thread_exit_full_direct_small_pages_route_reabandons_each_distinct_bin_page_then_releases`
+  proves two distinct-bin full direct-small members retain the complete rounded
   source cache image, detach before old-Theap/TLD teardown, independently hold
   the partial-collector head through their source accounting lag, and release
   one one-slice PageMap member at a time. Its siblings
@@ -1048,19 +1078,19 @@ aggregate-registry adoption remain absent.
   absent, while a collection failure retains the drain.
   `DynamicThreadExitDrain::abandon_full_os_singleton_pages` is a separate
   sequential dynamic aggregate, not a general `BIN_FULL` or OS-list traversal:
-  it requires two or more same-rounded-size full `MemoryKind::Os` singleton
-  members, each with `reserved == used == 1`, zero retirement countdown, empty
+  it requires two or more full `MemoryKind::Os` singleton members, each with
+  its own rounded block size, `reserved == used == 1`, zero retirement countdown, empty
   local free list, a valid clipped PageMap/alias release image, an initially
   empty dynamic `Heap::os_abandoned_pages` list, and every other queue/direct
   entry empty. It preserves source force -> false collection -> full-queue/
   page-count detach -> private OS-list insertion -> unmapped unown for every
   member. The returned `DynamicThreadExitFullOsSingletonPagesRoute` retains
-  only the original drain, sealed size, and member count, not a raw member list
+  only the original drain and member count, not a raw member list
   or dynamic bitmap/count pair. Each sequential canonical free re-resolves
   PageMap, accepts only the raw empty failed-reclaim result, removes that exact
   private-list member, then releases its clipped PageMap -> alias -> primary
   metadata -> mapping image. The final free returns the empty drain for
-  existing teardown. A sole, arena-backed, mixed-size, non-singleton,
+existing teardown. A sole, arena-backed, non-singleton,
   preexisting-list, allocation-time, reclaim/adoption/requeue, scan, producer,
   concurrent, huge, or general owner-exit case remains absent, while a
   collection, list, or mapping-release failure retains the sole owner
@@ -1085,19 +1115,20 @@ aggregate-registry adoption remain absent.
   remains absent, while a collection failure retains the drain.
   `DynamicThreadExitDrain::abandon_full_large_pages` is a fourth separate
   sequential dynamic aggregate, not a general `BIN_FULL` traversal: it
-  requires two or more full `MemoryKind::Arena` `PageKind::Large` members with
-  one rounded block size and regular bin, `reserved > 1`, `used == reserved`,
-  zero retirement countdown, empty local free lists, the matching dynamic
-  bitmap/count capability for every member, every other queue/direct entry
-  empty, and every member's exact 64-slice arena/PageMap span. It force- then
-  false-collects and detaches each member before unmapped abandonment. The
-  returned `DynamicThreadExitFullLargePagesRoute` retains the original drain
-  rather than raw member pointers or per-member mapped state; every sequential
-  canonical free re-resolves PageMap, uses the member's abandoned identity to
-  select its unmapped or mapped full-large failed-reclaim tail, and releases
-  only that member through PageMap -> dynamic ordinary bit -> metadata -> its
-  complete 64-slice arena span. The final free returns an empty drain for
-  existing teardown. A sole, mixed-size/class, non-large, OS-backed,
+  requires two or more full `MemoryKind::Arena` `PageKind::Large` members,
+  each with its own rounded block size and regular bin, `reserved > 1`,
+  `used == reserved`, zero retirement countdown, empty local free list, the
+  matching dynamic bitmap/count capability for every member, every other
+  queue/direct entry empty, and every member's exact 64-slice arena/PageMap
+  span. It force- then false-collects and detaches each member before unmapped
+  abandonment. The returned `DynamicThreadExitFullLargePagesRoute` retains the
+  original drain rather than raw member pointers or per-member mapped state;
+  every sequential canonical free re-resolves PageMap, claims the low owner
+  bit, then selects the member's exact dynamic bitmap/count capability and
+  unmapped or mapped full-large failed-reclaim tail. It releases only that
+  member through PageMap -> dynamic ordinary bit -> metadata -> its complete
+  64-slice arena span. The final free returns an empty drain for existing
+  teardown. A sole, mixed-class, non-large, OS-backed,
   malformed-span, existing queue/direct, allocation-time,
   reclaim/adoption/requeue, scan, producer, or concurrent case remains absent,
   while a collection failure retains the drain.
@@ -1353,25 +1384,25 @@ aggregate-registry adoption remain absent.
   `dynamic_thread_exit_full_medium_pages_route_rejects_mixed_full_classes_before_mutation`,
   and
   `dynamic_thread_exit_full_medium_pages_route_retains_a_collection_failure`
-  prove complete same-bin medium aggregate preflight, independent
+  prove complete per-member-bin medium aggregate preflight, independent
   unmapped-to-mapped reabandonment and PageMap/ordinary-bit/metadata/slice
   release for each member, wholly pre-mutation sole/mixed-class refusal, and
   retained dynamic-drain collection failure.
-  `dynamic_thread_exit_full_large_pages_route_reabandons_each_same_bin_page_then_releases`,
+  `dynamic_thread_exit_full_large_pages_route_reabandons_each_distinct_bin_page_then_releases`,
   `dynamic_thread_exit_full_large_pages_route_rejects_a_sole_full_large_before_mutation`,
   `dynamic_thread_exit_full_large_pages_route_rejects_mixed_full_classes_before_mutation`,
   and
   `dynamic_thread_exit_full_large_pages_route_retains_a_collection_failure`
-  prove complete same-bin large aggregate preflight, independent
+  prove complete distinct-bin large aggregate preflight, independent
   unmapped-to-mapped reabandonment and complete 64-slice
   PageMap/ordinary-bit/metadata release for each member, wholly pre-mutation
   sole/mixed-class refusal, and retained dynamic-drain collection failure.
-  `dynamic_thread_exit_full_non_direct_small_pages_route_reabandons_each_same_bin_page_then_releases`,
+  `dynamic_thread_exit_full_non_direct_small_pages_route_reabandons_each_distinct_bin_page_then_releases`,
   `dynamic_thread_exit_full_non_direct_small_pages_route_rejects_a_sole_full_page_before_mutation`,
   `dynamic_thread_exit_full_non_direct_small_pages_route_rejects_mixed_full_classes_before_mutation`,
   and
   `dynamic_thread_exit_full_non_direct_small_pages_route_retains_a_collection_failure`
-  prove the exact ordinary `true`/`2` fixture, complete same-bin
+  prove the exact ordinary `true`/`2` fixture, complete per-member ordinary-bin
   non-direct-small aggregate preflight, independent normal-collector
   unmapped-to-mapped reabandonment and PageMap/ordinary-bit/metadata/one-slice
   release for each member, wholly pre-mutation sole/mixed-class refusal, and

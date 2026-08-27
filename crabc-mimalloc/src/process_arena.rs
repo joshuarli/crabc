@@ -6,12 +6,13 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/page.c:574-644`
 // (`mi_page_extend_free`'s direct `_mi_os_commit`), and
-// `src/arena.c:1573-1611,1676-1791,1794-1912` (`mi_arenas_add`,
-// `mi_arena_initialize`, `mi_manage_os_memory_ex2`, and the bounded
-// `mi_reserve_os_memory_ex2` regular-map path). The later automatic
-// arena-reserve policy in
-// `src/arena.c:341-406,525-569` remains intentionally absent: it needs the
-// source option and fresh-page routing owners rather than a fixed substitute.
+// `src/arena.c:341-406,525-569,1573-1611,1676-1791,1794-1912`
+// (`mi_arena_reserve`, the one-at-a-time fresh-arena retry point,
+// `mi_arenas_add`, `mi_arena_initialize`, `mi_manage_os_memory_ex2`, and the
+// regular `mi_reserve_os_memory_ex2` map path). The first-arena policy retains
+// the pinned default options; general option mutation, later arena-count
+// scaling, NUMA/exclusive selection, huge pages, and fresh-page routing remain
+// separately incomplete.
 
 //! One process-shared, caller-selected arena backing.
 //!
@@ -21,15 +22,19 @@
 //! mapped single arena to that exact map root and main-subprocess identity,
 //! then retains the mapping, registry slot, and in-place metadata for process
 //! lifetime. Its explicit [`ProcessSharedArenaStorage::reserve_one_os_arena`]
-//! entry additionally ports one caller-selected regular
-//! `mi_reserve_os_memory_ex2` map: exactly one complete arena, ordinary
-//! reserved or committed mapping access, and source-shaped unmap after an
-//! unpublished manage failure. It deliberately does not choose automatic
-//! reservation policy, huge pages, exclusive/NUMA configuration, multiple
-//! sub-arenas, or general fresh-page routing. `ProcessPageArenaLease` can
-//! instead prove this exact pairing for the separately bounded ticket-zero
-//! static page owner; that owner alone attaches the main Heap, registers
-//! pages, and retains a scoped producer lifetime.
+//! entry ports one caller-selected regular `mi_reserve_os_memory_ex2` map. Its
+//! separate [`ProcessSharedArenaStorage::reserve_default_os_arena`] entry
+//! ports the first lazy `mi_arena_reserve` decision: the Linux/AArch64 default
+//! 1-GiB reserve, normal default eager-commit choice, and 128-MiB retry after
+//! a failed first reservation. The entry has no process-initialization caller;
+//! `MainStaticFirstArenaPageAllocator` is its one current ticket-zero caller,
+//! invoking it after an actual first fresh-page miss. Later arena-count scaling,
+//! option mutation, huge pages,
+//! exclusive/NUMA configuration, multiple sub-arenas, and general fresh-page
+//! routing remain absent. `ProcessPageArenaLease` can instead prove this exact
+//! pairing for the separately bounded ticket-zero static page owner; that
+//! owner alone attaches the main Heap, registers pages, and retains a scoped
+//! producer lifetime.
 //!
 //! A reserved selected mapping enters this sidecar's final slot before
 //! `manage_external_in_place` initializes metadata. The retained arena callback
@@ -65,7 +70,10 @@ use crate::arena::{
     ArenaRegistry, ArenaView, CommitHook, ExternalArenaPlan, ManageArenaError,
     ManagedExternalRegion, manage_external_in_place, manage_os_in_place,
 };
-use crate::config::{ARENA_ALIGNMENT, ARENA_SLICE_SIZE, MAX_ALLOC_SIZE};
+use crate::config::{
+    ARENA_ALIGNMENT, ARENA_MAX_CHUNK_OBJ_SIZE, ARENA_MAX_SIZE, ARENA_MIN_SIZE,
+    ARENA_SLICE_SIZE, GIB, MAX_ALLOC_SIZE,
+};
 use crate::invariants;
 use crate::lock::PrivateLock;
 use crate::os::{MapAccess, Mapping, MemoryConfig};
@@ -82,6 +90,14 @@ const RETAINED: u8 = 3;
 
 const PAIR_UNSET: u8 = 0;
 const PAIR_SET: u8 = 1;
+
+// `src/options.c:46-64` freezes these normal-release values for the only
+// supported 64-bit Linux/AArch64 profile. The source stores `arena_reserve`
+// in KiB; retain bytes here because every surrounding map/arena boundary is
+// byte-based. This is not an options implementation or a mutable substitute
+// for one.
+const DEFAULT_ARENA_RESERVE: usize = GIB;
+const DEFAULT_SMALL_ARENA_RESERVE: usize = 4 * ARENA_MIN_SIZE;
 
 /// Process-static sidecar for one source-managed arena backing.
 ///
@@ -135,6 +151,23 @@ impl ProcessSharedArenaStorage {
     #[inline]
     pub(crate) fn global() -> &'static Self {
         &PROCESS_SHARED_ARENA
+    }
+
+    /// Returns an immutable lease for the one already-published shared arena.
+    ///
+    /// This is the read-only counterpart to the bounded reservation entries:
+    /// it never reserves, searches, or mutates a map. A caller must still join
+    /// it with an exact process PageMap lease before a page owner may use the
+    /// arena, so an unrelated ready sidecar cannot be mistaken for the current
+    /// process image.
+    #[inline]
+    pub(crate) fn ready_lease(
+        &'static self,
+    ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaError> {
+        if self.state.load(Ordering::Acquire) != READY {
+            return Err(ProcessSharedArenaError::Retained);
+        }
+        Ok(ProcessSharedArenaLease { storage: self })
     }
 
     /// Builds an isolated deliberately leaked process-lifetime fixture.
@@ -312,6 +345,85 @@ impl ProcessSharedArenaStorage {
         }
     }
 
+    /// Reserves the first default arena after a source fresh-page miss.
+    ///
+    /// This is the bounded first-arena branch of `mi_arena_reserve`, not a
+    /// process-start reservation. The caller supplies the current fresh page's
+    /// already-rounded byte requirement; the frozen Linux/AArch64 profile
+    /// first reserves 1 GiB and then retries 128 MiB only if the primary map
+    /// or unpublished setup returned the sidecar to COLD. Later source arena
+    /// count scaling, options, huge-page policy, and general fresh-page retry
+    /// routing must be added with their owning source state machines.
+    pub(crate) fn reserve_default_os_arena(
+        &'static self,
+        page_map: ProcessPageMapLease,
+        requested_size: usize,
+    ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaReserveFailure> {
+        let pair = ProcessArenaPair::from_page_map(page_map)
+            .map_err(|error| ProcessSharedArenaReserveFailure::rejected(
+                ProcessSharedArenaReserveError::PageMap(error),
+            ))?;
+        let plan = default_os_arena_reservation(pair.config, requested_size)
+            .map_err(ProcessSharedArenaReserveFailure::rejected)?;
+        let guard = self
+            .initialization_lock
+            .lock()
+            .map_err(|error| ProcessSharedArenaReserveFailure::rejected(
+                ProcessSharedArenaReserveError::Lock(error),
+            ))?;
+
+        let attempt = match self.state.load(Ordering::Acquire) {
+            READY => {
+                if self.pair_matches(pair) {
+                    // The one-arena first-default policy cannot search or
+                    // reuse this published arena. Returning a retryable
+                    // rejection would let a caller mistake READY for COLD.
+                    ProcessSharedArenaReservationAttempt::Retained(
+                        ProcessSharedArenaReserveError::AlreadyInstalled,
+                    )
+                } else {
+                    ProcessSharedArenaReservationAttempt::Retained(
+                        ProcessSharedArenaReserveError::PairMismatch,
+                    )
+                }
+            }
+            COLD if self.pair_state.load(Ordering::Acquire) == PAIR_SET
+                && !self.pair_matches(pair) =>
+            {
+                ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::PairMismatch,
+                )
+            }
+            COLD => self.reserve_cold_default_os_arena(pair, plan),
+            INITIALIZING | RETAINED | _ => ProcessSharedArenaReservationAttempt::Retained(
+                ProcessSharedArenaReserveError::Retained,
+            ),
+        };
+        let unlock = guard.unlock();
+
+        match (attempt, unlock) {
+            (ProcessSharedArenaReservationAttempt::Ready(lease), Ok(())) => Ok(lease),
+            (ProcessSharedArenaReservationAttempt::Ready(_), Err(error)) => {
+                // The arena and its stable mapping callback were already
+                // published before the wake failure. Preserve the only sound
+                // terminal ownership state rather than offering a retry.
+                self.state.store(RETAINED, Ordering::Release);
+                Err(ProcessSharedArenaReserveFailure::retained(
+                    ProcessSharedArenaReserveError::Lock(error),
+                ))
+            }
+            (ProcessSharedArenaReservationAttempt::Rejected(error), Err(_))
+            | (ProcessSharedArenaReservationAttempt::Rejected(error), Ok(())) => {
+                // The source reservation/setup outcome takes precedence over
+                // an unrelated post-Release private-futex wake failure.
+                Err(ProcessSharedArenaReserveFailure::rejected(error))
+            }
+            (ProcessSharedArenaReservationAttempt::Retained(error), _) => {
+                Err(ProcessSharedArenaReserveFailure::retained(error))
+            }
+        }
+    }
+
     fn reserve_cold_regular_os_arena(
         &'static self,
         pair: ProcessArenaPair,
@@ -357,6 +469,31 @@ impl ProcessSharedArenaStorage {
                 self.release_unpublished_os_reservation(mapping, error)
             }
         }
+    }
+
+    fn reserve_cold_default_os_arena(
+        &'static self,
+        pair: ProcessArenaPair,
+        plan: DefaultOsArenaReservation,
+    ) -> ProcessSharedArenaReservationAttempt {
+        let primary = self.reserve_cold_regular_os_arena(pair, plan.primary_size, plan.access);
+        if !matches!(&primary, ProcessSharedArenaReservationAttempt::Rejected(_)) {
+            return primary;
+        }
+
+        let Some(fallback_size) = plan.fallback_size else {
+            return primary;
+        };
+        // `reserve_cold_regular_os_arena` restores COLD only after it has
+        // released the failed unpublished mapping. The source retry must not
+        // manufacture a second reservation when any terminal owner remains.
+        if self.state.load(Ordering::Acquire) != COLD {
+            self.state.store(RETAINED, Ordering::Release);
+            return ProcessSharedArenaReservationAttempt::Retained(
+                ProcessSharedArenaReserveError::Retained,
+            );
+        }
+        self.reserve_cold_regular_os_arena(pair, fallback_size, plan.access)
     }
 
     fn release_unpublished_os_reservation(
@@ -1007,8 +1144,8 @@ enum ProcessSharedArenaInstallAttempt {
 ///
 /// `Rejected` has released every unpublished mapping and leaves the selected
 /// sidecar retryable when its state is COLD. `Retained` records that an arena,
-/// registry, or failed-release mapping remains process-owned and no retry may
-/// assume a fresh reservation boundary.
+/// registry, failed-release mapping, or already-selected incompatible process
+/// identity prevents a caller from assuming a fresh reservation boundary.
 #[must_use = "an OS-reservation failure records retryable or terminal mapping ownership"]
 pub(crate) enum ProcessSharedArenaReserveFailure {
     Rejected {
@@ -1037,7 +1174,8 @@ impl ProcessSharedArenaReserveFailure {
 pub(crate) enum ProcessSharedArenaReserveError {
     /// The source request was zero before slice rounding.
     InvalidRequest,
-    /// The source request exceeded its maximum representable allocation size.
+    /// The source request, including automatic reserve headroom when present,
+    /// cannot fit the bounded regular one-arena path.
     RequestTooLarge,
     /// Slice rounding overflowed before any map was attempted.
     SizeOverflow,
@@ -1062,6 +1200,19 @@ enum ProcessSharedArenaReservationAttempt {
     Ready(ProcessSharedArenaLease),
     Rejected(ProcessSharedArenaReserveError),
     Retained(ProcessSharedArenaReserveError),
+}
+
+/// The frozen first-arena result of `mi_arena_reserve` before a mapping exists.
+///
+/// The v3.5.0 source uses mutable option descriptors and the number of already
+/// registered arenas. This bounded owner admits only the first automatic arena,
+/// so this carries its exact default policy without inventing an option store
+/// or claiming the later count-scaling branches.
+#[derive(Clone, Copy)]
+struct DefaultOsArenaReservation {
+    primary_size: usize,
+    fallback_size: Option<usize>,
+    access: MapAccess,
 }
 
 #[derive(Clone, Copy)]
@@ -1147,6 +1298,74 @@ fn one_regular_os_arena_length(
     Ok(length)
 }
 
+/// Selects the first regular source arena from `mi_arena_reserve`.
+///
+/// `requested_size` is the current fresh page's slice-rounded size before the
+/// source adds `MI_ARENA_MAX_CHUNK_OBJ_SIZE` for metadata/headroom. On the
+/// first arena, v3.5.0 does not apply its later `arena_count / 8` growth; it
+/// starts with the 64-bit default 1 GiB, clamps it to one arena, and uses the
+/// 128 MiB retry only when that retry can still contain the request. The
+/// normal Linux default `arena_eager_commit == 2` commits the arena mapping on
+/// an overcommit kernel; `allow_large_os_pages` is false in this frozen profile.
+fn default_os_arena_reservation(
+    config: MemoryConfig,
+    requested_size: usize,
+) -> Result<DefaultOsArenaReservation, ProcessSharedArenaReserveError> {
+    if requested_size == 0 {
+        return Err(ProcessSharedArenaReserveError::InvalidRequest);
+    }
+    if requested_size > MAX_ALLOC_SIZE {
+        return Err(ProcessSharedArenaReserveError::RequestTooLarge);
+    }
+    let with_page_headroom = requested_size
+        .checked_add(ARENA_MAX_CHUNK_OBJ_SIZE)
+        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
+    let required_size = invariants::align_up(with_page_headroom, ARENA_MAX_CHUNK_OBJ_SIZE)
+        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
+
+    // `src/arena.c` reduces the option before clamping only on targets that
+    // cannot reserve virtual address space. Linux/AArch64 has that facility,
+    // but retain the source decision so this policy has no hidden platform
+    // assumption beyond the frozen `MemoryConfig` observation.
+    let base_size = if config.has_virtual_reserve() {
+        DEFAULT_ARENA_RESERVE
+    } else {
+        DEFAULT_ARENA_RESERVE / 4
+    };
+    let base_size = invariants::align_up(base_size, ARENA_SLICE_SIZE)
+        .ok_or(ProcessSharedArenaReserveError::SizeOverflow)?;
+    let primary_size = base_size
+        .max(required_size)
+        .max(ARENA_MIN_SIZE)
+        .min(ARENA_MAX_SIZE);
+    if primary_size < required_size {
+        return Err(ProcessSharedArenaReserveError::RequestTooLarge);
+    }
+    // `MI_DEFAULT_ARENA_EAGER_COMMIT == 2` and
+    // `MI_DEFAULT_ALLOW_LARGE_OS_PAGES == 0`: source eagerly maps only when
+    // the live Linux configuration reports overcommit.
+    let access = if config.has_overcommit() {
+        MapAccess::Committed
+    } else {
+        MapAccess::Reserved
+    };
+    let fallback_size = (primary_size > DEFAULT_SMALL_ARENA_RESERVE
+        && DEFAULT_SMALL_ARENA_RESERVE > required_size)
+        .then_some(DEFAULT_SMALL_ARENA_RESERVE);
+
+    // The ordinary reservation entry retains the one-arena structural proof,
+    // including source slice rounding and the metadata-alignment requirement.
+    one_regular_os_arena_length(primary_size)?;
+    if let Some(fallback_size) = fallback_size {
+        one_regular_os_arena_length(fallback_size)?;
+    }
+    Ok(DefaultOsArenaReservation {
+        primary_size,
+        fallback_size,
+        access,
+    })
+}
+
 static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStorage::new();
 
 #[cfg(test)]
@@ -1209,6 +1428,152 @@ mod tests {
                 core::ptr::null_mut(),
                 "reservation publishes no page before a typed page owner begins"
             );
+        }
+    }
+
+    #[test]
+    fn default_os_reservation_is_lazy_and_uses_the_pinned_first_arena_policy() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+
+        assert!(storage.test_is_cold(), "process initialization does not pre-reserve an arena");
+        let lease = match storage.reserve_default_os_arena(page_map, 1) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the first source fresh-page miss reserves its default arena"),
+        };
+        let arena = lease.arena().expect("the default arena remains published");
+        assert_eq!(arena.size(), Some(crate::config::GIB));
+        assert!(
+            !arena.arena().memid.initially_committed(),
+            "the non-overcommit fixture preserves source lazy page commitment"
+        );
+        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert!(
+            unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) }
+                .is_null(),
+            "reservation alone never manufactures a fresh page-map entry"
+        );
+    }
+
+    #[test]
+    fn default_os_reservation_retries_the_pinned_smaller_arena_after_its_first_map_failure() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+
+        let lease = match storage.reserve_default_os_arena(page_map, ARENA_SLICE_SIZE) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the source default-reserve fallback publishes its smaller arena"),
+        };
+        assert_eq!(
+            lease.arena().unwrap().size(),
+            Some(4 * ARENA_MIN_SIZE),
+            "a failed 1 GiB first attempt retries the source 128 MiB arena"
+        );
+        assert!(fault.observed() >= 2, "the failed primary map is followed by a distinct fallback map");
+    }
+
+    #[test]
+    fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Map,
+            1,
+            fault::Point::Map,
+            2,
+            Errno::NOMEM,
+        ));
+
+        match storage.reserve_default_os_arena(page_map, ARENA_SLICE_SIZE) {
+            Err(ProcessSharedArenaReserveFailure::Rejected { .. }) => {}
+            Err(ProcessSharedArenaReserveFailure::Retained { error }) => {
+                panic!("a failed default reservation must not retain a map: {error:?}")
+            }
+            Ok(_) => panic!("the paired mapping failures cannot publish an arena"),
+        }
+        assert!(storage.test_is_cold());
+        assert_eq!(storage.registry.count(), 0);
+        assert!(
+            fault.observed() >= 2,
+            "the source fallback performs a distinct final reservation attempt"
+        );
+
+        fault.set(fault::Plan::disabled());
+        let lease = match storage.reserve_default_os_arena(page_map, ARENA_SLICE_SIZE) {
+            Ok(lease) => lease,
+            Err(_) => panic!("a pair of map failures retains no owner and stays retryable"),
+        };
+        assert_eq!(lease.arena().unwrap().size(), Some(crate::config::GIB));
+    }
+
+    #[test]
+    fn default_os_reservation_plan_preserves_headroom_commit_and_retry_boundaries() {
+        let reserved = default_os_arena_reservation(memory_config(), ARENA_SLICE_SIZE)
+            .expect("a small fresh page fits the first default arena");
+        assert_eq!(reserved.primary_size, crate::config::GIB);
+        assert_eq!(reserved.fallback_size, Some(4 * ARENA_MIN_SIZE));
+        assert_eq!(reserved.access, MapAccess::Reserved);
+
+        let overcommit = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(),
+            1024 * 1024,
+            true,
+            false,
+        );
+        assert_eq!(
+            default_os_arena_reservation(overcommit, ARENA_SLICE_SIZE)
+                .expect("the overcommit profile remains a valid source default")
+                .access,
+            MapAccess::Committed,
+            "arena_eager_commit == 2 commits only on an overcommit kernel"
+        );
+
+        let request = crate::config::GIB;
+        let enlarged = default_os_arena_reservation(memory_config(), request)
+            .expect("the source adds one max-page headroom chunk before reserving");
+        assert_eq!(
+            enlarged.primary_size,
+            crate::config::GIB + ARENA_MAX_CHUNK_OBJ_SIZE
+        );
+        assert_eq!(enlarged.fallback_size, None);
+        assert!(matches!(
+            default_os_arena_reservation(memory_config(), ARENA_MAX_SIZE),
+            Err(ProcessSharedArenaReserveError::RequestTooLarge)
+        ), "a fresh page that cannot fit with its source headroom never maps a partial arena");
+    }
+
+    #[test]
+    fn default_os_reservation_retains_an_already_published_first_arena() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+
+        let first = match storage.reserve_default_os_arena(page_map, ARENA_SLICE_SIZE) {
+            Ok(first) => first,
+            Err(_) => panic!("the first default arena publishes"),
+        };
+        assert_eq!(first.arena().unwrap().size(), Some(crate::config::GIB));
+        match storage.reserve_default_os_arena(page_map, ARENA_SLICE_SIZE) {
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::AlreadyInstalled,
+            }) => {}
+            Err(ProcessSharedArenaReserveFailure::Rejected { error }) => panic!(
+                "an already-published first arena is not a retryable cold rejection: {error:?}"
+            ),
+            Err(ProcessSharedArenaReserveFailure::Retained { error }) => {
+                panic!("the published first arena retains its exact ownership: {error:?}")
+            }
+            Ok(_) => panic!("the one-arena default policy cannot publish a second first arena"),
         }
     }
 

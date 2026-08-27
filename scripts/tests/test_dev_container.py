@@ -16,6 +16,133 @@ DISPATCHER = ROOT / "scripts" / "dev.sh"
 
 
 class DevContainerTests(unittest.TestCase):
+    def test_structure_runs_in_pinned_container(self) -> None:
+        """The structure gate must not depend on the host Python version."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+            docker = bin_directory / "docker"
+            docker.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+
+case "$1" in
+    image)
+        if [[ "$2" == "inspect" ]]; then
+            if [[ "${3:-}" == "--format" ]]; then
+                printf 'arm64\\n'
+            fi
+            exit 0
+        fi
+        ;;
+    run)
+        printf '%s\\0' "$@" > "${FAKE_DOCKER_ARGS:?}"
+        exit 0
+        ;;
+esac
+
+printf 'unexpected docker invocation: %s\\n' "$*" >&2
+exit 64
+""",
+                encoding="utf-8",
+            )
+            docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "CRABC_DEV_IMAGE": "crabc-test:aarch64",
+                    "CRABC_TARGET_VOLUME": "crabc-test-target",
+                    "CRABC_CARGO_VOLUME": "crabc-test-cargo",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(DISPATCHER), "structure"],
+                cwd=ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+
+            arguments = [
+                argument.decode("utf-8")
+                for argument in capture.read_bytes().split(bytes((0,)))
+                if argument
+            ]
+            self.assertEqual(arguments[-2:], ["python3", "scripts/check_structure.py"])
+
+    def test_dispatcher_runs_without_optional_oracle_mounts(self) -> None:
+        """Optional oracle checkouts must not make the native dispatcher fail."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+            docker = bin_directory / "docker"
+            docker.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+
+case "$1" in
+    image)
+        if [[ "$2" == "inspect" ]]; then
+            if [[ "${3:-}" == "--format" ]]; then
+                printf 'arm64\\n'
+            fi
+            exit 0
+        fi
+        ;;
+    run)
+        printf '%s\\0' "$@" > "${FAKE_DOCKER_ARGS:?}"
+        exit 0
+        ;;
+esac
+
+printf 'unexpected docker invocation: %s\\n' "$*" >&2
+exit 64
+""",
+                encoding="utf-8",
+            )
+            docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "CRABC_DEV_IMAGE": "crabc-test:aarch64",
+                    "CRABC_TARGET_VOLUME": "crabc-test-target",
+                    "CRABC_CARGO_VOLUME": "crabc-test-cargo",
+                    "CRABC_RUSTIX_SOURCE_HOST": str(root / "missing-rustix"),
+                    "CRABC_RUSTYBENCH_SOURCE_HOST": str(root / "missing-rustybench"),
+                    "FAKE_DOCKER_ARGS": str(capture),
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(DISPATCHER), "sysroot-dist"],
+                cwd=ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8"))
+
+            arguments = [
+                argument.decode("utf-8")
+                for argument in capture.read_bytes().split(bytes((0,)))
+                if argument
+            ]
+            self.assertNotIn("CRABC_RUSTIX_SOURCE=/opt/rustix", arguments)
+            self.assertNotIn("CRABC_RUSTYBENCH_SOURCE=/opt/rustybench", arguments)
+
     def test_sysroot_distribution_marks_the_source_mount_as_git_safe(self) -> None:
         """A container UID must be able to query the runner-owned checkout."""
 

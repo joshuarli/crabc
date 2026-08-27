@@ -3371,7 +3371,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_full_large_pages_route_reabandons_each_same_bin_page_then_releases() {
+    fn dynamic_thread_exit_full_large_pages_route_reabandons_each_distinct_bin_page_then_releases() {
         with_non_abandoning_dynamic_page_fixture(|_owner, arena, page_map| {
             let session = _owner
                 .page_session()
@@ -3382,10 +3382,11 @@ mod tests {
                 ArenaId::none(),
                 page_map,
             );
-            let request = MEDIUM_MAX_OBJ_SIZE + WORD_SIZE;
+            let first_request = MEDIUM_MAX_OBJ_SIZE + WORD_SIZE;
+            let second_request = first_request * 2;
 
             let first = allocator
-                .allocate(request, false)
+                .allocate(first_request, false)
                 .expect("the fixture creates its first dynamic large page");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first large page remains PageMap-published");
@@ -3398,24 +3399,27 @@ mod tests {
             first_blocks.push(first);
             while first_blocks.len() < capacity {
                 let block = allocator
-                    .allocate(request, false)
+                    .allocate(first_request, false)
                     .expect("the fixture fills only its first dynamic large page");
                 assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
                 first_blocks.push(block);
             }
 
             let second = allocator
-                .allocate(request, false)
+                .allocate(second_request, false)
                 .expect("the fixture creates its second dynamic large page");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second large page remains PageMap-published");
             let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
-            assert_eq!(second_capacity, capacity);
+            assert!(
+                second_capacity > 8,
+                "the second large geometry exposes its own source mostly-used prefix"
+            );
             let mut second_blocks = Vec::with_capacity(second_capacity);
             second_blocks.push(second);
             while second_blocks.len() < second_capacity {
                 let block = allocator
-                    .allocate(request, false)
+                    .allocate(second_request, false)
                     .expect("the fixture fills only its second dynamic large page");
                 assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
                 second_blocks.push(block);
@@ -3431,9 +3435,22 @@ mod tests {
                 crate::size_class::page_kind_for_block_size(first_ref.block_size()),
                 Some(crate::types::PageKind::Large)
             );
-            assert_eq!(first_ref.block_size(), second_ref.block_size());
-            let bin = crate::size_class::bin(first_ref.block_size())
-                .expect("the homogeneous large pages retain one source bin");
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(second_ref.block_size()),
+                Some(crate::types::PageKind::Large)
+            );
+            assert_ne!(
+                first_ref.block_size(), second_ref.block_size(),
+                "the source full queue accepts independent rounded large sizes"
+            );
+            let first_bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the first large page retains one source bin");
+            let second_bin = crate::size_class::bin(second_ref.block_size())
+                .expect("the second large page retains one source bin");
+            assert_ne!(
+                first_bin, second_bin,
+                "the mixed-size source members select independent arena bitmap bins"
+            );
             let first_memory = first_ref.memid();
             let second_memory = second_ref.memid();
             let first_arena_memory = first_memory
@@ -3471,7 +3488,7 @@ mod tests {
                 }
             };
             // SAFETY: both vectors retain every live canonical allocation in
-            // the complete same-bin full-large source queue.
+            // the complete mixed-bin full-large source queue.
             let mut route = match unsafe { drain.abandon_full_large_pages() } {
                 Ok(route) => route,
                 Err(DynamicThreadExitFullLargePagesAbandonFailure::Rejected { drain, error })
@@ -3480,20 +3497,21 @@ mod tests {
                     error,
                 }) => {
                     core::mem::forget(drain);
-                    panic!("same-bin full large pages enter the dynamic aggregate route: {error:?}");
+                    panic!("mixed-bin full large pages enter the dynamic aggregate route: {error:?}");
                 }
             };
             assert_eq!(route.test_remaining_pages(), 2);
             assert_eq!(route.test_page_count(), 0);
             assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
             assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
 
-            let unmapped_frees = capacity / 8;
-            assert!(unmapped_frees > 0);
-            for block in first_blocks.iter().copied().take(unmapped_frees) {
+            let first_unmapped_frees = capacity / 8;
+            assert!(first_unmapped_frees > 0);
+            for block in first_blocks.iter().copied().take(first_unmapped_frees) {
                 // SAFETY: each block is still live and belongs to the linear
                 // first aggregate member.
                 route = match unsafe { route.remote_free_after_thread_exit(block) } {
@@ -3512,13 +3530,13 @@ mod tests {
                     }
                 };
             }
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
 
             // SAFETY: this exact next free crosses the first member's source
             // mostly-used threshold and must publish only its bitmap/count.
             route = match unsafe {
-                route.remote_free_after_thread_exit(first_blocks[unmapped_frees])
+                route.remote_free_after_thread_exit(first_blocks[first_unmapped_frees])
             } {
                 Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
                 Ok(_) => panic!("the first reabandon boundary leaves live blocks"),
@@ -3534,15 +3552,15 @@ mod tests {
                     panic!("the first large reabandon boundary succeeds: {error:?}");
                 }
             };
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
-            assert!(route.test_dynamic_abandoned_page_is_set(bin, first_memory));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
 
             for block in first_blocks
                 .iter()
                 .copied()
-                .skip(unmapped_frees + 1)
-                .take(capacity - unmapped_frees - 2)
+                .skip(first_unmapped_frees + 1)
+                .take(capacity - first_unmapped_frees - 2)
             {
                 // SAFETY: this linear route still owns the selected first-page
                 // client allocation through its mapped failed-reclaim tail.
@@ -3580,12 +3598,14 @@ mod tests {
                 }
             };
             assert_eq!(route.test_remaining_pages(), 1);
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
             assert!(unsafe { route.test_page_for_block(first) }.is_null());
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
             assert!(route.test_dynamic_arena_page_is_clear(first_memory));
 
-            for block in second_blocks.iter().copied().take(unmapped_frees) {
+            let second_unmapped_frees = second_capacity / 8;
+            assert!(second_unmapped_frees > 0);
+            for block in second_blocks.iter().copied().take(second_unmapped_frees) {
                 // SAFETY: the second page remains independently live and
                 // source-unmapped through its own threshold prefix.
                 route = match unsafe { route.remote_free_after_thread_exit(block) } {
@@ -3607,7 +3627,7 @@ mod tests {
             // SAFETY: this exact next free crosses only the second member's
             // source mostly-used threshold.
             route = match unsafe {
-                route.remote_free_after_thread_exit(second_blocks[unmapped_frees])
+                route.remote_free_after_thread_exit(second_blocks[second_unmapped_frees])
             } {
                 Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
                 Ok(_) => panic!("the second reabandon boundary leaves live blocks"),
@@ -3623,14 +3643,14 @@ mod tests {
                     panic!("the second large reabandon boundary succeeds: {error:?}");
                 }
             };
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
-            assert!(route.test_dynamic_abandoned_page_is_set(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(second_bin, second_memory));
 
             for block in second_blocks
                 .iter()
                 .copied()
-                .skip(unmapped_frees + 1)
-                .take(second_capacity - unmapped_frees - 2)
+                .skip(second_unmapped_frees + 1)
+                .take(second_capacity - second_unmapped_frees - 2)
             {
                 // SAFETY: this linear route still owns the selected second-page
                 // allocation through its mapped failed-reclaim tail.
@@ -3672,8 +3692,8 @@ mod tests {
                 }
             };
             assert!(unsafe { drain.test_page_for_block(second) }.is_null());
-            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(drain.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
             assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
             assert_eq!(drain.test_page_count(), 0);
             assert!(drain.finish());
@@ -3928,7 +3948,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_full_non_direct_small_pages_route_reabandons_each_same_bin_page_then_releases() {
+    fn dynamic_thread_exit_full_non_direct_small_pages_route_reabandons_each_distinct_bin_page_then_releases() {
         with_ordinary_dynamic_page_fixture(|_owner, arena, page_map| {
             let session = _owner
                 .page_session_for_ordinary_thread_exit_fixture()
@@ -3939,10 +3959,12 @@ mod tests {
                 ArenaId::none(),
                 page_map,
             );
-            let request = SMALL_SIZE_MAX + WORD_SIZE;
+            let first_request = SMALL_SIZE_MAX + WORD_SIZE;
+            let second_request = first_request * 2;
+            assert!(second_request <= SMALL_MAX_OBJ_SIZE);
 
             let first = allocator
-                .allocate(request, false)
+                .allocate(first_request, false)
                 .expect("the fixture creates its first dynamic non-direct-small page");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first non-direct-small page remains PageMap-published");
@@ -3955,24 +3977,27 @@ mod tests {
             first_blocks.push(first);
             while first_blocks.len() < capacity {
                 let block = allocator
-                    .allocate(request, false)
+                    .allocate(first_request, false)
                     .expect("the fixture fills only its first dynamic non-direct-small page");
                 assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
                 first_blocks.push(block);
             }
 
             let second = allocator
-                .allocate(request, false)
+                .allocate(second_request, false)
                 .expect("the fixture creates its second dynamic non-direct-small page");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second non-direct-small page remains PageMap-published");
             let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
-            assert_eq!(second_capacity, capacity);
+            assert!(
+                second_capacity > 8,
+                "the second non-direct-small geometry exposes the source mostly-used prefix"
+            );
             let mut second_blocks = Vec::with_capacity(second_capacity);
             second_blocks.push(second);
             while second_blocks.len() < second_capacity {
                 let block = allocator
-                    .allocate(request, false)
+                    .allocate(second_request, false)
                     .expect("the fixture fills only its second dynamic non-direct-small page");
                 assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
                 second_blocks.push(block);
@@ -3994,13 +4019,22 @@ mod tests {
                     && !crate::types::page_queue::page_is_in_full(first_ref),
                 "the first member has the ordinary non-direct-small source shape"
             );
-            assert_eq!(first_ref.block_size(), second_ref.block_size());
+            assert_ne!(
+                first_ref.block_size(), second_ref.block_size(),
+                "the aggregate exercises distinct rounded non-direct-small source sizes"
+            );
             assert!(
                 !crate::types::page_queue::page_is_in_full(second_ref),
-                "the second member remains in the same ordinary source bin"
+                "the second member remains in its own ordinary source bin"
             );
-            let bin = crate::size_class::bin(first_ref.block_size())
-                .expect("the homogeneous non-direct-small pages retain one source bin");
+            let first_bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the first non-direct-small page retains one source bin");
+            let second_bin = crate::size_class::bin(second_ref.block_size())
+                .expect("the second non-direct-small page retains one source bin");
+            assert_ne!(
+                first_bin, second_bin,
+                "the aggregate exercises distinct ordinary non-direct-small bins"
+            );
             let first_memory = first_ref.memid();
             let second_memory = second_ref.memid();
             let first_arena_memory = first_memory
@@ -4025,7 +4059,8 @@ mod tests {
                 second_arena_memory.slice_count, 1,
                 "the second aggregate member retains one exact source arena slice"
             );
-            assert_eq!(allocator.queue_count(bin), Some(2));
+            assert_eq!(allocator.queue_count(first_bin), Some(1));
+            assert_eq!(allocator.queue_count(second_bin), Some(1));
             assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
             for index in 0..PAGES_DIRECT {
                 assert_eq!(
@@ -4043,7 +4078,7 @@ mod tests {
                 }
             };
             // SAFETY: both vectors retain every live canonical allocation in
-            // the complete same-bin full non-direct-small source queue.
+            // the complete distinct-bin full non-direct-small source queues.
             let mut route = match unsafe { drain.abandon_full_non_direct_small_pages() } {
                 Ok(route) => route,
                 Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
@@ -4057,16 +4092,17 @@ mod tests {
                     },
                 ) => {
                     core::mem::forget(drain);
-                    panic!("same-bin full non-direct-small pages enter the dynamic aggregate route: {error:?}");
+                    panic!("distinct-bin full non-direct-small pages enter the dynamic aggregate route: {error:?}");
                 }
             };
             assert_eq!(route.test_remaining_pages(), 2);
             assert_eq!(route.test_page_count(), 0);
             assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
             assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
 
             let unmapped_frees = capacity / 8;
             assert!(unmapped_frees > 0);
@@ -4091,8 +4127,8 @@ mod tests {
                     }
                 };
             }
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
 
             // SAFETY: this exact next free crosses the first member's source
             // mostly-used threshold and publishes only its dynamic bitmap/count.
@@ -4115,9 +4151,10 @@ mod tests {
                     panic!("the first non-direct-small reabandon boundary succeeds: {error:?}");
                 }
             };
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
-            assert!(route.test_dynamic_abandoned_page_is_set(bin, first_memory));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(1));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_set(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
 
             for block in first_blocks
                 .iter()
@@ -4165,12 +4202,14 @@ mod tests {
                 }
             };
             assert_eq!(route.test_remaining_pages(), 1);
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
             assert!(unsafe { route.test_page_for_block(first) }.is_null());
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
             assert!(route.test_dynamic_arena_page_is_clear(first_memory));
 
-            for block in second_blocks.iter().copied().take(unmapped_frees) {
+            let second_unmapped_frees = second_capacity / 8;
+            assert!(second_unmapped_frees > 0);
+            for block in second_blocks.iter().copied().take(second_unmapped_frees) {
                 // SAFETY: the second page remains independently live and
                 // source-unmapped through its own threshold prefix.
                 route = match unsafe { route.remote_free_after_thread_exit(block) } {
@@ -4194,7 +4233,7 @@ mod tests {
             // SAFETY: this exact next free crosses only the second member's
             // source mostly-used threshold.
             route = match unsafe {
-                route.remote_free_after_thread_exit(second_blocks[unmapped_frees])
+                route.remote_free_after_thread_exit(second_blocks[second_unmapped_frees])
             } {
                 Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
                 Ok(_) => panic!("the second reabandon boundary leaves live blocks"),
@@ -4212,14 +4251,14 @@ mod tests {
                     panic!("the second non-direct-small reabandon boundary succeeds: {error:?}");
                 }
             };
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
-            assert!(route.test_dynamic_abandoned_page_is_set(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(second_bin, second_memory));
 
             for block in second_blocks
                 .iter()
                 .copied()
-                .skip(unmapped_frees + 1)
-                .take(second_capacity - unmapped_frees - 2)
+                .skip(second_unmapped_frees + 1)
+                .take(second_capacity - second_unmapped_frees - 2)
             {
                 // SAFETY: this linear route still owns the selected second-page
                 // allocation through its mapped failed-reclaim tail.
@@ -4265,8 +4304,8 @@ mod tests {
                 }
             };
             assert!(unsafe { drain.test_page_for_block(second) }.is_null());
-            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(drain.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
             assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
             assert_eq!(drain.test_page_count(), 0);
             assert!(drain.finish());
@@ -4566,7 +4605,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_full_direct_small_pages_route_preserves_partial_head_then_releases_each_member() {
+    fn dynamic_thread_exit_full_direct_small_pages_route_reabandons_each_distinct_bin_page_then_releases() {
         with_ordinary_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
                 .page_session_for_ordinary_thread_exit_fixture()
@@ -4577,10 +4616,10 @@ mod tests {
                 ArenaId::none(),
                 page_map,
             );
-            let request = SMALL_SIZE_MAX;
+            let first_request = SMALL_SIZE_MAX;
 
             let first = allocator
-                .allocate(request, false)
+                .allocate(first_request, false)
                 .expect("the fixture creates its first dynamic direct-small page");
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first direct-small page remains PageMap-published");
@@ -4593,7 +4632,7 @@ mod tests {
             first_blocks.push(first);
             while first_blocks.len() < capacity {
                 let block = allocator
-                    .allocate(request, false)
+                    .allocate(first_request, false)
                     .expect("the fixture fills only its first dynamic direct-small page");
                 assert_eq!(
                     unsafe { allocator.page_for_block(block) },
@@ -4604,8 +4643,8 @@ mod tests {
             }
 
             let second = allocator
-                .allocate(request, false)
-                .expect("the fixture creates its second dynamic direct-small page");
+                .allocate(SMALL_SIZE_MAX / 2, false)
+                .expect("the fixture creates its distinct-bin second dynamic direct-small page");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second direct-small page remains PageMap-published");
             assert_ne!(
@@ -4613,20 +4652,20 @@ mod tests {
                 "the aggregate route receives two distinct ordinary-bin source pages"
             );
             let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
-            assert_eq!(
-                second_capacity, capacity,
-                "one request class gives both aggregate members the same full-page geometry"
+            assert!(
+                second_capacity >= 16,
+                "the second direct-small member also satisfies the source partial collector floor"
             );
             let mut second_blocks = Vec::with_capacity(second_capacity);
             second_blocks.push(second);
             while second_blocks.len() < second_capacity {
                 let block = allocator
-                    .allocate(request, false)
+                    .allocate(SMALL_SIZE_MAX / 2, false)
                     .expect("the fixture fills only its second dynamic direct-small page");
                 assert_eq!(
                     unsafe { allocator.page_for_block(block) },
                     second_page.as_ptr(),
-                    "the second source page fills without creating a third member"
+                    "the second source page fills its own ordinary bin without creating a third member"
                 );
                 second_blocks.push(block);
             }
@@ -4642,16 +4681,22 @@ mod tests {
                 first_ref.block_size() <= SMALL_SIZE_MAX,
                 "the aggregate owns only the direct-small source interval"
             );
-            assert_eq!(first_ref.block_size(), second_ref.block_size());
+            assert_ne!(
+                first_ref.block_size(), second_ref.block_size(),
+                "the aggregate regression requires two distinct direct-small source bins"
+            );
             assert_eq!(first_ref.used() as usize, capacity);
             assert_eq!(second_ref.used() as usize, second_capacity);
             assert!(
                 !crate::types::page_queue::page_is_in_full(first_ref)
                     && !crate::types::page_queue::page_is_in_full(second_ref),
-                "full direct-small pages remain in their ordinary source bin"
+                "full direct-small pages remain in their ordinary source bins"
             );
-            let bin = crate::size_class::bin(first_ref.block_size())
-                .expect("the homogeneous direct-small pages retain one source bin");
+            let first_bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the first direct-small page retains an ordinary source bin");
+            let second_bin = crate::size_class::bin(second_ref.block_size())
+                .expect("the second direct-small page retains an ordinary source bin");
+            assert_ne!(first_bin, second_bin);
             let first_memory = first_ref.memid();
             let second_memory = second_ref.memid();
             let first_slice_start = first_memory
@@ -4686,19 +4731,20 @@ mod tests {
                 1,
                 "the second aggregate member retains one exact source arena slice"
             );
-            assert_eq!(allocator.queue_count(bin), Some(2));
+            assert_eq!(allocator.queue_count(first_bin), Some(1));
+            assert_eq!(allocator.queue_count(second_bin), Some(1));
             assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
-            let (direct_start, direct_end) = source_direct_cache_range(first_ref.block_size());
-            let direct_head = allocator
-                .direct_page(direct_start)
-                .expect("the source direct cache remains addressable");
+            let (first_direct_start, first_direct_end) = source_direct_cache_range(first_ref.block_size());
+            let (second_direct_start, second_direct_end) = source_direct_cache_range(second_ref.block_size());
             assert!(
-                direct_head == first_page.as_ptr() || direct_head == second_page.as_ptr(),
-                "the source direct cache names the ordinary queue head"
+                first_direct_end < second_direct_start || second_direct_end < first_direct_start,
+                "distinct source bins own disjoint rounded direct-cache ranges"
             );
             for index in 0..PAGES_DIRECT {
-                let expected = if index >= direct_start && index <= direct_end {
-                    direct_head
+                let expected = if index >= first_direct_start && index <= first_direct_end {
+                    first_page.as_ptr()
+                } else if index >= second_direct_start && index <= second_direct_end {
+                    second_page.as_ptr()
                 } else {
                     crate::types::EMPTY_PAGE.as_ptr()
                 };
@@ -4717,7 +4763,7 @@ mod tests {
                 }
             };
             // SAFETY: both vectors retain every live canonical allocation in
-            // the complete same-bin full direct-small source queue.
+            // both complete distinct-bin full direct-small source queues.
             let mut route = match unsafe { drain.abandon_full_direct_small_pages() } {
                 Ok(route) => route,
                 Err(DynamicThreadExitFullDirectSmallPagesAbandonFailure::Rejected {
@@ -4731,16 +4777,17 @@ mod tests {
                     },
                 ) => {
                     core::mem::forget(drain);
-                    panic!("same-bin full direct-small pages enter the dynamic aggregate route: {error:?}");
+                    panic!("distinct-bin full direct-small pages enter the dynamic aggregate route: {error:?}");
                 }
             };
             assert_eq!(route.test_remaining_pages(), 2);
             assert_eq!(route.test_page_count(), 0);
             assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
             assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
             for index in 0..PAGES_DIRECT {
                 assert_eq!(
                     route.test_direct_page(index),
@@ -4775,8 +4822,8 @@ mod tests {
                     }
                 };
             }
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
 
             // SAFETY: this exact next free crosses the first member's delayed
             // source mostly-used threshold and publishes only its dynamic
@@ -4800,9 +4847,10 @@ mod tests {
                     panic!("the first direct-small reabandon boundary succeeds: {error:?}");
                 }
             };
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
-            assert!(route.test_dynamic_abandoned_page_is_set(bin, first_memory));
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(1));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_set(first_bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
 
             for block in first_blocks
                 .iter()
@@ -4850,12 +4898,14 @@ mod tests {
                 }
             };
             assert_eq!(route.test_remaining_pages(), 1);
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert_eq!(route.test_dynamic_abandoned_count(first_bin), Some(0));
             assert!(unsafe { route.test_page_for_block(first) }.is_null());
-            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(first_bin, first_memory));
             assert!(route.test_dynamic_arena_page_is_clear(first_memory));
 
-            for block in second_blocks.iter().copied().take(unmapped_frees) {
+            let second_unmapped_frees = second_capacity / 8 + 1;
+            assert!(second_unmapped_frees + 1 < second_capacity);
+            for block in second_blocks.iter().copied().take(second_unmapped_frees) {
                 // SAFETY: the second page remains independently live and
                 // source-unmapped through its own partial-head prefix.
                 route = match unsafe { route.remote_free_after_thread_exit(block) } {
@@ -4879,7 +4929,7 @@ mod tests {
             // SAFETY: this exact next free crosses only the second member's
             // delayed source mostly-used threshold.
             route = match unsafe {
-                route.remote_free_after_thread_exit(second_blocks[unmapped_frees])
+                route.remote_free_after_thread_exit(second_blocks[second_unmapped_frees])
             } {
                 Ok(DynamicThreadExitFullDirectSmallPagesFreeResult::StillLive(route)) => route,
                 Ok(_) => panic!("the second reabandon boundary leaves live blocks"),
@@ -4897,14 +4947,14 @@ mod tests {
                     panic!("the second direct-small reabandon boundary succeeds: {error:?}");
                 }
             };
-            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
-            assert!(route.test_dynamic_abandoned_page_is_set(bin, second_memory));
+            assert_eq!(route.test_dynamic_abandoned_count(second_bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(second_bin, second_memory));
 
             for block in second_blocks
                 .iter()
                 .copied()
-                .skip(unmapped_frees + 1)
-                .take(second_capacity - unmapped_frees - 2)
+                .skip(second_unmapped_frees + 1)
+                .take(second_capacity - second_unmapped_frees - 2)
             {
                 // SAFETY: this linear route still owns the selected second-
                 // page allocation through its mapped partial-collector tail.
@@ -4950,8 +5000,8 @@ mod tests {
                 }
             };
             assert!(unsafe { drain.test_page_for_block(second) }.is_null());
-            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
-            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert_eq!(drain.test_dynamic_abandoned_count(second_bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(second_bin, second_memory));
             assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
             assert_eq!(drain.test_page_count(), 0);
             assert!(drain.finish());
@@ -5660,7 +5710,7 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_thread_exit_full_os_singleton_pages_route_releases_each_clipped_map() {
+    fn dynamic_thread_exit_full_os_singleton_pages_route_releases_each_distinct_clipped_map() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
                 .page_session()
@@ -5677,15 +5727,19 @@ mod tests {
             let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
                 .expect("the first OS singleton is PageMap-published");
             let second = allocator
-                .allocate_aligned(7, 128 * crate::config::KIB)
-                .expect("the fixture creates its second OS-aligned singleton");
+                .allocate_aligned(8 * crate::config::KIB + 1, 256 * crate::config::KIB)
+                .expect("the fixture creates its distinct OS-aligned singleton");
             let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
                 .expect("the second OS singleton is PageMap-published");
             let first_ref = unsafe { first_page.as_ref() };
             let second_ref = unsafe { second_page.as_ref() };
             assert!(first_ref.memid().is_os());
             assert!(second_ref.memid().is_os());
-            assert_eq!(first_ref.block_size(), second_ref.block_size());
+            assert_ne!(
+                first_ref.block_size(),
+                second_ref.block_size(),
+                "the full source queue can contain OS singletons with distinct rounded sizes"
+            );
             assert_eq!(first_ref.reserved(), 1);
             assert_eq!(first_ref.used(), 1);
             assert_eq!(second_ref.reserved(), 1);
@@ -5706,8 +5760,9 @@ mod tests {
                 }
             };
             // SAFETY: both exact OS-aligned singleton allocations remain live
-            // in the complete homogeneous full source queue. The route owns
-            // their sequential failed-reclaim frees after source detachment.
+            // in the complete full source queue with distinct rounded sizes.
+            // The route owns their sequential failed-reclaim frees after
+            // source detachment.
             let route = match unsafe { drain.abandon_full_os_singleton_pages() } {
                 Ok(route) => route,
                 Err(DynamicThreadExitFullOsSingletonPagesAbandonFailure::Rejected {

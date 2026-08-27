@@ -5,28 +5,40 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:181-224,305-360`,
-// `src/page-map.c:228-365`, and `src/arena.c:674-723,781-821,951-1114,
-// 1240-1282`.
+// `src/page-map.c:228-365`, `src/alloc.c:29-159,379-451`, and `src/arena.c:341-406,
+// 525-569,674-723,781-821,951-1114,1129-1213,1240-1282`.
 
 //! Page-bearing binding of the static main Theap to one process-owned arena.
 //!
 //! This module holds the first bounded page allocator which pairs the
 //! already-published process PageMap with a caller-managed process arena and
-//! borrows the ticket-zero static owner. It deliberately does not reserve an
-//! arena, implement general process initialization, attach later threads, or
-//! introduce pthread/TLS hooks.
+//! borrows the ticket-zero static owner. Its separate first-arena owner starts
+//! with no arena and invokes the fixed source default reservation only after
+//! an empty ticket-zero Theap needs its first ordinary page. It deliberately
+//! does not implement later arena selection, general process initialization,
+//! later-thread attachment, or pthread/TLS hooks.
 
 use core::ptr::NonNull;
 
 use crate::arena::ArenaId;
-use crate::main_theap::{
-    MainStaticPageSessionError, MainStaticTheapAttachment,
+use crate::config::{
+    ARENA_SLICE_SIZE, BIN_HUGE, SMALL_PAGE_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
-use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
+use crate::main_theap::{
+    MainStaticPageSessionError, MainStaticTheapAttachment, MainStaticTheapError,
+};
+use crate::os::MemoryConfig;
+use crate::page;
+use crate::process_arena::{
+    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaReserveFailure,
+    ProcessSharedArenaStorage,
+};
 use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
+use crate::size_class;
 use crate::single_thread::{
     FreeError, PageAllocatorEngine, RemoteFreePreparationError, RemoteFreeProducer,
 };
+use crate::types::PageKind;
 #[cfg(test)]
 use crate::types::Page;
 
@@ -122,6 +134,23 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
         self.engine.allocate(request, zero)
     }
 
+    /// Reallocates one ordinary main-static allocation through the source page
+    /// engine.
+    ///
+    /// # Safety
+    ///
+    /// When present, `block` must be one current allocation from this exact
+    /// owner, with no aliased access during this operation. A failed
+    /// replacement leaves that allocation current and unchanged.
+    #[inline]
+    pub(crate) unsafe fn reallocate(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.engine.reallocate(block, new_size) }
+    }
+
     /// Frees one current main-static allocation.
     ///
     /// # Safety
@@ -181,6 +210,377 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
     unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
         unsafe { self.engine.page_for_block(block) }
     }
+}
+
+/// One ticket-zero owner which has not yet observed its first ordinary
+/// fresh-page miss, or has activated the existing page engine from the source
+/// first-arena policy.
+///
+/// This is intentionally narrower than a general allocator. It carries no
+/// arena at construction, validates the zero-page ticket-zero session before
+/// mapping, and calls `mi_arena_reserve`'s frozen first-arena branch only for
+/// the first ordinary request that needs a page. Once active it delegates to
+/// the already-bounded [`MainStaticProcessPageAllocator`]; exhaustion of that
+/// one arena does not manufacture later arena-count scaling or a second route.
+#[must_use = "a first-arena static page owner must finish or retain its ticket-zero attachment explicitly"]
+pub(crate) struct MainStaticFirstArenaPageAllocator<'main> {
+    state: MainStaticFirstArenaPageAllocatorState<'main>,
+}
+
+enum MainStaticFirstArenaPageAllocatorState<'main> {
+    AwaitingFreshPage {
+        attachment: &'main mut MainStaticTheapAttachment,
+        page_map: crate::process_page_map::ProcessPageMapLease,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    },
+    Active(MainStaticProcessPageAllocator<'main>),
+    Retained {
+        attachment: &'main mut MainStaticTheapAttachment,
+    },
+    Transition,
+}
+
+/// A pre-reservation refusal for the lazy ticket-zero arena owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainStaticFirstArenaPageAllocatorBeginError {
+    PageMap(ProcessPageMapError),
+    Attachment(MainStaticTheapError),
+    SubprocessMismatch,
+}
+
+/// A free attempted before the lazy owner activated its source page engine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainStaticFirstArenaPageAllocatorFreeError {
+    NotActive,
+    Free(FreeError),
+}
+
+/// The result of finishing one lazy ticket-zero page owner.
+#[must_use = "a retained first-arena page owner still owns its ticket-zero attachment or page engine"]
+pub(crate) enum MainStaticFirstArenaPageAllocatorFinishError<'main> {
+    Retained(MainStaticFirstArenaPageAllocator<'main>),
+    PageMap(ProcessPageMapError),
+}
+
+impl<'main> MainStaticFirstArenaPageAllocator<'main> {
+    /// Opens a first-arena owner without reserving any virtual memory.
+    ///
+    /// The map and attachment must already name the same process image. This
+    /// only proves that immutable relation; the complete zero-page session is
+    /// revalidated immediately before a valid request can reserve its first
+    /// arena.
+    pub(crate) fn begin(
+        attachment: &'main mut MainStaticTheapAttachment,
+        page_map: crate::process_page_map::ProcessPageMapLease,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<Self, MainStaticFirstArenaPageAllocatorBeginError> {
+        let map_subprocess = page_map
+            .subprocess()
+            .map_err(MainStaticFirstArenaPageAllocatorBeginError::PageMap)?;
+        let attachment_subprocess = attachment
+            .subprocess()
+            .map_err(MainStaticFirstArenaPageAllocatorBeginError::Attachment)?;
+        if !core::ptr::eq(map_subprocess.as_ptr(), attachment_subprocess.as_ptr()) {
+            return Err(MainStaticFirstArenaPageAllocatorBeginError::SubprocessMismatch);
+        }
+        Ok(Self {
+            state: MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage {
+                attachment,
+                page_map,
+                arena_storage,
+            },
+        })
+    }
+
+    /// Allocates one ordinary ticket-zero block, reserving the source default
+    /// arena only when this empty owner needs its first fresh page.
+    #[inline]
+    pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+        let state = core::mem::replace(
+            &mut self.state,
+            MainStaticFirstArenaPageAllocatorState::Transition,
+        );
+        match state {
+            MainStaticFirstArenaPageAllocatorState::Active(mut allocator) => {
+                let block = allocator.allocate(request, zero);
+                self.state = MainStaticFirstArenaPageAllocatorState::Active(allocator);
+                block
+            }
+            MainStaticFirstArenaPageAllocatorState::Retained { attachment } => {
+                self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                None
+            }
+            MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage {
+                mut attachment,
+                page_map,
+                arena_storage,
+            } => {
+                let config = match page_map.memory_config() {
+                    Ok(config) => config,
+                    Err(_) => {
+                        self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                        return None;
+                    }
+                };
+                let required_size = match first_ordinary_fresh_page_size(config, request) {
+                    Some(size) => size,
+                    None => {
+                        self.state = MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage {
+                            attachment,
+                            page_map,
+                            arena_storage,
+                        };
+                        return None;
+                    }
+                };
+                // This repeats the exact ticket-zero page-session checks while
+                // no arena has been mapped. It prevents an invalid root/image
+                // from becoming a process-global reservation side effect.
+                if attachment.preflight_fresh_page_session().is_err() {
+                    self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                    return None;
+                }
+                let page_map_lifecycle = match page_map.begin_page_lifecycle() {
+                    Ok(lifecycle) => lifecycle,
+                    Err(ProcessPageMapError::LifecycleBusy) => {
+                        self.state = MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage {
+                            attachment,
+                            page_map,
+                            arena_storage,
+                        };
+                        return None;
+                    }
+                    Err(_) => {
+                        self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                        return None;
+                    }
+                };
+                let arena = match arena_storage.reserve_default_os_arena(page_map, required_size) {
+                    Ok(arena) => arena,
+                    Err(ProcessSharedArenaReserveFailure::Rejected { .. }) => {
+                        self.state = if page_map_lifecycle.finish().is_ok() {
+                            MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage {
+                                attachment,
+                                page_map,
+                                arena_storage,
+                            }
+                        } else {
+                            MainStaticFirstArenaPageAllocatorState::Retained { attachment }
+                        };
+                        return None;
+                    }
+                    Err(ProcessSharedArenaReserveFailure::Retained { .. }) => {
+                        let _ = page_map_lifecycle.finish();
+                        self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                        return None;
+                    }
+                };
+                let pair = match ProcessPageArenaLease::join(page_map, arena) {
+                    Ok(pair) => pair,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                        return None;
+                    }
+                };
+                let arena = match pair.arena() {
+                    Ok(arena) => arena,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                        return None;
+                    }
+                };
+                let page_map_ref = match page_map_lifecycle.page_map() {
+                    Ok(page_map_ref) => page_map_ref,
+                    Err(_) => {
+                        let _ = page_map_lifecycle.finish();
+                        self.state = MainStaticFirstArenaPageAllocatorState::Retained { attachment };
+                        return None;
+                    }
+                };
+                let session = attachment.page_session().unwrap_or_else(|_| {
+                    // `preflight_fresh_page_session` proved this exact
+                    // attachment immediately above; no operation between the
+                    // preflight and this construction can alter its roots,
+                    // page count, or static image. Treat a contrary result as
+                    // an internal invariant violation, never an alternate
+                    // post-reservation allocation path.
+                    unreachable!("the preflighted ticket-zero page session remains valid")
+                });
+                // SAFETY: the preflight and repeated page-session construction
+                // prove the zero-page ticket-zero image; `pair` joins the
+                // newly published source arena to this exact root; and the
+                // stored lifecycle serializes every plain PageMap access until
+                // the activated engine finishes.
+                let allocator = MainStaticProcessPageAllocator {
+                    engine: unsafe {
+                        PageAllocatorEngine::activate_main_static(
+                            session,
+                            arena,
+                            ArenaId::none(),
+                            page_map_ref,
+                        )
+                    },
+                    page_map_lifecycle,
+                };
+                self.state = MainStaticFirstArenaPageAllocatorState::Active(allocator);
+                match &mut self.state {
+                    MainStaticFirstArenaPageAllocatorState::Active(allocator) => {
+                        allocator.allocate(request, zero)
+                    }
+                    _ => unreachable!("the just-activated first-arena owner remains active"),
+                }
+            }
+            MainStaticFirstArenaPageAllocatorState::Transition => {
+                unreachable!("a mutable first-arena owner cannot reenter its state transition")
+            }
+        }
+    }
+
+    /// Reallocates one ordinary ticket-zero allocation.
+    ///
+    /// The null-pointer case is the source `realloc(NULL, size)` allocation
+    /// entry, so it follows this owner's first-fresh-page reservation policy.
+    /// A non-null block can exist only after that policy has activated the
+    /// bounded page engine; before activation, accepting one would manufacture
+    /// a foreign allocation route.
+    ///
+    /// # Safety
+    ///
+    /// When present, `block` must be one current allocation from this exact
+    /// owner, with no aliased access during the operation. It must not have
+    /// been freed or transferred to a remote producer. On failure, that block
+    /// remains current and unchanged.
+    #[inline]
+    pub(crate) unsafe fn reallocate(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        let Some(block) = block else {
+            return self.allocate(new_size, false);
+        };
+        match &mut self.state {
+            MainStaticFirstArenaPageAllocatorState::Active(allocator) => {
+                // SAFETY: the caller proved this block belongs to the exact
+                // active engine and remains exclusively accessible here.
+                unsafe { allocator.reallocate(Some(block), new_size) }
+            }
+            MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            | MainStaticFirstArenaPageAllocatorState::Retained { .. }
+            | MainStaticFirstArenaPageAllocatorState::Transition => None,
+        }
+    }
+
+    /// Frees one allocation returned by this exact active first-arena owner.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be a current allocation from this owner and must not have
+    /// been freed, handed to a remote producer, or accessed concurrently.
+    #[inline]
+    pub(crate) unsafe fn free(
+        &mut self,
+        block: NonNull<u8>,
+    ) -> Result<(), MainStaticFirstArenaPageAllocatorFreeError> {
+        match &mut self.state {
+            MainStaticFirstArenaPageAllocatorState::Active(allocator) => unsafe {
+                allocator
+                    .free(block)
+                    .map_err(MainStaticFirstArenaPageAllocatorFreeError::Free)
+            },
+            MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            | MainStaticFirstArenaPageAllocatorState::Retained { .. }
+            | MainStaticFirstArenaPageAllocatorState::Transition => {
+                Err(MainStaticFirstArenaPageAllocatorFreeError::NotActive)
+            }
+        }
+    }
+
+    /// Completes the active page engine, or closes an owner that never mapped
+    /// an arena because no ordinary fresh-page request succeeded.
+    pub(crate) fn finish(
+        self,
+    ) -> Result<(), MainStaticFirstArenaPageAllocatorFinishError<'main>> {
+        match self.state {
+            MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage { .. } => Ok(()),
+            MainStaticFirstArenaPageAllocatorState::Active(allocator) => match allocator.finish() {
+                Ok(()) => Ok(()),
+                Err(MainStaticProcessPageAllocatorFinishError::Retained(allocator)) => {
+                    Err(MainStaticFirstArenaPageAllocatorFinishError::Retained(Self {
+                        state: MainStaticFirstArenaPageAllocatorState::Active(allocator),
+                    }))
+                }
+                Err(MainStaticProcessPageAllocatorFinishError::PageMap(error)) => {
+                    Err(MainStaticFirstArenaPageAllocatorFinishError::PageMap(error))
+                }
+            },
+            MainStaticFirstArenaPageAllocatorState::Retained { attachment } => {
+                Err(MainStaticFirstArenaPageAllocatorFinishError::Retained(Self {
+                    state: MainStaticFirstArenaPageAllocatorState::Retained { attachment },
+                }))
+            }
+            MainStaticFirstArenaPageAllocatorState::Transition => {
+                unreachable!("a consumed first-arena owner cannot remain mid-transition")
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        match &self.state {
+            MainStaticFirstArenaPageAllocatorState::Active(allocator) => {
+                unsafe { allocator.test_page_for_block(block) }
+            }
+            MainStaticFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            | MainStaticFirstArenaPageAllocatorState::Retained { .. }
+            | MainStaticFirstArenaPageAllocatorState::Transition => core::ptr::null_mut(),
+        }
+    }
+}
+
+/// Returns the first ordinary page span selected by an empty source Theap.
+///
+/// This mirrors `PageAllocatorEngine::allocate` through its first
+/// `mi_arenas_page_alloc` call: small direct requests always need one small
+/// page, while generic requests preserve `mi_good_size`, huge singleton, and
+/// normal page-kind selection. It deliberately says nothing about a later
+/// queue miss: this owner implements only the first-arena boundary.
+fn first_ordinary_fresh_page_size(config: MemoryConfig, request: usize) -> Option<usize> {
+    let request = request.max(WORD_SIZE);
+    if !size_class::request_size_is_valid(request) {
+        return None;
+    }
+    if request <= SMALL_SIZE_MAX {
+        return Some(SMALL_PAGE_SIZE);
+    }
+    let bin = size_class::bin(request)?;
+    let (block_size, kind) = if bin == BIN_HUGE {
+        let block_size = config.good_alloc_size(request);
+        if block_size == 0 || block_size < request {
+            return None;
+        }
+        (block_size, PageKind::Singleton)
+    } else {
+        let block_size = size_class::good_size(request, config.page_size().bytes())?;
+        if size_class::bin(block_size)? != bin {
+            return None;
+        }
+        let kind = size_class::page_kind_for_block_size(block_size)?;
+        if kind == PageKind::Singleton {
+            return None;
+        }
+        (block_size, kind)
+    };
+    let slice_count = match kind {
+        PageKind::Small | PageKind::Medium | PageKind::Large => {
+            page::regular_page_slice_count(kind)?
+        }
+        PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+    };
+    slice_count.checked_mul(ARENA_SLICE_SIZE)
 }
 
 #[cfg(test)]
@@ -595,5 +995,168 @@ mod tests {
         })
         .join()
         .expect("unfinished static page fixture remains current-thread local");
+    }
+
+    #[test]
+    fn first_ticket_zero_fresh_page_reserves_the_default_arena_only_after_a_valid_miss() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let attachment_storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = ProcessPageMapStorage::test_static_owner()
+                .initialize(config, subprocess)
+                .expect("the page-map root exists before the lazy owner opens");
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(attachment_storage, subprocess)
+            }
+            .expect("the ticket-zero owner attaches before its first page miss");
+            let mut allocator = MainStaticFirstArenaPageAllocator::begin(
+                &mut owner,
+                page_map,
+                arena_storage,
+            )
+            .expect("the matching root and ticket-zero attachment open lazily");
+
+            assert!(arena_storage.test_is_cold(), "opening the owner is not an arena reservation");
+            assert!(
+                allocator
+                    .allocate(crate::config::MAX_ALLOC_SIZE + 1, false)
+                    .is_none(),
+                "an invalid request has no source fresh-page miss or arena side effect"
+            );
+            assert!(arena_storage.test_is_cold(), "the invalid request leaves the first arena cold");
+
+            let block = allocator
+                .allocate(37, false)
+                .expect("the first ordinary small request reaches the lazy source arena reserve");
+            let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                .expect("the first page is registered only after its default arena exists");
+            assert!(
+                !arena_storage.test_is_cold(),
+                "the first source fresh-page miss publishes the one default arena"
+            );
+            assert_eq!(
+                unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) },
+                page.as_ptr(),
+                "the activated ticket-zero engine owns the new PageMap registration"
+            );
+
+            // SAFETY: `block` is the exact live allocation returned by this
+            // active lazy owner and has not escaped to a producer.
+            unsafe { allocator.free(block) }
+                .expect("the first-arena ticket-zero block releases normally");
+            assert!(matches!(allocator.finish(), Ok(())));
+            owner
+                .teardown()
+                .expect("the all-free lazy owner restores static teardown eligibility");
+        })
+        .join()
+        .expect("the lazy first-arena fixture remains current-thread local");
+    }
+
+    #[test]
+    fn first_ticket_zero_realloc_null_activates_and_preserves_the_live_block_on_failure() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let attachment_storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = ProcessPageMapStorage::test_static_owner()
+                .initialize(config, subprocess)
+                .expect("the page-map root exists before the lazy owner opens");
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(attachment_storage, subprocess)
+            }
+            .expect("the ticket-zero owner attaches before its first page miss");
+            let mut allocator = MainStaticFirstArenaPageAllocator::begin(
+                &mut owner,
+                page_map,
+                arena_storage,
+            )
+            .expect("the matching root and ticket-zero attachment open lazily");
+
+            // SAFETY: the null case creates a new allocation through this
+            // exact owner, then keeps that allocation uniquely live here.
+            let block = unsafe { allocator.reallocate(None, 37) }
+                .expect("realloc(NULL, size) reaches the first ordinary arena miss");
+            for index in 0..37 {
+                // SAFETY: the returned allocation is uniquely live and has
+                // at least the requested 37-byte extent.
+                unsafe { block.as_ptr().add(index).write((index as u8).wrapping_add(3)) };
+            }
+            assert!(
+                !arena_storage.test_is_cold(),
+                "the realloc null case activates the same lazy default-arena policy"
+            );
+
+            // SAFETY: `block` remains the unique current allocation. The
+            // rejected size must preserve it without a second allocation.
+            assert!(unsafe { allocator.reallocate(Some(block), crate::config::MAX_ALLOC_SIZE + 1) }
+                .is_none());
+            for index in 0..37 {
+                // SAFETY: the failed reallocation retained `block` live.
+                assert_eq!(unsafe { block.as_ptr().add(index).read() }, (index as u8).wrapping_add(3));
+            }
+
+            // SAFETY: the old allocation is still live and exclusively held;
+            // the ordinary replacement must copy its source extent first.
+            let replacement = unsafe {
+                allocator.reallocate(Some(block), crate::config::SMALL_MAX_OBJ_SIZE + 1)
+            }
+            .expect("the active first-arena engine reallocates into its medium branch");
+            for index in 0..37 {
+                // SAFETY: `replacement` is uniquely live and its requested
+                // extent covers the original initialized prefix.
+                assert_eq!(
+                    unsafe { replacement.as_ptr().add(index).read() },
+                    (index as u8).wrapping_add(3)
+                );
+            }
+
+            // SAFETY: the successful reallocation consumed `block` and
+            // returned this sole current allocation.
+            unsafe { allocator.free(replacement) }
+                .expect("the reallocated first-arena block releases normally");
+            assert!(matches!(allocator.finish(), Ok(())));
+            owner
+                .teardown()
+                .expect("the reallocation fixture restores static teardown eligibility");
+        })
+        .join()
+        .expect("the lazy first-arena realloc fixture remains current-thread local");
+    }
+
+    #[test]
+    fn first_fresh_page_requirement_preserves_the_empty_theap_source_size_branches() {
+        let config = memory_config();
+        assert_eq!(
+            first_ordinary_fresh_page_size(config, 0),
+            Some(crate::config::SMALL_PAGE_SIZE),
+            "a normalized zero request starts with one direct small page"
+        );
+        assert_eq!(
+            first_ordinary_fresh_page_size(config, crate::config::SMALL_MAX_OBJ_SIZE + 1),
+            Some(crate::config::MEDIUM_PAGE_SIZE),
+            "the first generic post-small request keeps the medium source span"
+        );
+        assert_eq!(
+            first_ordinary_fresh_page_size(config, crate::config::MEDIUM_MAX_OBJ_SIZE + 1),
+            Some(crate::config::LARGE_PAGE_SIZE),
+            "the first post-medium request keeps the large source span"
+        );
+        let singleton_request = crate::config::LARGE_MAX_OBJ_SIZE + 1;
+        let singleton_block = config.good_alloc_size(singleton_request);
+        assert_eq!(
+            first_ordinary_fresh_page_size(config, singleton_request),
+            crate::page::singleton_page_slice_count(singleton_block)
+                .and_then(|slices| slices.checked_mul(crate::config::ARENA_SLICE_SIZE)),
+            "the huge-bin first miss preserves its page-rounded singleton span"
+        );
+        assert_eq!(
+            first_ordinary_fresh_page_size(config, crate::config::MAX_ALLOC_SIZE + 1),
+            None,
+            "an invalid request has no source first-page span"
+        );
     }
 }

@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-360,377-421,448-481`,
-// `src/theap.c:89-152`, `src/page.c:214-341,414-518,574-665`,
+// `src/alloc.c:379-451`, `src/theap.c:89-152`, `src/page.c:214-341,414-518,574-665`,
 // `src/page-queue.c:204-330`,
 // `src/arena.c:631-778,781-821,870-1037,951-1153,1183-1204,1240-1282`, and
 // `src/page-map.c:228-365`, and `src/free.c:372-514`.
@@ -103,6 +103,12 @@ use crate::single_thread::{
     ThreadExitFullMediumPagesPostExitFreeOutcome,
     ThreadExitFullMediumPagesPostExitParts,
     ThreadExitFullMediumPagesPostExitTeardownTerminal,
+    ThreadExitFullMediumOrLargePagesPostExitAbandonError,
+    ThreadExitFullMediumOrLargePagesPostExitAbandonFailure,
+    ThreadExitFullMediumOrLargePagesPostExitFreeError,
+    ThreadExitFullMediumOrLargePagesPostExitFreeOutcome,
+    ThreadExitFullMediumOrLargePagesPostExitParts,
+    ThreadExitFullMediumOrLargePagesPostExitTeardownTerminal,
     ThreadExitFullSingletonPagesPostExitAbandonError,
     ThreadExitFullSingletonPagesPostExitAbandonFailure,
     ThreadExitFullSingletonPagesPostExitFreeError,
@@ -379,15 +385,37 @@ pub(crate) struct MainHeapThreadProcessPageExitFullMediumPagesRoute<'main> {
 // permits concurrent frees, allocation-time use, or requeue.
 unsafe impl Send for MainHeapThreadProcessPageExitFullMediumPagesRoute<'_> {}
 
-/// One bounded homogeneous aggregate of two-or-more full non-direct-small
+/// One bounded aggregate of full medium and large pages that begins post-exit
+/// life source-unmapped.
+///
+/// The complete source `BIN_FULL` queue contains at least one member of each
+/// regular kind. Every later free re-resolves one PageMap member, claims the
+/// low owner bit before selecting its exact static-main bitmap/count pair, and
+/// terminally validates that member's one-slice medium or 64-slice large span.
+/// This keeps no raw member list and grants no small, singleton, OS, huge,
+/// allocation-time claim/requeue, full-queue scan, or concurrent-free
+/// authority.
+#[must_use = "a mixed full medium/large aggregate route must release every member or remain terminally retained"]
+pub(crate) struct MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main> {
+    parts: ThreadExitFullMediumOrLargePagesPostExitParts<'main, 'static>,
+    page_map_access: ProcessPageMapPostExitAccess,
+}
+
+// SAFETY: the route holds only process-stable arena/static-Heap facts and
+// serialized short PageMap access. Its consuming API transfers one sequential
+// source failed-reclaim decision at a time; sending moves that owner but never
+// permits concurrent frees, allocation-time use, or requeue.
+unsafe impl Send for MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'_> {}
+
+/// One bounded per-member aggregate of two-or-more full non-direct-small
 /// pages that begins post-exit life source-unmapped.
 ///
-/// Every member has the same rounded ordinary small-bin block size above
-/// `SMALL_SIZE_MAX`, an empty direct-cache image, and the normal free.c
-/// collector. Each later free re-resolves its PageMap member under short
-/// access and independently crosses the source mostly-used boundary. This
-/// route keeps no raw page list and gives no direct-small, allocation-time
-/// claim/requeue, or concurrent-free authority.
+/// Every member has an ordinary small-bin block size above `SMALL_SIZE_MAX`,
+/// an empty direct-cache image, and the normal free.c collector. Each later
+/// free re-resolves its PageMap member under short access, then derives that
+/// member's bin after the source low-owner claim and independently crosses its
+/// mostly-used boundary. This route keeps no raw page list and gives no
+/// direct-small, allocation-time claim/requeue, or concurrent-free authority.
 #[must_use = "a full non-direct-small aggregate route must release every member or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main> {
     parts: ThreadExitFullNonDirectSmallPagesPostExitParts<'main, 'static>,
@@ -401,14 +429,15 @@ pub(crate) struct MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'mai
 // use, or requeue.
 unsafe impl Send for MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'_> {}
 
-/// One bounded homogeneous aggregate of two-or-more full direct-small pages
+/// One bounded per-member aggregate of two-or-more full direct-small pages
 /// that begins post-exit life source-unmapped.
 ///
-/// Every member has the same rounded ordinary small-bin block size at or below
-/// `SMALL_SIZE_MAX`. The exact rounded direct-cache range follows the source
-/// queue head while owner exit detaches each member, then is empty before this
-/// route begins. Each later free uses free.c's partial collector and
-/// independently crosses the delayed mostly-used boundary. The route keeps no
+/// Each member has its own rounded ordinary small-bin block size at or below
+/// `SMALL_SIZE_MAX`. Every exact rounded direct-cache range follows its source
+/// queue head while owner exit detaches the bin-ordered members, then the
+/// complete direct-cache image is empty before this route begins. Each later
+/// free uses free.c's partial collector and independently crosses the delayed
+/// mostly-used boundary. The route keeps no
 /// raw page list and gives no allocation-time claim/requeue or concurrent-free
 /// authority.
 #[must_use = "a full direct-small aggregate route must release every member or remain terminally retained"]
@@ -423,16 +452,15 @@ pub(crate) struct MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main> 
 // but never permits concurrent frees, allocation-time use, or requeue.
 unsafe impl Send for MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'_> {}
 
-/// One bounded homogeneous aggregate of two-or-more full large pages that
-/// begins post-exit life source-unmapped.
+/// One bounded aggregate of two-or-more full large pages that begins post-exit
+/// life source-unmapped.
 ///
-/// Every member has the same rounded large block size and static-main bin,
-/// which lets each later free use the exact preselected bitmap/count pair once
-/// source's mostly-used predicate permits mapped reabandonment. The route
-/// keeps no raw page list: each consuming free re-resolves its member through
-/// short PageMap access and terminally proves its complete 64-slice span. It
-/// remains client-free-only and provides neither allocation-time
-/// claim/requeue nor a heterogeneous/full-queue scan.
+/// Every member has its own rounded large block size and static-main bin,
+/// selected only after source's low-owner claim permits mapped reabandonment.
+/// The route keeps no raw page list: each consuming free re-resolves its
+/// member through short PageMap access and terminally proves its complete
+/// 64-slice span. It remains client-free-only and provides neither
+/// allocation-time claim/requeue nor a heterogeneous/full-queue scan.
 #[must_use = "a full-large aggregate route must release every member or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
     parts: ThreadExitFullLargePagesPostExitParts<'main, 'static>,
@@ -925,7 +953,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeFailure<'main
 }
 
 /// A failure while crossing a later-main post-fast-slot drain from a complete
-/// homogeneous full OS-singleton `BIN_FULL` queue into its sequential process
+/// full OS-singleton `BIN_FULL` queue into its sequential process
 /// route.
 #[must_use = "a failed full OS singleton aggregate process-route transition retains its exact source state"]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure<
@@ -960,7 +988,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailu
     },
 }
 
-/// The result of one client free through the homogeneous full OS-singleton
+/// The result of one client free through the full OS-singleton
 /// aggregate route.
 #[must_use = "a nonterminal full OS singleton aggregate result retains the only route owner"]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult<'main> {
@@ -968,7 +996,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult<'mai
     ReleasedAll,
 }
 
-/// A process-map or source-route reason one homogeneous full OS-singleton
+/// A process-map or source-route reason one full OS-singleton
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError {
@@ -976,7 +1004,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError {
     Route(ThreadExitFullOsSingletonPagesPostExitFreeError),
 }
 
-/// A retained homogeneous full OS-singleton aggregate route after one client
+/// A retained full OS-singleton aggregate route after one client
 /// free attempt.
 #[must_use = "a failed full OS singleton aggregate free must retain or terminally record its route"]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure<'main> {
@@ -1073,6 +1101,84 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeFailure<'main> {
     },
 }
 
+/// A failure while crossing a later-main post-fast-slot drain from a complete
+/// mixed medium/large `BIN_FULL` queue into its sequential process route.
+#[must_use = "a failed mixed full medium/large process-route transition retains its exact source state"]
+pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure<
+    'attachment,
+    'main,
+> {
+    /// The complete queue/direct/page preflight rejected before source
+    /// collection or detachment.
+    Rejected {
+        drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
+        error: ThreadExitFullMediumOrLargePagesPostExitAbandonError,
+    },
+    /// Source force/false collection or a later page transition may have
+    /// changed the drain, so it remains the only terminal owner.
+    RetainedDrain {
+        drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
+        error: ThreadExitFullMediumOrLargePagesPostExitAbandonError,
+    },
+    /// All members detached, but old root/list/TLD teardown did not finish.
+    /// The long PageMap lifecycle stays coupled to the complete registry.
+    Teardown {
+        terminal: ThreadExitFullMediumOrLargePagesPostExitTeardownTerminal<
+            'attachment,
+            'main,
+            'static,
+        >,
+        page_map_lifecycle: ProcessPageMapMutationLease,
+    },
+    /// The old Theap/TLD is gone, but short PageMap access could not be
+    /// created. The map root is poisoned and the registry facts remain
+    /// terminally retained for evidence.
+    PageMap {
+        parts: ThreadExitFullMediumOrLargePagesPostExitParts<'main, 'static>,
+        error: ProcessPageMapError,
+    },
+}
+
+/// The result of one client free through the bounded mixed medium/large
+/// aggregate route.
+#[must_use = "a nonterminal mixed full medium/large aggregate result retains the only route owner"]
+pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult<'main> {
+    StillLive(MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>),
+    ReleasedPage(MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>),
+    ReleasedAll,
+}
+
+/// A process-map or source-route reason one bounded mixed medium/large
+/// aggregate client free could not complete normally.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError {
+    PageMap(ProcessPageMapError),
+    Route(ThreadExitFullMediumOrLargePagesPostExitFreeError),
+}
+
+/// A retained bounded mixed medium/large aggregate route after one client-free
+/// attempt.
+#[must_use = "a failed mixed full medium/large aggregate free must retain or terminally record its route"]
+pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure<'main> {
+    /// The supplied block was absent from the current PageMap, so no source
+    /// owner bit changed and the route can still receive an actual member.
+    Rejected {
+        route: MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>,
+        error: MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError,
+    },
+    /// The source tail may have changed an owner bit, mapped publication, or
+    /// PageMap entry. Retain the route only as a terminal owner.
+    Terminal {
+        route: MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>,
+        error: MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError,
+    },
+    /// The final member physically released, but PageMap quiescence failed and
+    /// poisoned the root. No live aggregate route remains.
+    ReleasedAllPageMapPoisoned {
+        error: ProcessPageMapError,
+    },
+}
+
 /// A failure while crossing a later-main post-fast-slot drain from its one
 /// complete ordinary non-direct-small bin into a sequential aggregate
 /// unmapped-to-mapped process route.
@@ -1112,7 +1218,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesRouteBeginFa
     },
 }
 
-/// The result of one client free through the homogeneous full non-direct-small
+/// The result of one client free through the per-member full non-direct-small
 /// aggregate route.
 #[must_use = "a nonterminal full non-direct-small aggregate result retains the only route owner"]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeResult<'main> {
@@ -1121,7 +1227,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeResult<'
     ReleasedAll,
 }
 
-/// A process-map or source-route reason one homogeneous full non-direct-small
+/// A process-map or source-route reason one per-member full non-direct-small
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeError {
@@ -1129,7 +1235,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeError {
     Route(ThreadExitFullNonDirectSmallPagesPostExitFreeError),
 }
 
-/// A retained homogeneous full non-direct-small aggregate route after one
+/// A retained per-member full non-direct-small aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed full non-direct-small aggregate free must retain or terminally record its route"]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeFailure<'main> {
@@ -1191,7 +1297,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesRouteBeginFailu
     },
 }
 
-/// The result of one client free through the homogeneous full direct-small
+/// The result of one client free through the per-member full direct-small
 /// aggregate route.
 #[must_use = "a nonterminal full direct-small aggregate result retains the only route owner"]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult<'main> {
@@ -1200,7 +1306,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult<'mai
     ReleasedAll,
 }
 
-/// A process-map or source-route reason one homogeneous full direct-small
+/// A process-map or source-route reason one per-member full direct-small
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeError {
@@ -1208,7 +1314,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeError {
     Route(ThreadExitFullDirectSmallPagesPostExitFreeError),
 }
 
-/// A retained homogeneous full direct-small aggregate route after one
+/// A retained per-member full direct-small aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed full direct-small aggregate free must retain or terminally record its route"]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeFailure<'main> {
@@ -1232,7 +1338,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeFailure<'ma
 }
 
 /// A failure while crossing a later-main post-fast-slot drain from a complete
-/// homogeneous full-large `BIN_FULL` queue into its sequential aggregate
+/// full-large `BIN_FULL` queue into its sequential aggregate
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full-large aggregate process-route transition retains its exact source state"]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesRouteBeginFailure<'attachment, 'main> {
@@ -1263,7 +1369,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesRouteBeginFailure<'at
     },
 }
 
-/// The result of one client free through the homogeneous full-large
+/// The result of one client free through the bounded full-large
 /// aggregate route.
 #[must_use = "a nonterminal full-large aggregate result retains the only route owner"]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeResult<'main> {
@@ -1272,7 +1378,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeResult<'main> {
     ReleasedAll,
 }
 
-/// A process-map or source-route reason one homogeneous full-large aggregate
+/// A process-map or source-route reason one bounded full-large aggregate
 /// client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeError {
@@ -1280,7 +1386,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeError {
     Route(ThreadExitFullLargePagesPostExitFreeError),
 }
 
-/// A retained homogeneous full-large aggregate route after one client-free
+/// A retained bounded full-large aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed full-large aggregate free must retain or terminally record its route"]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeFailure<'main> {
@@ -1700,6 +1806,23 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     #[inline]
     pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
         self.engine.allocate(request, zero)
+    }
+
+    /// Reallocates one ordinary later-thread allocation through the source
+    /// page engine.
+    ///
+    /// # Safety
+    ///
+    /// When present, `block` must be one current allocation from this exact
+    /// owner, with no aliased access during this operation. A failed
+    /// replacement leaves that allocation current and unchanged.
+    #[inline]
+    pub(crate) unsafe fn reallocate(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.engine.reallocate(block, new_size) }
     }
 
     /// Frees one current allocation belonging to this exact later-thread
@@ -2776,23 +2899,111 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
-    /// Transfers a bounded homogeneous aggregate of full non-direct-small
-    /// pages from one ordinary source bin into one sequential post-exit
-    /// process route.
+    /// Transfers one complete mixed medium/large `BIN_FULL` queue into a
+    /// sequential post-exit process route.
     ///
-    /// Every admitted member has the same rounded size/bin above
-    /// `SMALL_SIZE_MAX`, no direct-cache image, and begins source unmapped. A
-    /// later client free may independently cross that member's mostly-used
-    /// threshold and publish the already-proved static-main bitmap/count pair.
-    /// The aggregate never scans, adopts, requeues, or grants direct-small or
-    /// allocation-time authority.
+    /// Every admitted member is a full regular arena Medium or Large page; the
+    /// complete source queue contains at least one of each. A later free claims
+    /// its source low owner bit before it selects the member's exact bitmap and
+    /// terminal span. The route never scans, adopts, requeues, or grants small,
+    /// singleton, OS, huge, allocation-time, or concurrent-free authority.
     ///
     /// # Safety
     ///
-    /// At least two current full arena non-direct-small pages of one rounded
-    /// source size must occupy the complete post-fast-slot drain. No producer
-    /// may survive, and every client alias must be consumed exactly once
-    /// through the returned linear route or retained terminally.
+    /// No producer may survive. Every current page in the complete
+    /// post-fast-slot drain must satisfy the bounded mixed source shape, and
+    /// every client alias must be consumed exactly once through the returned
+    /// linear route or retained terminally.
+    pub(crate) unsafe fn abandon_full_medium_or_large_pages_to_process_route(
+        self,
+    ) -> Result<
+        MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>,
+        MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure<'attachment, 'main>,
+    > {
+        let Self {
+            engine,
+            page_map_lifecycle,
+        } = self;
+        // SAFETY: this drain owns the fixed-fast-slot source transition and
+        // unique process PageMap/arena lifecycle through the complete mixed
+        // aggregate traversal.
+        let detach = match unsafe { engine.abandon_full_medium_or_large_pages_to_process_route() } {
+            Ok(detach) => detach,
+            Err(ThreadExitFullMediumOrLargePagesPostExitAbandonFailure::Rejected {
+                engine,
+                error,
+            }) => {
+                return Err(
+                    MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure::Rejected {
+                        drain: Self {
+                            engine,
+                            page_map_lifecycle,
+                        },
+                        error,
+                    },
+                );
+            }
+            Err(ThreadExitFullMediumOrLargePagesPostExitAbandonFailure::RetainedEngine {
+                engine,
+                error,
+            }) => {
+                return Err(
+                    MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure::RetainedDrain {
+                        drain: Self {
+                            engine,
+                            page_map_lifecycle,
+                        },
+                        error,
+                    },
+                );
+            }
+        };
+
+        let parts = match detach.finish_thread_owner() {
+            Ok(parts) => parts,
+            Err(terminal) => {
+                return Err(
+                    MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure::Teardown {
+                        terminal,
+                        page_map_lifecycle,
+                    },
+                );
+            }
+        };
+        // SAFETY: `parts` is now the only source-shaped registry for every
+        // detached member. Later frees obtain short PageMap access only for
+        // their complete failed-reclaim decision and terminal release.
+        match unsafe { page_map_lifecycle.into_post_exit_access() } {
+            Ok(page_map_access) => Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute {
+                parts,
+                page_map_access,
+            }),
+            Err(error) => Err(
+                MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure::PageMap {
+                    parts,
+                    error,
+                },
+            ),
+        }
+    }
+
+    /// Transfers a bounded per-member aggregate of full non-direct-small
+    /// pages from ordinary source bins into one sequential post-exit process
+    /// route.
+    ///
+    /// Every admitted member lies above `SMALL_SIZE_MAX`, has no direct-cache
+    /// image, and begins source-unmapped. A later client free derives that
+    /// member's rounded bin after its low-owner claim, then may cross its own
+    /// mostly-used threshold and publish the matching static-main bitmap/count
+    /// pair. The aggregate never scans, adopts, requeues, or grants
+    /// direct-small or allocation-time authority.
+    ///
+    /// # Safety
+    ///
+    /// At least two current full arena non-direct-small pages must occupy the
+    /// complete post-fast-slot drain. No producer may survive, and every
+    /// client alias must be consumed exactly once through the returned linear
+    /// route or retained terminally.
     pub(crate) unsafe fn abandon_full_non_direct_small_pages_to_process_route(
         self,
     ) -> Result<
@@ -2867,22 +3078,21 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
-    /// Transfers a bounded homogeneous aggregate of full direct-small pages
-    /// from one ordinary source bin into one sequential post-exit process
-    /// route.
+    /// Transfers a bounded per-member aggregate of full direct-small pages
+    /// from ordinary source bins into one sequential post-exit process route.
     ///
-    /// Every admitted member has the same rounded size/bin at or below
-    /// `SMALL_SIZE_MAX`, an exact direct-cache queue-head image, and begins
-    /// source unmapped. Owner exit advances that image on every member removal;
-    /// later client frees retain free.c's partial-collector head until each
-    /// member independently falls below mostly used. The aggregate never
+    /// Every admitted member has its own rounded size/bin at or below
+    /// `SMALL_SIZE_MAX`, an exact complete direct-cache queue-head image, and
+    /// begins source unmapped. Owner exit advances that member's image on every
+    /// removal; later client frees retain free.c's partial-collector head until
+    /// each member independently falls below mostly used. The aggregate never
     /// scans, adopts, requeues, or grants allocation-time or concurrent-free
     /// authority.
     ///
     /// # Safety
     ///
-    /// At least two current full arena direct-small pages of one rounded source
-    /// size must occupy the complete post-fast-slot drain. No producer may
+    /// At least two current full arena direct-small pages across ordinary source
+    /// bins must occupy the complete post-fast-slot drain. No producer may
     /// survive, and every client alias must be consumed exactly once through
     /// the returned linear route or retained terminally.
     pub(crate) unsafe fn abandon_full_direct_small_pages_to_process_route(
@@ -2959,22 +3169,22 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
-    /// Transfers a bounded homogeneous aggregate of full large pages from
-    /// the source full queue into one sequential post-exit process route.
+    /// Transfers a bounded aggregate of full large pages from the source full
+    /// queue into one sequential post-exit process route.
     ///
-    /// Every admitted member has the same rounded size/bin and begins source
-    /// unmapped. A later client free may independently cross that member's
-    /// mostly-used threshold and publish the already-proved static-main
-    /// bitmap/count pair; the aggregate never scans for members, adopts,
-    /// requeues, or grants allocation-time authority. Its terminal release
-    /// proves and removes the exact large 64-slice arena span for each member.
+    /// Every admitted member begins source-unmapped and has its own rounded
+    /// size/bin. A later client free may independently cross that member's
+    /// mostly-used threshold and publish its exact static-main bitmap/count
+    /// pair; the aggregate never scans for members, adopts, requeues, or
+    /// grants allocation-time authority. Its terminal release proves and
+    /// removes the exact large 64-slice arena span for each member.
     ///
     /// # Safety
     ///
-    /// At least two current full large arena pages of one rounded source size
-    /// must occupy the complete post-fast-slot drain. No producer may survive,
-    /// and every client alias must be consumed exactly once through the
-    /// returned linear route or retained terminally.
+    /// At least two current full large arena pages must occupy the complete
+    /// post-fast-slot drain. No producer may survive, and every client alias
+    /// must be consumed exactly once through the returned linear route or
+    /// retained terminally.
     pub(crate) unsafe fn abandon_full_large_pages_to_process_route(
         self,
     ) -> Result<
@@ -3710,6 +3920,7 @@ impl<'main> MainHeapThreadProcessPageExitFullMediumRoute<'main> {
     pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
         self.parts.test_abandoned_count()
     }
+
 }
 
 impl<'main> MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
@@ -4044,8 +4255,122 @@ impl<'main> MainHeapThreadProcessPageExitFullMediumPagesRoute<'main> {
     }
 }
 
+impl<'main> MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main> {
+    /// Routes one exact client free through the bounded mixed medium/large
+    /// aggregate after the originating later Theap/TLD has torn down.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be an exact once-live canonical allocation in one member
+    /// transferred by
+    /// [`MainHeapThreadProcessPageExitDrain::abandon_full_medium_or_large_pages_to_process_route`].
+    /// It must not be freed, transferred, or concurrently used through another
+    /// route. This consuming API serializes one source normal-collector
+    /// failed-reclaim decision at a time; it does not make the aggregate a
+    /// small, allocation-time, reclaim/requeue, or concurrent-free interface.
+    pub(crate) unsafe fn remote_free_after_thread_exit(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult<'main>,
+        MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure<'main>,
+    > {
+        let Self {
+            mut parts,
+            page_map_access,
+        } = self;
+        let free = page_map_access.with_page_map(|page_map| {
+            // SAFETY: this boundary carries the caller's exact client-block
+            // proof through lookup, low-owner claim, optional mapped
+            // publication, and the exact member's terminal span release.
+            unsafe { parts.remote_free_after_thread_exit(page_map, block) }
+        });
+        match free {
+            Ok(Ok(ThreadExitFullMediumOrLargePagesPostExitFreeOutcome::StillLive)) => Ok(
+                MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::StillLive(Self {
+                    parts,
+                    page_map_access,
+                }),
+            ),
+            Ok(Ok(ThreadExitFullMediumOrLargePagesPostExitFreeOutcome::ReleasedPage)) => Ok(
+                MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::ReleasedPage(Self {
+                    parts,
+                    page_map_access,
+                }),
+            ),
+            Ok(Ok(ThreadExitFullMediumOrLargePagesPostExitFreeOutcome::ReleasedAll)) => {
+                // Source terminal release removed the last member's PageMap
+                // span, bitmap/count state, arena bit, metadata, and exact
+                // medium or large backing span. Drop the empty registry before
+                // reopening its process map.
+                drop(parts);
+                // SAFETY: `ReleasedAll` is emitted only after the exact route
+                // count reached zero following the final terminal release.
+                match unsafe { page_map_access.finish_after_all_pages_released() } {
+                    Ok(()) => Ok(
+                        MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::ReleasedAll,
+                    ),
+                    Err(error) => Err(
+                        MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure::ReleasedAllPageMapPoisoned {
+                            error,
+                        },
+                    ),
+                }
+            }
+            Ok(Err(error)) => {
+                let route = Self {
+                    parts,
+                    page_map_access,
+                };
+                let error = MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError::Route(error);
+                if matches!(
+                    error,
+                    MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError::Route(
+                        ThreadExitFullMediumOrLargePagesPostExitFreeError::Unmapped
+                    )
+                ) {
+                    Err(
+                        MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure::Rejected {
+                            route,
+                            error,
+                        },
+                    )
+                } else {
+                    Err(
+                        MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure::Terminal {
+                            route,
+                            error,
+                        },
+                    )
+                }
+            }
+            Err(error) => Err(
+                MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure::Terminal {
+                    route: Self {
+                        parts,
+                        page_map_access,
+                    },
+                    error: MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError::PageMap(error),
+                },
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_remaining_pages(&self) -> usize {
+        self.parts.test_remaining_pages()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
+        self.parts.test_abandoned_count_for_bin(bin)
+    }
+}
+
 impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main> {
-    /// Routes one exact client free through the bounded homogeneous full
+    /// Routes one exact client free through the bounded per-member full
     /// non-direct-small aggregate after the originating later Theap/TLD has
     /// torn down.
     ///
@@ -4156,8 +4481,8 @@ impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main> {
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
-        self.parts.test_abandoned_count()
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
+        self.parts.test_abandoned_count_for_bin(bin)
     }
 }
 
@@ -4273,15 +4598,14 @@ impl<'main> MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main> {
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
-        self.parts.test_abandoned_count()
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
+        self.parts.test_abandoned_count_for_bin(bin)
     }
 }
 
 impl<'main> MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
-    /// Routes one exact client free through the bounded homogeneous
-    /// full-large aggregate after the originating later Theap/TLD has torn
-    /// down.
+    /// Routes one exact client free through the bounded full-large aggregate
+    /// after the originating later Theap/TLD has torn down.
     ///
     /// # Safety
     ///
@@ -4387,8 +4711,8 @@ impl<'main> MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
-        self.parts.test_abandoned_count()
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
+        self.parts.test_abandoned_count_for_bin(bin)
     }
 }
 
@@ -6557,7 +6881,7 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_full_os_singleton_pages_route_releases_each_clipped_map() {
+    fn later_thread_exit_full_os_singleton_pages_route_releases_each_distinct_clipped_map() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -6597,8 +6921,8 @@ mod tests {
                         .expect("the first OS singleton has its clipped release token");
                     let second = allocator
                         .engine
-                        .allocate_aligned(7, 128 * 1024)
-                        .expect("the fixture creates its second OS-aligned singleton");
+                        .allocate_aligned(8 * 1024 + 1, 256 * 1024)
+                        .expect("the fixture creates its distinct OS-aligned singleton");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second OS singleton remains PageMap-published");
                     let second_published = unsafe { PublishedOsAlignedPage::from_page(config, second_page) }
@@ -6606,7 +6930,11 @@ mod tests {
                     let first_ref = unsafe { first_page.as_ref() };
                     let second_ref = unsafe { second_page.as_ref() };
                     assert!(first_ref.memid().is_os() && second_ref.memid().is_os());
-                    assert_eq!(first_ref.block_size(), second_ref.block_size());
+                    assert_ne!(
+                        first_ref.block_size(),
+                        second_ref.block_size(),
+                        "the full source queue can contain OS singletons with distinct rounded sizes"
+                    );
                     assert_eq!(first_ref.reserved(), 1);
                     assert_eq!(first_ref.used(), 1);
                     assert_eq!(second_ref.reserved(), 1);
@@ -6627,7 +6955,7 @@ mod tests {
                     } {
                         Ok(route) => route,
                         Err(_) => panic!(
-                            "two same-size full OS singletons enter the bounded post-exit process route"
+                            "two distinct-size full OS singletons enter the bounded post-exit process route"
                         ),
                     };
 
@@ -10647,7 +10975,172 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_full_non_direct_small_pages_route_reabandons_each_same_bin_page_then_releases() {
+    fn later_thread_exit_mixed_full_medium_or_large_pages_route_releases_both_spans() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the route");
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the mixed full-page fixture");
+
+                    let medium_request = SMALL_MAX_OBJ_SIZE + 1;
+                    let medium_first = allocator
+                        .allocate(medium_request, false)
+                        .expect("the fixture creates one medium page");
+                    let medium_page = NonNull::new(unsafe { allocator.test_page_for_block(medium_first) })
+                        .expect("the medium page remains PageMap-published");
+                    let medium_capacity = unsafe { medium_page.as_ref().reserved() as usize };
+                    assert!(medium_capacity >= 16);
+                    let mut medium_blocks = std::vec::Vec::with_capacity(medium_capacity);
+                    medium_blocks.push(medium_first);
+                    while medium_blocks.len() < medium_capacity {
+                        let block = allocator
+                            .allocate(medium_request, false)
+                            .expect("the fixture fills only its medium page");
+                        assert_eq!(unsafe { allocator.test_page_for_block(block) }, medium_page.as_ptr());
+                        medium_blocks.push(block);
+                    }
+
+                    let large_request = MEDIUM_MAX_OBJ_SIZE + 1;
+                    let large_first = allocator
+                        .allocate(large_request, false)
+                        .expect("the fixture creates one large page after the medium page fills");
+                    let large_page = NonNull::new(unsafe { allocator.test_page_for_block(large_first) })
+                        .expect("the large page remains PageMap-published");
+                    assert_ne!(medium_page, large_page);
+                    let large_capacity = unsafe { large_page.as_ref().reserved() as usize };
+                    assert!(large_capacity >= 16);
+                    let mut large_blocks = std::vec::Vec::with_capacity(large_capacity);
+                    large_blocks.push(large_first);
+                    while large_blocks.len() < large_capacity {
+                        let block = allocator
+                            .allocate(large_request, false)
+                            .expect("the fixture fills only its large page");
+                        assert_eq!(unsafe { allocator.test_page_for_block(block) }, large_page.as_ptr());
+                        large_blocks.push(block);
+                    }
+
+                    let medium_ref = unsafe { medium_page.as_ref() };
+                    let large_ref = unsafe { large_page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(medium_ref.block_size()),
+                        Some(crate::types::PageKind::Medium)
+                    );
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(large_ref.block_size()),
+                        Some(crate::types::PageKind::Large)
+                    );
+                    assert!(
+                        crate::types::page_queue::page_is_in_full(medium_ref)
+                            && crate::types::page_queue::page_is_in_full(large_ref),
+                        "the source full queue contains exactly the mixed regular classes"
+                    );
+                    let medium_slice = medium_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the medium member belongs to the paired arena")
+                        .slice_index as usize;
+                    let large_slice = large_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the large member belongs to the paired arena")
+                        .slice_index as usize;
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let mut route = match unsafe {
+                        drain.abandon_full_medium_or_large_pages_to_process_route()
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "one full medium and one full large page enter the bounded mixed process route"
+                        ),
+                    };
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the mixed route tears down the former Theap/TLD before client frees"
+                    );
+                    assert_eq!(route.test_remaining_pages(), 2);
+
+                    route = match unsafe { route.remote_free_after_thread_exit(medium_blocks.remove(0)) } {
+                        Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::StillLive(route)) => route,
+                        Ok(_) | Err(_) => panic!("the first medium free remains in the mixed route"),
+                    };
+                    route = match unsafe { route.remote_free_after_thread_exit(large_blocks.remove(0)) } {
+                        Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::StillLive(route)) => route,
+                        Ok(_) | Err(_) => panic!("the first large free remains in the mixed route"),
+                    };
+
+                    let mut remaining_blocks = medium_blocks;
+                    remaining_blocks.extend(large_blocks);
+                    let remaining_count = remaining_blocks.len();
+                    for (index, block) in remaining_blocks.into_iter().enumerate() {
+                        let last = index + 1 == remaining_count;
+                        match unsafe { route.remote_free_after_thread_exit(block) } {
+                            Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::StillLive(next))
+                            | Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::ReleasedPage(next))
+                                if !last => route = next,
+                            Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::ReleasedAll)
+                                if last => break,
+                            Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::StillLive(next))
+                            | Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::ReleasedPage(next)) => {
+                                core::mem::forget(next);
+                                panic!("only the final client free may finish the mixed route")
+                            }
+                            Ok(MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult::ReleasedAll) => {
+                                panic!("the mixed route cannot release before its final client block")
+                            }
+                            Err(_) => panic!("each mixed member follows its source failed-reclaim tail"),
+                        }
+                    }
+                    assert!(unsafe { page_map.page_map().unwrap().checked_lookup(medium_first.as_ptr()) }.is_null());
+                    assert!(unsafe { page_map.page_map().unwrap().checked_lookup(large_first.as_ptr()) }.is_null());
+                    assert_eq!(unsafe { arena.pages() }.unwrap().is_clear_range(medium_slice, 1), Some(true));
+                    assert_eq!(unsafe { arena.pages() }.unwrap().is_clear_range(large_slice, 1), Some(true));
+                    assert_eq!(page_map.begin_page_lifecycle().unwrap().finish(), Ok(()));
+                });
+                worker
+                    .join()
+                    .expect("mixed full-page aggregate route fixture remains local to its later owner");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("mixed full-page aggregate route fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_full_non_direct_small_pages_route_reabandons_each_distinct_bin_page_then_releases() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -10680,10 +11173,12 @@ mod tests {
                     };
                     let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
                         .expect("the matched process pair admits the full non-direct-small aggregate fixture");
-                    let request = SMALL_SIZE_MAX + WORD_SIZE;
+                    let first_request = SMALL_SIZE_MAX + WORD_SIZE;
+                    let second_request = first_request * 2;
+                    assert!(second_request <= SMALL_MAX_OBJ_SIZE);
 
                     let first = allocator
-                        .allocate(request, false)
+                        .allocate(first_request, false)
                         .expect("the fixture creates its first non-direct small page");
                     let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
                         .expect("the first non-direct small page remains PageMap-published");
@@ -10696,7 +11191,7 @@ mod tests {
                     first_blocks.push(first);
                     while first_blocks.len() < capacity {
                         let block = allocator
-                            .allocate(request, false)
+                            .allocate(first_request, false)
                             .expect("the fixture fills only its first non-direct small page");
                         assert_eq!(
                             unsafe { allocator.test_page_for_block(block) },
@@ -10707,7 +11202,7 @@ mod tests {
                     }
 
                     let second = allocator
-                        .allocate(request, false)
+                        .allocate(second_request, false)
                         .expect("the fixture creates a second non-direct small page after the first fills");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second non-direct small page remains PageMap-published");
@@ -10717,15 +11212,15 @@ mod tests {
                         "the aggregate route receives two distinct ordinary-bin source pages"
                     );
                     let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
-                    assert_eq!(
-                        second_capacity, capacity,
-                        "one request class gives both aggregate members the same full-page geometry"
+                    assert!(
+                        second_capacity >= 16,
+                        "the second non-direct small geometry exposes the source mostly-used unmapped phase"
                     );
                     let mut second_blocks = std::vec::Vec::with_capacity(second_capacity);
                     second_blocks.push(second);
                     while second_blocks.len() < second_capacity {
                         let block = allocator
-                            .allocate(request, false)
+                            .allocate(second_request, false)
                             .expect("the fixture fills only its second non-direct small page");
                         assert_eq!(
                             unsafe { allocator.test_page_for_block(block) },
@@ -10747,13 +11242,24 @@ mod tests {
                             && first_ref.block_size() <= SMALL_MAX_OBJ_SIZE,
                         "the aggregate owns only the non-direct small source interval"
                     );
-                    assert_eq!(first_ref.block_size(), second_ref.block_size());
+                    assert_ne!(
+                        first_ref.block_size(), second_ref.block_size(),
+                        "the aggregate exercises distinct rounded non-direct-small source sizes"
+                    );
                     assert_eq!(first_ref.used(), capacity);
                     assert_eq!(second_ref.used(), second_capacity);
                     assert!(
                         !crate::types::page_queue::page_is_in_full(first_ref)
                             && !crate::types::page_queue::page_is_in_full(second_ref),
                         "full non-direct small pages remain in their ordinary source bin"
+                    );
+                    let first_bin = crate::size_class::bin(first_ref.block_size())
+                        .expect("the first non-direct-small page retains one source bin");
+                    let second_bin = crate::size_class::bin(second_ref.block_size())
+                        .expect("the second non-direct-small page retains one source bin");
+                    assert_ne!(
+                        first_bin, second_bin,
+                        "the aggregate exercises distinct ordinary non-direct-small bins"
                     );
                     for index in 0..PAGES_DIRECT {
                         assert_eq!(
@@ -10783,7 +11289,7 @@ mod tests {
                     } {
                         Ok(route) => route,
                         Err(_) => panic!(
-                            "two same-bin full non-direct-small pages enter the bounded aggregate process route"
+                            "two distinct-bin full non-direct-small pages enter the bounded aggregate process route"
                         ),
                     };
 
@@ -10793,7 +11299,8 @@ mod tests {
                         "the aggregate route tears down the old Theap/TLD before client frees"
                     );
                     assert_eq!(route.test_remaining_pages(), 2);
-                    assert_eq!(route.test_abandoned_count(), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
 
                     let unmapped_frees = capacity / 8;
                     assert!(unmapped_frees > 0);
@@ -10804,7 +11311,7 @@ mod tests {
                             Ok(_) => panic!("a mostly-used first non-direct-small page remains in the aggregate route"),
                             Err(_) => panic!("a mostly-used first non-direct-small page stays source-unmapped"),
                         };
-                        assert_eq!(route.test_abandoned_count(), Some(0));
+                        assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
                         index += 1;
                     }
                     route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
@@ -10812,7 +11319,8 @@ mod tests {
                         Ok(_) => panic!("the below-mostly-used first free cannot release its page"),
                         Err(_) => panic!("the first below-mostly-used free reabandons the first page"),
                     };
-                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
                     index += 1;
                     while index + 1 < capacity {
                         route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
@@ -10828,7 +11336,7 @@ mod tests {
                         Err(_) => panic!("the first final free completes its mapped release"),
                     };
                     assert_eq!(route.test_remaining_pages(), 1);
-                    assert_eq!(route.test_abandoned_count(), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
                         "the first terminal free unregisters only its PageMap span"
@@ -10839,8 +11347,10 @@ mod tests {
                         "the first terminal free clears its ordinary main-arena bit"
                     );
 
+                    let second_unmapped_frees = second_capacity / 8;
+                    assert!(second_unmapped_frees > 0);
                     let mut index = 0usize;
-                    while index < unmapped_frees {
+                    while index < second_unmapped_frees {
                         route = match unsafe { route.remote_free_after_thread_exit(second_blocks[index]) } {
                             Ok(MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
                             Ok(_) => panic!("a mostly-used second non-direct-small page remains in the aggregate route"),
@@ -10853,7 +11363,7 @@ mod tests {
                         Ok(_) => panic!("the below-mostly-used second free cannot release its page"),
                         Err(_) => panic!("the first below-mostly-used second free reabandons its page"),
                     };
-                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(1));
                     index += 1;
                     while index + 1 < second_capacity {
                         route = match unsafe { route.remote_free_after_thread_exit(second_blocks[index]) } {
@@ -10898,7 +11408,7 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_full_direct_small_pages_route_preserves_partial_head_then_releases_each_member() {
+    fn later_thread_exit_full_direct_small_pages_route_reabandons_each_distinct_bin_page_then_releases() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -10931,10 +11441,10 @@ mod tests {
                     };
                     let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
                         .expect("the matched process pair admits the full direct-small aggregate fixture");
-                    let request = SMALL_SIZE_MAX;
+                    let first_request = SMALL_SIZE_MAX;
 
                     let first = allocator
-                        .allocate(request, false)
+                        .allocate(first_request, false)
                         .expect("the fixture creates its first direct-small page");
                     let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
                         .expect("the first direct-small page remains PageMap-published");
@@ -10947,7 +11457,7 @@ mod tests {
                     first_blocks.push(first);
                     while first_blocks.len() < capacity {
                         let block = allocator
-                            .allocate(request, false)
+                            .allocate(first_request, false)
                             .expect("the fixture fills only its first direct-small page");
                         assert_eq!(
                             unsafe { allocator.test_page_for_block(block) },
@@ -10958,8 +11468,8 @@ mod tests {
                     }
 
                     let second = allocator
-                        .allocate(request, false)
-                        .expect("the fixture creates a second direct-small page after the first fills");
+                        .allocate(SMALL_SIZE_MAX / 2, false)
+                        .expect("the fixture creates its distinct-bin second direct-small page");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second direct-small page remains PageMap-published");
                     assert_ne!(
@@ -10968,20 +11478,20 @@ mod tests {
                         "the aggregate route receives two distinct ordinary-bin source pages"
                     );
                     let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
-                    assert_eq!(
-                        second_capacity, capacity,
-                        "one request class gives both aggregate members the same full-page geometry"
+                    assert!(
+                        second_capacity >= 16,
+                        "the second direct-small member also satisfies the source partial collector floor"
                     );
                     let mut second_blocks = std::vec::Vec::with_capacity(second_capacity);
                     second_blocks.push(second);
                     while second_blocks.len() < second_capacity {
                         let block = allocator
-                            .allocate(request, false)
+                            .allocate(SMALL_SIZE_MAX / 2, false)
                             .expect("the fixture fills only its second direct-small page");
                         assert_eq!(
                             unsafe { allocator.test_page_for_block(block) },
                             second_page.as_ptr(),
-                            "the second source page fills without creating a third member"
+                            "the second source page fills its own ordinary bin without creating a third member"
                         );
                         second_blocks.push(block);
                     }
@@ -10997,25 +11507,35 @@ mod tests {
                         first_ref.block_size() <= SMALL_SIZE_MAX,
                         "the aggregate owns only the direct-small source interval"
                     );
-                    assert_eq!(first_ref.block_size(), second_ref.block_size());
+                    assert_ne!(
+                        first_ref.block_size(), second_ref.block_size(),
+                        "the aggregate regression requires two distinct direct-small source bins"
+                    );
                     assert_eq!(first_ref.used(), capacity);
                     assert_eq!(second_ref.used(), second_capacity);
                     assert!(
                         !crate::types::page_queue::page_is_in_full(first_ref)
                             && !crate::types::page_queue::page_is_in_full(second_ref),
-                        "full direct-small pages remain in their ordinary source bin"
+                        "full direct-small pages remain in their ordinary source bins"
                     );
-                    let (direct_start, direct_end) = source_direct_cache_range(first_ref.block_size());
-                    let direct_head = allocator
-                        .test_direct_page(direct_start)
-                        .expect("the direct cache remains addressable");
+                    let first_bin = crate::size_class::bin(first_ref.block_size())
+                        .expect("the first direct-small page retains an ordinary source bin");
+                    let second_bin = crate::size_class::bin(second_ref.block_size())
+                        .expect("the second direct-small page retains an ordinary source bin");
+                    assert_ne!(first_bin, second_bin);
+                    assert_eq!(allocator.test_queue_count(first_bin), Some(1));
+                    assert_eq!(allocator.test_queue_count(second_bin), Some(1));
+                    let (first_direct_start, first_direct_end) = source_direct_cache_range(first_ref.block_size());
+                    let (second_direct_start, second_direct_end) = source_direct_cache_range(second_ref.block_size());
                     assert!(
-                        direct_head == first_page.as_ptr() || direct_head == second_page.as_ptr(),
-                        "the direct cache names the current ordinary-bin queue head"
+                        first_direct_end < second_direct_start || second_direct_end < first_direct_start,
+                        "distinct source bins own disjoint rounded direct-cache ranges"
                     );
                     for index in 0..PAGES_DIRECT {
-                        let expected = if index >= direct_start && index <= direct_end {
-                            direct_head
+                        let expected = if index >= first_direct_start && index <= first_direct_end {
+                            first_page.as_ptr()
+                        } else if index >= second_direct_start && index <= second_direct_end {
+                            second_page.as_ptr()
                         } else {
                             EMPTY_PAGE.as_ptr()
                         };
@@ -11046,7 +11566,7 @@ mod tests {
                     } {
                         Ok(route) => route,
                         Err(_) => panic!(
-                            "two same-bin full direct-small pages enter the bounded aggregate process route"
+                            "two distinct-bin full direct-small pages enter the bounded aggregate process route"
                         ),
                     };
 
@@ -11056,7 +11576,8 @@ mod tests {
                         "the aggregate route tears down the old Theap/TLD before client frees"
                     );
                     assert_eq!(route.test_remaining_pages(), 2);
-                    assert_eq!(route.test_abandoned_count(), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
 
                     // `_mi_page_free_collect_partly` leaves the just-pushed
                     // atomic head for the next free. This keeps each member
@@ -11071,7 +11592,7 @@ mod tests {
                             Ok(_) => panic!("a mostly-used first direct-small page remains in the aggregate route"),
                             Err(_) => panic!("a mostly-used first direct-small page stays source-unmapped"),
                         };
-                        assert_eq!(route.test_abandoned_count(), Some(0));
+                        assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
                         index += 1;
                     }
                     route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
@@ -11079,7 +11600,8 @@ mod tests {
                         Ok(_) => panic!("the first post-head below-mostly-used free cannot release its page"),
                         Err(_) => panic!("the first post-head below-mostly-used free reabandons the first page"),
                     };
-                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
                     index += 1;
                     while index + 1 < capacity {
                         route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
@@ -11095,7 +11617,7 @@ mod tests {
                         Err(_) => panic!("the first final free completes its mapped release"),
                     };
                     assert_eq!(route.test_remaining_pages(), 1);
-                    assert_eq!(route.test_abandoned_count(), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
                         "the first terminal free unregisters only its PageMap span"
@@ -11106,8 +11628,10 @@ mod tests {
                         "the first terminal free clears its ordinary main-arena bit"
                     );
 
+                    let second_unmapped_frees = second_capacity / 8 + 1;
+                    assert!(second_unmapped_frees > 0);
                     let mut index = 0usize;
-                    while index < unmapped_frees {
+                    while index < second_unmapped_frees {
                         route = match unsafe { route.remote_free_after_thread_exit(second_blocks[index]) } {
                             Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => route,
                             Ok(_) => panic!("a mostly-used second direct-small page remains in the aggregate route"),
@@ -11120,7 +11644,7 @@ mod tests {
                         Ok(_) => panic!("the first post-head below-mostly-used second free cannot release its page"),
                         Err(_) => panic!("the first post-head below-mostly-used second free reabandons its page"),
                     };
-                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(1));
                     index += 1;
                     while index + 1 < second_capacity {
                         route = match unsafe { route.remote_free_after_thread_exit(second_blocks[index]) } {
@@ -11958,7 +12482,7 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_full_large_pages_route_reabandons_each_same_bin_page_then_releases() {
+    fn later_thread_exit_full_large_pages_route_reabandons_each_distinct_bin_page_then_releases() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -11991,10 +12515,11 @@ mod tests {
                     };
                     let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
                         .expect("the matched process pair admits the full-large aggregate fixture");
-                    let request = MEDIUM_MAX_OBJ_SIZE + 1;
+                    let first_request = MEDIUM_MAX_OBJ_SIZE + 1;
+                    let second_request = first_request * 2;
 
                     let first = allocator
-                        .allocate(request, false)
+                        .allocate(first_request, false)
                         .expect("the fixture creates its first large page");
                     let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
                         .expect("the first large page remains PageMap-published");
@@ -12007,7 +12532,7 @@ mod tests {
                     first_blocks.push(first);
                     while first_blocks.len() < capacity {
                         let block = allocator
-                            .allocate(request, false)
+                            .allocate(first_request, false)
                             .expect("the fixture fills only its first large page");
                         assert_eq!(
                             unsafe { allocator.test_page_for_block(block) },
@@ -12018,7 +12543,7 @@ mod tests {
                     }
 
                     let second = allocator
-                        .allocate(request, false)
+                        .allocate(second_request, false)
                         .expect("the fixture creates a second large page after the first fills");
                     let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
                         .expect("the second large page remains PageMap-published");
@@ -12028,15 +12553,15 @@ mod tests {
                         "the aggregate route receives two distinct source pages"
                     );
                     let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
-                    assert_eq!(
-                        second_capacity, capacity,
-                        "one request class gives both aggregate members the same full-page geometry"
+                    assert!(
+                        second_capacity >= 16,
+                        "the second large page exposes its own source mostly-used unmapped phase"
                     );
                     let mut second_blocks = std::vec::Vec::with_capacity(second_capacity);
                     second_blocks.push(second);
                     while second_blocks.len() < second_capacity {
                         let block = allocator
-                            .allocate(request, false)
+                            .allocate(second_request, false)
                             .expect("the fixture fills only its second large page");
                         assert_eq!(
                             unsafe { allocator.test_page_for_block(block) },
@@ -12054,9 +12579,23 @@ mod tests {
                         "the first member is a regular large page"
                     );
                     assert_eq!(
+                        crate::size_class::page_kind_for_block_size(second_ref.block_size()),
+                        Some(crate::types::PageKind::Large),
+                        "the second member is a regular large page"
+                    );
+                    assert_ne!(
                         first_ref.block_size(),
                         second_ref.block_size(),
-                        "the bounded aggregate keeps one source rounded block size"
+                        "the source full queue retains independent rounded large sizes"
+                    );
+                    let first_bin = crate::size_class::bin(first_ref.block_size())
+                        .expect("the first large page retains one regular bin");
+                    let second_bin = crate::size_class::bin(second_ref.block_size())
+                        .expect("the second large page retains one regular bin");
+                    assert_ne!(
+                        first_bin,
+                        second_bin,
+                        "the mixed-size members select independent static-main bitmap bins"
                     );
                     assert_eq!(first_ref.used(), capacity);
                     assert_eq!(second_ref.used(), second_capacity);
@@ -12096,7 +12635,7 @@ mod tests {
                     let mut route = match unsafe { drain.abandon_full_large_pages_to_process_route() } {
                         Ok(route) => route,
                         Err(_) => panic!(
-                            "two same-bin full large pages enter the bounded aggregate process route"
+                            "two mixed-bin full large pages enter the bounded aggregate process route"
                         ),
                     };
 
@@ -12106,7 +12645,8 @@ mod tests {
                         "the aggregate route tears down the old Theap/TLD before client frees"
                     );
                     assert_eq!(route.test_remaining_pages(), 2);
-                    assert_eq!(route.test_abandoned_count(), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
                     for (page, slice_start) in [
                         (first_page, first_slice_start),
                         (second_page, second_slice_start),
@@ -12123,16 +12663,17 @@ mod tests {
                         }
                     }
 
-                    let unmapped_frees = capacity / 8;
-                    assert!(unmapped_frees > 0);
+                    let first_unmapped_frees = capacity / 8;
+                    assert!(first_unmapped_frees > 0);
                     let mut index = 0usize;
-                    while index < unmapped_frees {
+                    while index < first_unmapped_frees {
                         route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
                             Ok(MainHeapThreadProcessPageExitFullLargePagesFreeResult::StillLive(route)) => route,
                             Ok(_) => panic!("a mostly-used first large page remains in the aggregate route"),
                             Err(_) => panic!("a mostly-used first large page stays source-unmapped"),
                         };
-                        assert_eq!(route.test_abandoned_count(), Some(0));
+                        assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
+                        assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
                         index += 1;
                     }
                     route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
@@ -12140,7 +12681,8 @@ mod tests {
                         Ok(_) => panic!("the below-mostly-used first free cannot release its large page"),
                         Err(_) => panic!("the first below-mostly-used free reabandons the first large page"),
                     };
-                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
                     index += 1;
                     while index + 1 < capacity {
                         route = match unsafe { route.remote_free_after_thread_exit(first_blocks[index]) } {
@@ -12156,7 +12698,8 @@ mod tests {
                         Err(_) => panic!("the first final free completes its mapped release"),
                     };
                     assert_eq!(route.test_remaining_pages(), 1);
-                    assert_eq!(route.test_abandoned_count(), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
                     for offset in 0..expected_large_slices {
                         let address = unsafe {
                             first_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
@@ -12182,8 +12725,10 @@ mod tests {
                         );
                     }
 
+                    let second_unmapped_frees = second_capacity / 8;
+                    assert!(second_unmapped_frees > 0);
                     let mut index = 0usize;
-                    while index < unmapped_frees {
+                    while index < second_unmapped_frees {
                         route = match unsafe { route.remote_free_after_thread_exit(second_blocks[index]) } {
                             Ok(MainHeapThreadProcessPageExitFullLargePagesFreeResult::StillLive(route)) => route,
                             Ok(_) => panic!("a mostly-used second large page remains in the aggregate route"),
@@ -12196,7 +12741,8 @@ mod tests {
                         Ok(_) => panic!("the below-mostly-used second free cannot release its large page"),
                         Err(_) => panic!("the first below-mostly-used second free reabandons its page"),
                     };
-                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
+                    assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(1));
                     index += 1;
                     while index + 1 < second_capacity {
                         route = match unsafe { route.remote_free_after_thread_exit(second_blocks[index]) } {

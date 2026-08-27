@@ -743,6 +743,22 @@ impl MainStaticTheapAttachment {
         MainStaticPageSession::begin(self)
     }
 
+    /// Validates that this ticket-zero attachment can begin a fresh page
+    /// session without retaining that borrow.
+    ///
+    /// A source fresh-arena owner needs this before it maps its first arena:
+    /// if the current roots, static images, or zero-page precondition are not
+    /// valid, it must reject without publishing a new process arena. The
+    /// returned unit capability deliberately carries no mutable image or page
+    /// access; the caller must acquire its matching PageMap lifecycle and then
+    /// call [`Self::page_session`] again to form the actual engine.
+    #[inline]
+    pub(crate) fn preflight_fresh_page_session(
+        &mut self,
+    ) -> Result<(), MainStaticPageSessionError> {
+        MainStaticPageSession::begin(self).map(|_| ())
+    }
+
     /// Performs the bounded source teardown order for the one static main
     /// theap: require no pages, clear only owned TLS roots, detach heap then
     /// TLD lists, clear terminal theap links/random state, invalidate TLD,

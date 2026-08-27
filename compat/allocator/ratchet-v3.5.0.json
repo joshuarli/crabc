@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 127,
-    "item_count": 123,
+    "implemented": 131,
+    "item_count": 127,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 127
+    "unit_verified": 131
   },
-  "port_map_sha256": "6a67de392ea02a5ef800b04b82da3beba05c1be2c29d49853a048fea2c95ae35",
+  "port_map_sha256": "bdec947636e120191cfd3210f00b82d4588ec942d3fe36ecc4fcfa36c750a3db",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -166,7 +166,15 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/arena.c:main-static-first-fresh-page-default-arena": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/arena.c:main-static-process-page-map-arena-lifecycle": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:mi-arena-reserve-first-default-one-arena": [
       "implemented",
       "unit_verified"
     ],
@@ -183,6 +191,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:os-aligned-singleton-metadata-page-map-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:process-ready-published-shared-arena-pair": [
       "implemented",
       "unit_verified"
     ],
@@ -505,6 +517,10 @@
       "unit_verified"
     ],
     "item:src/theap.c:later-main-mapped-medium-pages-post-exit-registry": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:later-main-mixed-full-medium-large-aggregate-post-exit-route": [
       "implemented",
       "unit_verified"
     ],

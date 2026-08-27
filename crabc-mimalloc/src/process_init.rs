@@ -18,7 +18,8 @@
 //! it does not choose options, reserve or manage the process-shared arena,
 //! initialize pthread keys, route allocations/frees, run process shutdown,
 //! or expose the metadata allocator's private map/arena as process-global
-//! state.
+//! state. Its one page-bearing factory only creates a private first-fresh-page
+//! owner; that owner remains arena-free until a valid allocation miss.
 
 #[cfg(test)]
 extern crate std;
@@ -34,9 +35,16 @@ use crate::main_theap::{
     MainStaticHeapFoundationError, MainStaticHeapLease, MainStaticTheapAttachment,
     MainStaticTheapError,
 };
+use crate::main_static_page::{
+    MainStaticFirstArenaPageAllocator, MainStaticFirstArenaPageAllocatorBeginError,
+};
 use crate::meta::{MetaAllocator, MetaError};
 use crate::os::MemoryConfig;
 use crate::page_map::PageMapHeader;
+use crate::process_arena::{
+    ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError,
+    ProcessSharedArenaStorage,
+};
 use crate::process_page_map::{
     ProcessPageMapError, ProcessPageMapLease, ProcessPageMapStorage,
 };
@@ -405,6 +413,23 @@ pub(crate) struct ProcessMainThread {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
+/// A refusal while turning the retained source-order process-main owner into
+/// its one bounded first-arena page owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessMainFirstArenaPageAllocatorError {
+    Process(ProcessMainInitError),
+    PageOwner(MainStaticFirstArenaPageAllocatorBeginError),
+}
+
+/// A refusal while deriving the already-published process arena from the
+/// immutable source-order process-ready witness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessMainReadySharedArenaError {
+    Process(ProcessMainInitError),
+    Arena(ProcessSharedArenaError),
+    Pair(ProcessPageArenaLeaseError),
+}
+
 impl ProcessMainThread {
     /// Returns the immutable process-ready witness only while the ticket-zero
     /// attachment is still live and current.
@@ -426,6 +451,80 @@ impl ProcessMainThread {
             return Err(ProcessMainInitError::Retained);
         }
         self.attachment.as_mut().ok_or(ProcessMainInitError::Retained)
+    }
+
+    /// Reconstructs the one immutable process map/arena pair after a bounded
+    /// source reservation has already published it.
+    ///
+    /// This is not an arena search or a reservation policy. The pair is
+    /// available only while this ticket-zero owner remains live and the
+    /// process-shared sidecar is already READY; joining its two immutable
+    /// witnesses rejects a root, configuration, or subprocess mismatch before
+    /// any page lifecycle can begin.
+    pub(crate) fn ready_shared_arena_pair(
+        &self,
+    ) -> Result<ProcessPageArenaLease, ProcessMainReadySharedArenaError> {
+        self.ready_shared_arena_pair_with_storage(ProcessSharedArenaStorage::global())
+    }
+
+    fn ready_shared_arena_pair_with_storage(
+        &self,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<ProcessPageArenaLease, ProcessMainReadySharedArenaError> {
+        let page_map = self
+            .ready()
+            .and_then(ProcessMainReadyLease::page_map)
+            .map_err(ProcessMainReadySharedArenaError::Process)?;
+        let arena = arena_storage
+            .ready_lease()
+            .map_err(ProcessMainReadySharedArenaError::Arena)?;
+        ProcessPageArenaLease::join(page_map, arena).map_err(ProcessMainReadySharedArenaError::Pair)
+    }
+
+    /// Test-only injection of an isolated process-lifetime arena sidecar.
+    #[cfg(test)]
+    fn ready_shared_arena_pair_with_test_storage(
+        &self,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<ProcessPageArenaLease, ProcessMainReadySharedArenaError> {
+        self.ready_shared_arena_pair_with_storage(arena_storage)
+    }
+
+    /// Borrows this retained ticket-zero owner as the one private lazy
+    /// first-arena page engine.
+    ///
+    /// The source-order coordinator provides the only valid process-ready map
+    /// witness and ticket-zero attachment. This factory exposes neither raw
+    /// static storage nor arena ownership; the returned owner remains bounded
+    /// to its first ordinary fresh-page miss and the global one-arena policy.
+    pub(crate) fn begin_first_arena_page_allocator(
+        &mut self,
+    ) -> Result<MainStaticFirstArenaPageAllocator<'_>, ProcessMainFirstArenaPageAllocatorError> {
+        self.begin_first_arena_page_allocator_with_storage(ProcessSharedArenaStorage::global())
+    }
+
+    fn begin_first_arena_page_allocator_with_storage(
+        &mut self,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<MainStaticFirstArenaPageAllocator<'_>, ProcessMainFirstArenaPageAllocatorError> {
+        let page_map = self
+            .ready()
+            .and_then(ProcessMainReadyLease::page_map)
+            .map_err(ProcessMainFirstArenaPageAllocatorError::Process)?;
+        let attachment = self
+            .attachment_mut()
+            .map_err(ProcessMainFirstArenaPageAllocatorError::Process)?;
+        MainStaticFirstArenaPageAllocator::begin(attachment, page_map, arena_storage)
+            .map_err(ProcessMainFirstArenaPageAllocatorError::PageOwner)
+    }
+
+    /// Test-only injection of an isolated process-lifetime arena sidecar.
+    #[cfg(test)]
+    fn begin_first_arena_page_allocator_with_test_storage(
+        &mut self,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<MainStaticFirstArenaPageAllocator<'_>, ProcessMainFirstArenaPageAllocatorError> {
+        self.begin_first_arena_page_allocator_with_storage(arena_storage)
     }
 
     /// Mints the live static main-Heap lease on the ticket-zero thread.
@@ -493,6 +592,8 @@ mod tests {
         default_theap, fast_slot_peek, roots_are_pristine_for_main_static_attachment,
         set_default_theap,
     };
+    use crate::main_heap_page::MainHeapThreadProcessPageAllocator;
+    use crate::main_heap_thread::MainHeapThreadAttachment;
     use crate::meta::MetaAllocator;
     use crate::os::{fault, PageSize};
     use crate::process_arena::ProcessSharedArenaStorage;
@@ -739,5 +840,153 @@ mod tests {
         })
         .join()
         .expect("ready-process reuse test thread completes");
+    }
+
+    #[test]
+    fn process_main_owner_opens_the_ticket_zero_first_arena_page_owner() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("source-order startup creates the retained ticket-zero owner");
+
+            let mut page_owner = owner
+                .begin_first_arena_page_allocator_with_test_storage(arena_storage)
+                .expect("the process owner supplies its exact ready map and ticket-zero attachment");
+            assert!(arena_storage.test_is_cold(), "the factory itself makes no startup reservation");
+            let block = page_owner
+                .allocate(37, false)
+                .expect("the first ticket-zero request reaches the bounded default arena");
+            assert!(
+                !arena_storage.test_is_cold(),
+                "the process-owned page route reserves only after its first fresh page miss"
+            );
+            // SAFETY: `block` is the exact active allocation returned above
+            // and has not escaped the process-main page owner.
+            unsafe { page_owner.free(block) }
+                .expect("the process-owned first-arena block frees normally");
+            assert!(matches!(page_owner.finish(), Ok(())));
+            owner
+                .teardown()
+                .expect("the released page owner returns ticket-zero teardown authority");
+        })
+        .join()
+        .expect("process-main first-arena page-owner fixture completes");
+    }
+
+    #[test]
+    fn process_ready_first_arena_pair_reuses_the_published_default_arena_for_one_later_owner() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("source-order startup creates the ticket-zero owner");
+
+            assert!(matches!(
+                owner.ready_shared_arena_pair_with_test_storage(arena_storage),
+                Err(ProcessMainReadySharedArenaError::Arena(ProcessSharedArenaError::Retained))
+            ), "a cold arena sidecar cannot become a process-ready page pair");
+
+            let mut first = owner
+                .begin_first_arena_page_allocator_with_test_storage(arena_storage)
+                .expect("the ticket-zero owner opens its first default arena route");
+            let block = first
+                .allocate(37, false)
+                .expect("the first fresh page publishes the default arena");
+            // SAFETY: `block` is the exact still-live allocation returned by
+            // this first owner and has not escaped it.
+            unsafe { first.free(block) }.expect("the first owner releases its only block");
+            assert!(matches!(
+                first.finish(),
+                Ok(())
+            ), "the empty first owner releases its map lifecycle");
+
+            let pair = owner
+                .ready_shared_arena_pair_with_test_storage(arena_storage)
+                .expect("the ready process derives the exact published first-arena pair");
+            assert_eq!(
+                pair.page_map_root().unwrap(),
+                owner.ready().unwrap().root().unwrap(),
+                "the reuse pair retains the coordinator's release-published map root"
+            );
+            let main_heap = owner
+                .shared_main_heap_lease()
+                .expect("ticket zero mints the later-owner heap witness");
+
+            thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        let mut later = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap, metadata, config,
+                            )
+                        } {
+                            Ok(attachment) => attachment,
+                            Err(_) => panic!("the later source attachment must publish"),
+                        };
+                        let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut later, pair)
+                            .expect("the published first arena is reusable by the selected later owner");
+                        let block = allocator
+                            .allocate(37, false)
+                            .expect("the later owner allocates through the reused arena");
+                        for index in 0..37 {
+                            // SAFETY: `block` is uniquely live and has its
+                            // complete requested 37-byte extent.
+                            unsafe { block.as_ptr().add(index).write((index as u8).wrapping_add(19)) };
+                        }
+                        // SAFETY: `block` is the exact current allocation of
+                        // this live later-thread engine and remains exclusive.
+                        let replacement = unsafe {
+                            allocator.reallocate(Some(block), crate::config::SMALL_MAX_OBJ_SIZE + 1)
+                        }
+                        .expect("the later owner exposes ordinary realloc through the reused arena");
+                        for index in 0..37 {
+                            // SAFETY: the successful replacement is uniquely
+                            // live and preserves the initialized old prefix.
+                            assert_eq!(
+                                unsafe { replacement.as_ptr().add(index).read() },
+                                (index as u8).wrapping_add(19)
+                            );
+                        }
+                        // SAFETY: `replacement` is the sole current allocation
+                        // returned by the successful reallocation.
+                        unsafe { allocator.free(replacement) }
+                            .expect("the later owner releases its only allocation");
+                        assert!(matches!(
+                            allocator.finish(),
+                            Ok(())
+                        ), "the later page engine drains cleanly");
+                        later
+                            .finish_after_user_destructors()
+                            .expect("the later attachment completes after its empty page engine");
+                    })
+                    .join()
+                    .expect("the later source owner remains current-thread-local");
+            });
+
+            owner
+                .teardown()
+                .expect("the reused first arena leaves ticket-zero teardown authority intact");
+        })
+        .join()
+        .expect("process-ready first-arena reuse fixture completes");
     }
 }
