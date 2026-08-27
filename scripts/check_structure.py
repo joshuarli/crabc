@@ -276,6 +276,21 @@ def check_x86_rr_interval_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_sched_affinity_boundary(errors: list[str]) -> None:
+    """Keep the private x86 affinity slice read-only."""
+
+    thread_source = ROOT / "crabc-rs" / "src" / "thread_x86_64.rs"
+    text = thread_source.read_text(errors="replace")
+    if "pub fn sched_getaffinity" not in text:
+        errors.append("crabc-rs/src/thread_x86_64.rs: private affinity slice is missing")
+    for forbidden in ("pub fn sched_setaffinity", "pub fn sched_setscheduler", "pub fn sched_setparam"):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/thread_x86_64.rs: private affinity slice must defer "
+                f"{forbidden}"
+            )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
 
@@ -439,6 +454,7 @@ def main() -> int:
     check_x86_getcwd_boundary(errors)
     check_x86_readlinkat_boundary(errors)
     check_x86_rr_interval_boundary(errors)
+    check_x86_sched_affinity_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):

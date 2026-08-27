@@ -235,6 +235,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][11]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][12]["command"],
+            "./scripts/dev-x86_64.sh sched-affinity-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][12]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][13]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])

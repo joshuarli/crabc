@@ -1,17 +1,91 @@
 //! Narrow Linux/x86-64 thread observations and scheduler operations.
 //!
-//! This target-specific slice preserves the three record-independent thread
-//! operations admitted by the AArch64 facade: the calling task ID, the
-//! currently observed CPU, a scheduler yield, and a read-only round-robin
-//! interval query. Affinity masks, futex wrappers, and credential transitions
-//! remain outside this module until their x86-64 contracts have independent
-//! evidence.
+//! This target-specific slice preserves record-independent thread operations
+//! plus a bounded read-only CPU-affinity observation. Affinity mutation,
+//! futex wrappers, and credential transitions remain outside this module until
+//! their x86-64 contracts have independent evidence.
 
 use core::mem::MaybeUninit;
 use core::time::Duration;
 
 use crate::process::Pid;
 use crate::{Errno, Result};
+
+/// A bounded Linux CPU-affinity mask.
+///
+/// The fixed 1024-bit capacity is the native x86-64 facade boundary. Local
+/// bit operations affect only this value; this module intentionally exposes no
+/// affinity mutation operation.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct CpuSet([u64; 16]);
+
+impl CpuSet {
+    /// The largest CPU identifier representable by this fixed mask plus one.
+    pub const MAX_CPU: usize = 1024;
+
+    /// Creates an empty CPU set.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self([0; 16])
+    }
+
+    /// Returns whether `cpu` is present in this affinity mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `cpu` is outside [`Self::MAX_CPU`].
+    #[inline]
+    pub fn is_set(&self, cpu: usize) -> bool {
+        (self.0[cpu / 64] & (1u64 << (cpu % 64))) != 0
+    }
+
+    /// Adds `cpu` to this local affinity mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `cpu` is outside [`Self::MAX_CPU`].
+    #[inline]
+    pub fn set(&mut self, cpu: usize) {
+        self.0[cpu / 64] |= 1u64 << (cpu % 64);
+    }
+
+    /// Removes `cpu` from this local affinity mask.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `cpu` is outside [`Self::MAX_CPU`].
+    #[inline]
+    pub fn unset(&mut self, cpu: usize) {
+        self.0[cpu / 64] &= !(1u64 << (cpu % 64));
+    }
+
+    /// Counts the CPUs present in this affinity mask.
+    #[inline]
+    pub fn count(&self) -> u32 {
+        self.0.iter().map(|word| word.count_ones()).sum()
+    }
+
+    /// Returns whether the mask contains no CPUs.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|word| *word == 0)
+    }
+
+    /// Clears every CPU from this local affinity mask.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.0 = [0; 16];
+    }
+}
+
+impl Default for CpuSet {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Returns the caller's Linux task ID.
 #[inline]
@@ -59,6 +133,40 @@ pub fn sched_rr_get_interval(pid: Option<Pid>) -> Result<Duration> {
         interval.tv_sec as u64,
         interval.tv_nsec as u32,
     ))
+}
+
+/// Reads a Linux task's CPU-affinity mask.
+///
+/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
+/// Linux may write fewer bytes than this fixed 1024-bit capacity; the
+/// unwritten suffix is cleared before exposure. A kernel mask larger than
+/// this boundary is reported as `EINVAL`.
+#[inline]
+pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
+    let mut mask = CpuSet::new();
+    let size = core::mem::size_of_val(&mask.0);
+    // SAFETY: `mask` is initialized writable storage for exactly `size` bytes.
+    let written = unsafe {
+        crabc_core::thread::sched_getaffinity_raw(
+            pid.map_or(0, Pid::as_raw_pid),
+            mask.0.as_mut_ptr().cast(),
+            size,
+        )?
+    };
+    if written > size {
+        return Err(Errno::RANGE);
+    }
+    if written < size {
+        // SAFETY: `written <= size`, so the tail is within `mask`.
+        unsafe {
+            core::ptr::write_bytes(
+                mask.0.as_mut_ptr().cast::<u8>().add(written),
+                0,
+                size - written,
+            );
+        }
+    }
+    Ok(mask)
 }
 
 /// Yields the processor to the Linux scheduler.

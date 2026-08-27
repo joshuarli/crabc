@@ -45,6 +45,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh rr-interval-reference
+./scripts/dev-x86_64.sh sched-affinity-reference
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
 ./scripts/dev-x86_64.sh rusage-reference
@@ -273,6 +274,14 @@ pins the x86 16-byte, align-8 `timespec`, syscall 148, canonical duration
 validation, and direct `ESRCH` propagation. The interval query does not select
 or mutate scheduler policy and remains private evidence for the planned
 record-owning family.
+
+`sched-affinity-reference` executes the private x86 read-only CPU-affinity
+observation slice. It records the fixed 128-byte mask and syscall 204. The raw
+syscall returns the dynamic initialized-prefix length and leaves its tail
+untouched; pinned musl's C wrapper instead returns success as zero and clears
+the rest of its `cpu_set_t`. The typed Rust facade owns a zeroed mask and
+exposes no C return value. Affinity mutation, pthread support, and the broader
+record-owning facade family remain excluded.
 
 `priority-reference` executes a pinned-musl x86 probe for
 `PRIO_PROCESS`/`PRIO_PGRP`/`PRIO_USER`, `getpriority` syscall 140, the
