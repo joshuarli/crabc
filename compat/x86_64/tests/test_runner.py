@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -82,6 +82,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_time_observation_reference.sh', source)
         self.assertIn('run_relative_sleep_reference()', source)
         self.assertIn('compat/x86_64/run_x86_relative_sleep_reference.sh', source)
+        self.assertIn('run_getitimer_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_getitimer_reference.sh', source)
         self.assertIn('run_timerfd_reference()', source)
         self.assertIn('compat/x86_64/run_x86_timerfd_reference.sh', source)
         self.assertIn('run_pselect_reference()', source)
@@ -133,6 +135,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_fs_advice', source)
         self.assertIn('--test x86_64_getgroups', source)
+        self.assertIn('--test x86_64_getitimer', source)
         self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
@@ -245,6 +248,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         relative_sleep_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_relative_sleep_reference.sh"
+        ).read_text(encoding="utf-8")
+        getitimer_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_getitimer_reference.sh"
         ).read_text(encoding="utf-8")
         timerfd_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_timerfd_reference.sh"
@@ -403,6 +409,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_relative_sleep_reference_probe.c', relative_sleep_reference)
         self.assertIn('relative-sleep reference', relative_sleep_reference)
         self.assertNotIn('-p crabc-libc', relative_sleep_reference)
+        self.assertIn('x86_getitimer_reference_probe.c', getitimer_reference)
+        self.assertIn('getitimer ABI and read-only behavior reference', getitimer_reference)
+        self.assertIn('run_musl_oracle.sh', getitimer_reference)
+        self.assertNotIn('-p crabc-libc', getitimer_reference)
         self.assertIn('x86_timerfd_reference_probe.c', timerfd_reference)
         self.assertIn('timerfd ABI/lifecycle reference', timerfd_reference)
         self.assertIn('run_musl_oracle.sh', timerfd_reference)
@@ -768,6 +778,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_fs_advice",
                     "--test",
                     "x86_64_getgroups",
+                    "--test",
+                    "x86_64_getitimer",
                     "--test",
                     "x86_64_io",
                     "--test",

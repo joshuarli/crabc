@@ -33,6 +33,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh time-observation-reference
 ./scripts/dev-x86_64.sh relative-sleep-reference
+./scripts/dev-x86_64.sh getitimer-reference
 ./scripts/dev-x86_64.sh timerfd-reference
 ./scripts/dev-x86_64.sh pselect-reference
 ./scripts/dev-x86_64.sh poll-reference
@@ -189,6 +190,15 @@ zero-duration completion, invalid-request `EINVAL`, and signal-interrupted
 positive remainder behavior. It establishes only the typed Rust relative-sleep
 boundary, not a C sleep ABI.
 
+`getitimer-reference` executes pinned-musl x86 read-only interval-timer
+queries. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
+`itimerval` records (nested offsets zero/eight and interval/value offsets
+zero/16), `getitimer=36`, all three `ITIMER_*` selectors, canonical results
+from musl and the direct syscall, and invalid-selector `EINVAL`. It does not
+compare separately read values because a real timer can decrement. It is
+private evidence for the bounded query slice only; it does not select
+`setitimer`, `alarm`, `ualarm`, C time APIs, or a general x86 facade.
+
 `timerfd-reference` executes a pinned-musl x86 timer-descriptor lifecycle. It
 pins the 32-byte, align-8 `itimerspec` layout (interval/value offsets zero and
 16), timerfd syscall numbers and flags, close-on-exec/nonblocking creation,
@@ -335,7 +345,7 @@ establish pthread, TLS, or C ABI parity.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
-`x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
+`x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
@@ -372,8 +382,9 @@ readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves only a
 typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, read-only
-supplementary-group query/fill, owned nonblocking pidfds, read-only
-`getpriority`, private read-only resource-limit queries, private read-only
+supplementary-group query/fill, private read-only interval-timer queries,
+owned nonblocking pidfds, read-only `getpriority`, private read-only
+resource-limit queries, private read-only
 resource-usage and process-accounting observations, conflicting-lock `F_GETLK`
 records, and scheduler-priority bounds; the system and thread regressions prove
 the named bounded kernel observations. It verifies the
@@ -394,8 +405,11 @@ The time regression proves x86 `timespec` shape, admitted realtime, monotonic,
 monotonic-raw, and process-CPU clock IDs, normalized results, truncated
 realtime-millisecond observations, nondecreasing CPU-time observations, and
 typed relative `nanosleep` completion/interruption with an explicit remainder
-through the validated vDSO/direct-syscall seam. Calendar, timer, timezone,
-clock-sleep, clock-mutation, and C sleep APIs remain outside this direct slice.
+through the validated vDSO/direct-syscall seam. The private query regression
+also proves closed `getitimer` selectors and validated microsecond-duration
+results without timer mutation. Calendar, interval-timer control/other timer
+policy, timezone, clock-sleep, clock-mutation, and C sleep APIs remain outside
+this direct slice.
 
 `ldso-relocation` compiles and runs only the unintegrated
 `ldso/src/x86_64_relocation.rs` source tests under the pinned native image. It

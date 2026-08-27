@@ -1,14 +1,14 @@
 //! Bounded Linux/x86-64 clock and relative-sleep operations.
 //!
-//! This module owns the x86-64 `timespec` and `itimerspec` wire records,
-//! clock query boundaries, timerfd operations, and the direct relative
-//! `nanosleep` syscall. Clock mutation, process-owned time state, and the C
-//! ABI remain outside this staged slice.
+//! This module owns the x86-64 `timespec`, `itimerspec`, and read-only legacy
+//! `itimerval` wire records, clock query boundaries, timerfd operations, and
+//! the direct relative `nanosleep` syscall. Clock mutation, process-owned time
+//! state, and the C ABI remain outside this staged slice.
 
 use core::mem::MaybeUninit;
 
 use crate::syscall::{
-    decode, syscall2, syscall4, SYS_CLOCK_GETRES, SYS_NANOSLEEP,
+    decode, syscall2, syscall4, SYS_CLOCK_GETRES, SYS_GETITIMER, SYS_NANOSLEEP,
     SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
 };
 use crate::{RawFd, Result};
@@ -25,6 +25,45 @@ pub struct KernelTimespec {
 
 const _: () = assert!(core::mem::size_of::<KernelTimespec>() == 16);
 const _: () = assert!(core::mem::align_of::<KernelTimespec>() == 8);
+
+/// Linux/x86-64 `struct timeval` nested in an interval-timer record.
+///
+/// This is a syscall wire type with two signed 64-bit words, not a public C
+/// ABI alias. Linux normalizes a successful `getitimer` microsecond remainder
+/// to `0..1_000_000`; the native facade validates it before constructing a
+/// Rust duration.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct KernelItimervalTimeval {
+    /// Whole seconds in the interval-timer value.
+    pub tv_sec: i64,
+    /// Microseconds within `tv_sec`.
+    pub tv_usec: i64,
+}
+
+const _: () = assert!(core::mem::size_of::<KernelItimervalTimeval>() == 16);
+const _: () = assert!(core::mem::align_of::<KernelItimervalTimeval>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelItimervalTimeval, tv_sec) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelItimervalTimeval, tv_usec) == 8);
+
+/// Linux/x86-64 `struct itimerval` returned by `getitimer`.
+///
+/// The kernel writes the interval first and remaining value second. This
+/// private wire record is deliberately distinct from a public C `itimerval`
+/// declaration and from timerfd's nanosecond `itimerspec` record.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct KernelItimerval {
+    /// Time between expirations, or zero for a one-shot timer.
+    pub it_interval: KernelItimervalTimeval,
+    /// Time remaining until the next expiration, or zero when disarmed.
+    pub it_value: KernelItimervalTimeval,
+}
+
+const _: () = assert!(core::mem::size_of::<KernelItimerval>() == 32);
+const _: () = assert!(core::mem::align_of::<KernelItimerval>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelItimerval, it_interval) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelItimerval, it_value) == 16);
 
 /// Linux/x86-64 `struct itimerspec` used by the timerfd syscalls.
 ///
@@ -60,6 +99,26 @@ pub unsafe fn nanosleep_raw(request: *const u8, remaining: *mut u8) -> Result<()
     // SAFETY: The caller owns both timespec pointer contracts; Linux
     // validates the requested range and writes `remaining` only on EINTR.
     decode(unsafe { syscall2(SYS_NANOSLEEP, request as usize, remaining as usize) }).map(|_| ())
+}
+
+/// Reads one Linux/x86-64 process interval timer without using libc or TLS
+/// `errno`.
+///
+/// `which` is the raw Linux `ITIMER_*` selector. The native facade owns the
+/// closed safe selector vocabulary, while this boundary preserves Linux's
+/// `EINVAL` result for unsupported raw values.
+///
+/// # Safety
+///
+/// `value` must point to writable storage for one [`KernelItimerval`] value
+/// that remains live for the syscall. Linux initializes the complete record on
+/// success. An invalid pointer may be passed deliberately when testing the
+/// kernel's pointer-validation behavior.
+#[inline]
+pub unsafe fn getitimer_raw(which: i32, value: *mut KernelItimerval) -> Result<()> {
+    // SAFETY: The caller owns the exact output-pointer contract documented
+    // above; Linux validates the selector and writes all four words on success.
+    decode(unsafe { syscall2(SYS_GETITIMER, which as usize, value as usize) }).map(|_| ())
 }
 
 /// Reads one x86-64 Linux clock through the validated vDSO, with a direct

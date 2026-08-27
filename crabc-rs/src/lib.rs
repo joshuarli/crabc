@@ -40,7 +40,8 @@ pub mod collections;
 // `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
 // `thread::{gettid, sched_getcpu, sched_yield}`, and bounded `time`
-// clock-query/observation APIs, plus the root descriptor/error types. These
+// clock-query/observation APIs plus a private read-only interval-timer query,
+// and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and
 // stays absent until its record family has its own x86 proof; admission must
