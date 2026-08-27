@@ -105,7 +105,8 @@ typed read-only interval-timer and round-robin interval queries, and typed
 process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
-plus privately evidenced packed-epoll, clock-nanosleep, contained
+plus bounded typed clock-nanosleep with its relative-remainder and
+absolute-no-remainder modes, and privately evidenced packed-epoll, contained
 interval-timer control, timerfd, pselect,
 private statat path-metadata, caller-buffer-only getcwd,
 caller-buffer-only readlinkat, and private CPU-affinity observation and bounded
@@ -205,13 +206,13 @@ task while the worker is live; a missing task returns `ESRCH`. Its pinned-musl
 C oracle uses the worker only as harness machinery. It excludes scheduler
 policy selection/mutation and parameter-query APIs, a C API or pthread facade,
 errno TLS, affinity, and a broader thread API.
-`clock-nanosleep-reference` proves only the private x86 direct clock-sleep
+`clock-nanosleep-reference` proves only the direct typed x86 clock-sleep
 boundary: syscall 230 with a 16-byte timespec, relative zero completion and
-signal interruption with a positive remainder, and absolute past-deadline
-completion with a null remainder pointer. Pinned musl's C function returns
-direct positive errors, while the raw syscall uses `-1` plus `errno`; neither
-form selects a C sleep ABI, clock mutation, or the broader record-owning facade
-family.
+signal interruption with a positive remainder, plus absolute past-deadline
+completion and signal-interrupted deadlines with a null remainder pointer. Pinned musl's C
+function returns direct positive errors, while the raw syscall uses `-1` plus
+`errno`; neither form selects a C sleep ABI, clock mutation, POSIX timers, or
+broader time policy.
 `sched-affinity-reference` proves only the private x86 read-only CPU-affinity
 observation. It records raw dynamic-length/untouched-tail behavior versus
 musl's zero-success/zero-tail C wrapper.

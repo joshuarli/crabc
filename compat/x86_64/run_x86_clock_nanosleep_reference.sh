@@ -25,7 +25,7 @@ probe="$work_dir/x86-clock-nanosleep-reference"
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_clock_nanosleep_reference_probe.c" \
     -o "$probe"
-expected='layout=timespec16/8 syscall=230 relative-zero=musl0/raw0 absolute-past=musl0/raw0 malformed-nsec=EINVAL musl-convention=positive-error/raw-errno eintr=musl-remainder/raw-remainder'
+expected='layout=timespec16/8 syscall=230 relative-zero=musl0/raw0 absolute-past=musl0/raw0 malformed-nsec=EINVAL musl-convention=positive-error/raw-errno eintr=relative-musl-remainder/raw-remainder absolute-musl-null-remaining/raw-null-remaining'
 actual="$($probe)"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 clock_nanosleep reference output mismatch\nexpected: %s\nactual: %s\n' \

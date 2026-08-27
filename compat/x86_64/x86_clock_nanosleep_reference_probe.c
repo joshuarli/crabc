@@ -48,19 +48,41 @@ static int positive_remainder(const struct timespec *value)
            (value->tv_sec != 0 || value->tv_nsec != 0);
 }
 
-static int run_musl_interrupted(void)
+static int install_interrupt_handler(struct sigaction *old_action)
 {
-    struct timespec requested = { 2, 0 };
-    struct timespec remaining = { -1, -1 };
     struct sigaction action = { 0 };
-    struct sigaction old_action;
+    sigset_t unblocked;
 
     action.sa_handler = interrupt_handler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = 0;
-    if (sigaction(SIGALRM, &action, &old_action) != 0)
+    if (sigaction(SIGALRM, &action, old_action) != 0)
         return 1;
+    /* Each probe runs in a child, so this changes no parent signal mask. */
+    if (sigemptyset(&unblocked) != 0 || sigaddset(&unblocked, SIGALRM) != 0 ||
+        sigprocmask(SIG_UNBLOCK, &unblocked, NULL) != 0) {
+        (void)sigaction(SIGALRM, old_action, NULL);
+        return 2;
+    }
     signal_delivered = 0;
+    return 0;
+}
+
+static int restore_interrupt_handler(const struct sigaction *old_action)
+{
+    /* Stop a still-pending one-shot alarm before restoring its disposition. */
+    (void)ualarm(0, 0);
+    return sigaction(SIGALRM, old_action, NULL) == 0 ? 0 : 1;
+}
+
+static int run_musl_interrupted(void)
+{
+    struct timespec requested = { 2, 0 };
+    struct timespec remaining = { -1, -1 };
+    struct sigaction old_action;
+
+    if (install_interrupt_handler(&old_action) != 0)
+        return 1;
     /*
      * The child starts without its parent's interval timer.  ualarm returns
      * a previous timer's remaining duration, not a success status, so the
@@ -71,7 +93,7 @@ static int run_musl_interrupted(void)
     int result = clock_nanosleep(CLOCK_MONOTONIC, 0, &requested, &remaining);
     int valid = result == EINTR && signal_delivered &&
                 positive_remainder(&remaining);
-    if (sigaction(SIGALRM, &old_action, NULL) != 0)
+    if (restore_interrupt_handler(&old_action) != 0)
         return 3;
     return valid ? 0 : 4;
 }
@@ -80,15 +102,10 @@ static int run_raw_interrupted(void)
 {
     struct timespec requested = { 2, 0 };
     struct timespec remaining = { -1, -1 };
-    struct sigaction action = { 0 };
     struct sigaction old_action;
 
-    action.sa_handler = interrupt_handler;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0;
-    if (sigaction(SIGALRM, &action, &old_action) != 0)
+    if (install_interrupt_handler(&old_action) != 0)
         return 1;
-    signal_delivered = 0;
     /*
      * The child starts without its parent's interval timer.  ualarm returns
      * a previous timer's remaining duration, not a success status, so the
@@ -101,7 +118,52 @@ static int run_raw_interrupted(void)
                           &requested, &remaining);
     int valid = result == -1 && errno == EINTR && signal_delivered &&
                 positive_remainder(&remaining);
-    if (sigaction(SIGALRM, &old_action, NULL) != 0)
+    if (restore_interrupt_handler(&old_action) != 0)
+        return 3;
+    return valid ? 0 : 4;
+}
+
+static int run_musl_absolute_interrupted(void)
+{
+    struct timespec requested;
+    struct sigaction old_action;
+
+    if (install_interrupt_handler(&old_action) != 0)
+        return 1;
+    if (clock_gettime(CLOCK_MONOTONIC, &requested) != 0) {
+        (void)restore_interrupt_handler(&old_action);
+        return 2;
+    }
+    requested.tv_sec += 2;
+    (void)ualarm(20000, 0);
+
+    int result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &requested,
+                                 NULL);
+    int valid = result == EINTR && signal_delivered;
+    if (restore_interrupt_handler(&old_action) != 0)
+        return 3;
+    return valid ? 0 : 4;
+}
+
+static int run_raw_absolute_interrupted(void)
+{
+    struct timespec requested;
+    struct sigaction old_action;
+
+    if (install_interrupt_handler(&old_action) != 0)
+        return 1;
+    if (clock_gettime(CLOCK_MONOTONIC, &requested) != 0) {
+        (void)restore_interrupt_handler(&old_action);
+        return 2;
+    }
+    requested.tv_sec += 2;
+    (void)ualarm(20000, 0);
+
+    errno = 0;
+    long result = syscall(SYS_clock_nanosleep, CLOCK_MONOTONIC,
+                          TIMER_ABSTIME, &requested, NULL);
+    int valid = result == -1 && errno == EINTR && signal_delivered;
+    if (restore_interrupt_handler(&old_action) != 0)
         return 3;
     return valid ? 0 : 4;
 }
@@ -155,7 +217,11 @@ int main(void)
         return 30;
     if (run_in_child(run_raw_interrupted) != 0)
         return 31;
+    if (run_in_child(run_musl_absolute_interrupted) != 0)
+        return 32;
+    if (run_in_child(run_raw_absolute_interrupted) != 0)
+        return 33;
 
-    puts("layout=timespec16/8 syscall=230 relative-zero=musl0/raw0 absolute-past=musl0/raw0 malformed-nsec=EINVAL musl-convention=positive-error/raw-errno eintr=musl-remainder/raw-remainder");
+    puts("layout=timespec16/8 syscall=230 relative-zero=musl0/raw0 absolute-past=musl0/raw0 malformed-nsec=EINVAL musl-convention=positive-error/raw-errno eintr=relative-musl-remainder/raw-remainder absolute-musl-null-remaining/raw-null-remaining");
     return 0;
 }

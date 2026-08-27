@@ -63,7 +63,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the direct read-only round-robin interval query, and bounded CPU-affinity
 # observation/mutation,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
-# private clock-nanosleep seams, direct read-only interval-timer query, private
+# direct clock-nanosleep seams, direct read-only interval-timer query, private
 # contained-control slice, and timerfd seams. No other facade
 # source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
@@ -348,7 +348,7 @@ def check_x86_futex_boundary(errors: list[str]) -> None:
 
 
 def check_x86_clock_nanosleep_boundary(errors: list[str]) -> None:
-    """Keep the private x86 clock-sleep slice bounded."""
+    """Keep the direct x86 clock-sleep slice bounded."""
 
     time_source = ROOT / "crabc-rs" / "src" / "time_x86_64.rs"
     text = time_source.read_text(errors="replace")
@@ -358,13 +358,13 @@ def check_x86_clock_nanosleep_boundary(errors: list[str]) -> None:
     ):
         if required not in text:
             errors.append(
-                "crabc-rs/src/time_x86_64.rs: private clock-sleep slice is missing "
+                "crabc-rs/src/time_x86_64.rs: direct clock-sleep slice is missing "
                 f"{required}"
             )
     for forbidden in ("pub fn clock_settime", "pub fn clock_adjtime"):
         if forbidden in text:
             errors.append(
-                "crabc-rs/src/time_x86_64.rs: private clock-sleep slice must defer "
+                "crabc-rs/src/time_x86_64.rs: direct clock-sleep slice must defer "
                 f"{forbidden}"
             )
 

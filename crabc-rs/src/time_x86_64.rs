@@ -1,5 +1,5 @@
 //! Bounded native Linux/x86-64 clock queries and whole-second `time`,
-//! relative `nanosleep`, private `clock_nanosleep`, interval-timer control
+//! relative `nanosleep`, typed `clock_nanosleep`, interval-timer control
 //! and queries, and timerfds.
 //!
 //! This staged facade admits only validated realtime, monotonic,

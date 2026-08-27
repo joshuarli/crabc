@@ -246,15 +246,15 @@ zero-duration completion, invalid-request `EINVAL`, and signal-interrupted
 positive remainder behavior. It establishes only the typed Rust relative-sleep
 boundary, not a C sleep ABI.
 
-`clock-nanosleep-reference` executes the private x86
+`clock-nanosleep-reference` executes the direct typed x86
 `clock_nanosleep(2)` slice. It pins the 16-byte, align-8 `timespec`, syscall
 230, relative zero completion and child-contained `EINTR` with a positive
-remainder, and `TIMER_ABSTIME` past-deadline completion with a null remainder
-pointer. Pinned musl returns a direct positive error from its C function,
-whereas the raw syscall uses `-1` plus `errno`; the typed Rust facade instead
-uses its direct syscall error boundary. It remains private evidence under the
-planned record-owning family: C sleep APIs, clock mutation, and general x86
-facade promotion remain excluded.
+remainder, plus `TIMER_ABSTIME` past-deadline completion and a live interrupted
+deadline with a null remainder pointer. Pinned musl returns a direct positive
+error from its C function, whereas the raw syscall uses `-1` plus `errno`; the
+typed Rust facade instead uses its direct syscall error boundary. It completes
+only `time.clock-sleep`: C sleep APIs, clock mutation, POSIX timers, and
+broader time policy remain excluded.
 
 `getitimer-reference` executes the direct typed x86 read-only interval-timer
 query. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
@@ -637,9 +637,10 @@ The time regression proves x86 `timespec` shape, admitted realtime, monotonic,
 monotonic-raw, and process-CPU clock IDs, normalized results, truncated
 realtime-millisecond observations, nondecreasing CPU-time observations, and
 typed relative `nanosleep` completion/interruption with an explicit remainder
-through the validated vDSO/direct-syscall seam. The separately private
-`clock_nanosleep` regression additionally proves relative and absolute
-mode-specific pointer contracts and direct error handling. The direct
+through the validated vDSO/direct-syscall seam. The direct `clock_nanosleep`
+regression additionally proves relative and absolute mode-specific pointer
+contracts, including absolute interruption with no invented remainder, and
+direct error handling. The direct
 `getitimer` regression proves closed selectors and canonical transient query
 results. The private `setitimer` regression proves child-contained
 exchange/disarm behavior over validated microsecond settings. Calendar,

@@ -2,7 +2,7 @@
 //!
 //! This module owns the x86-64 `timespec`, `itimerspec`, and read-only legacy
 //! `itimerval` wire records, clock query boundaries, timerfd operations, and
-//! the direct `nanosleep` and private `clock_nanosleep` syscalls. Clock
+//! the direct `nanosleep` and typed `clock_nanosleep` syscalls. Clock
 //! mutation, process-owned time state, and the C ABI remain outside this staged
 //! slice.
 
