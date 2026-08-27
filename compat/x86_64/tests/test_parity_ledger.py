@@ -49,7 +49,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         direct = self.family(data, "facade.direct")
         remaining = self.family(data, "facade.record-owning")
         self.assertEqual(self.family(data, "libc.raw-syscall")["status"], "foundation-verified")
-        self.assertEqual(self.family(data, "libc.errno-tls")["status"], "foundation-verified")
+        errno_tls = self.family(data, "libc.errno-tls")
+        self.assertEqual(errno_tls["status"], "foundation-verified")
+        self.assertIn("oracle.musl-toolchain", errno_tls["depends_on"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/foundation.rs", errno_tls["source_owners"]
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-foundation",
+            {evidence["command"] for evidence in errno_tls["native_evidence"]},
+        )
         self.assertEqual(self.family(data, "ldso.relative-relocation")["status"], "foundation-verified")
         self.assertEqual(self.family(data, "crt.static-pie")["status"], "foundation-verified")
         headers_layouts = self.family(data, "libc.headers-layouts")

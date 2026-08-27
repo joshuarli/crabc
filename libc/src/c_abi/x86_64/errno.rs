@@ -24,3 +24,17 @@ static mut ERRNO: c_int = 0;
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {
     core::ptr::addr_of_mut!(ERRNO)
 }
+
+/// Publish one Linux error number in the calling thread's C `errno` slot.
+///
+/// This stays private to the x86 C-runtime foundation: public callers reach
+/// the slot only through [`__errno_location`]. Keeping the writer beside the
+/// storage prevents a future target composition from reaching across a
+/// module boundary to mutate target-specific TLS directly.
+#[allow(dead_code)] // The isolated errno/TLS probe intentionally selects no syscall writer.
+#[inline]
+pub(crate) unsafe fn set_errno(value: c_int) {
+    // SAFETY: The caller is the C ABI error-translation boundary for the
+    // calling thread. `ERRNO` is one initial-TLS `c_int` slot on x86-64.
+    unsafe { ERRNO = value };
+}
