@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -82,6 +82,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_time_observation_reference.sh', source)
         self.assertIn('run_relative_sleep_reference()', source)
         self.assertIn('compat/x86_64/run_x86_relative_sleep_reference.sh', source)
+        self.assertIn('run_clock_nanosleep_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_clock_nanosleep_reference.sh', source)
         self.assertIn('run_getitimer_reference()', source)
         self.assertIn('compat/x86_64/run_x86_getitimer_reference.sh', source)
         self.assertIn('run_timerfd_reference()', source)
@@ -163,6 +165,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_times', source)
         self.assertIn('--test x86_64_scheduler_priority_bounds', source)
         self.assertIn('--test x86_64_sleep', source)
+        self.assertIn('--test x86_64_clock_nanosleep', source)
         self.assertIn('--test x86_64_statat', source)
         self.assertIn('--test x86_64_getcwd', source)
         self.assertIn('--test x86_64_readlink', source)
@@ -266,6 +269,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         relative_sleep_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_relative_sleep_reference.sh"
+        ).read_text(encoding="utf-8")
+        clock_nanosleep_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_clock_nanosleep_reference.sh"
+        ).read_text(encoding="utf-8")
+        clock_nanosleep_probe = (
+            ROOT / "compat" / "x86_64" / "x86_clock_nanosleep_reference_probe.c"
         ).read_text(encoding="utf-8")
         getitimer_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_getitimer_reference.sh"
@@ -445,6 +454,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_relative_sleep_reference_probe.c', relative_sleep_reference)
         self.assertIn('relative-sleep reference', relative_sleep_reference)
         self.assertNotIn('-p crabc-libc', relative_sleep_reference)
+        self.assertIn('x86_clock_nanosleep_reference_probe.c', clock_nanosleep_reference)
+        self.assertIn('clock_nanosleep ABI and behavior reference', clock_nanosleep_reference)
+        self.assertIn('run_musl_oracle.sh', clock_nanosleep_reference)
+        self.assertIn('musl-convention=positive-error/raw-errno', clock_nanosleep_reference)
+        self.assertNotIn('-p crabc-libc', clock_nanosleep_reference)
+        self.assertIn('(void)ualarm(20000, 0);', clock_nanosleep_probe)
+        self.assertNotIn('ualarm(20000, 0) != 0', clock_nanosleep_probe)
         self.assertIn('x86_getitimer_reference_probe.c', getitimer_reference)
         self.assertIn('getitimer ABI and read-only behavior reference', getitimer_reference)
         self.assertIn('run_musl_oracle.sh', getitimer_reference)
@@ -869,6 +885,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_scheduler_priority_bounds",
                     "--test",
                     "x86_64_sleep",
+                    "--test",
+                    "x86_64_clock_nanosleep",
                     "--test",
                     "x86_64_statat",
                     "--test",

@@ -2,13 +2,14 @@
 //!
 //! This module owns the x86-64 `timespec`, `itimerspec`, and read-only legacy
 //! `itimerval` wire records, clock query boundaries, timerfd operations, and
-//! the direct relative `nanosleep` syscall. Clock mutation, process-owned time
-//! state, and the C ABI remain outside this staged slice.
+//! the direct `nanosleep` and private `clock_nanosleep` syscalls. Clock
+//! mutation, process-owned time state, and the C ABI remain outside this staged
+//! slice.
 
 use core::mem::MaybeUninit;
 
 use crate::syscall::{
-    decode, syscall2, syscall4, SYS_CLOCK_GETRES, SYS_GETITIMER, SYS_NANOSLEEP,
+    decode, syscall2, syscall4, SYS_CLOCK_GETRES, SYS_CLOCK_NANOSLEEP, SYS_GETITIMER, SYS_NANOSLEEP,
     SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
 };
 use crate::{RawFd, Result};
@@ -99,6 +100,39 @@ pub unsafe fn nanosleep_raw(request: *const u8, remaining: *mut u8) -> Result<()
     // SAFETY: The caller owns both timespec pointer contracts; Linux
     // validates the requested range and writes `remaining` only on EINTR.
     decode(unsafe { syscall2(SYS_NANOSLEEP, request as usize, remaining as usize) }).map(|_| ())
+}
+
+/// Performs Linux/x86-64 `clock_nanosleep` through its native four-argument
+/// syscall ABI, without using libc or TLS `errno`.
+///
+/// `flags` is zero for a relative request and `1` (`TIMER_ABSTIME`) for an
+/// absolute request. Linux does not write `remaining` for an absolute
+/// request; callers should pass null in that mode.
+///
+/// # Safety
+///
+/// `request` must point to a readable Linux/x86-64 `struct timespec`.
+/// For a relative request, `remaining` must point to writable storage for one
+/// such value. For an absolute request, `remaining` must be null.
+#[inline]
+pub unsafe fn clock_nanosleep_raw(
+    clock_id: i32,
+    flags: u32,
+    request: *const u8,
+    remaining: *mut u8,
+) -> Result<()> {
+    // SAFETY: The caller owns the timespec pointer contracts; Linux validates
+    // the clock identifier, flags, and timespec fields.
+    decode(unsafe {
+        syscall4(
+            SYS_CLOCK_NANOSLEEP,
+            clock_id as usize,
+            flags as usize,
+            request as usize,
+            remaining as usize,
+        )
+    })
+    .map(|_| ())
 }
 
 /// Reads one Linux/x86-64 process interval timer without using libc or TLS

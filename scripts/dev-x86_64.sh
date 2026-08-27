@@ -43,6 +43,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
   time-observation-reference  verify pinned-musl x86 realtime observation behavior
   relative-sleep-reference  verify pinned-musl x86 nanosleep behavior
+  clock-nanosleep-reference  verify pinned-musl x86 clock_nanosleep behavior
   getitimer-reference  verify pinned-musl x86 read-only interval-timer ABI and behavior
   timerfd-reference  verify pinned-musl x86 timerfd ABI and lifecycle
   pselect-reference  verify pinned-musl x86 pselect ABI and behavior
@@ -80,8 +81,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
-subset plus privately evidenced packed-epoll, read-only interval-timer query,
-timerfd, pselect, resource-limit, resource-usage, process-accounting, and
+subset plus privately evidenced packed-epoll, clock-nanosleep, read-only
+interval-timer query, timerfd, pselect, resource-limit, resource-usage,
+process-accounting, and
 supplementary-group, private statat path-metadata, caller-buffer-only getcwd,
 caller-buffer-only readlinkat, and private CPU-affinity observation and bounded
 mutation slices; none makes the record-owning family selectable.
@@ -106,8 +108,9 @@ boundaries used by the typed Rust facade.
 `fs-advice-reference` establishes only the typed Rust file-access advice and
 readahead boundary; it does not select a C filesystem API.
 `rand-reference`, `time-abi-reference`, `time-observation-reference`,
-`relative-sleep-reference`, `getitimer-reference`, `timerfd-reference`,
-`pselect-reference`, `poll-reference`, `ppoll-reference`, and `epoll-reference`,
+`relative-sleep-reference`, `clock-nanosleep-reference`,
+`getitimer-reference`, `timerfd-reference`, `pselect-reference`,
+`poll-reference`, `ppoll-reference`, and `epoll-reference`,
 `process-identity-reference`, `getgroups-reference`, `process-session-reference`,
 `pidfd-open-reference`, `fcntl-getlk-reference`,
 `scheduler-priority-bounds-reference`, `rlimit-reference`, `rusage-reference`,
@@ -141,6 +144,13 @@ record-owning facade family.
 `rr-interval-reference` proves only the private x86 read-only current-task and
 missing-PID `sched_rr_get_interval` query; it does not select scheduler policy
 mutation or promote the broader record-owning facade family.
+`clock-nanosleep-reference` proves only the private x86 direct clock-sleep
+boundary: syscall 230 with a 16-byte timespec, relative zero completion and
+signal interruption with a positive remainder, and absolute past-deadline
+completion with a null remainder pointer. Pinned musl's C function returns
+direct positive errors, while the raw syscall uses `-1` plus `errno`; neither
+form selects a C sleep ABI, clock mutation, or the broader record-owning facade
+family.
 `sched-affinity-reference` proves only the private x86 read-only CPU-affinity
 observation. It records raw dynamic-length/untouched-tail behavior versus
 musl's zero-success/zero-tail C wrapper.
@@ -364,6 +374,10 @@ run_relative_sleep_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_relative_sleep_reference.sh
 }
 
+run_clock_nanosleep_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_clock_nanosleep_reference.sh
+}
+
 run_getitimer_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_getitimer_reference.sh
 }
@@ -507,7 +521,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -640,6 +654,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "relative-sleep-reference takes no arguments"
         ensure_image
         run_relative_sleep_reference
+        ;;
+    clock-nanosleep-reference)
+        [ "$#" -eq 0 ] || fail "clock-nanosleep-reference takes no arguments"
+        ensure_image
+        run_clock_nanosleep_reference
         ;;
     getitimer-reference)
         [ "$#" -eq 0 ] || fail "getitimer-reference takes no arguments"
@@ -776,7 +795,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_getgroups --test x86_64_getitimer --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_getgroups --test x86_64_getitimer --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)

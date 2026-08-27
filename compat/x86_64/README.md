@@ -33,6 +33,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh time-observation-reference
 ./scripts/dev-x86_64.sh relative-sleep-reference
+./scripts/dev-x86_64.sh clock-nanosleep-reference
 ./scripts/dev-x86_64.sh getitimer-reference
 ./scripts/dev-x86_64.sh timerfd-reference
 ./scripts/dev-x86_64.sh pselect-reference
@@ -195,6 +196,16 @@ C ABI artifact.
 zero-duration completion, invalid-request `EINVAL`, and signal-interrupted
 positive remainder behavior. It establishes only the typed Rust relative-sleep
 boundary, not a C sleep ABI.
+
+`clock-nanosleep-reference` executes the private x86
+`clock_nanosleep(2)` slice. It pins the 16-byte, align-8 `timespec`, syscall
+230, relative zero completion and child-contained `EINTR` with a positive
+remainder, and `TIMER_ABSTIME` past-deadline completion with a null remainder
+pointer. Pinned musl returns a direct positive error from its C function,
+whereas the raw syscall uses `-1` plus `errno`; the typed Rust facade instead
+uses its direct syscall error boundary. It remains private evidence under the
+planned record-owning family: C sleep APIs, clock mutation, and general x86
+facade promotion remain excluded.
 
 `getitimer-reference` executes pinned-musl x86 read-only interval-timer
 queries. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
@@ -467,11 +478,13 @@ The time regression proves x86 `timespec` shape, admitted realtime, monotonic,
 monotonic-raw, and process-CPU clock IDs, normalized results, truncated
 realtime-millisecond observations, nondecreasing CPU-time observations, and
 typed relative `nanosleep` completion/interruption with an explicit remainder
-through the validated vDSO/direct-syscall seam. The private query regression
-also proves closed `getitimer` selectors and validated microsecond-duration
-results without timer mutation. Calendar, interval-timer control/other timer
-policy, timezone, clock-sleep, clock-mutation, and C sleep APIs remain outside
-this direct slice.
+through the validated vDSO/direct-syscall seam. The separately private
+`clock_nanosleep` regression additionally proves relative and absolute
+mode-specific pointer contracts and direct error handling. The private query
+regression also proves closed `getitimer` selectors and validated
+microsecond-duration results without timer mutation. Calendar, interval-timer
+control/other timer policy, timezone, broader clock sleep, clock mutation, and
+C sleep APIs remain outside this direct slice.
 
 `ldso-relocation` compiles and runs only the unintegrated
 `ldso/src/x86_64_relocation.rs` source tests under the pinned native image. It

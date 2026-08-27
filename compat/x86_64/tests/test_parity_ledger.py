@@ -124,6 +124,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_getitimer.rs", remaining["source_owners"]
         )
         self.assertIn(
+            "crabc-rs/tests/x86_64_clock_nanosleep.rs", remaining["source_owners"]
+        )
+        self.assertIn(
             "crabc-rs/src/process_x86_64.rs", remaining["source_owners"]
         )
         self.assertIn(
@@ -148,6 +151,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_x86_getitimer_reference.sh", remaining["source_owners"]
         )
         self.assertIn(
+            "compat/x86_64/run_x86_clock_nanosleep_reference.sh",
+            remaining["source_owners"],
+        )
+        self.assertIn(
             "compat/x86_64/x86_rusage_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn(
@@ -158,6 +165,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "compat/x86_64/x86_getitimer_reference_probe.c", remaining["source_owners"]
+        )
+        self.assertIn(
+            "compat/x86_64/x86_clock_nanosleep_reference_probe.c",
+            remaining["source_owners"],
         )
         self.assertIn("compat/x86_64/x86_statat_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
@@ -248,6 +259,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][13]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][14]["command"],
+            "./scripts/dev-x86_64.sh clock-nanosleep-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][14]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][15]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
