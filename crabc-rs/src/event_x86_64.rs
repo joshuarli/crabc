@@ -406,8 +406,25 @@ pub mod epoll {
     #[allow(private_interfaces)]
     pub fn wait<EpollFd: AsFd, Buf: Buffer<Event>>(
         epoll: EpollFd,
+        event_list: Buf,
+        timeout: Option<&Timespec>,
+    ) -> Result<Buf::Output> {
+        wait_with_mask(epoll, event_list, timeout, None)
+    }
+
+    /// Waits for registered events while temporarily installing a signal mask.
+    ///
+    /// `timeout` is rounded up to Linux's signed millisecond representation.
+    /// A supplied mask is installed atomically for the wait and restored by the
+    /// kernel before this function returns. `None` preserves the ordinary
+    /// unmasked [`wait`] behavior.
+    #[inline]
+    #[allow(private_interfaces)]
+    pub fn wait_with_mask<EpollFd: AsFd, Buf: Buffer<Event>>(
+        epoll: EpollFd,
         mut event_list: Buf,
         timeout: Option<&Timespec>,
+        mask: Option<&SignalSet>,
     ) -> Result<Buf::Output> {
         let timeout = timeout.map(timeout_millis).transpose()?.unwrap_or(-1);
         let epoll = epoll.as_fd();
@@ -415,14 +432,20 @@ pub mod epoll {
         // The Linux ABI takes this count as a signed `int`; reject values
         // which cannot be represented before crossing the raw seam.
         let maxevents = i32::try_from(maxevents).map_err(|_| crate::Errno::INVAL)?;
+        let sigmask = mask.map_or(ptr::null(), |mask| {
+            (mask.kernel_bits() as *const u64).cast()
+        });
         // SAFETY: `Buffer` supplies writable storage for `maxevents` packed
-        // x86-64 records, and the epoll descriptor remains open for the call.
+        // x86-64 records, the epoll descriptor remains open for the call, and
+        // `SignalSet` supplies one live kernel-sized signal-mask word.
         let ready = unsafe {
-            crabc_core::event::epoll_wait_raw(
+            crabc_core::event::epoll_pwait_raw(
                 epoll.as_raw_fd(),
                 events.cast::<crabc_core::event::KernelEpollEvent>(),
                 maxevents,
                 timeout,
+                sigmask,
+                crabc_core::signal::KERNEL_SIGSET_SIZE,
             )?
         };
         // SAFETY: Linux initialized exactly the returned event prefix.

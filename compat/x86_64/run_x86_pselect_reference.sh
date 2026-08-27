@@ -23,7 +23,7 @@ trap 'rm -rf -- "$work_dir"' EXIT
 probe="$work_dir/x86-pselect-reference"
 
 "$ORACLE_CC" -std=c11 "$ROOT_DIR/compat/x86_64/x86_pselect_reference_probe.c" -o "$probe"
-expected='pselect=0,1 invalid=einval timeout-preserved=1 mask-restored=1'
+expected='select=0,1 pselect=0,1 raw-pselect=0,1 invalid=musl+raw-einval timeout-preserved=1 mask-restored=musl+raw'
 actual="$($probe)"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 pselect reference output mismatch\nexpected: %s\nactual: %s\n' \

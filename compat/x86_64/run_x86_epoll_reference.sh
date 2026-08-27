@@ -27,7 +27,7 @@ probe="$work_dir/x86-epoll-reference"
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_epoll_reference_probe.c" \
     -o "$probe"
-expected='layout=size12 align1 offsets=0,4 syscalls=291,233,281 cloexec=enabled future-event=musl+raw-accepted empty=0 add=readable data=u64-preserved modify=updated delete=removed errors=EINVAL,EBADF,ENOENT'
+expected='layout=size12 align1 offsets=0,4 syscalls=291,233,281 legacy=positive-size cloexec=enabled future-event=musl+raw-accepted masked=musl+raw-restored empty=0 add=readable data=u64-preserved modify=updated delete=removed errors=EINVAL,EBADF,ENOENT'
 actual="$("$probe")"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 epoll reference output mismatch\nexpected: %s\nactual: %s\n' \

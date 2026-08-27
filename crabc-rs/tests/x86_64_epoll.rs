@@ -1,8 +1,15 @@
 #![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, size_of, MaybeUninit};
+use core::sync::atomic::{AtomicBool, Ordering};
 
-use crabc_rs::{event, io, pipe, time::Timespec, Errno};
+use crabc_rs::{event, io, pipe, signal, time::Timespec, Errno};
+
+static EPOLL_MASK_SIGNAL_SEEN: AtomicBool = AtomicBool::new(false);
+
+unsafe extern "C" fn epoll_mask_signal_handler(_: signal::Signal) {
+    EPOLL_MASK_SIGNAL_SEEN.store(true, Ordering::SeqCst);
+}
 
 #[test]
 fn x86_64_epoll_event_uses_the_packed_kernel_layout_and_exact_tokens() {
@@ -134,6 +141,128 @@ fn x86_64_epoll_pipe_lifecycle_preserves_flags_and_tokens() {
     let (ready, _) = event::epoll::wait(&epoll, &mut deleted, Some(&timeout))
         .expect("deleted registration should not report readiness");
     assert!(ready.is_empty());
+}
+
+#[test]
+fn x86_64_epoll_masked_wait_reports_pipe_readiness_without_mutating_timeout() {
+    let (reader, writer) = pipe::pipe().expect("create epoll pipe");
+    let epoll = event::epoll::create_legacy(1).expect("create legacy epoll descriptor");
+    event::epoll::add(
+        &epoll,
+        &reader,
+        event::epoll::EventData::new_u64(0xfeed),
+        event::epoll::EventFlags::IN,
+    )
+    .expect("register epoll pipe reader");
+
+    let mask = signal::SignalSet::EMPTY;
+    let mut events = [MaybeUninit::uninit(); 1];
+    let empty_timeout = Timespec { tv_sec: 0, tv_nsec: 0 };
+    let (ready, _) = event::epoll::wait_with_mask(
+        &epoll,
+        &mut events,
+        Some(&empty_timeout),
+        Some(&mask),
+    )
+        .expect("masked empty epoll wait");
+    assert!(ready.is_empty());
+    assert_eq!(empty_timeout, Timespec { tv_sec: 0, tv_nsec: 0 });
+
+    assert_eq!(io::write(&writer, b"m").expect("write epoll byte"), 1);
+    let timeout = Timespec {
+        tv_sec: 1,
+        tv_nsec: 234_567_890,
+    };
+    let original_timeout = timeout;
+    let (ready, _) = event::epoll::wait_with_mask(&epoll, &mut events, Some(&timeout), Some(&mask))
+        .expect("masked epoll wait for readable pipe");
+    assert_eq!(ready.len(), 1);
+    assert!(ready[0].flags().contains(event::epoll::EventFlags::IN));
+    assert_eq!(ready[0].data().u64(), 0xfeed);
+    assert_eq!(timeout, original_timeout);
+}
+
+#[test]
+fn x86_64_epoll_masked_wait_temporarily_installs_and_restores_the_signal_mask() {
+    const SIG_SETMASK: i32 = 2;
+    let selected_signal = signal::Signal::USR1;
+    let signal_bit = 1_u64 << (selected_signal.as_raw() - 1);
+
+    let old_action =
+        unsafe { signal::sigaction(selected_signal, None) }.expect("query SIGUSR1 action");
+    let action = signal::SigAction::new(
+        signal::SigHandler::Simple(epoll_mask_signal_handler),
+        signal::SigActionFlags::empty(),
+    );
+    // SAFETY: The handler is a static function with the x86-64 restorer owned
+    // by crabc-rs and remains installed only for this test.
+    unsafe { signal::sigaction(selected_signal, Some(&action)) }
+        .expect("install SIGUSR1 handler");
+
+    let mut old_mask = 0_u64;
+    // SAFETY: A null input queries this thread's one-word kernel mask.
+    unsafe {
+        crabc_core::signal::rt_sigprocmask_raw(
+            SIG_SETMASK,
+            core::ptr::null(),
+            &mut old_mask,
+        )
+        .expect("query signal mask");
+    }
+    let blocked_mask = old_mask | signal_bit;
+    // SAFETY: `blocked_mask` is one initialized x86-64 kernel mask word.
+    unsafe {
+        crabc_core::signal::rt_sigprocmask_raw(
+            SIG_SETMASK,
+            &blocked_mask,
+            core::ptr::null_mut(),
+        )
+        .expect("block SIGUSR1");
+    }
+
+    EPOLL_MASK_SIGNAL_SEEN.store(false, Ordering::SeqCst);
+    let target_pid = crabc_core::process::getpid();
+    let target_tid = crabc_core::thread::gettid();
+    let target_signal = selected_signal.as_raw();
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        crabc_core::process::tgkill(target_pid, target_tid, target_signal)
+    });
+    let epoll = event::epoll::create(event::epoll::CreateFlags::empty())
+        .expect("create epoll descriptor");
+    let timeout = Timespec { tv_sec: 1, tv_nsec: 0 };
+    let empty = signal::SignalSet::EMPTY;
+    let mut events = [MaybeUninit::uninit(); 1];
+    let wait = event::epoll::wait_with_mask(&epoll, &mut events, Some(&timeout), Some(&empty));
+    let sender = sender.join().expect("join delayed SIGUSR1 sender");
+
+    let mut observed_mask = 0_u64;
+    // SAFETY: A null input queries the mask restored by epoll_pwait.
+    let observed = unsafe {
+        crabc_core::signal::rt_sigprocmask_raw(
+            SIG_SETMASK,
+            core::ptr::null(),
+            &mut observed_mask,
+        )
+    };
+
+    // SAFETY: Restore the caller's signal state and the prior disposition.
+    let restored_mask = unsafe {
+        crabc_core::signal::rt_sigprocmask_raw(
+            SIG_SETMASK,
+            &old_mask,
+            core::ptr::null_mut(),
+        )
+    };
+    let restored_action = unsafe { signal::sigaction(selected_signal, Some(&old_action)) };
+
+    sender.expect("send SIGUSR1 while epoll_pwait temporarily unmasks it");
+    observed.expect("query restored signal mask");
+    restored_mask.expect("restore signal mask");
+    restored_action.expect("restore SIGUSR1 action");
+    assert!(matches!(wait, Err(Errno::INTR)));
+    assert!(EPOLL_MASK_SIGNAL_SEEN.load(Ordering::SeqCst));
+    assert_ne!(observed_mask & signal_bit, 0);
 }
 
 #[test]

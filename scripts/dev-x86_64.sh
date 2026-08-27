@@ -50,10 +50,10 @@ Native Linux/x86-64 staged-foundation evidence commands:
   getitimer-reference  verify pinned-musl x86 read-only interval-timer ABI and behavior
   setitimer-reference  verify pinned-musl x86 contained interval-timer behavior
   timerfd-reference  verify pinned-musl x86 timerfd ABI and lifecycle
-  pselect-reference  verify pinned-musl x86 pselect ABI and behavior
+  pselect-reference  verify pinned-musl/raw x86 direct select/pselect ABI and behavior
   poll-reference  verify pinned-musl x86 poll ABI and behavior reference
   ppoll-reference  verify pinned-musl x86 ppoll/pause signal-mask behavior
-  epoll-reference  verify pinned-musl x86 direct typed epoll ABI and behavior
+  epoll-reference  verify pinned-musl/raw x86 direct typed epoll ABI and behavior
   process-identity-reference  verify pinned-musl x86 process-identity behavior
   getgroups-reference  verify pinned-musl x86 supplementary-group ABI and behavior
   process-session-reference  verify pinned-musl x86 process group/session behavior
@@ -108,11 +108,12 @@ process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus bounded typed clock-nanosleep with its relative-remainder and
-absolute-no-remainder modes, direct packed epoll lifecycle, and caller-buffer
-current-working-directory observation. The dedicated `getcwd-reference` gate
-also covers its alloc-gated retry; contained interval-timer control, timerfd,
-pselect, private statat path-metadata, and caller-buffer-only readlinkat
-remain privately evidenced. None makes the record-owning family selectable.
+absolute-no-remainder modes, direct select/pselect and packed epoll readiness
+with masked waits, and caller-buffer current-working-directory observation. The
+dedicated `getcwd-reference` gate also covers its alloc-gated retry; contained
+interval-timer control, timerfd, private statat path-metadata, and
+caller-buffer-only readlinkat remain privately evidenced. None makes the
+record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
@@ -179,9 +180,10 @@ returns the previous identity even when a requested change is denied, so it
 does not claim ordinary failure reporting, process-wide synchronization, or a
 C credential API.
 `epoll-reference` proves the direct typed x86 packed epoll lifecycle:
-close-on-exec and legacy creation, future-bit forwarding for Linux validation,
-add/modify/delete, and initialized-prefix readiness output. It excludes masked
-epoll waits, pselect/select, C facades, errno TLS, and broader `io.readiness`.
+close-on-exec and legacy creation, null and borrowed eight-byte signal masks,
+future-bit forwarding for Linux validation, add/modify/delete, initialized-prefix
+readiness output, and temporary mask installation/restoration through raw and
+pinned-musl waits. C facades and errno TLS remain excluded.
 `timerfd-reference` proves only the x86 `itimerspec` record and focused
 timer-descriptor lifecycle; it does not promote the broader record-owning
 facade family.
@@ -237,9 +239,11 @@ also records empty-mask `EINVAL` and missing-task `ESRCH`. Its pinned-musl
 pthread worker is oracle harness machinery only; wider scheduler policy, C or
 pthread facades, errno TLS, and the broader record-owning family remain
 excluded.
-`pselect-reference` proves only the x86 descriptor-bit-vector ABI and focused
-readiness/mask lifecycle; it does not promote the broader record-owning
-facade family.
+`pselect-reference` proves direct x86 `event::{select, pselect}` behavior:
+the 1024-bit descriptor-bit-vector ABI, empty/readable readiness, invalid
+`nfds`, raw `pselect6` argument-six mask-pointer/size placement, copied
+timeouts, and raw/pinned-musl temporary signal-mask restoration. C facades and
+errno TLS remain excluded.
 `priority-reference` establishes only the typed Rust read-only getpriority
 boundary; it does not by itself select scheduling mutation or a C process API.
 `setpriority-reference` proves only typed scheduling-priority mutation:
