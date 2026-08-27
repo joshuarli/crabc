@@ -52,6 +52,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh statat-reference
 ./scripts/dev-x86_64.sh getcwd-reference
+./scripts/dev-x86_64.sh readlinkat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
 ./scripts/dev-x86_64.sh core
@@ -324,6 +325,17 @@ than emulating that wrapper policy. There is no allocation helper or
 process-CWD mutation. `getcwd_alloc`, `chdir`, and `fchdir` remain explicitly
 deferred, as do general pathname APIs and public support for `filesystem.cwd`.
 
+`readlinkat-reference` executes the private x86 caller-buffer-only
+`readlinkat(2)` slice. It records the initialized target prefix without adding
+a NUL byte, and accepts a short output buffer with its truncated prefix. The
+raw syscall rejects a zero-length buffer with `EINVAL`; pinned musl's C wrapper
+instead returns an empty successful result, which the direct Rust facade
+deliberately does not emulate. `&str` and byte-slice paths use fixed 256-byte
+stack conversion storage; a borrowed `&CStr` remains caller-owned.
+Allocation-backed readlink helpers, general path APIs, and filesystem/path
+mutation remain deferred; this evidence does not promote
+`filesystem.path-core` or `filesystem.path-metadata`.
+
 `system-reference` records the pinned-musl `uname` and `sysinfo` behavior used
 by bounded typed system name/status/load observations. It does not select
 `crabc-libc` or establish C system-information behavior.
@@ -374,7 +386,7 @@ establish pthread, TLS, or C ABI parity.
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
-`x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
+`x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_readlink`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
 `x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
 positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
@@ -405,7 +417,7 @@ regression proves x86 descriptor-bit-vector helpers, empty/readable pipe
 readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves a
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
-metadata slice, caller-buffer-only `getcwd` output, plus
+metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, read-only
 supplementary-group query/fill, private read-only interval-timer queries,

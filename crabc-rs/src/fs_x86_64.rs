@@ -1,16 +1,19 @@
-//! Deliberately narrow Linux/x86-64 filesystem metadata operations.
+//! Deliberately narrow Linux/x86-64 filesystem metadata and link observations.
 //!
 //! This module admits descriptor-based `fstat(2)`, a deliberately narrow
-//! query-only `statat(2)` path-metadata boundary, file-access advice, and
-//! file readahead.  The
+//! query-only `statat(2)` path-metadata boundary, caller-buffer-only
+//! `readlinkat(2)` target reads, file-access advice, and file readahead. The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
-//! has a distinct 144-byte layout.  This private slice admits only `CWD` and
-//! `AT_SYMLINK_NOFOLLOW`; `AT_EMPTY_PATH`, a general path module, `statx`,
-//! filesystem statistics, and mutating filesystem operations remain outside
-//! this staged target boundary until they have their own x86-64 evidence.
+//! has a distinct 144-byte layout. This private path slice admits only `CWD`
+//! and `AT_SYMLINK_NOFOLLOW` for metadata, plus the direct caller-buffer
+//! readlink target boundary; `AT_EMPTY_PATH`, a general path module, `statx`,
+//! filesystem statistics, allocation-backed path helpers, and mutating
+//! filesystem operations remain outside this staged target boundary until
+//! they have their own x86-64 evidence.
 
 use bitflags::bitflags;
+use crate::buffer::Buffer;
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
@@ -24,7 +27,7 @@ use crate::{AsFd, BorrowedFd, Errno, Result};
 /// [`Errno::NAMETOOLONG`] before a syscall instead.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
-/// A pathname input accepted by [`statat`] and [`stat`].
+/// A pathname input accepted by [`statat`], [`stat`], and [`readlinkat_raw`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
 /// buffer. The callback is invoked while that C string remains live, so the
@@ -105,8 +108,9 @@ impl PathArg for &str {
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
-/// accepted only as the directory argument to [`statat`] in this private
-/// x86-64 path-metadata slice and can never become an owned descriptor.
+/// accepted only as the directory argument to [`statat`] and
+/// [`readlinkat_raw`] in this private x86-64 path slice and can never become
+/// an owned descriptor.
 pub const CWD: BorrowedFd<'static> =
     // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
     // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
@@ -267,6 +271,42 @@ pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Resul
 #[inline]
 pub fn stat<P: PathArg>(path: P) -> Result<Stat> {
     statat(CWD, path, AtFlags::empty())
+}
+
+/// Reads a symbolic-link target relative to `dirfd` into caller-owned storage.
+///
+/// Linux returns the exact initialized target-byte prefix and never appends a
+/// NUL byte. If the supplied buffer is shorter than the target, Linux reports
+/// success with the truncated prefix. A zero-length buffer returns
+/// [`crate::Errno::INVAL`] from the raw kernel boundary; unlike the C wrapper,
+/// this direct facade deliberately does not translate it to an empty result.
+/// This boundary allocates nothing, changes no process or descriptor state,
+/// and propagates kernel errors unchanged.
+#[inline]
+#[allow(private_interfaces)]
+pub fn readlinkat_raw<P: PathArg, Fd: AsFd, Buf: Buffer<u8>>(
+    dirfd: Fd,
+    path: P,
+    mut buffer: Buf,
+) -> Result<Buf::Output> {
+    let dirfd = dirfd.as_fd();
+    let (pointer, length) = buffer.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        // SAFETY: `Buffer` is sealed and supplies writable storage for
+        // exactly `length` bytes. `readlinkat` initializes the returned
+        // prefix and does not write a terminating NUL byte.
+        unsafe {
+            crabc_core::fs::readlinkat_raw(
+                dirfd.as_raw_fd(),
+                path,
+                pointer.cast(),
+                length,
+            )
+        }
+    })?;
+    // SAFETY: A successful readlinkat initialized exactly the reported
+    // prefix and never returns more bytes than the supplied buffer length.
+    unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
 /// Gives Linux a POSIX filesystem access-pattern advisory through the native

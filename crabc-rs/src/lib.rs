@@ -34,8 +34,9 @@ pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
 // (eventfd counters plus bounded poll/ppoll/pause), descriptor `fs::fstat`
-// plus the private CWD/AT_SYMLINK_NOFOLLOW `statat` metadata and strict
-// caller-buffer-only `process::getcwd` slices,
+// plus the private CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, strict
+// caller-buffer-only `process::getcwd`, and caller-buffer-only
+// `fs::readlinkat_raw` slices,
 // `fd`, `fenv`, `ffi`, `io`, `ioctl`, bounded `mm` mapping/remapping,
 // `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
 // and supplementary-group observations plus pidfd creation, `rand`, `signal`,

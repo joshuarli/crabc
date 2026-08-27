@@ -43,8 +43,9 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `event_x86_64.rs` owns the scalar event-counter, exact `pollfd` record seam,
 # and privately evidenced packed `epoll_event` and pselect descriptor-bit-vector
 # seams which remain under the planned record-owning family. `fs_x86_64.rs`
-# owns descriptor `fstat`, private CWD/statat path metadata, plus file-access
-# advice and readahead. `process_x86_64.rs` owns only the strict
+# owns descriptor `fstat`, private CWD/statat path metadata,
+# caller-buffer-only readlinkat, plus file-access advice and readahead.
+# `process_x86_64.rs` owns only the strict
 # caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
 # remain deferred. It also owns read-only identity/session and
 # supplementary-group observations plus privately evidenced resource-limit/
@@ -275,6 +276,29 @@ def check_x86_rr_interval_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_readlinkat_boundary(errors: list[str]) -> None:
+    """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    text = fs_source.read_text(errors="replace")
+    if "pub fn readlinkat_raw<" not in text:
+        errors.append("crabc-rs/src/fs_x86_64.rs: private readlinkat slice is missing")
+    for forbidden in (
+        "pub fn readlinkat<",
+        "pub fn readlink<",
+        "pub fn unlink",
+        "pub fn rename",
+        "pub fn symlink",
+        "CString",
+        "Vec<",
+    ):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: private readlinkat slice must defer "
+                f"{forbidden}"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     root_manifest = (ROOT / "Cargo.toml").read_text()
@@ -413,6 +437,7 @@ def main() -> int:
     )
     check_root_c_link_boundaries(errors)
     check_x86_getcwd_boundary(errors)
+    check_x86_readlinkat_boundary(errors)
     check_x86_rr_interval_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:

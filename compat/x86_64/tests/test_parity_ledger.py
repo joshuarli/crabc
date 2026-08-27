@@ -163,6 +163,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_getcwd_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_getcwd_reference_probe.c", remaining["source_owners"])
+        self.assertIn("crabc-core/src/fs.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/src/fs_x86_64.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_readlink.rs", remaining["source_owners"])
+        self.assertIn("compat/x86_64/run_x86_readlinkat_reference.sh", remaining["source_owners"])
+        self.assertIn("compat/x86_64/x86_readlinkat_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-core/src/thread.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
@@ -220,11 +225,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][9]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][10]["command"],
-            "./scripts/dev-x86_64.sh rr-interval-reference",
+            "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(remaining["native_evidence"][10]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][11]["command"],
+            "./scripts/dev-x86_64.sh rr-interval-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][11]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][12]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
