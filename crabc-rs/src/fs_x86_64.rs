@@ -2,10 +2,10 @@
 //!
 //! This module admits descriptor-based `fstat(2)`, a deliberately narrow
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
-//! `readlinkat(2)` target reads, file-access advice, file readahead, and
-//! descriptor-based file-length mutation, and anonymous memory-file creation
-//! with bounded sealing. The x86-64 kernel
-//! record is not interchangeable with the AArch64 record:
+//! `readlinkat(2)` target reads, file-access advice, file readahead,
+//! descriptor-based file-length mutation, file-position and synchronization
+//! operations, and anonymous memory-file creation with bounded sealing. The
+//! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
 //! has a distinct 144-byte layout. This private path slice admits only `CWD`
 //! and `AT_SYMLINK_NOFOLLOW` for metadata, plus the direct caller-buffer
@@ -261,6 +261,79 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     }
 
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
+}
+
+/// The Linux file-position origins accepted by [`seek`].
+///
+/// `Data` and `Hole` select Linux sparse-file regions in addition to the
+/// ordinary absolute, end-relative, and current-position origins. Unsupported
+/// sparse seeking or an invalid resulting position remains a direct kernel
+/// error.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SeekFrom {
+    /// Set the position to an absolute byte offset.
+    Start(u64),
+    /// Set the position relative to the end of the file.
+    End(i64),
+    /// Set the position relative to the current file position.
+    Current(i64),
+    /// Set the position to the next data region at or after an absolute byte
+    /// offset.
+    Data(u64),
+    /// Set the position to the next hole at or after an absolute byte offset.
+    Hole(u64),
+}
+
+/// Repositions an open descriptor through Linux `lseek(2)`.
+///
+/// Successful Linux positions are non-negative and are returned as an
+/// unsigned byte offset. Absolute `Start`, `Data`, and `Hole` values above
+/// `i64::MAX` are passed through their signed Linux `off_t` representation,
+/// so their direct Linux error is preserved: a negative `SEEK_SET` position
+/// is `EINVAL`, while sparse `SEEK_DATA`/`SEEK_HOLE` may report `ENXIO`.
+/// Relative positions retain their signed Linux representation, so an invalid
+/// resulting offset remains the kernel's direct error.
+#[inline]
+#[doc(alias = "lseek")]
+pub fn seek<Fd: AsFd>(fd: Fd, position: SeekFrom) -> Result<u64> {
+    let (whence, offset) = match position {
+        SeekFrom::Start(offset) => (crabc_core::fs::SEEK_SET, offset as i64),
+        SeekFrom::End(offset) => (crabc_core::fs::SEEK_END, offset),
+        SeekFrom::Current(offset) => (crabc_core::fs::SEEK_CUR, offset),
+        SeekFrom::Data(offset) => (crabc_core::fs::SEEK_DATA, offset as i64),
+        SeekFrom::Hole(offset) => (crabc_core::fs::SEEK_HOLE, offset as i64),
+    };
+
+    // Linux reports a non-negative signed off_t on every successful seek;
+    // preserve that direct kernel value in the facade's unsigned byte count.
+    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), offset, whence).map(|offset| offset as u64)
+}
+
+/// Returns an open descriptor's current byte position without changing it.
+#[inline]
+#[doc(alias = "lseek")]
+pub fn tell<Fd: AsFd>(fd: Fd) -> Result<u64> {
+    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)
+        .map(|offset| offset as u64)
+}
+
+/// Flushes file data and metadata for an open descriptor through Linux
+/// `fsync(2)`.
+///
+/// The descriptor is borrowed only for the direct syscall; filesystem and
+/// descriptor errors remain unchanged [`Errno`] values.
+#[inline]
+pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::fsync(fd.as_fd().as_raw_fd())
+}
+
+/// Flushes file data for an open descriptor through Linux `fdatasync(2)`.
+///
+/// The descriptor is borrowed only for the direct syscall; filesystem and
+/// descriptor errors remain unchanged [`Errno`] values.
+#[inline]
+pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
 }
 
 /// Linux/x86-64 `struct stat` returned by `fstat(2)`.

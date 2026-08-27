@@ -98,7 +98,7 @@ id = "facade.direct"
 order = 20
 depends_on = ["oracle.musl-toolchain", "core.architecture"]
 category = "rust-facade"
-description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, getpriority and scheduler-priority bounds, fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield plus borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus typed fadvise64/readahead whose broader filesystem.path-core capability remains planned, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation and typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary. The separately evidenced private clock_nanosleep slice remains under facade.record-owning."
+description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, getpriority and scheduler-priority bounds, fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield plus borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus typed fadvise64/readahead whose broader filesystem.path-core capability remains planned, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation and typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary. The separately evidenced private clock_nanosleep slice remains under facade.record-owning."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -128,6 +128,8 @@ source_owners = [
   "crabc-rs/tests/x86_64_fcntl_getlk.rs",
   "crabc-rs/tests/x86_64_fs.rs",
   "crabc-rs/tests/x86_64_fs_advice.rs",
+  "crabc-rs/tests/x86_64_ftruncate.rs",
+  "crabc-rs/tests/x86_64_file_position.rs",
   "crabc-rs/tests/futex.rs",
   "crabc-rs/tests/x86_64_mm.rs",
   "crabc-rs/tests/x86_64_pidfd_open.rs",
@@ -143,6 +145,8 @@ source_owners = [
   "crabc-rs/tests/x86_64_time.rs",
   "compat/x86_64/run_x86_fcntl_getlk_reference.sh",
   "compat/x86_64/run_x86_fs_advice_reference.sh",
+  "compat/x86_64/run_x86_ftruncate_reference.sh",
+  "compat/x86_64/run_x86_file_position_reference.sh",
   "compat/x86_64/run_x86_fstat_reference.sh",
   "compat/x86_64/run_x86_madvise_reference.sh",
   "compat/x86_64/run_x86_mincore_reference.sh",
@@ -164,6 +168,8 @@ source_owners = [
   "compat/x86_64/run_x86_time_observation_reference.sh",
   "compat/x86_64/x86_fcntl_getlk_reference_probe.c",
   "compat/x86_64/x86_fs_advice_reference_probe.c",
+  "compat/x86_64/x86_ftruncate_reference_probe.c",
+  "compat/x86_64/x86_file_position_reference_probe.c",
   "compat/x86_64/x86_fstat_reference_probe.c",
   "compat/x86_64/x86_madvise_reference_probe.c",
   "compat/x86_64/x86_mincore_reference_probe.c",
@@ -184,16 +190,18 @@ source_owners = [
   "compat/x86_64/x86_time_reference_probe.c",
   "compat/x86_64/x86_time_observation_reference_probe.c",
 ]
-x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 SCHED_OTHER/FIFO/RR scalar values plus sched_get_priority_max/min syscall values", "x86 PRIO_PROCESS/PGRP/USER plus SYS_getpriority=140 and its [1, 40] success encoding", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 futex=202 six-word syscall placement, four-byte AtomicU32 alignment/lifetime, and optional 16-byte align-8 timeout timespec", "x86 144-byte fstat record", "x86 fadvise64=221/readahead=187, POSIX_FADV values, signed loff_t, and size_t", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 msync/mincore/madvise syscall values, MS/MADV values, and 4096-byte residency-vector page unit", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec", "Private clock_nanosleep slice: syscall 230 through x86 syscall4's r10 fourth-argument placement, 16-byte align-8 timespec, relative EINTR initialized remainder, and TIMER_ABSTIME=1 with null absolute remainder; pinned musl returns direct positive errors while the raw syscall uses -1 plus errno"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 SCHED_OTHER/FIFO/RR scalar values plus sched_get_priority_max/min syscall values", "x86 PRIO_PROCESS/PGRP/USER plus SYS_getpriority=140 and its [1, 40] success encoding", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 futex=202 six-word syscall placement, four-byte AtomicU32 alignment/lifetime, and optional 16-byte align-8 timeout timespec", "x86 144-byte fstat record", "x86 fadvise64=221/readahead=187, POSIX_FADV values, signed loff_t, and size_t", "x86 lseek=8, fsync=74, fdatasync=75, ftruncate=77, signed 64-bit off_t/loff_t, SEEK_SET/CUR/END/DATA/HOLE, direct oversized unsigned-offset conversion with SEEK_SET EINVAL and SEEK_DATA/HOLE ENXIO, and private-memfd position/sync lifecycle", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 msync/mincore/madvise syscall values, MS/MADV values, and 4096-byte residency-vector page unit", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec", "Private clock_nanosleep slice: syscall 230 through x86 syscall4's r10 fourth-argument placement, 16-byte align-8 timespec, relative EINTR initialized remainder, and TIMER_ABSTIME=1 with null absolute remainder; pinned musl returns direct positive errors while the raw syscall uses -1 plus errno"]
 x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat plus fadvise64/readahead, read-only process identity/session plus pidfd_open, getpriority, F_GETLK observation, and scheduler-priority bounds, gettid/getcpu/sched_yield, borrowed-AtomicU32 futex mismatch/relative-timeout/wake/exchange plus CLOCK_REALTIME-ENOSYS behavior, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, page residency, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations. It also executes privately evidenced packed-epoll, clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, statat path-metadata, and read-only resource-limit/resource-usage/process-accounting regressions owned by the planned record-owning family; the broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat plus fadvise64/readahead and the complete seek/tell/ftruncate/fsync/fdatasync file-position family, read-only process identity/session plus pidfd_open, getpriority, F_GETLK observation, and scheduler-priority bounds, gettid/getcpu/sched_yield, borrowed-AtomicU32 futex mismatch/relative-timeout/wake/exchange plus CLOCK_REALTIME-ENOSYS behavior, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, page residency, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations. It also executes privately evidenced packed-epoll, clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, statat path-metadata, and read-only resource-limit/resource-usage/process-accounting regressions owned by the planned record-owning family; the broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mm-abi-reference", scope = "Pinned-musl x86 mmap/mremap/mprotect/munmap syscall values and the closed mapping/remapping flags admitted by the Rust facade." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mlock-reference", scope = "Pinned-musl x86 mlock/munlock/mlock2 syscall values, MLOCK_ONFAULT, constrained-memlock outcomes, and invalid-range/flag behavior for only the typed per-range Rust locking slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh msync-reference", scope = "Pinned-musl x86 msync syscall value, MS flag combinations, and direct mapping-synchronization behavior for only the typed Rust slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh madvise-reference", scope = "Pinned-musl x86 madvise syscall value, Linux private-anonymous DONTNEED page discard, and POSIX DONTNEED no-op behavior for only the typed Rust advisory slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mincore-reference", scope = "Pinned-musl x86 mincore syscall value, one-byte-per-page residency output, partial-range rounding, and output-boundary preservation for only the typed Rust slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh fs-advice-reference", scope = "Pinned-musl x86 fadvise64/readahead syscall values, POSIX_FADV vocabulary, descriptor-position preservation, and direct invalid-range/descriptor behavior for only the typed Rust filesystem-advice slice." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh ftruncate-reference", scope = "Pinned-musl x86 ftruncate=77, signed-64-bit loff_t boundary, fresh-memfd extend/zero-fill/shrink behavior, and direct EINVAL/EBADF errors for the typed Rust file-position family." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh file-position-reference", scope = "Pinned-musl x86 lseek=8, fsync=74, fdatasync=75, signed-64-bit off_t, memfd SEEK_SET/CUR/END and sparse DATA/HOLE positions, accepted descriptor-sync requests, direct oversized SEEK_SET EINVAL and SEEK_DATA/HOLE ENXIO, plus ESPIPE and EBADF behavior for the complete typed Rust file-position family." },
   { state = "verified", command = "./scripts/dev-x86_64.sh rand-reference", scope = "Pinned-musl x86 getrandom constants and initialized-length behavior for the admitted Rust random-source boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-abi-reference", scope = "Pinned-musl x86 timespec layout, admitted realtime/monotonic/monotonic-raw/process-CPU clock values, and clock_gettime/clock_getres syscall constants for the bounded Rust clock boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-observation-reference", scope = "Pinned-musl x86 normalized realtime, C time whole-second/tloc equality behavior, and nondecreasing process-CPU clock behavior for the bounded typed time/timespec-get/realtime-millis/process-CPU observations." },
@@ -244,6 +252,7 @@ capabilities = [
   "io.vectored",
   "io.positioned-vectored",
   "io.basic-descriptor",
+  "io.file-position",
   "io.advisory-flock",
   "io.typed-ioctl",
   "pipe.basic",
@@ -295,7 +304,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, private clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, read-only resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd and readlinkat observations, bounded anonymous memory-file plus seal-observation/seal-mutation and descriptor-length-mutation slices, the read-only current/missing-PID round-robin interval query, and bounded CPU-affinity observation plus mutation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, private clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, read-only resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd and readlinkat observations, bounded anonymous memory-file plus seal-observation/seal-mutation slices, the read-only current/missing-PID round-robin interval query, and bounded CPU-affinity observation plus mutation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -330,7 +339,6 @@ source_owners = [
   "crabc-rs/tests/x86_64_getcwd.rs",
   "crabc-rs/tests/x86_64_readlink.rs",
   "crabc-rs/tests/x86_64_memfd.rs",
-  "crabc-rs/tests/x86_64_ftruncate.rs",
   "crabc-rs/tests/x86_64_sched_rr_interval.rs",
   "crabc-rs/tests/x86_64_timerfd.rs",
   "compat/x86_64/run_x86_epoll_reference.sh",
@@ -359,8 +367,6 @@ source_owners = [
   "compat/x86_64/x86_readlinkat_reference_probe.c",
   "compat/x86_64/run_x86_memfd_reference.sh",
   "compat/x86_64/x86_memfd_reference_probe.c",
-  "compat/x86_64/run_x86_ftruncate_reference.sh",
-  "compat/x86_64/x86_ftruncate_reference_probe.c",
   "compat/x86_64/run_x86_sched_rr_interval_reference.sh",
   "compat/x86_64/x86_sched_rr_interval_reference_probe.c",
   "crabc-rs/tests/x86_64_sched_affinity.rs",
@@ -378,7 +384,6 @@ x86_abi_prerequisites = [
   "Private getcwd slice: direct getcwd=79 over caller-owned writable bytes, returned initialized NUL-terminated prefix, empty/undersized-buffer ERANGE, and no allocation or CWD mutation; pinned-musl's C wrapper reports EINVAL for zero size and is deliberately not emulated; allocation helpers and chdir/fchdir remain excluded",
   "Private readlinkat slice: direct readlinkat=267 into caller-owned writable bytes, returned initialized prefix is not NUL-terminated, short buffers return their truncated prefix, and zero length returns EINVAL; pinned-musl's C wrapper instead returns an empty successful result, which the direct facade deliberately does not emulate; string/byte paths use fixed stack conversion storage, borrowed CStr paths remain caller-owned, and allocation, general path APIs, and filesystem mutation remain excluded",
   "Private memory-file/seal slice: memfd_create=319; fixed MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB values 1/2/4; F_ADD_SEALS/F_GET_SEALS commands 1033/1034; and Linux-5.10 F_SEAL_SEAL/SHRINK/GROW/WRITE/FUTURE_WRITE values 1/2/4/8/16. A named memfd transfers one fresh owned descriptor; the Linux name boundary accepts 249 content bytes and rejects 250 with EINVAL; retained unknown creation bits are rejected before the syscall; a sealing-capable memfd starts unsealed, additions are observable, and F_SEAL_SEAL prevents later additions with EPERM, while a plain memfd starts F_SEAL_SEAL and an ineligible pipe returns EINVAL from F_GET_SEALS. Huge-page sizing, executable policy, F_SEAL_EXEC (Linux 6.3), C fcntl/header support, and broader filesystem semantics remain excluded",
-  "Private descriptor-length-mutation slice: ftruncate=77 takes a signed 64-bit Linux loff_t; the typed u64 facade rejects values above i64::MAX with EINVAL before borrowing the descriptor or issuing the syscall. A fresh owned memfd proves extension with a zero-filled new range and later shrink. Negative raw lengths, C unistd/header ABI support, seek/fsync/fdatasync, pathname truncation, file allocation, and promotion of io.file-position or the record-owning family remain excluded",
   "Private round-robin interval slice: direct sched_rr_get_interval=148 over a 16-byte, align-8 timespec, current-task PID zero and missing-PID ESRCH observations, canonical nonnegative duration, and no scheduler-policy mutation",
   "Private CPU-affinity observation slice: direct sched_getaffinity=204 into an aligned 128-byte/1024-bit mask; raw success returns a positive initialized-prefix length and leaves the tail untouched, while pinned musl's C wrapper returns zero and clears its cpu_set_t tail; undersized masks return EINVAL and missing PID returns ESRCH",
   "Private CPU-affinity mutation slice: direct sched_setaffinity=203 over the same aligned 128-byte/1024-bit typed mask; caller-provided masks can be intersected with available or cgroup-permitted CPUs, a kernel requiring more than the fixed 1024-bit capacity returns EINVAL, parent current-mask reapplication and a short-lived child singleton prove contained mutation, empty masks return EINVAL, missing PID returns ESRCH, and wider scheduler policy remains excluded",
@@ -412,7 +417,6 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh sched-affinity-set-reference", scope = "Private pinned-musl x86 sched_setaffinity behavior: aligned 128-byte mask, syscall 203, bounded caller-provided typed-mask mutation, parent current-mask reapplication, short-lived child singleton proof, same musl/raw success, no-broaden postcondition, empty-mask EINVAL, and missing-PID ESRCH; wider scheduler policy, pthread support, capability promotion, and record-owning family selection remain excluded." },
   { state = "required", command = "./scripts/dev-x86_64.sh clock-nanosleep-reference", scope = "Private pinned-musl x86 clock_nanosleep behavior: 16-byte aligned timespec, syscall 230, relative zero and contained EINTR-positive-remainder cases, TIMER_ABSTIME past-deadline completion with null remainder, invalid-timespec EINVAL, and explicit musl direct-positive-error versus raw -1/errno conventions; C sleep APIs, clock mutation, capability promotion, and record-owning family selection remain excluded." },
   { state = "required", command = "./scripts/dev-x86_64.sh memfd-reference", scope = "Private pinned-musl x86 memfd_create and F_GET_SEALS/F_ADD_SEALS ABI and lifecycle evidence: closed Linux-5.10 flag/command values, named fresh CLOEXEC descriptor ownership, 249-byte name acceptance and 250-byte/unknown-flag EINVAL, sealing-capable/plain lifecycle, F_SEAL_SEAL EPERM, and ineligible-pipe EINVAL. It does not make filesystem.memory-file, filesystem.seal-observation, filesystem.seal-mutation, broader filesystem behavior, C fcntl/header support, or the record-owning family selectable." },
-  { state = "required", command = "./scripts/dev-x86_64.sh ftruncate-reference", scope = "Private pinned-musl x86 ftruncate ABI and lifecycle evidence: syscall 77, signed-64-bit loff_t boundary, and fresh-memfd extend/zero-fill/shrink behavior. The typed u64 facade rejects values above i64::MAX before descriptor borrowing. It does not make io.file-position, C unistd/header behavior, pathname truncation, broader filesystem behavior, or the record-owning family selectable." },
   { state = "required", command = "Define closed native x86 facade family runners", scope = "Each remaining record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." },
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]
@@ -451,7 +455,6 @@ capabilities = [
   "filesystem.seal-observation",
   "filesystem.seal-mutation",
   "filesystem.xattr",
-  "io.file-position",
   "io.readiness",
   "io.readiness-epoll",
   "memory.vm",

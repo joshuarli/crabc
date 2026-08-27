@@ -30,6 +30,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mincore-reference
 ./scripts/dev-x86_64.sh fs-advice-reference
 ./scripts/dev-x86_64.sh ftruncate-reference
+./scripts/dev-x86_64.sh file-position-reference
 ./scripts/dev-x86_64.sh memfd-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
@@ -185,10 +186,20 @@ filesystem support or broader path-based behavior.
 It pins `ftruncate=77` and its signed 64-bit Linux `loff_t` argument, then
 uses a fresh memfd to prove extension with a zero-filled new range and later
 shrink. The typed Rust `u64` facade refuses a length above `i64::MAX` with
-`EINVAL` before it borrows the descriptor or reaches the syscall. This is
-private evidence under the planned `facade.record-owning` family only: it
-does not select `io.file-position`, C `unistd`/header behavior, pathname
-truncation, allocation, durability, or broader filesystem support.
+`EINVAL` before it borrows the descriptor or reaches the syscall. Together
+with `file-position-reference`, it proves the admitted typed
+`io.file-position` family; it does not select C `unistd`/header behavior,
+pathname truncation, allocation, durability policy, or broader filesystem
+support.
+
+`file-position-reference` executes the remaining pinned-musl x86
+`lseek`/`fsync`/`fdatasync` lifecycle. It pins syscalls `8`/`74`/`75`,
+signed 64-bit `off_t`, and `SEEK_SET`/`SEEK_CUR`/`SEEK_END`; a fresh memfd
+proves typed start/current/end positions, sparse data/hole positions,
+position-preserving sync calls, and direct oversized-offset `SEEK_SET:EINVAL` and
+`SEEK_DATA`/`SEEK_HOLE:ENXIO`, pipe `ESPIPE`, and invalid-descriptor
+`EBADF` errors. It completes only the typed Rust file-position family, not a
+C filesystem API, pathname behavior, or host-filesystem durability claim.
 
 `memfd-reference` executes a pinned-musl x86 `memfd_create`/seal lifecycle.
 It pins `memfd_create=319`; `MFD_CLOEXEC`, `MFD_ALLOW_SEALING`, and

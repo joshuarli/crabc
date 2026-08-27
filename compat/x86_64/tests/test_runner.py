@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -78,6 +78,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_memfd_reference.sh', source)
         self.assertIn('run_ftruncate_reference()', source)
         self.assertIn('compat/x86_64/run_x86_ftruncate_reference.sh', source)
+        self.assertIn('run_file_position_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_file_position_reference.sh', source)
         self.assertIn('run_rand_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_time_abi_reference()', source)
@@ -154,6 +156,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_fcntl_getlk', source)
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_fs_advice', source)
+        self.assertIn('--test x86_64_file_position', source)
         self.assertIn('--test x86_64_ftruncate', source)
         self.assertIn('--test x86_64_memfd', source)
         self.assertIn('--test x86_64_getgroups', source)
@@ -248,6 +251,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         ftruncate = (
             ROOT / "compat" / "x86_64" / "run_x86_ftruncate_reference.sh"
+        ).read_text(encoding="utf-8")
+        file_position = (
+            ROOT / "compat" / "x86_64" / "run_x86_file_position_reference.sh"
         ).read_text(encoding="utf-8")
         signal = (ROOT / "compat" / "x86_64" / "run_signal_header_abi.sh").read_text(
             encoding="utf-8"
@@ -437,6 +443,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('ftruncate=77 loff_t=signed64', ftruncate)
         self.assertIn('run_musl_oracle.sh', ftruncate)
         self.assertNotIn('-p crabc-libc', ftruncate)
+        self.assertIn('x86_file_position_reference_probe.c', file_position)
+        self.assertIn('lseek/fsync/fdatasync ABI/behavior reference', file_position)
+        self.assertIn('syscalls=lseek:8,fsync:74,fdatasync:75', file_position)
+        self.assertIn('sparse=data4096:hole0', file_position)
+        self.assertIn('SEEK_DATA/HOLE:ENXIO', file_position)
+        self.assertIn('run_musl_oracle.sh', file_position)
+        self.assertNotIn('-p crabc-libc', file_position)
         self.assertIn('signal_header_abi_probe.c', signal)
         self.assertIn('signal_header_posix_abi_probe.c', signal)
         self.assertIn('-fsyntax-only', signal)
@@ -903,6 +916,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_fs",
                     "--test",
                     "x86_64_fs_advice",
+                    "--test",
+                    "x86_64_file_position",
                     "--test",
                     "x86_64_ftruncate",
                     "--test",
