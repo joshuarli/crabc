@@ -256,8 +256,9 @@ pub fn sched_getcpu() -> usize {
 ///
 /// # Safety
 ///
-/// `interval` must point to writable Linux/AArch64 `struct timespec`
-/// storage for the duration of the syscall.
+/// `interval` must point to writable target-native Linux `struct timespec`
+/// storage for the duration of the syscall. The target facade owns the exact
+/// record layout and validates the initialized result before exposing it.
 #[inline]
 pub unsafe fn sched_rr_get_interval_raw(pid: i32, interval: *mut u8) -> Result<()> {
     // SAFETY: The caller supplies writable timespec storage; `pid` and

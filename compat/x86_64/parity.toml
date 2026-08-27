@@ -294,7 +294,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, read-only interval-timer query, timerfd, pselect, read-only resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, and the strict allocation-free caller-buffer-only getcwd observation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, read-only interval-timer query, timerfd, pselect, read-only resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd observation, and the read-only current/missing-PID round-robin interval query are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -306,10 +306,12 @@ source_owners = [
   "crabc-rs/src/net.rs",
   "crabc-rs/src/process.rs",
   "crabc-rs/src/process_x86_64.rs",
+  "crabc-rs/src/thread_x86_64.rs",
   "crabc-rs/src/time.rs",
   "crabc-rs/src/time_x86_64.rs",
   "crabc-core/src/event_x86_64.rs",
   "crabc-core/src/process.rs",
+  "crabc-core/src/thread.rs",
   "crabc-core/src/time_x86_64.rs",
   "crabc-rs/tests/x86_64_epoll.rs",
   "crabc-rs/tests/x86_64_pselect.rs",
@@ -320,6 +322,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_getitimer.rs",
   "crabc-rs/tests/x86_64_statat.rs",
   "crabc-rs/tests/x86_64_getcwd.rs",
+  "crabc-rs/tests/x86_64_sched_rr_interval.rs",
   "crabc-rs/tests/x86_64_timerfd.rs",
   "compat/x86_64/run_x86_epoll_reference.sh",
   "compat/x86_64/run_x86_pselect_reference.sh",
@@ -339,9 +342,11 @@ source_owners = [
   "compat/x86_64/x86_statat_reference_probe.c",
   "compat/x86_64/run_x86_getcwd_reference.sh",
   "compat/x86_64/x86_getcwd_reference_probe.c",
+  "compat/x86_64/run_x86_sched_rr_interval_reference.sh",
+  "compat/x86_64/x86_sched_rr_interval_reference_probe.c",
   "compat/x86_64/x86_timerfd_reference_probe.c",
 ]
-x86_abi_prerequisites = ["Per-record x86 layout and syscall proof before admission", "x86 signal, socket, time, stat, and poll record layouts", "Private statat slice: x86 144-byte stat record, newfstatat=262, AT_FDCWD=-100, and only zero flags or AT_SYMLINK_NOFOLLOW; AT_EMPTY_PATH, general path APIs, and mutation remain excluded", "Private getcwd slice: direct getcwd=79 over caller-owned writable bytes, returned initialized NUL-terminated prefix, empty/undersized-buffer ERANGE, and no allocation or CWD mutation; pinned-musl's C wrapper reports EINVAL for zero size and is deliberately not emulated; allocation helpers and chdir/fchdir remain excluded", "Private epoll slice: packed 12-byte, align-1 epoll_event with events/data offsets 0/4, epoll_create1=291, epoll_ctl=233, epoll_pwait=281, and Linux epoll flag values", "Private timerfd slice: 32-byte, align-8 itimerspec with interval/value offsets 0/16, timerfd_create=283, timerfd_settime=286, timerfd_gettime=287, and TFD flag values", "Private pselect slice: 1024-bit, 128-byte fd_set representation with eight-byte words, pselect6=270, x86 six-register placement, and the private mask-pointer/size argument-six record", "Private resource-limit slice: 16-byte, align-8 rlimit64 with current/maximum offsets 0/8, prlimit64=302, RLIM_INFINITY=UINT64_MAX, and selectors 0 through 15", "Private resource-usage slice: 16-byte, align-8 timeval and 144-byte, align-8 initialized rusage prefix with offsets 0/16/32/136; pinned-musl's 272-byte public rusage record has a reserved tail at 144; getrusage=98 and RUSAGE_SELF/CHILDREN/THREAD=0/-1/1", "Private process-accounting slice: signed 64-bit clock_t, 32-byte, align-8 tms with offsets 0/8/16/24, times=100, nonnegative process fields, and a separately preserved signed elapsed-tick return that may wrap", "Private supplementary-group slice: unsigned 32-bit, align-4 gid_t, getgroups=115, zero-count query, count/fill equivalence, and undersized-buffer EINVAL", "Private read-only interval-timer slice: signed 16-byte, align-8 timeval and 32-byte, align-8 itimerval with timeval offsets 0/8 and interval/value offsets 0/16; getitimer=36 and ITIMER_REAL/VIRTUAL/PROF=0/1/2"]
+x86_abi_prerequisites = ["Per-record x86 layout and syscall proof before admission", "x86 signal, socket, time, stat, and poll record layouts", "Private statat slice: x86 144-byte stat record, newfstatat=262, AT_FDCWD=-100, and only zero flags or AT_SYMLINK_NOFOLLOW; AT_EMPTY_PATH, general path APIs, and mutation remain excluded", "Private getcwd slice: direct getcwd=79 over caller-owned writable bytes, returned initialized NUL-terminated prefix, empty/undersized-buffer ERANGE, and no allocation or CWD mutation; pinned-musl's C wrapper reports EINVAL for zero size and is deliberately not emulated; allocation helpers and chdir/fchdir remain excluded", "Private round-robin interval slice: direct sched_rr_get_interval=148 over a 16-byte, align-8 timespec, current-task PID zero and missing-PID ESRCH observations, canonical nonnegative duration, and no scheduler-policy mutation", "Private epoll slice: packed 12-byte, align-1 epoll_event with events/data offsets 0/4, epoll_create1=291, epoll_ctl=233, epoll_pwait=281, and Linux epoll flag values", "Private timerfd slice: 32-byte, align-8 itimerspec with interval/value offsets 0/16, timerfd_create=283, timerfd_settime=286, timerfd_gettime=287, and TFD flag values", "Private pselect slice: 1024-bit, 128-byte fd_set representation with eight-byte words, pselect6=270, x86 six-register placement, and the private mask-pointer/size argument-six record", "Private resource-limit slice: 16-byte, align-8 rlimit64 with current/maximum offsets 0/8, prlimit64=302, RLIM_INFINITY=UINT64_MAX, and selectors 0 through 15", "Private resource-usage slice: 16-byte, align-8 timeval and 144-byte, align-8 initialized rusage prefix with offsets 0/16/32/136; pinned-musl's 272-byte public rusage record has a reserved tail at 144; getrusage=98 and RUSAGE_SELF/CHILDREN/THREAD=0/-1/1", "Private process-accounting slice: signed 64-bit clock_t, 32-byte, align-8 tms with offsets 0/8/16/24, times=100, nonnegative process fields, and a separately preserved signed elapsed-tick return that may wrap", "Private supplementary-group slice: unsigned 32-bit, align-4 gid_t, getgroups=115, zero-count query, count/fill equivalence, and undersized-buffer EINVAL", "Private read-only interval-timer slice: signed 16-byte, align-8 timeval and 32-byte, align-8 itimerval with timeval offsets 0/8 and interval/value offsets 0/16; getitimer=36 and ITIMER_REAL/VIRTUAL/PROF=0/1/2"]
 x86_header_prerequisites = ["Published Rust types must correspond to x86 Linux ABI records without borrowing AArch64 constants or layouts."]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh epoll-reference", scope = "Private pinned-musl x86 packed epoll ABI and lifecycle evidence only; it does not make io.readiness-epoll or the record-owning family selectable." },
@@ -354,6 +359,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh getitimer-reference", scope = "Private pinned-musl x86 itimerval ABI and read-only getitimer observations for all three selectors only; it does not make time.interval-timer-query, time.process-interval-control, or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh statat-reference", scope = "Private pinned-musl x86 statat ABI and CWD/AT_SYMLINK_NOFOLLOW path-metadata observations only; AT_EMPTY_PATH, general path APIs, filesystem mutation, filesystem.path-metadata promotion, and the record-owning family remain excluded." },
   { state = "required", command = "./scripts/dev-x86_64.sh getcwd-reference", scope = "Private pinned-musl x86 caller-buffer-only getcwd behavior and initialized-prefix/direct-ERANGE evidence; it records but does not emulate the musl C wrapper's zero-size EINVAL. No allocation helper, CWD mutation, general pathname API, filesystem.cwd promotion, or record-owning family selection." },
+  { state = "required", command = "./scripts/dev-x86_64.sh rr-interval-reference", scope = "Private pinned-musl x86 read-only sched_rr_get_interval ABI and current/missing-PID behavior; no scheduler policy selection or mutation, thread.scheduler-rr-interval promotion, or record-owning family selection." },
   { state = "required", command = "Define closed native x86 facade family runners", scope = "Each remaining record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." },
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]

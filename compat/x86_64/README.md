@@ -44,6 +44,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh pidfd-open-reference
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
+./scripts/dev-x86_64.sh rr-interval-reference
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
 ./scripts/dev-x86_64.sh rusage-reference
@@ -265,6 +266,13 @@ values, and invalid-policy behavior. It establishes only the typed Rust
 read-only scheduler-priority bounds query, not scheduling mutation or C process
 support.
 
+`rr-interval-reference` executes a pinned-musl x86 read-only
+`sched_rr_get_interval(2)` query for the current task and a missing PID. It
+pins the x86 16-byte, align-8 `timespec`, syscall 148, canonical duration
+validation, and direct `ESRCH` propagation. The interval query does not select
+or mutate scheduler policy and remains private evidence for the planned
+record-owning family.
+
 `priority-reference` executes a pinned-musl x86 probe for
 `PRIO_PROCESS`/`PRIO_PGRP`/`PRIO_USER`, `getpriority` syscall 140, the
 non-negative `[1, 40]` raw success encoding, and missing-process `ESRCH`.
@@ -365,7 +373,7 @@ establish pthread, TLS, or C ABI parity.
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
-`x86_64_rusage`, `x86_64_scheduler_priority_bounds`,
+`x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
 `x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
 `x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit

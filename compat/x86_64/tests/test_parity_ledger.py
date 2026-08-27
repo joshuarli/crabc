@@ -163,6 +163,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_getcwd_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_getcwd_reference_probe.c", remaining["source_owners"])
+        self.assertIn("crabc-core/src/thread.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
+        self.assertIn("compat/x86_64/run_x86_sched_rr_interval_reference.sh", remaining["source_owners"])
+        self.assertIn("compat/x86_64/x86_sched_rr_interval_reference_probe.c", remaining["source_owners"])
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh epoll-reference",
@@ -213,10 +218,21 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh getcwd-reference",
         )
         self.assertEqual(remaining["native_evidence"][9]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][10]["command"],
+            "./scripts/dev-x86_64.sh rr-interval-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][10]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][11]["command"],
+            "Define closed native x86 facade family runners",
+        )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertNotIn("filesystem.cwd", direct["capabilities"])
         self.assertIn("filesystem.cwd", remaining["capabilities"])
+        self.assertNotIn("thread.scheduler-rr-interval", direct["capabilities"])
+        self.assertIn("thread.scheduler-rr-interval", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
         self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
         self.assertNotIn("process.resource-limits", direct["capabilities"])

@@ -41,7 +41,8 @@ pub mod collections;
 // and supplementary-group observations plus pidfd creation, `rand`, `signal`,
 // `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
-// `thread::{gettid, sched_getcpu, sched_yield}`, and bounded `time`
+// `thread::{gettid, sched_getcpu, sched_yield}` plus the private read-only
+// `sched_rr_get_interval` query, and bounded `time`
 // clock-query/observation APIs plus a private read-only interval-timer query,
 // and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
