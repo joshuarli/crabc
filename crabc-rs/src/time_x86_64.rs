@@ -394,8 +394,9 @@ impl IntervalTimerValue {
     ///
     /// `setitimer` is a legacy microsecond API. Values with sub-microsecond
     /// precision are rejected rather than silently rounded at the kernel
-    /// boundary. Seconds outside Linux's signed `timeval.tv_sec` range are
-    /// rejected as well.
+    /// boundary; [`alarm`] and [`ualarm`] provide the corresponding integral
+    /// second and microsecond aliases. Seconds outside Linux's signed
+    /// `timeval.tv_sec` range are rejected as well.
     #[inline]
     pub const fn new(interval: Duration, value: Duration) -> Option<Self> {
         if interval.subsec_nanos() % 1_000 != 0
@@ -499,8 +500,7 @@ impl IntervalTimerError {
 /// The setting uses the same validated microsecond vocabulary returned by
 /// [`getitimer`]. The previous setting is returned after Linux's atomic
 /// `setitimer` exchange. This is process-global state: callers must coordinate
-/// use of the selected timer with other code in the same process. No alarm
-/// aliases or C ABI are involved.
+/// use of the selected timer with other code in the same process.
 #[inline]
 pub fn setitimer(
     kind: IntervalTimerKind,
@@ -516,6 +516,45 @@ pub fn setitimer(
         let old_value = old_value.assume_init();
         interval_from_kernel_itimerval(old_value).ok_or(IntervalTimerError::InvalidSpecification)
     }
+}
+
+/// Arms the real interval timer for integral seconds and returns its previous
+/// remaining value rounded up to the next second.
+///
+/// The ceiling is required by the `alarm` contract: a previously armed timer
+/// with any positive fractional remainder reports at least one second. This
+/// is a Rust facade alias only; it does not add a C ABI export.
+#[inline]
+pub fn alarm(seconds: u32) -> core::result::Result<u32, IntervalTimerError> {
+    let setting = IntervalTimerValue::new(Duration::ZERO, Duration::from_secs(seconds as u64))
+        .ok_or(IntervalTimerError::InvalidSpecification)?;
+    let old = setitimer(IntervalTimerKind::Real, setting)?;
+    let seconds = old.value.as_secs();
+    let rounded = seconds.saturating_add(u64::from(old.value.subsec_nanos() != 0));
+    Ok(rounded.min(u64::from(u32::MAX)) as u32)
+}
+
+/// Arms the real interval timer in integral microseconds and returns its
+/// previous remaining value in microseconds.
+///
+/// This is a Rust facade alias only; it does not add a C ABI export.
+#[inline]
+pub fn ualarm(
+    value_microseconds: u32,
+    interval_microseconds: u32,
+) -> core::result::Result<u32, IntervalTimerError> {
+    let setting = IntervalTimerValue::new(
+        Duration::from_micros(interval_microseconds as u64),
+        Duration::from_micros(value_microseconds as u64),
+    )
+    .ok_or(IntervalTimerError::InvalidSpecification)?;
+    let old = setitimer(IntervalTimerKind::Real, setting)?;
+    let micros = old
+        .value
+        .as_secs()
+        .saturating_mul(1_000_000)
+        .saturating_add(u64::from(old.value.subsec_nanos() / 1_000));
+    Ok(micros.min(u64::from(u32::MAX)) as u32)
 }
 
 /// Converts one signed Linux interval-timer timeval into a canonical Rust

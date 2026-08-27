@@ -256,6 +256,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-ldso', source)
 
     def test_pinned_musl_oracle_and_reference_header_baseline_stay_closed(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
         dockerfile = (ROOT / "docker" / "Dockerfile.x86_64").read_text(encoding="utf-8")
         wrapper = (ROOT / "docker" / "x86_64-musl-oracle-gcc").read_text(encoding="utf-8")
         oracle = (ROOT / "compat" / "x86_64" / "run_musl_oracle.sh").read_text(
@@ -574,11 +575,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('setitimer ABI and contained behavior reference', setitimer_reference)
         self.assertIn('run_musl_oracle.sh', setitimer_reference)
         self.assertNotIn('-p crabc-libc', setitimer_reference)
+        self.assertIn(
+            '-p crabc-rs --no-default-features --test x86_64_setitimer \\\n        -- --test-threads=1',
+            source,
+        )
         self.assertIn('SYS_setitimer == 38', setitimer_probe)
         self.assertIn('run_in_child', setitimer_probe)
         self.assertIn('invalid=EINVAL', setitimer_probe)
-        self.assertNotIn('ualarm(', setitimer_probe)
-        self.assertNotIn('alarm(', setitimer_probe)
+        self.assertIn('ualarm(', setitimer_probe)
+        self.assertIn('alarm(', setitimer_probe)
+        self.assertIn('aliases=alarm-ceil,ualarm-subsecond', setitimer_probe)
+        self.assertIn('ualarm-invalid=EINVAL', setitimer_probe)
         self.assertIn('SigHandler::Ignore', setitimer_test)
         self.assertIn('Signal::ALARM', setitimer_test)
         self.assertIn('restore SIGALRM', setitimer_test)

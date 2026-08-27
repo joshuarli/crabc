@@ -245,6 +245,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("./scripts/dev-x86_64.sh getgroups-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh getitimer-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh setitimer-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh timerfd-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh getcwd-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh clock-nanosleep-reference", direct_commands)
@@ -271,10 +272,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "memory.vm",
             "time.wall-clock",
             "time.clock-query",
-            "time.process-interval-control",
         ):
             self.assertNotIn(capability, direct["capabilities"])
             self.assertIn(capability, remaining["capabilities"])
+        self.assertIn("time.process-interval-control", direct["capabilities"])
+        self.assertNotIn("time.process-interval-control", remaining["capabilities"])
         self.assertNotIn(
             "crabc-rs/tests/x86_64_epoll.rs", remaining["source_owners"]
         )
@@ -311,7 +313,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "crabc-rs/tests/x86_64_getitimer.rs", remaining["source_owners"]
         )
-        self.assertIn(
+        self.assertIn("crabc-rs/tests/x86_64_setitimer.rs", direct["source_owners"])
+        self.assertNotIn(
             "crabc-rs/tests/x86_64_setitimer.rs", remaining["source_owners"]
         )
         self.assertNotIn(
@@ -348,6 +351,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_x86_getitimer_reference.sh", remaining["source_owners"]
         )
         self.assertIn(
+            "compat/x86_64/run_x86_setitimer_reference.sh", direct["source_owners"]
+        )
+        self.assertNotIn(
             "compat/x86_64/run_x86_setitimer_reference.sh", remaining["source_owners"]
         )
         self.assertNotIn(
@@ -364,6 +370,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_getitimer_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn(
+            "compat/x86_64/x86_setitimer_reference_probe.c", direct["source_owners"]
+        )
+        self.assertNotIn(
             "compat/x86_64/x86_setitimer_reference_probe.c", remaining["source_owners"]
         )
         self.assertNotIn(
@@ -401,18 +410,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("compat/x86_64/x86_sched_setaffinity_reference_probe.c", remaining["source_owners"])
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
-            "./scripts/dev-x86_64.sh setitimer-reference",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][1]["command"],
             "./scripts/dev-x86_64.sh statat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][2]["command"],
+            remaining["native_evidence"][1]["command"],
             "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][3]["command"],
+            remaining["native_evidence"][2]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])

@@ -48,7 +48,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   relative-sleep-reference  verify pinned-musl x86 nanosleep behavior
   clock-nanosleep-reference  verify pinned-musl x86 clock_nanosleep behavior
   getitimer-reference  verify pinned-musl x86 read-only interval-timer ABI and behavior
-  setitimer-reference  verify pinned-musl x86 contained interval-timer behavior
+  setitimer-reference  verify pinned-musl x86 interval-timer control and Rust aliases
   timerfd-reference  verify pinned-musl x86 timerfd ABI and lifecycle
   pselect-reference  verify pinned-musl/raw x86 direct select/pselect ABI and behavior
   poll-reference  verify pinned-musl x86 poll ABI and behavior reference
@@ -113,9 +113,9 @@ select/pselect and packed epoll readiness with masked waits, and caller-buffer
 and alloc-gated physical and validated-logical current-directory observation.
 The dedicated `getcwd-reference` gate also covers alloc-gated physical retry
 and logical explicit-PWD decisions; private statat remains only its narrow
-identity foundation, while contained interval-timer control and caller-buffer-
-only readlinkat remain privately evidenced. None makes the
-record-owning family selectable.
+identity foundation, while caller-buffer-only readlinkat remains privately
+evidenced. The interval-timer-control slice is admitted only through the typed
+Rust facade; none of these commands selects the C record-owning family.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
@@ -196,13 +196,18 @@ disarm, and expiration-read behavior.
 C facades, errno TLS, and broader timer policy remain excluded.
 `getitimer-reference` proves the direct typed read-only interval-timer query:
 the x86 `itimerval` record, closed selectors, canonical transient output, and
-invalid-selector `EINVAL`. It does not select `setitimer`, `alarm`/`ualarm`,
-C time APIs, timer/signal delivery policy, or a broader process API.
-`setitimer-reference` proves only the private x86 contained interval-timer
-control boundary: syscall 38, validated microsecond settings, old-setting
-exchange, and malformed-`timeval` `EINVAL` behavior in short-lived child
-processes. It does not select `alarm`, `ualarm`, C time APIs, or promote the
-broader record-owning facade family.
+invalid-selector `EINVAL`. It does not select C time APIs, timer/signal delivery
+policy, or a broader process API.
+`setitimer-reference` proves the x86 `time.process-interval-control` boundary:
+syscall 38, all three `ITIMER_*` selectors, validated microsecond settings,
+complete old-setting exchange, and malformed-`timeval` `EINVAL` behavior in
+short-lived child processes. Its Rust-only `alarm` and `ualarm` aliases operate
+on `ITIMER_REAL`; `alarm` returns a prior fractional remainder rounded up to
+seconds, while `ualarm` returns bounded whole microseconds. The pinned-musl C
+`ualarm` comparison is valid only for subsecond inputs because musl does not
+normalize inputs of one second or more; the Rust facade intentionally accepts
+`u32` microseconds through `Duration`. These aliases add no C ABI. C time APIs,
+timer/signal delivery policy, and broader timer control remain excluded.
 `statat-reference` proves only the x86 `newfstatat` record with CWD and
 `AT_SYMLINK_NOFOLLOW`; it is the private `st_dev`/`st_ino` identity foundation
 for the separately admitted logical-current-directory name. It does not select
@@ -535,6 +540,9 @@ run_getitimer_reference() {
 
 run_setitimer_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_setitimer_reference.sh
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --test x86_64_setitimer \
+        -- --test-threads=1
 }
 
 run_timerfd_reference() {

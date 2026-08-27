@@ -270,17 +270,22 @@ query. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
 zero/16), `getitimer=36`, all three `ITIMER_*` selectors, canonical results
 from musl and the direct syscall, and invalid-selector `EINVAL`. A result is
 a transient snapshot, so it does not compare separately read values that can
-decrement. It admits only `time::getitimer`; `setitimer`, `alarm`, `ualarm`, C
-time APIs, and timer/signal delivery policy remain excluded.
+decrement. It admits only `time::getitimer`; C time APIs and timer/signal
+delivery policy remain excluded.
 
-`setitimer-reference` executes the private x86 contained interval-timer
-control slice. It pins syscall 38 over the established 16-byte `timeval` and
-32-byte `itimerval` records, uses short-lived children for every timer
-mutation, and verifies musl/raw old-setting exchange, replacement, disarm, and
-malformed-microsecond `EINVAL` behavior. The typed Rust facade admits only
-validated microsecond settings and returns the complete prior setting. It does
-not select `alarm`, `ualarm`, C time APIs, broader timer policy, or a
-general x86 facade.
+`setitimer-reference` executes the x86 `time.process-interval-control` slice.
+It pins syscall 38 over the established 16-byte `timeval` and 32-byte
+`itimerval` records, all three `ITIMER_*` selectors, uses short-lived children
+for every timer mutation, and verifies musl/raw old-setting exchange,
+replacement, disarm, and malformed-microsecond `EINVAL` behavior. The typed
+Rust facade admits validated microsecond settings and the Rust-only
+`alarm`/`ualarm` aliases, which operate on `ITIMER_REAL`: `alarm` rounds a
+prior fractional remainder up to seconds, while `ualarm` returns bounded whole
+microseconds. The pinned-musl C `ualarm` comparison is valid only for
+subsecond inputs because musl does not normalize inputs of one second or more;
+the Rust facade intentionally accepts `u32` microseconds through `Duration`.
+These aliases add no C ABI. C time APIs, timer/signal delivery policy, and
+broader timer control remain excluded.
 
 `timerfd-reference` executes pinned-musl and raw x86 proofs for the direct
 typed `time::{timerfd_create, timerfd_settime, timerfd_gettime}` slice. It pins
@@ -660,7 +665,7 @@ process regressions prove typed PID/identity/session observations, typed
 calling-process and bounded live-target resource-limit query plus
 child-contained mutation and process-global umask exchange with restore
 safety, typed read-only process accounting, typed supplementary-group query/fill, direct read-only
-interval-timer query plus private contained control,
+interval-timer query plus admitted typed interval-timer control and aliases,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
 scheduling-priority mutation, typed read-only resource-usage observations,
 conflicting-lock `F_GETLK`
@@ -690,9 +695,12 @@ regression additionally proves relative and absolute mode-specific pointer
 contracts, including absolute interruption with no invented remainder, and
 direct error handling. The direct
 `getitimer` regression proves closed selectors and canonical transient query
-results. The private `setitimer` regression proves child-contained
-exchange/disarm behavior over validated microsecond settings. Calendar,
-broader interval-timer/other timer policy,
+results. The `time.process-interval-control` regression proves
+child-contained `setitimer` exchange/disarm behavior over validated microsecond
+settings for all selectors, plus Rust-only `alarm`/`ualarm` aliases on
+`ITIMER_REAL`; C `ualarm` comparison is limited to subsecond inputs because
+musl does not normalize inputs of one second or more. Calendar, broader
+interval-timer/other timer policy,
 timezone, broader clock sleep, clock mutation, and C sleep APIs remain outside
 this direct slice.
 

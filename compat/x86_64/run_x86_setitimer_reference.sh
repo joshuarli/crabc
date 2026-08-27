@@ -29,7 +29,7 @@ probe="$work_dir/x86-setitimer-reference"
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_setitimer_reference_probe.c" \
     -o "$probe"
-expected='layout=timeval16/8 itimerval32/8 offsets=timeval0,8/itimerval0,16 syscall=38 selectors=0,1,2 musl=old/new/disarm direct=old/new/disarm invalid=EINVAL'
+expected='layout=timeval16/8 itimerval32/8 offsets=timeval0,8/itimerval0,16 syscall=38 selectors=0,1,2 musl=old/new/disarm direct=old/new/disarm aliases=alarm-ceil,ualarm-subsecond,ualarm-invalid=EINVAL invalid=EINVAL'
 actual="$($probe)"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 setitimer reference output mismatch\nexpected: %s\nactual: %s\n' \
