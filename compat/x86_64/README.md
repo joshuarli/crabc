@@ -367,13 +367,15 @@ direct `ESRCH` propagation. Its pinned-musl C oracle uses the worker only as
 harness machinery; the interval query does not select a C API, pthread facade,
 scheduler policy, other scheduler parameters, errno TLS, or CPU affinity.
 
-`sched-affinity-reference` executes the private x86 read-only CPU-affinity
-observation slice. It records the fixed 128-byte mask and syscall 204. The raw
-syscall returns the dynamic initialized-prefix length and leaves its tail
-untouched; pinned musl's C wrapper instead returns success as zero and clears
-the rest of its `cpu_set_t`. The typed Rust facade owns a zeroed mask and
-exposes no C return value. It remains separate from the restricted mutation
-below and does not establish pthread or broader record-owning support.
+`sched-affinity-reference` executes the direct typed x86 read-only
+CPU-affinity observation slice. It pins the fixed 128-byte mask and syscall
+204, PID-zero and explicit `gettid` selection for the calling task and a
+distinct live non-leader task, raw initialized-prefix/untouched-tail behavior,
+and pinned musl's zero-success/zero-tail C-wrapper normalization. The typed
+Rust facade owns a zeroed mask and exposes no C return value. Its pinned-musl
+pthread worker is oracle harness machinery only; the slice excludes affinity
+mutation, scheduler policy, C or pthread facades, errno TLS, and broader
+record-owning support.
 
 `sched-affinity-set-reference` executes the separate private x86
 `sched_setaffinity(2)` slice. It pins the 128-byte mask and syscall 203. Its
@@ -383,10 +385,10 @@ without leaving the evidence task restricted. The typed facade accepts a
 caller-provided bounded `CpuSet`; Linux may intersect it with available and
 cgroup-permitted CPUs. Its fixed 1024-bit capacity is passed as 128 bytes, so a
 kernel requiring a larger affinity mask also yields `EINVAL`. Both musl and
-the raw syscall succeed; an empty mask yields `EINVAL`, a missing PID yields
-`ESRCH`, and the postcondition cannot include a CPU outside the requested
-mask. Other scheduler policy, pthread support, and public capability promotion
-remain excluded.
+the raw syscall succeed; an empty mask yields `EINVAL`, a missing task ID
+yields `ESRCH`, and the postcondition cannot include a CPU outside the
+requested mask. Other scheduler policy, C or pthread facades, errno TLS, and
+`thread.cpu-affinity-mutation` promotion remain excluded.
 
 `priority-reference` executes a pinned-musl x86 probe for
 `PRIO_PROCESS`/`PRIO_PGRP`/`PRIO_USER`, `getpriority` syscall 140, the

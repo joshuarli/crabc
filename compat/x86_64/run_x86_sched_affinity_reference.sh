@@ -22,11 +22,17 @@ work_dir="$(mktemp -d /tmp/crabc-x86-64-sched-affinity.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 probe="$work_dir/x86-sched-affinity-reference"
 
-"$ORACLE_CC" -std=c11 \
+"$ORACLE_CC" -std=c11 -pthread \
     "$ROOT_DIR/compat/x86_64/x86_sched_affinity_reference_probe.c" \
     -o "$probe"
-expected='layout=cpu-set128 syscall=204 current=musl-success0/raw-returned-prefix-match/musl-zero-tail short=EINVAL missing=ESRCH'
-actual="$($probe)"
+expected='layout=cpu-set128 syscall=204 current=musl-success0/raw-returned-prefix-match/musl-zero-tail task=self-and-live-worker short=EINVAL missing=ESRCH'
+if actual="$($probe)"; then
+    :
+else
+    status=$?
+    printf 'ERROR: x86 sched_getaffinity reference probe failed with exit %s\n' "$status" >&2
+    exit "$status"
+fi
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 sched_getaffinity reference output mismatch\nexpected: %s\nactual: %s\n' \
         "$expected" "$actual" >&2

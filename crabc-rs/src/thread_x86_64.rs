@@ -1,8 +1,9 @@
 //! Narrow Linux/x86-64 thread observations and scheduler operations.
 //!
 //! This target-specific slice preserves record-independent thread operations,
-//! borrowed-atomic futex wait/wake, bounded CPU-affinity observation and
-//! mutation, and the direct calling-thread credential boundary. The
+//! borrowed-atomic futex wait/wake, direct bounded CPU-affinity observation,
+//! separately private bounded CPU-affinity mutation, and the direct
+//! calling-thread credential boundary. The
 //! credential operations retain Linux's per-task scope rather than emulating
 //! musl's process-wide synchronized transition.
 
@@ -18,8 +19,9 @@ use crate::{Errno, Result};
 /// A bounded Linux CPU-affinity mask.
 ///
 /// The fixed 1024-bit capacity is the native x86-64 facade boundary. Local
-/// bit operations affect only this value. Applying a set to a task is a
-/// separate, explicit scheduling mutation through [`sched_setaffinity`].
+/// bit operations affect only this value. Applying a set to a task is the
+/// separately evidenced scheduler-mutation operation
+/// [`sched_setaffinity`], not part of direct affinity observation.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CpuSet([u64; 16]);
@@ -214,12 +216,16 @@ pub fn sched_rr_get_interval(pid: Option<Pid>) -> Result<Duration> {
     ))
 }
 
-/// Reads a Linux task's CPU-affinity mask.
+/// Reads a transient Linux task CPU-affinity snapshot.
 ///
-/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
-/// Linux may write fewer bytes than this fixed 1024-bit capacity; the
-/// unwritten suffix is cleared before exposure. A kernel mask larger than
-/// this boundary is reported as `EINVAL`.
+/// `None` selects the calling task; `Some(pid)` selects a Linux task ID,
+/// including a live non-leader thread ID returned by [`gettid`]. Linux may
+/// initialize fewer bytes than this fixed 128-byte (1024-bit) capacity. The
+/// raw syscall reports that initialized-prefix length, while this typed facade
+/// clears the unwritten suffix before exposure without allocation, retry, or
+/// truncation. A kernel mask larger than this boundary is reported as `EINVAL`.
+/// The scheduler may change affinity between calls, so separate snapshots have
+/// no equality or stability guarantee.
 #[inline]
 pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
     let mut mask = CpuSet::new();
@@ -256,8 +262,8 @@ pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
 /// reported as [`crate::Errno::INVAL`]. This fixed 1024-bit boundary is passed
 /// to Linux as 128 bytes, so a kernel requiring a larger affinity-mask
 /// capacity also reports [`crate::Errno::INVAL`]. This operation is an explicit
-/// process-scheduling mutation and does not call libc or inspect thread-local
-/// `errno`.
+/// process-scheduling mutation, remains outside the direct affinity-observation
+/// slice, and does not call libc or inspect thread-local `errno`.
 #[inline]
 pub fn sched_setaffinity(pid: Option<Pid>, cpuset: &CpuSet) -> Result<()> {
     let size = core::mem::size_of_val(&cpuset.0);
