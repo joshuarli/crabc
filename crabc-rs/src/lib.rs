@@ -42,9 +42,9 @@ pub mod collections;
 // and supplementary-group observations plus pidfd creation, `rand`, `signal`,
 // `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
-// `thread::{gettid, sched_getcpu, sched_yield}` plus the private read-only
-// `sched_rr_get_interval`, CPU-affinity observation, and bounded typed
-// CPU-affinity mutation, and bounded `time`
+// `thread::{gettid, sched_getcpu, sched_yield}` plus borrowed `AtomicU32`
+// futex wait/wake, the private read-only `sched_rr_get_interval`,
+// CPU-affinity observation and bounded typed mutation, and bounded `time`
 // clock-query/observation APIs plus private clock-sleep and contained
 // interval-timer query/control slices,
 // and the root descriptor/error types. These

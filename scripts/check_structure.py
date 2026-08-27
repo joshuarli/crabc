@@ -55,8 +55,9 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
-# three record-independent task observations, the private read-only
-# round-robin interval query, and bounded CPU-affinity observation/mutation,
+# three record-independent task observations, borrowed-atomic futex wait/wake,
+# the private read-only round-robin interval query, and bounded CPU-affinity
+# observation/mutation,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
 # private clock-nanosleep seams, privately evidenced interval-timer query and
 # contained-control slices, and timerfd seams. No other facade
@@ -296,6 +297,32 @@ def check_x86_sched_affinity_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_futex_boundary(errors: list[str]) -> None:
+    """Keep the direct x86 futex facade to borrowed wait/wake operations."""
+
+    thread_source = ROOT / "crabc-rs" / "src" / "thread_x86_64.rs"
+    text = thread_source.read_text(errors="replace")
+    for required in ("pub mod futex", "pub fn wait(", "pub fn wake("):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/thread_x86_64.rs: direct x86 futex slice is missing "
+                f"{required}"
+            )
+    for forbidden in (
+        "pub fn waitv",
+        "pub fn requeue",
+        "pub fn cmp_requeue",
+        "pub fn lock_pi",
+        "pub fn unlock_pi",
+        "pub fn fd",
+    ):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/thread_x86_64.rs: direct x86 futex slice must defer "
+                f"{forbidden}"
+            )
+
+
 def check_x86_clock_nanosleep_boundary(errors: list[str]) -> None:
     """Keep the private x86 clock-sleep slice bounded."""
 
@@ -501,6 +528,7 @@ def main() -> int:
     check_x86_readlinkat_boundary(errors)
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)
+    check_x86_futex_boundary(errors)
     check_x86_clock_nanosleep_boundary(errors)
     check_x86_setitimer_boundary(errors)
 

@@ -1,12 +1,14 @@
 //! Narrow Linux/x86-64 thread observations and scheduler operations.
 //!
-//! This target-specific slice preserves record-independent thread operations
-//! plus bounded CPU-affinity observation and mutation. Futex wrappers and
-//! credential transitions remain outside this module until their x86-64
-//! contracts have independent evidence.
+//! This target-specific slice preserves record-independent thread operations,
+//! borrowed-atomic futex wait/wake, and bounded CPU-affinity observation and
+//! mutation. Credential transitions remain outside this module until their
+//! x86-64 contracts have independent evidence.
 
 use core::mem::MaybeUninit;
 use core::time::Duration;
+
+use bitflags::bitflags;
 
 use crate::process::Pid;
 use crate::{Errno, Result};
@@ -200,4 +202,109 @@ pub fn sched_setaffinity(pid: Option<Pid>, cpuset: &CpuSet) -> Result<()> {
 #[inline]
 pub fn sched_yield() {
     let _ = crabc_core::thread::sched_yield();
+}
+
+/// Direct Linux futex operations.
+///
+/// This is the low-level building block used by synchronization primitives.
+/// The futex word is borrowed as an [`AtomicU32`], which makes its four-byte
+/// alignment and atomic storage contract explicit at the Rust boundary. The
+/// caller must keep the atomic word alive and at the same address until the
+/// syscall returns; Linux may inspect it again while a wait is queued.
+pub mod futex {
+    use super::*;
+
+    // Keep the timeout spelling at the same module boundary as Rustix. The
+    // x86-64 C-layout value remains defined once in `time`, rather than
+    // creating a second futex-specific timespec record.
+    pub use crate::time::Timespec;
+    /// Seconds in the x86-64 Linux futex timeout `timespec`.
+    pub type Secs = i64;
+    /// Nanoseconds in the x86-64 Linux futex timeout `timespec`.
+    pub type Nsecs = i64;
+
+    bitflags! {
+        #[repr(transparent)]
+        #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+        /// Linux futex operation flags.
+        ///
+        /// `PRIVATE` is appropriate for a futex used only by threads in this
+        /// process. Omit it for a word shared between processes.
+        pub struct Flags: u32 {
+            /// `FUTEX_PRIVATE_FLAG`.
+            const PRIVATE = 0x80;
+            /// `FUTEX_CLOCK_REALTIME`.
+            ///
+            /// Linux rejects this option for the restricted `FUTEX_WAIT`
+            /// operation with `ENOSYS`. An absolute realtime deadline needs
+            /// `FUTEX_WAIT_BITSET`, which this bounded facade defers.
+            const CLOCK_REALTIME = 0x100;
+            /// Preserve future Linux-defined bits for kernel validation.
+            const _ = !0;
+        }
+    }
+
+    const FUTEX_WAIT: u32 = 0;
+    const FUTEX_WAKE: u32 = 1;
+
+    /// Waits while `uaddr` still contains `val`.
+    ///
+    /// The timeout is a Linux/x86-64 `timespec` interpreted as a relative
+    /// duration by `FUTEX_WAIT`; `None` waits indefinitely. Linux can return
+    /// [`crate::Errno::AGAIN`] when the value changed before the wait was
+    /// queued and [`crate::Errno::INTR`] when a signal interrupts the wait.
+    /// Both are ordinary futex wakeup races and are intentionally preserved
+    /// for the caller to handle. [`Flags::CLOCK_REALTIME`] is not admitted
+    /// by this operation, so its kernel `ENOSYS` result is preserved rather
+    /// than emulating an absolute realtime wait.
+    #[inline]
+    pub fn wait(
+        uaddr: &core::sync::atomic::AtomicU32,
+        flags: Flags,
+        val: u32,
+        timeout: Option<&Timespec>,
+    ) -> crate::Result<()> {
+        let timeout = timeout
+            .map(|value| (value as *const Timespec).cast::<u8>())
+            .unwrap_or(core::ptr::null());
+        // SAFETY: `AtomicU32` guarantees a four-byte-aligned atomic word and
+        // the borrowed word plus optional C-layout timespec remain alive for
+        // the entire syscall. Linux only reads these locations for FUTEX_WAIT.
+        unsafe {
+            crabc_core::thread::futex_raw(
+                (uaddr as *const core::sync::atomic::AtomicU32).cast::<u32>(),
+                FUTEX_WAIT | flags.bits(),
+                val,
+                timeout,
+                core::ptr::null(),
+                0,
+            )
+            .map(|_| ())
+        }
+    }
+
+    /// Wakes up to `val` waiters queued on `uaddr`.
+    ///
+    /// The return value is the number of waiters actually woken. A successful
+    /// call with no queued waiters returns `Ok(0)`. The atomic word must remain
+    /// four-byte aligned and alive until the syscall returns.
+    #[inline]
+    pub fn wake(
+        uaddr: &core::sync::atomic::AtomicU32,
+        flags: Flags,
+        val: u32,
+    ) -> crate::Result<usize> {
+        // SAFETY: `AtomicU32` guarantees a four-byte-aligned word which stays
+        // alive for the syscall. FUTEX_WAKE does not dereference a timeout.
+        unsafe {
+            crabc_core::thread::futex_raw(
+                (uaddr as *const core::sync::atomic::AtomicU32).cast::<u32>(),
+                FUTEX_WAKE | flags.bits(),
+                val,
+                core::ptr::null(),
+                core::ptr::null(),
+                0,
+            )
+        }
+    }
 }

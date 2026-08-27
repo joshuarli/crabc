@@ -64,6 +64,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.identity",
             "process.session-observation",
             "process.pidfd-open",
+            "thread.futex-basic",
             "thread.identity",
             "thread.cpu-observation",
             "system.load-average",
@@ -87,6 +88,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(capability, direct["capabilities"])
             self.assertNotIn(capability, remaining["capabilities"])
+        self.assertIn("crabc-rs/tests/futex.rs", direct["source_owners"])
+        self.assertIn("crabc-core/src/thread.rs", direct["source_owners"])
         for capability in (
             "io.readiness",
             "io.readiness-epoll",

@@ -15,14 +15,14 @@ pub const FUTEX_PRIVATE_FLAG: u32 = 128;
 ///
 /// This is the stateless kernel seam used by native Rust synchronization
 /// objects and by the C facade. The timeout pointer, when non-null, must
-/// point to a Linux/AArch64 `struct timespec`; for `FUTEX_WAIT` it is a
+/// point to a Linux 64-bit `struct timespec`; for `FUTEX_WAIT` it is a
 /// relative timeout.
 ///
 /// # Safety
 ///
 /// `address` must be a valid, four-byte-aligned futex word readable for
 /// the duration of the syscall. `timeout` must be null or point to a
-/// readable Linux/AArch64 timespec. `operation` must be a supported
+/// readable Linux 64-bit `timespec`. `operation` must be a supported
 /// futex operation plus any valid futex flags.
 #[inline]
 pub unsafe fn futex_raw(
@@ -50,7 +50,7 @@ pub unsafe fn futex_raw(
 
 /// Waits while `address` still contains `expected`.
 ///
-/// `timeout` is a nullable pointer to a relative Linux/AArch64 timespec.
+/// `timeout` is a nullable pointer to a relative Linux 64-bit timespec.
 /// `private` selects `FUTEX_PRIVATE_FLAG`; set it to false for a
 /// process-shared synchronization object.
 ///

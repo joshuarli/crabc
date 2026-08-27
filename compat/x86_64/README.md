@@ -425,7 +425,7 @@ helpers. It is a source-only prerequisite: it does not select `crabc-libc` or
 establish pthread, TLS, or C ABI parity.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
-`fenv`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
+`fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
@@ -438,7 +438,13 @@ positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
 sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
 proves `NONBLOCK`/`CLOEXEC`, counter accumulation and reset, semaphore reads,
 and Linux's reserved all-ones counter error through direct kernel seams. The
-parameter regression proves stable scalar aux-vector observations while
+futex regression proves borrowed-`AtomicU32` mismatch, relative-timeout,
+no-waiter wake-count, race-safe wait/wake exchange behavior, and the native
+`FUTEX_WAIT | FUTEX_CLOCK_REALTIME` `ENOSYS` boundary through the six-word
+syscall seam; PI, requeue, bitset, fd, and waitv forms remain deferred. Futex
+has no musl C wrapper, so this direct-kernel slice uses the existing x86 core
+ABI test and pinned Rustix behavior fixture as its evidence.
+The parameter regression proves stable scalar aux-vector observations while
 retaining the x86 exclusion of the pointer-valued `AT_EXECFN` API. The pipe
 regression proves Linux/x86-64's distinct `O_DIRECT` packet-mode bit, packet-tail
 discard, and descriptor `CLOEXEC`. The mapping regression proves closed

@@ -82,7 +82,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
-subset plus privately evidenced packed-epoll, clock-nanosleep, read-only
+subset, including borrowed-atomic futex wait/wake, plus privately evidenced
+packed-epoll, clock-nanosleep, read-only
 interval-timer query and contained interval-timer control, timerfd, pselect, resource-limit, resource-usage,
 process-accounting, and
 supplementary-group, private statat path-metadata, caller-buffer-only getcwd,
@@ -809,7 +810,7 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "facade takes no arguments"
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
-            -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
+            -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
             --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;

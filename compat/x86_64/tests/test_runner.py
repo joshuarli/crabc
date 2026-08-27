@@ -142,7 +142,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('objdump -d -- "$test_binary"', source)
         self.assertIn('fxrstor(64)?', source)
         self.assertIn(
-            '-p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation',
+            '-p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation',
             source,
         )
         self.assertIn('--test x86_64_eventfd', source)
@@ -863,6 +863,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--no-default-features",
                     "--test",
                     "fenv",
+                    "--test",
+                    "futex",
                     "--test",
                     "x86_64_foundation",
                     "--test",

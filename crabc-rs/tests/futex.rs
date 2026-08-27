@@ -33,6 +33,24 @@ fn wait_timeout_is_relative_and_reports_timeout() {
 }
 
 #[test]
+fn wait_with_realtime_clock_preserves_the_kernel_nosys_boundary() {
+    let word = AtomicU32::new(0);
+    let timeout = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_eq!(
+        futex::wait(
+            &word,
+            Flags::PRIVATE | Flags::CLOCK_REALTIME,
+            0,
+            Some(&timeout),
+        ),
+        Err(Errno::NOSYS)
+    );
+}
+
+#[test]
 fn wait_and_wake_exchange_an_atomic_state() {
     let word = Arc::new(AtomicU32::new(0));
     let entered = Arc::new(AtomicBool::new(false));
