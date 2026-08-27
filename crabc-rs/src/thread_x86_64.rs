@@ -1,9 +1,9 @@
 //! Narrow Linux/x86-64 thread observations and scheduler operations.
 //!
 //! This target-specific slice preserves record-independent thread operations
-//! plus a bounded read-only CPU-affinity observation. Affinity mutation,
-//! futex wrappers, and credential transitions remain outside this module until
-//! their x86-64 contracts have independent evidence.
+//! plus bounded CPU-affinity observation and mutation. Futex wrappers and
+//! credential transitions remain outside this module until their x86-64
+//! contracts have independent evidence.
 
 use core::mem::MaybeUninit;
 use core::time::Duration;
@@ -14,8 +14,8 @@ use crate::{Errno, Result};
 /// A bounded Linux CPU-affinity mask.
 ///
 /// The fixed 1024-bit capacity is the native x86-64 facade boundary. Local
-/// bit operations affect only this value; this module intentionally exposes no
-/// affinity mutation operation.
+/// bit operations affect only this value. Applying a set to a task is a
+/// separate, explicit scheduling mutation through [`sched_setaffinity`].
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct CpuSet([u64; 16]);
@@ -167,6 +167,29 @@ pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
         }
     }
     Ok(mask)
+}
+
+/// Sets a Linux task's CPU-affinity mask.
+///
+/// `None` selects the calling task; `Some(pid)` selects the Linux task ID.
+/// Linux may intersect the requested mask with CPUs present in the system and
+/// CPUs permitted by the task's cpuset cgroup. An empty resulting mask is
+/// reported as [`crate::Errno::INVAL`]. This fixed 1024-bit boundary is passed
+/// to Linux as 128 bytes, so a kernel requiring a larger affinity-mask
+/// capacity also reports [`crate::Errno::INVAL`]. This operation is an explicit
+/// process-scheduling mutation and does not call libc or inspect thread-local
+/// `errno`.
+#[inline]
+pub fn sched_setaffinity(pid: Option<Pid>, cpuset: &CpuSet) -> Result<()> {
+    let size = core::mem::size_of_val(&cpuset.0);
+    // SAFETY: `cpuset` owns readable storage for exactly `size` bytes.
+    unsafe {
+        crabc_core::thread::sched_setaffinity_raw(
+            pid.map_or(0, Pid::as_raw_pid),
+            cpuset.0.as_ptr().cast(),
+            size,
+        )
+    }
 }
 
 /// Yields the processor to the Linux scheduler.

@@ -173,6 +173,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_sched_rr_interval_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_sched_rr_interval_reference_probe.c", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_sched_setaffinity.rs", remaining["source_owners"])
+        self.assertIn("compat/x86_64/run_x86_sched_setaffinity_reference.sh", remaining["source_owners"])
+        self.assertIn("compat/x86_64/x86_sched_setaffinity_reference_probe.c", remaining["source_owners"])
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh epoll-reference",
@@ -240,6 +243,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][12]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][13]["command"],
+            "./scripts/dev-x86_64.sh sched-affinity-set-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][13]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][14]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])

@@ -46,6 +46,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh rr-interval-reference
 ./scripts/dev-x86_64.sh sched-affinity-reference
+./scripts/dev-x86_64.sh sched-affinity-set-reference
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
 ./scripts/dev-x86_64.sh rusage-reference
@@ -280,8 +281,21 @@ observation slice. It records the fixed 128-byte mask and syscall 204. The raw
 syscall returns the dynamic initialized-prefix length and leaves its tail
 untouched; pinned musl's C wrapper instead returns success as zero and clears
 the rest of its `cpu_set_t`. The typed Rust facade owns a zeroed mask and
-exposes no C return value. Affinity mutation, pthread support, and the broader
-record-owning facade family remain excluded.
+exposes no C return value. It remains separate from the restricted mutation
+below and does not establish pthread or broader record-owning support.
+
+`sched-affinity-set-reference` executes the separate private x86
+`sched_setaffinity(2)` slice. It pins the 128-byte mask and syscall 203. Its
+parent reapplies the task's observed current mask, while a short-lived child
+narrows itself to one observed CPU and exits, proving a caller-created singleton
+without leaving the evidence task restricted. The typed facade accepts a
+caller-provided bounded `CpuSet`; Linux may intersect it with available and
+cgroup-permitted CPUs. Its fixed 1024-bit capacity is passed as 128 bytes, so a
+kernel requiring a larger affinity mask also yields `EINVAL`. Both musl and
+the raw syscall succeed; an empty mask yields `EINVAL`, a missing PID yields
+`ESRCH`, and the postcondition cannot include a CPU outside the requested
+mask. Other scheduler policy, pthread support, and public capability promotion
+remain excluded.
 
 `priority-reference` executes a pinned-musl x86 probe for
 `PRIO_PROCESS`/`PRIO_PGRP`/`PRIO_USER`, `getpriority` syscall 140, the
