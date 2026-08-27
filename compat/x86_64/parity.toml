@@ -296,7 +296,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, private clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, read-only resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd and readlinkat observations, the read-only current/missing-PID round-robin interval query, and bounded CPU-affinity observation plus mutation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, private clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, read-only resource-limit/resource-usage/process-accounting/supplementary-group observations, the private CWD/AT_SYMLINK_NOFOLLOW statat path-metadata slice, the strict allocation-free caller-buffer-only getcwd and readlinkat observations, a bounded anonymous memory-file plus seal-observation/seal-mutation slice, the read-only current/missing-PID round-robin interval query, and bounded CPU-affinity observation plus mutation are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -313,7 +313,9 @@ source_owners = [
   "crabc-rs/src/time_x86_64.rs",
   "crabc-core/src/event_x86_64.rs",
   "crabc-core/src/fs.rs",
+  "crabc-core/src/io.rs",
   "crabc-core/src/process.rs",
+  "crabc-core/src/syscall_x86_64.rs",
   "crabc-core/src/thread.rs",
   "crabc-core/src/time_x86_64.rs",
   "crabc-rs/tests/x86_64_epoll.rs",
@@ -328,6 +330,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_statat.rs",
   "crabc-rs/tests/x86_64_getcwd.rs",
   "crabc-rs/tests/x86_64_readlink.rs",
+  "crabc-rs/tests/x86_64_memfd.rs",
   "crabc-rs/tests/x86_64_sched_rr_interval.rs",
   "crabc-rs/tests/x86_64_timerfd.rs",
   "compat/x86_64/run_x86_epoll_reference.sh",
@@ -354,6 +357,8 @@ source_owners = [
   "compat/x86_64/x86_getcwd_reference_probe.c",
   "compat/x86_64/run_x86_readlinkat_reference.sh",
   "compat/x86_64/x86_readlinkat_reference_probe.c",
+  "compat/x86_64/run_x86_memfd_reference.sh",
+  "compat/x86_64/x86_memfd_reference_probe.c",
   "compat/x86_64/run_x86_sched_rr_interval_reference.sh",
   "compat/x86_64/x86_sched_rr_interval_reference_probe.c",
   "crabc-rs/tests/x86_64_sched_affinity.rs",
@@ -370,6 +375,7 @@ x86_abi_prerequisites = [
   "Private statat slice: x86 144-byte stat record, newfstatat=262, AT_FDCWD=-100, and only zero flags or AT_SYMLINK_NOFOLLOW; AT_EMPTY_PATH, general path APIs, and mutation remain excluded",
   "Private getcwd slice: direct getcwd=79 over caller-owned writable bytes, returned initialized NUL-terminated prefix, empty/undersized-buffer ERANGE, and no allocation or CWD mutation; pinned-musl's C wrapper reports EINVAL for zero size and is deliberately not emulated; allocation helpers and chdir/fchdir remain excluded",
   "Private readlinkat slice: direct readlinkat=267 into caller-owned writable bytes, returned initialized prefix is not NUL-terminated, short buffers return their truncated prefix, and zero length returns EINVAL; pinned-musl's C wrapper instead returns an empty successful result, which the direct facade deliberately does not emulate; string/byte paths use fixed stack conversion storage, borrowed CStr paths remain caller-owned, and allocation, general path APIs, and filesystem mutation remain excluded",
+  "Private memory-file/seal slice: memfd_create=319; fixed MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB values 1/2/4; F_ADD_SEALS/F_GET_SEALS commands 1033/1034; and Linux-5.10 F_SEAL_SEAL/SHRINK/GROW/WRITE/FUTURE_WRITE values 1/2/4/8/16. A named memfd transfers one fresh owned descriptor; the Linux name boundary accepts 249 content bytes and rejects 250 with EINVAL; retained unknown creation bits are rejected before the syscall; a sealing-capable memfd starts unsealed, additions are observable, and F_SEAL_SEAL prevents later additions with EPERM, while a plain memfd starts F_SEAL_SEAL and an ineligible pipe returns EINVAL from F_GET_SEALS. Huge-page sizing, executable policy, F_SEAL_EXEC (Linux 6.3), C fcntl/header support, and broader filesystem semantics remain excluded",
   "Private round-robin interval slice: direct sched_rr_get_interval=148 over a 16-byte, align-8 timespec, current-task PID zero and missing-PID ESRCH observations, canonical nonnegative duration, and no scheduler-policy mutation",
   "Private CPU-affinity observation slice: direct sched_getaffinity=204 into an aligned 128-byte/1024-bit mask; raw success returns a positive initialized-prefix length and leaves the tail untouched, while pinned musl's C wrapper returns zero and clears its cpu_set_t tail; undersized masks return EINVAL and missing PID returns ESRCH",
   "Private CPU-affinity mutation slice: direct sched_setaffinity=203 over the same aligned 128-byte/1024-bit typed mask; caller-provided masks can be intersected with available or cgroup-permitted CPUs, a kernel requiring more than the fixed 1024-bit capacity returns EINVAL, parent current-mask reapplication and a short-lived child singleton prove contained mutation, empty masks return EINVAL, missing PID returns ESRCH, and wider scheduler policy remains excluded",
@@ -402,6 +408,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh sched-affinity-reference", scope = "Private pinned-musl x86 read-only sched_getaffinity behavior: an aligned 128-byte typed mask, raw initialized-prefix length and untouched tail versus musl C-wrapper zero-success and zero-tail normalization, undersized EINVAL, and missing-PID ESRCH; affinity mutation, pthread support, thread.cpu-affinity-observation promotion, and record-owning family selection remain excluded." },
   { state = "required", command = "./scripts/dev-x86_64.sh sched-affinity-set-reference", scope = "Private pinned-musl x86 sched_setaffinity behavior: aligned 128-byte mask, syscall 203, bounded caller-provided typed-mask mutation, parent current-mask reapplication, short-lived child singleton proof, same musl/raw success, no-broaden postcondition, empty-mask EINVAL, and missing-PID ESRCH; wider scheduler policy, pthread support, capability promotion, and record-owning family selection remain excluded." },
   { state = "required", command = "./scripts/dev-x86_64.sh clock-nanosleep-reference", scope = "Private pinned-musl x86 clock_nanosleep behavior: 16-byte aligned timespec, syscall 230, relative zero and contained EINTR-positive-remainder cases, TIMER_ABSTIME past-deadline completion with null remainder, invalid-timespec EINVAL, and explicit musl direct-positive-error versus raw -1/errno conventions; C sleep APIs, clock mutation, capability promotion, and record-owning family selection remain excluded." },
+  { state = "required", command = "./scripts/dev-x86_64.sh memfd-reference", scope = "Private pinned-musl x86 memfd_create and F_GET_SEALS/F_ADD_SEALS ABI and lifecycle evidence: closed Linux-5.10 flag/command values, named fresh CLOEXEC descriptor ownership, 249-byte name acceptance and 250-byte/unknown-flag EINVAL, sealing-capable/plain lifecycle, F_SEAL_SEAL EPERM, and ineligible-pipe EINVAL. It does not make filesystem.memory-file, filesystem.seal-observation, filesystem.seal-mutation, broader filesystem behavior, C fcntl/header support, or the record-owning family selectable." },
   { state = "required", command = "Define closed native x86 facade family runners", scope = "Each remaining record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." },
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]

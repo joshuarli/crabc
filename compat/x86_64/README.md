@@ -29,6 +29,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh madvise-reference
 ./scripts/dev-x86_64.sh mincore-reference
 ./scripts/dev-x86_64.sh fs-advice-reference
+./scripts/dev-x86_64.sh memfd-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh time-observation-reference
@@ -178,6 +179,20 @@ general VM facade.
 descriptor-position preservation, and direct invalid range/descriptor behavior.
 It establishes only the typed Rust `fs::{fadvise, readahead}` boundary, not C
 filesystem support or broader path-based behavior.
+
+`memfd-reference` executes a pinned-musl x86 `memfd_create`/seal lifecycle.
+It pins `memfd_create=319`; `MFD_CLOEXEC`, `MFD_ALLOW_SEALING`, and
+`MFD_HUGETLB` values `1`/`2`/`4`; `F_ADD_SEALS=1033` and `F_GET_SEALS=1034`;
+and Linux-5.10 `F_SEAL_SEAL`/`SHRINK`/`GROW`/`WRITE`/`FUTURE_WRITE` values
+`1`/`2`/`4`/`8`/`16`. It checks named fresh-descriptor ownership and `CLOEXEC`,
+unknown-flag `EINVAL`, 249-byte name acceptance, 250-byte-name `EINVAL`,
+sealing-capable/plain memfd state,
+observable additions, final-seal `EPERM`, and an ineligible pipe's `EINVAL`.
+It is private evidence under the planned `facade.record-owning` family only:
+it does not select `filesystem.memory-file`, `filesystem.seal-observation`,
+`filesystem.seal-mutation`, a C `fcntl`/header ABI, or broader filesystem
+behavior. Huge-page sizing, executable policy, and `F_SEAL_EXEC` (Linux 6.3)
+remain outside this Linux-5.10 slice.
 
 `rand-reference` runs a pinned-musl native x86 reference executable for
 `getrandom` syscall/flag values and initialized-length behavior. It does not

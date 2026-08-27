@@ -1,9 +1,10 @@
-//! Deliberately narrow Linux/x86-64 filesystem metadata and link observations.
+//! Deliberately narrow Linux/x86-64 filesystem observations and memory-file operations.
 //!
 //! This module admits descriptor-based `fstat(2)`, a deliberately narrow
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
-//! `readlinkat(2)` target reads, file-access advice, and file readahead. The
-//! x86-64 kernel record is not interchangeable with the AArch64 record:
+//! `readlinkat(2)` target reads, file-access advice, file readahead, and
+//! anonymous memory-file creation with bounded sealing. The x86-64 kernel
+//! record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
 //! has a distinct 144-byte layout. This private path slice admits only `CWD`
 //! and `AT_SYMLINK_NOFOLLOW` for metadata, plus the direct caller-buffer
@@ -18,7 +19,7 @@ use core::ffi::CStr;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
 
-use crate::{AsFd, BorrowedFd, Errno, Result};
+use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
 /// The largest byte pathname accepted by the fixed-stack [`PathArg`] boundary.
 ///
@@ -27,12 +28,15 @@ use crate::{AsFd, BorrowedFd, Errno, Result};
 /// [`Errno::NAMETOOLONG`] before a syscall instead.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
-/// A pathname input accepted by [`statat`], [`stat`], and [`readlinkat_raw`].
+/// A pathname or memory-file name input accepted by [`statat`], [`stat`],
+/// [`readlinkat_raw`], and [`memfd_create`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
 /// buffer. The callback is invoked while that C string remains live, so the
 /// safe facade never exposes a temporary raw pathname pointer. Byte-oriented
 /// inputs reject interior NULs with [`Errno::INVAL`] and need not be UTF-8.
+/// [`memfd_create`] uses the same input boundary for its anonymous-file label,
+/// not for pathname resolution.
 pub trait PathArg {
     /// Runs `callback` with a NUL-terminated representation of this path.
     fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
@@ -151,6 +155,95 @@ pub enum Advice {
     WillNeed = 3,
     /// `POSIX_FADV_DONTNEED`.
     DontNeed = 4,
+}
+
+bitflags! {
+    /// Stable Linux `MFD_*` creation flags for [`memfd_create`].
+    ///
+    /// This is deliberately a closed set: unknown or newer kernel bits are
+    /// rejected by [`MemfdFlags::from_bits`] instead of being silently
+    /// forwarded. Huge-page sizing bits and Linux 6.3 exec-policy flags are
+    /// outside this bounded facade slice.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct MemfdFlags: u32 {
+        /// Set `FD_CLOEXEC` on the returned descriptor.
+        const CLOEXEC = 0x0001;
+        /// Permit `F_ADD_SEALS` operations on the returned file.
+        const ALLOW_SEALING = 0x0002;
+        /// Use hugetlb-backed storage with the kernel's default huge-page
+        /// size. Allocation may fail when no suitable huge pages are reserved.
+        const HUGETLB = 0x0004;
+    }
+}
+
+bitflags! {
+    /// Linux `F_SEAL_*` flags returned by [`fcntl_get_seals`].
+    ///
+    /// Unknown bits are retained so observations from a newer Linux kernel are
+    /// not silently discarded at the native Rust boundary.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct SealFlags: u32 {
+        /// Prevent adding or removing seals.
+        const SEAL = 0x0001;
+        /// Prevent shrinking the inode.
+        const SHRINK = 0x0002;
+        /// Prevent growing the inode.
+        const GROW = 0x0004;
+        /// Prevent writes to the inode.
+        const WRITE = 0x0008;
+        /// Prevent future writable mappings (Linux 5.1+).
+        const FUTURE_WRITE = 0x0010;
+        /// Prevent executable changes (Linux 6.3+).
+        const EXEC = 0x0020;
+        /// Preserve future Linux-defined seal bits.
+        const _ = !0;
+    }
+}
+
+/// Creates an anonymous Linux memory file and returns its unique owner.
+///
+/// `name` follows the bounded [`PathArg`] boundary: it is a borrowed
+/// byte-oriented NUL-terminated string, rejects interior NUL bytes, and does
+/// not require UTF-8. Byte and string inputs through the no-allocation arm
+/// reject names of 256 bytes or more with [`Errno::NAMETOOLONG`] before the
+/// syscall; a supplied [`CStr`] is borrowed directly. Linux's 249-byte
+/// `memfd_create` name limit (excluding its NUL terminator) remains a direct
+/// kernel error.
+#[inline]
+pub fn memfd_create<P: PathArg>(name: P, flags: MemfdFlags) -> Result<OwnedFd> {
+    let flags = MemfdFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    name.into_with_c_str(|name| {
+        crabc_core::fs::memfd_create(name, flags.bits()).map(|fd| {
+            // SAFETY: successful Linux `memfd_create` returns one fresh,
+            // non-negative descriptor whose ownership transfers here.
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        })
+    })
+}
+
+/// Reads the Linux `F_SEAL_*` flags associated with a descriptor's inode.
+///
+/// This is an observation-only operation over a borrowed descriptor. Linux
+/// returns `EINVAL` for inodes that do not support sealing, and all kernel
+/// errors remain direct [`crate::Errno`] results without libc or TLS `errno`.
+#[inline]
+#[doc(alias = "F_GET_SEALS")]
+pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
+    crabc_core::io::fcntl_get_seals(fd.as_fd().as_raw_fd()).map(SealFlags::from_bits_retain)
+}
+
+/// Adds Linux `F_SEAL_*` flags to a descriptor's inode.
+///
+/// The descriptor must have been created with [`MemfdFlags::ALLOW_SEALING`],
+/// and once [`SealFlags::SEAL`] is present no further flags may be added.
+/// Kernel errors such as [`crate::Errno::PERM`] remain direct results without
+/// libc or TLS `errno`.
+#[inline]
+#[doc(alias = "F_ADD_SEALS")]
+pub fn fcntl_add_seals<Fd: AsFd>(fd: Fd, seals: SealFlags) -> Result<()> {
+    crabc_core::io::fcntl_add_seals(fd.as_fd().as_raw_fd(), seals.bits())
 }
 
 /// Linux/x86-64 `struct stat` returned by `fstat(2)`.

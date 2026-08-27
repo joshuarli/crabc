@@ -94,6 +94,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.readiness",
             "io.readiness-epoll",
             "memory.vm",
+            "filesystem.memory-file",
+            "filesystem.seal-observation",
+            "filesystem.seal-mutation",
             "time.wall-clock",
             "time.clock-query",
             "time.clock-sleep",
@@ -193,6 +196,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-rs/tests/x86_64_readlink.rs", remaining["source_owners"])
         self.assertIn("compat/x86_64/run_x86_readlinkat_reference.sh", remaining["source_owners"])
         self.assertIn("compat/x86_64/x86_readlinkat_reference_probe.c", remaining["source_owners"])
+        self.assertIn("crabc-core/src/io.rs", remaining["source_owners"])
+        self.assertIn("crabc-core/src/syscall_x86_64.rs", remaining["source_owners"])
+        self.assertIn("crabc-rs/tests/x86_64_memfd.rs", remaining["source_owners"])
+        self.assertIn("compat/x86_64/run_x86_memfd_reference.sh", remaining["source_owners"])
+        self.assertIn("compat/x86_64/x86_memfd_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-core/src/thread.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
@@ -283,12 +291,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][15]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][16]["command"],
+            "./scripts/dev-x86_64.sh memfd-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][16]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][17]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertNotIn("filesystem.cwd", direct["capabilities"])
         self.assertIn("filesystem.cwd", remaining["capabilities"])
+        self.assertEqual(remaining["status"], "planned")
         self.assertNotIn("thread.scheduler-rr-interval", direct["capabilities"])
         self.assertIn("thread.scheduler-rr-interval", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
