@@ -187,12 +187,16 @@ pub fn copy_file_range(
     })
 }
 
-/// Flushes all pending filesystem data associated with the descriptor's
-/// mounted filesystem without using libc or TLS `errno`.
+/// Requests synchronization of the filesystem associated with `fd`
+/// without using libc or TLS `errno`.
+///
+/// Linux waits for kernel/filesystem writeback completion before returning.
+/// That completion point does not promise that a device's volatile cache has
+/// reached nonvolatile media.
 #[inline]
 pub fn syncfs(fd: RawFd) -> Result<()> {
     // SAFETY: The kernel validates the descriptor and identifies its
-    // mounted filesystem for the direct sync operation.
+    // associated filesystem for the direct sync operation.
     decode(unsafe { syscall1(SYS_SYNCFS, fd as usize) }).map(|_| ())
 }
 

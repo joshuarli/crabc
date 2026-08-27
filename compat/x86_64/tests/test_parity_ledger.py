@@ -138,6 +138,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.cwd",
             "filesystem.path-metadata",
             "io.file-position",
+            "io.syncfs",
             "io.range-sync",
             "io.status-flags",
             "process.fcntl-lock-observation",
@@ -165,6 +166,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
+            "crabc-rs/tests/x86_64_syncfs.rs",
             "crabc-rs/tests/x86_64_sync_file_range.rs",
             "crabc-rs/tests/x86_64_memfd.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
@@ -195,6 +197,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_memfd_reference_probe.c",
             "compat/x86_64/run_x86_file_position_reference.sh",
             "compat/x86_64/x86_file_position_reference_probe.c",
+            "compat/x86_64/run_x86_syncfs_reference.sh",
+            "compat/x86_64/x86_syncfs_reference_probe.c",
             "compat/x86_64/run_x86_sync_file_range_reference.sh",
             "compat/x86_64/x86_sync_file_range_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
@@ -243,8 +247,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn(
             "./scripts/dev-x86_64.sh file-position-reference", direct_commands
         )
+        self.assertIn("./scripts/dev-x86_64.sh syncfs-reference", direct_commands)
         self.assertIn(
             "./scripts/dev-x86_64.sh sync-file-range-reference", direct_commands
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct syncfs=306")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
         )
         self.assertTrue(
             any(
@@ -308,6 +319,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_epoll_reference_probe.c", remaining["source_owners"]
         )
         for source_owner in (
+            "crabc-rs/tests/x86_64_syncfs.rs",
+            "compat/x86_64/run_x86_syncfs_reference.sh",
+            "compat/x86_64/x86_syncfs_reference_probe.c",
             "crabc-rs/tests/x86_64_sync_file_range.rs",
             "compat/x86_64/run_x86_sync_file_range_reference.sh",
             "compat/x86_64/x86_sync_file_range_reference_probe.c",

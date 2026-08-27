@@ -6,7 +6,8 @@
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, file-access advice, file readahead,
 //! descriptor-based file-length mutation, file-position and synchronization
-//! operations, and direct anonymous memory-file creation with bounded sealing.
+//! operations, descriptor-associated filesystem synchronization, and
+//! direct anonymous memory-file creation with bounded sealing.
 //! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
@@ -613,6 +614,19 @@ pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
 #[inline]
 pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
     crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
+}
+
+/// Requests synchronization of the filesystem associated with `fd`
+/// through Linux `syncfs(2)`.
+///
+/// The descriptor is borrowed only for the direct syscall. A successful
+/// request is a Linux kernel/filesystem writeback completion point, not a
+/// promise that a device's volatile cache has reached nonvolatile media.
+/// Descriptor and filesystem errors remain unchanged [`Errno`] values. This
+/// does not admit the separate process/system-wide `sync(2)` operation.
+#[inline]
+pub fn syncfs<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::syncfs(fd.as_fd().as_raw_fd())
 }
 
 /// Linux/x86-64 `struct stat` returned by `fstat(2)`.
