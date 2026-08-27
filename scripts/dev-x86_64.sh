@@ -66,7 +66,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   priority-reference  verify pinned-musl x86 getpriority ABI and behavior
   setpriority-reference  verify pinned-musl x86 contained scheduling-priority mutation
   rlimit-reference  verify pinned-musl x86 read-only resource-limit ABI and behavior
-  rlimit-targeted-private  run private native x86 targeted-resource-limit regressions
+  rlimit-targeted-reference  verify pinned-musl/raw x86 targeted-resource-limit behavior
   setrlimit-reference  verify pinned-musl x86 contained resource-limit mutation
   umask-reference  verify pinned-musl x86 process-mask exchange ABI and behavior
   rusage-reference  verify pinned-musl x86 read-only resource-usage ABI and behavior
@@ -161,7 +161,7 @@ API, pathname behavior, or broader filesystem semantics.
 `getitimer-reference`, `setitimer-reference`, `timerfd-reference`, `pselect-reference`,
 `poll-reference`, `ppoll-reference`, and `epoll-reference`,
 `process-identity-reference`, `getgroups-reference`, `process-session-reference`,
-`setpriority-reference`, `setrlimit-reference`, `umask-reference`,
+`setpriority-reference`, `rlimit-targeted-reference`, `setrlimit-reference`, `umask-reference`,
 `pidfd-open-reference`, `fcntl-getlk-reference`,
 `scheduler-priority-bounds-reference`, `rlimit-reference`, `rusage-reference`,
 `times-reference`,
@@ -169,9 +169,6 @@ API, pathname behavior, or broader filesystem semantics.
 `readlinkat-reference`, `system-reference`, and
 `thread-reference` establish only their named
 pinned-musl kernel boundaries for separately admitted Rust slices.
-`rlimit-targeted-private` is a separate native Rust regression for the
-unpromoted self/missing-target query cases; it is not a pinned-musl differential
-or a target-query promotion gate.
 `thread-credentials-reference` establishes only the typed direct
 calling-thread `setresuid`/`setresgid` no-change boundary: it does not
 emulate musl's process-wide credential synchronization or select C credential
@@ -249,13 +246,15 @@ with child-contained raw/musl set/read/no-op exchange plus invalid-selector
 mutation or a C process API.
 `rlimit-reference` proves the direct typed calling-process `getrlimit`
 boundary: `prlimit64=302`, a 16-byte `rlimit64`, PID zero/null-new-limit
-query placement, closed selectors, and infinity mapping. Its explicit-self and
-missing-target observations do not select targeted resource-limit queries,
-resource-limit mutation beyond `setrlimit`, or a C process API.
-`rlimit-targeted-private` runs only the native Rust self/implicit and
-missing-PID `getrlimit_for` regressions. It has no live distinct-target success
-proof or C differential, so it does not make targeted resource-limit queries
-selectable.
+query placement, closed selectors, and infinity mapping. It does not select
+target-resource mutation or a C process API.
+`rlimit-targeted-reference` proves the direct typed read-only
+`process::getrlimit_for` boundary: a forked live child holds a distinct
+`RLIMIT_NOFILE` soft limit while both pinned-musl `prlimit` and raw
+`prlimit64=302` reads agree with its reported 16-byte `rlimit64` record; the
+native Rust regression makes the same live-child query and retains missing-PID
+`ESRCH`. It excludes target-resource mutation, C process APIs, errno TLS, and
+the broader record-owning family.
 `setrlimit-reference` proves only typed calling-process resource-limit
 mutation: `prlimit64=302`, a 16-byte `rlimit64`, child-contained raw/musl
 set/query/restore exchange, and pre-syscall inverted-limit `EINVAL`. It does
@@ -570,7 +569,8 @@ run_rlimit_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rlimit_reference.sh
 }
 
-run_rlimit_targeted_private() {
+run_rlimit_targeted_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_rlimit_targeted_reference.sh
     run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
         -p crabc-rs --no-default-features --test x86_64_rlimit_targeted -- --test-threads=1
 }
@@ -702,7 +702,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-private|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -936,10 +936,10 @@ case "$command" in
         ensure_image
         run_rlimit_reference
         ;;
-    rlimit-targeted-private)
-        [ "$#" -eq 0 ] || fail "rlimit-targeted-private takes no arguments"
+    rlimit-targeted-reference)
+        [ "$#" -eq 0 ] || fail "rlimit-targeted-reference takes no arguments"
         ensure_image
-        run_rlimit_targeted_private
+        run_rlimit_targeted_reference
         ;;
     setrlimit-reference)
         [ "$#" -eq 0 ] || fail "setrlimit-reference takes no arguments"
@@ -1026,7 +1026,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_ftruncate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_ftruncate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)

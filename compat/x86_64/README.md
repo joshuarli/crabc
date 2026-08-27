@@ -55,7 +55,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh setpriority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
-./scripts/dev-x86_64.sh rlimit-targeted-private
+./scripts/dev-x86_64.sh rlimit-targeted-reference
 ./scripts/dev-x86_64.sh setrlimit-reference
 ./scripts/dev-x86_64.sh umask-reference
 ./scripts/dev-x86_64.sh rusage-reference
@@ -409,11 +409,17 @@ lifecycle. It pins the 16-byte, align-8 `rlimit`/`rlimit64` record
 `RLIM_INFINITY=UINT64_MAX`, the complete selectors zero through 15, repeated
 and explicit-self reads, and invalid-selector/missing-target errors. It is
 evidence for typed calling-process `process::getrlimit` only. Its
-explicit-self and missing-target observations do not select targeted queries,
-mutation beyond `setrlimit`, C process APIs, or a general x86 facade.
-`rlimit-targeted-private` retains native Rust self/implicit and missing-PID
-`getrlimit_for` regression coverage only. It has no live distinct-target
-success proof or C differential, so targeted queries remain unselectable.
+explicit-self and missing-target observations alone do not select targeted
+queries, mutation beyond `setrlimit`, C process APIs, or a general x86 facade.
+
+`rlimit-targeted-reference` executes a pinned-musl/raw x86 read-only targeted
+resource-limit query. A forked live child retains a distinct safe
+`RLIMIT_NOFILE` soft limit while musl `prlimit` and raw `prlimit64=302` both
+return its full 16-byte, align-8 `rlimit64` record. The native Rust regression
+makes the matching typed optional-PID query and preserves missing-PID `ESRCH`.
+It admits only the bounded read-only `process::getrlimit_for` slice; target
+mutation, C process APIs, errno TLS, and broader record-owning support remain
+excluded.
 
 `rusage-reference` executes a pinned-musl x86 read-only resource-usage
 lifecycle. It pins the 16-byte, align-8 `timeval`, the 144-byte, align-8
@@ -579,7 +585,8 @@ selected `crabc-libc` artifact.
 `x86_64_memfd`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`,
 `x86_64_poll`, `x86_64_pselect`, `x86_64_priority`, `x86_64_setpriority`,
 `x86_64_process_identity`, `x86_64_process_session`, `x86_64_pidfd_open`,
-`x86_64_rand`, `x86_64_rlimit`, `x86_64_setrlimit`, `x86_64_umask`,
+`x86_64_rand`, `x86_64_rlimit`, `x86_64_rlimit_targeted`,
+`x86_64_setrlimit`, `x86_64_umask`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sleep`,
 `x86_64_clock_nanosleep`, `x86_64_statat`, `x86_64_getcwd`,
 `x86_64_readlink`, `x86_64_sched_rr_interval`, `x86_64_sched_affinity`,
@@ -627,9 +634,9 @@ metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 `fadvise64`/`readahead` behavior and direct bounded anonymous memory-file
 creation plus seal observation/mutation. The
 process regressions prove typed PID/identity/session observations, typed
-calling-process resource-limit query plus child-contained mutation and
-process-global umask exchange with restore safety, typed read-only process
-accounting, typed supplementary-group query/fill, direct read-only
+calling-process and bounded live-target resource-limit query plus
+child-contained mutation and process-global umask exchange with restore
+safety, typed read-only process accounting, typed supplementary-group query/fill, direct read-only
 interval-timer query plus private contained control,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
 scheduling-priority mutation, typed read-only resource-usage observations,

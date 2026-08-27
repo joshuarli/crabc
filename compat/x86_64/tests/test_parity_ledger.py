@@ -109,6 +109,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.supplementary-groups",
             "process.pidfd-open",
             "process.resource-limits",
+            "process.resource-limits-targeted",
             "process.resource-usage",
             "process.resource-limit-mutation",
             "process.umask",
@@ -167,6 +168,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_sched_setaffinity.rs",
             "crabc-rs/tests/x86_64_setpriority.rs",
             "crabc-rs/tests/x86_64_rlimit.rs",
+            "crabc-rs/tests/x86_64_rlimit_targeted.rs",
             "crabc-rs/tests/x86_64_setrlimit.rs",
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
@@ -197,6 +199,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_setpriority_reference_probe.c",
             "compat/x86_64/run_x86_rlimit_reference.sh",
             "compat/x86_64/x86_rlimit_reference_probe.c",
+            "compat/x86_64/run_x86_rlimit_targeted_reference.sh",
+            "compat/x86_64/x86_rlimit_targeted_reference_probe.c",
             "crabc-rs/tests/x86_64_rusage.rs",
             "compat/x86_64/run_x86_rusage_reference.sh",
             "compat/x86_64/x86_rusage_reference_probe.c",
@@ -234,6 +238,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh epoll-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh setpriority-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rlimit-reference", direct_commands)
+        self.assertIn(
+            "./scripts/dev-x86_64.sh rlimit-targeted-reference", direct_commands
+        )
         self.assertIn("./scripts/dev-x86_64.sh rusage-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh setrlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh umask-reference", direct_commands)
@@ -267,8 +274,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn(
             "crabc-rs/tests/x86_64_pselect.rs", remaining["source_owners"]
         )
-        self.assertIn(
+        self.assertNotIn(
             "crabc-rs/tests/x86_64_rlimit_targeted.rs", remaining["source_owners"]
+        )
+        self.assertNotIn(
+            "compat/x86_64/run_x86_rlimit_targeted_reference.sh",
+            remaining["source_owners"],
+        )
+        self.assertNotIn(
+            "compat/x86_64/x86_rlimit_targeted_reference_probe.c",
+            remaining["source_owners"],
         )
         self.assertNotIn(
             "crabc-rs/tests/x86_64_rusage.rs", remaining["source_owners"]
@@ -364,26 +379,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][2]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][2]["command"],
-            "./scripts/dev-x86_64.sh rlimit-targeted-private",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][3]["command"],
             "./scripts/dev-x86_64.sh setitimer-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][4]["command"],
+            remaining["native_evidence"][3]["command"],
             "./scripts/dev-x86_64.sh statat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][5]["command"],
+            remaining["native_evidence"][4]["command"],
             "./scripts/dev-x86_64.sh getcwd-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][6]["command"],
+            remaining["native_evidence"][5]["command"],
             "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][7]["command"],
+            remaining["native_evidence"][6]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
@@ -406,7 +417,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("process.resource-limits", remaining["capabilities"])
         self.assertNotIn("process.resource-limit-mutation", remaining["capabilities"])
         self.assertNotIn("process.umask", remaining["capabilities"])
-        self.assertIn("process.resource-limits-targeted", remaining["capabilities"])
+        self.assertIn("process.resource-limits-targeted", direct["capabilities"])
+        self.assertNotIn("process.resource-limits-targeted", remaining["capabilities"])
         self.assertIn("process.resource-usage", direct["capabilities"])
         self.assertNotIn("process.resource-usage", remaining["capabilities"])
         self.assertIn("time.process-accounting", direct["capabilities"])
@@ -457,6 +469,12 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct targeted getrlimit")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
         self.assertFalse(
             any(
                 prerequisite.startswith("Private CPU-affinity observation")
@@ -472,6 +490,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertFalse(
             any(
                 prerequisite.startswith("Private epoll slice")
+                for prerequisite in remaining["x86_abi_prerequisites"]
+            )
+        )
+        self.assertFalse(
+            any(
+                prerequisite.startswith("Private targeted resource-limit-query")
                 for prerequisite in remaining["x86_abi_prerequisites"]
             )
         )

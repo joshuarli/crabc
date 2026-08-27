@@ -51,8 +51,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # remain deferred. It also owns read-only identity/session and
 # supplementary-group query/fill plus proved calling-task filesystem-credential
 # query/current-effective-ID requests, calling-process resource-limit
-# query/mutation, typed resource usage/process accounting, privately evidenced targeted
-# resource-limit, getpriority/scheduler-priority observations plus typed
+# query/mutation plus direct read-only targeted resource-limit query, typed
+# resource usage/process accounting, getpriority/scheduler-priority observations plus typed
 # scheduling-priority mutation, and record-lock observations, and the
 # explicitly proved process-global umask exchange
 # without admitting pathname creation,
