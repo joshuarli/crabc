@@ -462,6 +462,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-libc', time_reference)
         self.assertIn('x86_time_observation_reference_probe.c', time_observation_reference)
         self.assertIn('realtime observation reference', time_observation_reference)
+        self.assertIn('c-time=whole-second', time_observation_reference)
         self.assertNotIn('-p crabc-libc', time_observation_reference)
         self.assertIn('x86_relative_sleep_reference_probe.c', relative_sleep_reference)
         self.assertIn('relative-sleep reference', relative_sleep_reference)

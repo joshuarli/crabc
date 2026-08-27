@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 pinned-musl realtime observation reference.
+# Native Linux/x86-64 pinned-musl realtime observation reference, including C time.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,7 +24,7 @@ probe="$work_dir/x86-time-observation-reference"
 
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_time_observation_reference_probe.c" -o "$probe"
-expected='realtime=normalized milliseconds=truncated process-cpu=nondecreasing'
+expected='realtime=normalized milliseconds=truncated c-time=whole-second process-cpu=nondecreasing'
 actual="$("$probe")"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 time observation output mismatch\nexpected: %s\nactual: %s\n' \

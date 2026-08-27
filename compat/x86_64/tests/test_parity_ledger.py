@@ -94,6 +94,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.readiness",
             "io.readiness-epoll",
             "memory.vm",
+            "time.wall-clock",
             "time.clock-query",
             "time.clock-sleep",
             "time.process-interval-control",

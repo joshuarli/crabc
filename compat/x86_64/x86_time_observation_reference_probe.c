@@ -19,6 +19,11 @@ int main(void)
     struct timespec before;
     struct timespec observed;
     struct timespec after;
+    struct timespec time_before;
+    struct timespec time_after;
+    time_t stored;
+    time_t returned;
+    time_t observed_time;
     struct timespec cpu_before;
     struct timespec cpu_after;
     volatile unsigned long long checksum = 0;
@@ -32,6 +37,28 @@ int main(void)
         observed.tv_nsec / 1000000L < 0 || observed.tv_nsec / 1000000L >= 1000)
         return 2;
 
+    if (clock_gettime(CLOCK_REALTIME, &time_before) != 0)
+        return 6;
+    returned = time(&stored);
+    observed_time = time(NULL);
+    if (clock_gettime(CLOCK_REALTIME, &time_after) != 0)
+        return 7;
+    if (returned == (time_t)-1 || observed_time == (time_t)-1 ||
+        returned != stored)
+        return 8;
+    if (time_before.tv_sec <= time_after.tv_sec) {
+        if (returned < time_before.tv_sec - 1 ||
+            returned > time_after.tv_sec + 1 ||
+            observed_time < time_before.tv_sec - 1 ||
+            observed_time > time_after.tv_sec + 1)
+            return 9;
+    } else if (returned < time_after.tv_sec - 1 ||
+               returned > time_before.tv_sec + 1 ||
+               observed_time < time_after.tv_sec - 1 ||
+               observed_time > time_before.tv_sec + 1) {
+        return 9;
+    }
+
     if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu_before) != 0)
         return 3;
     for (unsigned long long value = 0; value < 500000ULL; ++value)
@@ -44,6 +71,6 @@ int main(void)
         checksum == 0)
         return 5;
 
-    puts("realtime=normalized milliseconds=truncated process-cpu=nondecreasing");
+    puts("realtime=normalized milliseconds=truncated c-time=whole-second process-cpu=nondecreasing");
     return 0;
 }

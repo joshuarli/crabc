@@ -1,15 +1,17 @@
-//! Bounded native Linux/x86-64 clock queries, relative `nanosleep`, private
-//! `clock_nanosleep`, interval-timer control and queries, and timerfds.
+//! Bounded native Linux/x86-64 clock queries and whole-second `time`,
+//! relative `nanosleep`, private `clock_nanosleep`, interval-timer control
+//! and queries, and timerfds.
 //!
 //! This staged facade admits only validated realtime, monotonic,
-//! monotonic-raw, and process-CPU observations, typed realtime milliseconds,
-//! typed relative sleep and private clock-sleep outcomes. Interrupted sleeps
-//! preserve the kernel's remainder instead of retrying or hiding `EINTR`. It
-//! intentionally does not expose AArch64 calendar, POSIX-timer, timezone, or
-//! clock-mutation APIs, nor a C sleep ABI, until their x86-64 records and
-//! behavior have independent evidence. The interval-timer and timerfd slices
-//! are direct kernel boundaries; neither selects a C time API or promotes
-//! x86-64 platform support.
+//! monotonic-raw, and process-CPU observations, typed whole-second and
+//! millisecond realtime observations, typed relative sleep and private
+//! clock-sleep outcomes. Interrupted sleeps preserve the kernel's remainder
+//! instead of retrying or hiding `EINTR`. It intentionally does not expose
+//! AArch64 calendar, POSIX-timer, timezone, or clock-mutation APIs, nor a C
+//! sleep ABI, until their x86-64 records and behavior have independent
+//! evidence. The interval-timer and timerfd slices are direct kernel
+//! boundaries; neither selects a C time API or promotes x86-64 platform
+//! support.
 
 use core::convert::TryFrom;
 use core::mem::MaybeUninit;
@@ -304,6 +306,14 @@ pub fn clock_getres(clock: ClockId) -> Result<Timespec> {
 /// Reads the current UTC wall-clock value using the admitted realtime clock.
 pub fn timespec_get() -> Result<Timespec> {
     clock_gettime(ClockId::Realtime)
+}
+
+/// Reads the current UTC wall-clock second through the validated realtime
+/// clock query. Subsecond precision is intentionally discarded at this
+/// typed boundary; no C `time_t`/`tloc` ABI or thread-local `errno` is used.
+#[inline]
+pub fn time() -> Result<i64> {
+    Ok(clock_gettime(ClockId::Realtime)?.tv_sec)
 }
 
 /// Reads `CLOCK_REALTIME` and truncates its subsecond part to milliseconds.

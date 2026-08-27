@@ -188,10 +188,10 @@ realtime/monotonic/monotonic-raw/process-CPU clock IDs, and
 `clock_gettime`/`clock_getres` syscall values used by the bounded native Rust
 time facade. It does not compile a project C header or select a C ABI artifact.
 
-`time-observation-reference` executes pinned-musl x86 realtime and
-process-CPU observations used by typed `timespec_get`, `realtime_millis`, and
-`process_cpu_time` helpers. It does not compile a project C header or select a
-C ABI artifact.
+`time-observation-reference` executes pinned-musl x86 realtime, C
+`time(NULL)` whole-second, and process-CPU observations used by typed `time`,
+`timespec_get`, `realtime_millis`, and `process_cpu_time` helpers. It does not
+compile a project C header or select a C ABI artifact.
 
 `relative-sleep-reference` executes a pinned-musl x86 `nanosleep` probe for
 zero-duration completion, invalid-request `EINVAL`, and signal-interrupted

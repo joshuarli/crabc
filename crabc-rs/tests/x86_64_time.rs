@@ -48,6 +48,20 @@ fn x86_64_realtime_millis_truncates_a_normalized_realtime_observation() {
 }
 
 #[test]
+fn x86_64_time_returns_whole_seconds_within_surrounding_realtime_reads() {
+    let before = time::clock_gettime(ClockId::Realtime).expect("realtime before");
+    let observed = time::time().expect("whole-second realtime query");
+    let after = time::clock_gettime(ClockId::Realtime).expect("realtime after");
+
+    // Realtime may be adjusted between reads, so allow a coarse one-second
+    // window around either surrounding read while still proving that `time`
+    // observes the same clock. Taking min/max also tolerates a clock step.
+    let lower = before.tv_sec.min(after.tv_sec).saturating_sub(1);
+    let upper = before.tv_sec.max(after.tv_sec).saturating_add(1);
+    assert!((lower..=upper).contains(&observed));
+}
+
+#[test]
 fn x86_64_process_cpu_time_is_a_nonnegative_duration() {
     let before = time::process_cpu_time();
     let mut checksum = 0u64;
