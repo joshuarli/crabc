@@ -408,9 +408,10 @@ kernel-initialized `rusage` prefix (selected offsets zero, 16, 32, and 136),
 the public 272-byte musl record's reserved tail at offset 144,
 `getrusage=98`, selectors `0`/`-1`/`1`, direct selector observations with
 stable children-prefix equivalence, canonical values, and invalid-selector
-behavior. It is private evidence for one
-record-owning x86 vertical slice only; it does not select C `struct rusage`
-support or a general x86 facade.
+behavior. It admits typed read-only `process::getrusage` only: its Rust value
+copies the initialized kernel prefix and omits musl's uninitialized reserved
+tail. It does not select C `struct rusage` storage, raw record exposure,
+broader process-accounting policy, or a general x86 facade.
 
 `times-reference` executes a pinned-musl x86 read-only process-accounting
 lifecycle. It pins signed 64-bit `clock_t`, the 32-byte, align-8 `tms` record
@@ -591,8 +592,7 @@ accounting, read-only
 supplementary-group query/fill, private interval-timer query plus contained
 control,
 owned nonblocking pidfds, read-only `getpriority` plus child-contained typed
-scheduling-priority mutation, private read-only
-resource-usage observations,
+scheduling-priority mutation, typed read-only resource-usage observations,
 conflicting-lock `F_GETLK`
 records, and scheduler-priority bounds; the system and thread regressions prove
 the named bounded kernel observations. It verifies the

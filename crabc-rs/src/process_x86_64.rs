@@ -4,7 +4,8 @@
 //! caller-buffer current-working-directory observation, the kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
 //! query/fill protocol, pidfd creation, typed calling-process resource-limit
-//! query/mutation, typed read-only process accounting, resource-usage,
+//! query/mutation, typed read-only resource usage copied from Linux's
+//! initialized kernel prefix, typed read-only process accounting,
 //! scheduling-priority observations, bounds, and bounded target mutation, and
 //! the read-only typed
 //! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.

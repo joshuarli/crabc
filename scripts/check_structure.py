@@ -49,8 +49,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
 # remain deferred. It also owns read-only identity/session and
 # supplementary-group observations plus proved calling-process resource-limit
-# query/mutation and typed process accounting, privately evidenced targeted
-# resource-limit/resource-usage, getpriority/scheduler-priority observations plus typed
+# query/mutation, typed resource usage/process accounting, privately evidenced targeted
+# resource-limit, getpriority/scheduler-priority observations plus typed
 # scheduling-priority mutation, and record-lock observations, and the
 # explicitly proved process-global umask exchange
 # without admitting pathname creation,

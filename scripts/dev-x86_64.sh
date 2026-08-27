@@ -97,12 +97,13 @@ an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset, including borrowed-atomic futex wait/wake and the complete typed
 `seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family, typed
-calling-process `getrlimit`/`setrlimit`, typed read-only `times` accounting,
+calling-process `getrlimit`/`setrlimit`, typed read-only `getrusage`
+observations, typed read-only `times` accounting,
 and typed process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus privately evidenced packed-epoll, clock-nanosleep, read-only
-interval-timer query and contained interval-timer control, timerfd, pselect, resource-usage, and
+interval-timer query and contained interval-timer control, timerfd, pselect, and
 supplementary-group, private statat path-metadata, caller-buffer-only getcwd,
 caller-buffer-only readlinkat, and private CPU-affinity observation and bounded
 mutation slices; none makes the record-owning family selectable.
@@ -234,9 +235,11 @@ not select target-process mutation or a C process API.
 `umask-reference` proves only the typed x86 process-mask exchange: syscall 95,
 unsigned 32-bit `mode_t`, and child-contained raw/musl exchange/restoration.
 It does not select a C process API or pathname-creation support.
-`rusage-reference` proves only the x86 initialized `rusage` kernel prefix and
-focused read-only resource-usage observations; it does not select a C process
-API or the broader record-owning facade family.
+`rusage-reference` proves the direct typed read-only `process::getrusage`
+boundary: the x86 initialized `rusage` kernel prefix, closed selectors, and
+focused canonical observations. It copies only initialized fields into the
+typed Rust value and does not select C `struct rusage` storage, musl's
+uninitialized reserved tail, or broader process-accounting policy.
 `times-reference` proves the direct typed read-only `process::times` boundary:
 the x86 `tms` record, nonnegative process-accounting fields, and a separately
 preserved signed elapsed-tick return. It does not select a C `times`/`struct
