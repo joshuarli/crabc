@@ -6,8 +6,9 @@
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, file-access advice, file readahead,
 //! descriptor-based file-length mutation, file-position and synchronization
-//! operations, descriptor-associated filesystem synchronization, and
-//! direct anonymous memory-file creation with bounded sealing.
+//! operations, system-wide and descriptor-associated filesystem
+//! synchronization, and direct anonymous memory-file creation with bounded
+//! sealing.
 //! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
@@ -614,6 +615,20 @@ pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
 #[inline]
 pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
     crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
+}
+
+/// Requests system-wide filesystem synchronization through Linux `sync(2)`.
+///
+/// Unlike [`syncfs`], this operation is neither descriptor- nor
+/// filesystem-scoped: it includes dirty data reachable through other
+/// descriptors and filesystems in the calling system. Linux waits for
+/// kernel/filesystem writeback completion before returning, but that is not a
+/// promise that a device's volatile cache has reached nonvolatile media.
+/// Linux specifies this syscall as always successful, so the typed Rust
+/// operation returns `()` without libc or TLS `errno`.
+#[inline]
+pub fn sync() {
+    crabc_core::fs::sync();
 }
 
 /// Requests synchronization of the filesystem associated with `fd`

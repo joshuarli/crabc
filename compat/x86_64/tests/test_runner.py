@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -80,6 +80,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_ftruncate_reference.sh', source)
         self.assertIn('run_file_position_reference()', source)
         self.assertIn('compat/x86_64/run_x86_file_position_reference.sh', source)
+        self.assertIn('run_sync_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_sync_reference.sh', source)
+        self.assertIn('--test x86_64_sync -- --test-threads=1', source)
         self.assertIn('run_syncfs_reference()', source)
         self.assertIn('compat/x86_64/run_x86_syncfs_reference.sh', source)
         self.assertIn('--test x86_64_syncfs -- --test-threads=1', source)
@@ -197,6 +200,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_fs_advice', source)
         self.assertIn('--test x86_64_file_position', source)
+        self.assertIn('--test x86_64_sync', source)
         self.assertIn('--test x86_64_syncfs', source)
         self.assertIn('--test x86_64_sync_file_range', source)
         self.assertIn('--test x86_64_ftruncate', source)
@@ -320,6 +324,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         file_position = (
             ROOT / "compat" / "x86_64" / "run_x86_file_position_reference.sh"
         ).read_text(encoding="utf-8")
+        sync = (ROOT / "compat" / "x86_64" / "run_x86_sync_reference.sh").read_text(
+            encoding="utf-8"
+        )
         syncfs = (
             ROOT / "compat" / "x86_64" / "run_x86_syncfs_reference.sh"
         ).read_text(encoding="utf-8")
@@ -533,6 +540,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('SEEK_DATA/HOLE:ENXIO', file_position)
         self.assertIn('run_musl_oracle.sh', file_position)
         self.assertNotIn('-p crabc-libc', file_position)
+        self.assertIn('x86_sync_reference_probe.c', sync)
+        self.assertIn('global sync ABI reference', sync)
+        self.assertIn('run_musl_oracle.sh', sync)
+        self.assertIn('does not measure writeback timing', sync)
+        self.assertNotIn('-p crabc-libc', sync)
         self.assertIn('x86_syncfs_reference_probe.c', syncfs)
         self.assertIn('syncfs ABI/descriptor reference', syncfs)
         self.assertIn('closed-fd=EBADF', syncfs)
@@ -1301,6 +1313,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_fs_advice",
                     "--test",
                     "x86_64_file_position",
+                    "--test",
+                    "x86_64_sync",
                     "--test",
                     "x86_64_syncfs",
                     "--test",

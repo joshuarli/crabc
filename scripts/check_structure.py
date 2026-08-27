@@ -527,6 +527,39 @@ def check_x86_syncfs_boundary(errors: list[str]) -> None:
         )
 
 
+def check_x86_sync_boundary(errors: list[str]) -> None:
+    """Keep the admitted x86 global sync operation separate from syncfs."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub fn sync()",
+        "crabc_core::fs::sync();",
+        "Unlike [`syncfs`], this operation is neither descriptor- nor",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 sync slice is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    if "pub(crate) const SYS_SYNC: usize = 162" not in syscall_text:
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: admitted x86 sync ABI proof is "
+            "missing SYS_SYNC=162"
+        )
+
+    core_fs_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_fs_text = core_fs_source.read_text(errors="replace")
+    if "let _ = unsafe { syscall0(SYS_SYNC) };" not in core_fs_text:
+        errors.append(
+            "crabc-core/src/fs.rs: admitted x86 sync boundary must issue "
+            "SYS_SYNC through syscall0"
+        )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
 
@@ -734,6 +767,7 @@ def main() -> int:
     check_x86_fcntl_status_flags_boundary(errors)
     check_x86_sync_file_range_boundary(errors)
     check_x86_syncfs_boundary(errors)
+    check_x86_sync_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):
