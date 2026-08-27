@@ -142,6 +142,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_statat_reference.sh', source)
         self.assertIn('run_getcwd_reference()', source)
         self.assertIn('compat/x86_64/run_x86_getcwd_reference.sh', source)
+        self.assertIn(
+            '--no-default-features --features alloc --test x86_64_getcwd -- --test-threads=1',
+            source,
+        )
         self.assertIn('run_readlinkat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_readlinkat_reference.sh', source)
         self.assertIn('run_rr_interval_reference()', source)

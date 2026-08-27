@@ -134,6 +134,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.memory-file",
             "filesystem.seal-observation",
             "filesystem.seal-mutation",
+            "filesystem.cwd",
             "io.file-position",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
@@ -162,6 +163,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_fs_credentials.rs",
             "crabc-rs/tests/x86_64_getgroups.rs",
             "crabc-rs/tests/x86_64_getitimer.rs",
+            "crabc-rs/tests/x86_64_getcwd.rs",
             "crabc-rs/tests/x86_64_clock_nanosleep.rs",
             "crabc-rs/tests/x86_64_sched_rr_interval.rs",
             "crabc-rs/tests/x86_64_sched_affinity.rs",
@@ -187,6 +189,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_getgroups_reference_probe.c",
             "compat/x86_64/run_x86_getitimer_reference.sh",
             "compat/x86_64/x86_getitimer_reference_probe.c",
+            "compat/x86_64/run_x86_getcwd_reference.sh",
+            "compat/x86_64/x86_getcwd_reference_probe.c",
             "compat/x86_64/run_x86_clock_nanosleep_reference.sh",
             "compat/x86_64/x86_clock_nanosleep_reference_probe.c",
             "compat/x86_64/run_x86_sched_rr_interval_reference.sh",
@@ -231,6 +235,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("./scripts/dev-x86_64.sh getgroups-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh getitimer-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh getcwd-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh clock-nanosleep-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rr-interval-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sched-affinity-reference", direct_commands)
@@ -342,9 +347,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             remaining["source_owners"],
         )
         self.assertIn("compat/x86_64/x86_statat_reference_probe.c", remaining["source_owners"])
-        self.assertIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
-        self.assertIn("compat/x86_64/run_x86_getcwd_reference.sh", remaining["source_owners"])
-        self.assertIn("compat/x86_64/x86_getcwd_reference_probe.c", remaining["source_owners"])
+        self.assertNotIn("crabc-rs/tests/x86_64_getcwd.rs", remaining["source_owners"])
+        self.assertNotIn(
+            "compat/x86_64/run_x86_getcwd_reference.sh", remaining["source_owners"]
+        )
+        self.assertNotIn(
+            "compat/x86_64/x86_getcwd_reference_probe.c", remaining["source_owners"]
+        )
         self.assertIn("crabc-core/src/fs.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/src/fs_x86_64.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/tests/x86_64_readlink.rs", remaining["source_owners"])
@@ -387,20 +396,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             remaining["native_evidence"][4]["command"],
-            "./scripts/dev-x86_64.sh getcwd-reference",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][5]["command"],
             "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(
-            remaining["native_evidence"][6]["command"],
+            remaining["native_evidence"][5]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
-        self.assertNotIn("filesystem.cwd", direct["capabilities"])
-        self.assertIn("filesystem.cwd", remaining["capabilities"])
+        self.assertIn("filesystem.cwd", direct["capabilities"])
+        self.assertNotIn("filesystem.cwd", remaining["capabilities"])
         self.assertEqual(remaining["status"], "planned")
         self.assertIn("thread.scheduler-rr-interval", direct["capabilities"])
         self.assertNotIn("thread.scheduler-rr-interval", remaining["capabilities"])
@@ -475,6 +480,12 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct getcwd=79")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
         self.assertFalse(
             any(
                 prerequisite.startswith("Private CPU-affinity observation")
@@ -496,6 +507,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertFalse(
             any(
                 prerequisite.startswith("Private targeted resource-limit-query")
+                for prerequisite in remaining["x86_abi_prerequisites"]
+            )
+        )
+        self.assertFalse(
+            any(
+                prerequisite.startswith("Private getcwd slice")
                 for prerequisite in remaining["x86_abi_prerequisites"]
             )
         )

@@ -35,10 +35,10 @@ pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
 // (eventfd counters plus bounded poll/ppoll/pause and packed epoll lifecycle),
 // descriptor `fs::fstat`,
-// direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}`, plus the
-// private CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, strict
-// caller-buffer-only `process::getcwd`, and caller-buffer-only
-// `fs::readlinkat_raw` slices,
+// direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}`, plus private
+// CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, direct caller-buffer and
+// alloc-gated `process::getcwd` observations, and
+// caller-buffer-only `fs::readlinkat_raw` slices,
 // `fd`, `fenv`, `ffi`, `io`, `ioctl`, bounded `mm` mapping/remapping,
 // `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
 // and supplementary-group query/fill plus pidfd creation and resource-limit

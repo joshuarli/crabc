@@ -1,7 +1,8 @@
 //! Bounded Linux/x86-64 process operations and record-lock observations.
 //!
 //! This module intentionally admits only scalar identity queries, a
-//! caller-buffer current-working-directory observation, the kernel's
+//! caller-buffer and alloc-gated current-working-directory observations, the
+//! kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
 //! query/fill protocol, pidfd creation, typed calling-task filesystem
 //! credential query/current-effective-ID requests, typed calling-process
@@ -16,6 +17,10 @@
 
 use bitflags::bitflags;
 
+#[cfg(feature = "alloc")]
+use alloc::ffi::CString;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use crate::buffer::Buffer;
 pub use crate::fs::Mode;
 use crate::{AsFd, OwnedFd, Result};
@@ -421,6 +426,45 @@ pub fn getcwd<Buf: Buffer<u8>>(mut buffer: Buf) -> Result<Buf::Output> {
     let initialized = unsafe { crabc_core::process::getcwd_raw(pointer, length)? };
     // SAFETY: A successful getcwd initialized exactly the returned prefix.
     unsafe { Ok(buffer.assume_init(initialized)) }
+}
+
+/// Returns the current working directory as an owned NUL-terminated string.
+///
+/// The supplied vector is cleared and reused when possible. It is grown only
+/// after Linux reports [`crate::Errno::RANGE`], retaining the same bounded
+/// caller-buffered syscall contract as [`getcwd`].
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn getcwd_alloc<B: Into<Vec<u8>>>(reuse: B) -> Result<CString> {
+    let mut buffer = reuse.into();
+    buffer.clear();
+    buffer.reserve(crate::fs::SMALL_PATH_BUFFER_SIZE);
+
+    loop {
+        let capacity = buffer.capacity();
+        let spare = buffer.spare_capacity_mut();
+        let length = match unsafe {
+            crabc_core::process::getcwd_raw(spare.as_mut_ptr().cast(), spare.len())
+        } {
+            Ok(length) => length,
+            Err(crate::Errno::RANGE) => {
+                // Grow by at least one byte so a path exactly filling the
+                // previous capacity can make progress on the next syscall.
+                buffer.reserve(capacity.saturating_add(1));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+
+        // SAFETY: Linux's successful getcwd result is a pathname, which cannot
+        // contain an interior NUL; it includes one terminating NUL byte and
+        // reports its complete initialized length. The returned length is
+        // bounded by the spare capacity supplied above.
+        unsafe {
+            buffer.set_len(length);
+            return Ok(CString::from_vec_with_nul_unchecked(buffer));
+        }
+    }
 }
 
 /// A Linux nice value observed or supplied through the native priority facade.

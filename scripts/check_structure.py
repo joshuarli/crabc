@@ -46,9 +46,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # owns descriptor `fstat`, private CWD/statat path metadata,
 # caller-buffer-only readlinkat, plus file-access advice and readahead, and
 # direct bounded anonymous memory-file/seal operations.
-# `process_x86_64.rs` owns only the strict
-# caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
-# remain deferred. It also owns read-only identity/session and
+# `process_x86_64.rs` owns caller-buffer and alloc-gated `getcwd`
+# observations; CWD mutation remains deferred. It also owns read-only identity/session and
 # supplementary-group query/fill plus proved calling-task filesystem-credential
 # query/current-effective-ID requests, calling-process resource-limit
 # query/mutation plus direct read-only targeted resource-limit query, typed
@@ -260,16 +259,20 @@ def is_authorized_x86_branch(relative: Path, line: str) -> bool:
 
 
 def check_x86_getcwd_boundary(errors: list[str]) -> None:
-    """Keep the private x86 getcwd slice caller-buffer-only and read-only."""
+    """Keep the direct x86 getcwd slice alloc-gated and read-only."""
 
     process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
     text = process_source.read_text(errors="replace")
     if "pub fn getcwd<" not in text:
-        errors.append("crabc-rs/src/process_x86_64.rs: private x86 getcwd slice is missing")
-    for forbidden in ("getcwd_alloc", "pub fn chdir", "pub fn fchdir"):
+        errors.append("crabc-rs/src/process_x86_64.rs: direct x86 getcwd slice is missing")
+    if '#[cfg(feature = "alloc")]\n#[inline]\npub fn getcwd_alloc<' not in text:
+        errors.append(
+            "crabc-rs/src/process_x86_64.rs: direct x86 getcwd_alloc must remain alloc-gated"
+        )
+    for forbidden in ("pub fn chdir", "pub fn fchdir"):
         if forbidden in text:
             errors.append(
-                "crabc-rs/src/process_x86_64.rs: private x86 getcwd slice must defer "
+                "crabc-rs/src/process_x86_64.rs: direct x86 getcwd slice must defer "
                 f"{forbidden}"
             )
 

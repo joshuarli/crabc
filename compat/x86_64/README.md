@@ -449,14 +449,15 @@ not complete the broader filesystem path-core capability.
 `CWD`, with only `AT_SYMLINK_NOFOLLOW`. It does not expose `AT_EMPTY_PATH`,
 general pathname APIs, filesystem mutation, or promote `filesystem.path-metadata`.
 
-`getcwd-reference` executes the strict private x86 caller-buffer-only
-`getcwd(2)` slice. It checks the direct syscall's initialized,
-NUL-terminated prefix and undersized-buffer `ERANGE` behavior, including a
-zero-length buffer. The pinned-musl C wrapper instead returns `EINVAL` for its
-zero-size input; the direct Rust facade retains the raw kernel result rather
-than emulating that wrapper policy. There is no allocation helper or
-process-CWD mutation. `getcwd_alloc`, `chdir`, and `fchdir` remain explicitly
-deferred, as do general pathname APIs and public support for `filesystem.cwd`.
+`getcwd-reference` completes only x86 `filesystem.cwd`. Direct syscall 79 and
+pinned musl agree on the exact initialized NUL-terminated caller-buffer prefix
+and undersized-buffer `ERANGE` behavior. The pinned-musl C wrapper instead
+returns `EINVAL` for its zero-size input; the direct Rust facade retains the
+raw-kernel `ERANGE` rather than emulating that wrapper policy. The alloc-gated
+`process::getcwd_alloc` clears and reuses a caller vector, retries only
+`ERANGE`, and returns a `CString`; a native child regression puts its CWD
+beyond the initial small buffer. `chdir`, `fchdir`, C APIs, errno TLS, and
+general pathname APIs remain explicitly deferred.
 
 `readlinkat-reference` executes the private x86 caller-buffer-only
 `readlinkat(2)` slice. It records the initialized target prefix without adding
@@ -630,7 +631,8 @@ regression proves x86 descriptor-bit-vector helpers, empty/readable pipe
 readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves a
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
-metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
+metadata slice, caller-buffer and alloc-gated `getcwd` plus caller-buffer-only
+`readlinkat` output, plus
 `fadvise64`/`readahead` behavior and direct bounded anonymous memory-file
 creation plus seal observation/mutation. The
 process regressions prove typed PID/identity/session observations, typed
@@ -648,7 +650,7 @@ explicitly admitted Rust subset only; it does not make broader pselect/select
 semantics, epoll signal-mask variants or broader `io.readiness`, timerfd
 clock/policy variants beyond the named descriptor slice,
 signalfd, target resource-limit mutation, C `struct rusage` or `struct tms` support, broader
-filesystem path-core behavior, CWD mutation or allocation-backed path helpers,
+filesystem path-core behavior, CWD mutation or allocation-backed path-core helpers,
 global locking policy, wider mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.

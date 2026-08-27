@@ -73,7 +73,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   times-reference  verify pinned-musl x86 process-accounting ABI and behavior
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
   statat-reference  verify pinned-musl x86 private statat ABI and behavior reference
-  getcwd-reference  verify pinned-musl x86 private caller-buffer getcwd behavior reference
+  getcwd-reference  verify pinned-musl/raw x86 direct typed getcwd behavior
   readlinkat-reference  verify pinned-musl x86 private caller-buffer readlinkat behavior reference
   system-reference  verify pinned-musl x86 uname/sysinfo ABI and behavior reference
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
@@ -108,11 +108,11 @@ process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
 plus bounded typed clock-nanosleep with its relative-remainder and
-absolute-no-remainder modes, direct packed epoll lifecycle, and privately
-evidenced contained interval-timer control, timerfd, pselect,
-private statat path-metadata, caller-buffer-only getcwd, and
-caller-buffer-only readlinkat;
-none makes the record-owning family selectable.
+absolute-no-remainder modes, direct packed epoll lifecycle, and caller-buffer
+current-working-directory observation. The dedicated `getcwd-reference` gate
+also covers its alloc-gated retry; contained interval-timer control, timerfd,
+pselect, private statat path-metadata, and caller-buffer-only readlinkat
+remain privately evidenced. None makes the record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
@@ -197,9 +197,12 @@ broader record-owning facade family.
 `statat-reference` proves only the x86 `newfstatat` record with CWD and
 `AT_SYMLINK_NOFOLLOW`; it does not select `AT_EMPTY_PATH`, general path APIs,
 filesystem mutation, or promote the broader record-owning facade family.
-`getcwd-reference` proves only the private x86 caller-buffer-only `getcwd`
-contract; it does not select allocation helpers, `chdir`/`fchdir`, filesystem
-mutation, or promote the broader record-owning facade family.
+`getcwd-reference` proves the direct x86 typed `process::{getcwd,getcwd_alloc}`
+boundary: raw/pinned-musl `getcwd=79` prefix and `ERANGE` behavior, the
+intentional musl zero-size `EINVAL` versus raw-kernel `ERANGE` difference, and
+an alloc-gated native Rust long-current-directory retry that returns a
+`CString`. It excludes `chdir`/`fchdir`, filesystem mutation, general path
+APIs, C APIs, errno TLS, and the broader record-owning facade family.
 `readlinkat-reference` proves only the private x86 caller-buffer-only
 `readlinkat` target query: the caller owns writable storage, the result is a
 non-NUL-terminated initialized prefix, and a short output buffer succeeds with
@@ -601,6 +604,8 @@ run_statat_reference() {
 
 run_getcwd_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_getcwd_reference.sh
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --features alloc --test x86_64_getcwd -- --test-threads=1
 }
 
 run_readlinkat_reference() {
