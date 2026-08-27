@@ -52,9 +52,9 @@ pub mod collections;
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and
 // stays absent until its record family has its own x86 proof; admission must
-// not silently make an AArch64 layout usable on x86-64. The credential
-// setters retain direct Linux calling-task scope; they are not musl-style
-// process-wide credential transitions.
+// not silently make an AArch64 layout usable on x86-64. The direct credential
+// setters retain Linux calling-task scope; they are not musl-style process-wide
+// credential transitions.
 mod eventfd;
 #[cfg(target_arch = "aarch64")]
 pub mod event;

@@ -67,6 +67,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
 ./scripts/dev-x86_64.sh thread-credentials-reference
+./scripts/dev-x86_64.sh fs-credentials-reference
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
@@ -467,6 +468,14 @@ exposes the direct calling-task kernel operation, not musl's process-wide
 synchronized credential transition; it establishes neither C credential APIs
 nor broader process/thread support.
 
+`fs-credentials-reference` records x86 `setfsuid=122` and `setfsgid=123`,
+their unsigned 32-bit identity words, all-ones query behavior, and prior-ID
+returns. Its short-lived child compares pinned-musl and raw query/current-
+effective-ID requests. The typed unsafe `process::{set_fs_uid, set_fs_gid}`
+boundary reserves all-ones for `None`, rejects explicit typed all-ones IDs with
+`EINVAL`, and does not claim that a requested change can report permission
+denial, synchronize credentials process-wide, or establish C credential APIs.
+
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent
 capability/gate families separately from these foundation measurements.
@@ -555,7 +564,7 @@ selected `crabc-libc` artifact.
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
-`x86_64_process_session`, `x86_64_setpriority`,
+`x86_64_process_session`, `x86_64_setpriority`, `x86_64_fs_credentials`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`, `x86_64_setrlimit`, `x86_64_umask`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
 `x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_readlink`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,

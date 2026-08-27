@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-private|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-private|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -155,6 +155,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             'compat/x86_64/run_x86_thread_credentials_reference.sh',
             source,
         )
+        self.assertIn('run_fs_credentials_reference()', source)
+        self.assertIn(
+            'compat/x86_64/run_x86_fs_credentials_reference.sh',
+            source,
+        )
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -171,6 +176,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_fs_advice', source)
         self.assertIn('--test x86_64_file_position', source)
         self.assertIn('--test x86_64_ftruncate', source)
+        self.assertIn('--test x86_64_fs_credentials', source)
         self.assertIn('--test x86_64_memfd', source)
         self.assertIn('--test x86_64_getgroups', source)
         self.assertIn('--test x86_64_getitimer', source)
@@ -881,6 +887,46 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("RestoreUmask", umask_test)
         self.assertIn("process::umask", umask_test)
 
+    def test_x86_fs_credentials_are_typed_and_child_contained(self) -> None:
+        process = (ROOT / "crabc-rs" / "src" / "process_x86_64.rs").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "x86_fs_credentials_reference_probe.c"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_x86_fs_credentials_reference.sh"
+        ).read_text(encoding="utf-8")
+        test = (ROOT / "crabc-rs" / "tests" / "x86_64_fs_credentials.rs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("pub unsafe fn set_fs_uid", process)
+        self.assertIn("pub unsafe fn set_fs_gid", process)
+        self.assertIn("setfsuid_raw(uid).map(Uid::from_raw)", process)
+        self.assertIn("setfsgid_raw(gid).map(Gid::from_raw)", process)
+        self.assertGreaterEqual(process.count("== u32::MAX => return Err(crate::Errno::INVAL)"), 2)
+        self.assertIn("previous value even when the requested change is denied", process)
+        self.assertIn("calling-task operation, not musl's synchronized", process)
+
+        self.assertIn("SYS_setfsuid == 122", probe)
+        self.assertIn("SYS_setfsgid == 123", probe)
+        self.assertIn("raw_fsuid_query", probe)
+        self.assertIn("raw_fsgid_query", probe)
+        self.assertIn("setfsuid(effective_uid)", probe)
+        self.assertIn("setfsgid(effective_gid)", probe)
+        self.assertIn("run_in_child", probe)
+        self.assertIn("child-contained", probe)
+
+        self.assertIn("run_musl_oracle.sh", runner)
+        self.assertIn("/usr/local/bin/crabc-x86_64-musl-gcc", runner)
+        self.assertNotIn("-p crabc-libc", runner)
+
+        self.assertIn("#[ignore", test)
+        self.assertIn('"--ignored"', test)
+        self.assertIn("x86_64_fs_credentials_child_queries_and_requests_current_identity", test)
+        self.assertIn("Err(Errno::INVAL)", test)
+
     def test_libc_fenv_probe_is_a_fixed_source_only_x87_mxcsr_boundary(self) -> None:
         rust_probe = (ROOT / "compat" / "x86_64" / "libc_fenv_probe.rs").read_text(
             encoding="utf-8"
@@ -1191,6 +1237,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_file_position",
                     "--test",
                     "x86_64_ftruncate",
+                    "--test",
+                    "x86_64_fs_credentials",
                     "--test",
                     "x86_64_getgroups",
                     "--test",

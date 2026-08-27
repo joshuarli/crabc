@@ -3,8 +3,9 @@
 //! This module intentionally admits only scalar identity queries, a
 //! caller-buffer current-working-directory observation, the kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
-//! query/fill protocol, pidfd creation, typed calling-process resource-limit
-//! query/mutation, typed read-only resource usage copied from Linux's
+//! query/fill protocol, pidfd creation, typed calling-task filesystem
+//! credential query/current-effective-ID requests, typed calling-process
+//! resource-limit query/mutation, typed read-only resource usage copied from Linux's
 //! initialized kernel prefix, typed read-only process accounting,
 //! scheduling-priority observations, bounds, and bounded target mutation, and
 //! the read-only typed
@@ -967,6 +968,64 @@ pub fn getgid() -> Gid {
 #[must_use]
 pub fn getegid() -> Gid {
     Gid::from_raw(crabc_core::process::getegid())
+}
+
+/// Sets or queries the calling task's Linux filesystem user ID.
+///
+/// `None` maps to Linux's all-ones query word and therefore leaves the
+/// filesystem credential unchanged while returning its previous value.
+/// `Some` requests a filesystem-UID change and returns the previous value.
+/// Linux returns the previous value even when the requested change is denied,
+/// so an unsuccessful request is not distinguishable through an errno; the
+/// returned [`Result`] only represents a negative syscall return. This is a
+/// Linux calling-task operation, not musl's synchronized process credential
+/// API.
+///
+/// # Safety
+///
+/// Changing the filesystem UID changes permission checks for filesystem
+/// operations performed by this task. The caller must ensure that this
+/// authority transition is intentional, coordinate concurrent code which may
+/// access filesystem objects, and not assume that other threads are changed.
+#[inline]
+pub unsafe fn set_fs_uid(uid: Option<Uid>) -> Result<Uid> {
+    let uid = match uid {
+        Some(uid) if uid.as_raw() == u32::MAX => return Err(crate::Errno::INVAL),
+        Some(uid) => uid.as_raw(),
+        None => u32::MAX,
+    };
+    // The caller owns the authority transition described above; the core seam
+    // receives only an immediate, validated Linux uid_t word.
+    crabc_core::process::setfsuid_raw(uid).map(Uid::from_raw)
+}
+
+/// Sets or queries the calling task's Linux filesystem group ID.
+///
+/// `None` maps to Linux's all-ones query word and therefore leaves the
+/// filesystem credential unchanged while returning its previous value.
+/// `Some` requests a filesystem-GID change and returns the previous value.
+/// Linux returns the previous value even when the requested change is denied,
+/// so an unsuccessful request is not distinguishable through an errno; the
+/// returned [`Result`] only represents a negative syscall return. This is a
+/// Linux calling-task operation, not musl's synchronized process credential
+/// API.
+///
+/// # Safety
+///
+/// Changing the filesystem GID changes permission checks for filesystem
+/// operations performed by this task. The caller must ensure that this
+/// authority transition is intentional, coordinate concurrent code which may
+/// access filesystem objects, and not assume that other threads are changed.
+#[inline]
+pub unsafe fn set_fs_gid(gid: Option<Gid>) -> Result<Gid> {
+    let gid = match gid {
+        Some(gid) if gid.as_raw() == u32::MAX => return Err(crate::Errno::INVAL),
+        Some(gid) => gid.as_raw(),
+        None => u32::MAX,
+    };
+    // The caller owns the authority transition described above; the core seam
+    // receives only an immediate, validated Linux gid_t word.
+    crabc_core::process::setfsgid_raw(gid).map(Gid::from_raw)
 }
 
 /// Reads the calling process's real, effective, and saved user IDs.

@@ -105,6 +105,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.identity-triples",
             "process.identity",
             "process.session-observation",
+            "process.fs-credentials",
             "process.pidfd-open",
             "process.resource-limits",
             "process.resource-usage",
@@ -144,6 +145,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
+            "crabc-rs/tests/x86_64_fs_credentials.rs",
             "crabc-rs/tests/x86_64_setpriority.rs",
             "crabc-rs/tests/x86_64_rlimit.rs",
             "crabc-rs/tests/x86_64_setrlimit.rs",
@@ -154,6 +156,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_file_position_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
             "compat/x86_64/x86_thread_credentials_reference_probe.c",
+            "compat/x86_64/run_x86_fs_credentials_reference.sh",
+            "compat/x86_64/x86_fs_credentials_reference_probe.c",
             "compat/x86_64/run_x86_setpriority_reference.sh",
             "compat/x86_64/x86_setpriority_reference_probe.c",
             "compat/x86_64/run_x86_rlimit_reference.sh",
@@ -181,6 +185,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh thread-credentials-reference",
             direct_commands,
         )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh fs-credentials-reference",
+            direct_commands,
+        )
         self.assertIn("./scripts/dev-x86_64.sh setpriority-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rusage-reference", direct_commands)
@@ -190,6 +198,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             all(evidence["state"] == "required" for evidence in remaining["native_evidence"])
         )
+        self.assertNotIn("process.fs-credentials", remaining["capabilities"])
         for capability in (
             "io.readiness",
             "io.readiness-epoll",
