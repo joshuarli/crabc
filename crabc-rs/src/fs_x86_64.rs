@@ -1,17 +1,130 @@
 //! Deliberately narrow Linux/x86-64 filesystem metadata operations.
 //!
-//! This module admits descriptor-based `fstat(2)`, file-access advice, and
+//! This module admits descriptor-based `fstat(2)`, a deliberately narrow
+//! query-only `statat(2)` path-metadata boundary, file-access advice, and
 //! file readahead.  The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
-//! has a distinct 144-byte layout.  Path metadata, `statx`, filesystem
-//! statistics, and mutating filesystem operations remain outside this staged
-//! target boundary until they have their own x86-64 evidence.
+//! has a distinct 144-byte layout.  This private slice admits only `CWD` and
+//! `AT_SYMLINK_NOFOLLOW`; `AT_EMPTY_PATH`, a general path module, `statx`,
+//! filesystem statistics, and mutating filesystem operations remain outside
+//! this staged target boundary until they have their own x86-64 evidence.
 
+use bitflags::bitflags;
+use core::ffi::CStr;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
 
-use crate::{AsFd, Result};
+use crate::{AsFd, BorrowedFd, Errno, Result};
+
+/// The largest byte pathname accepted by the fixed-stack [`PathArg`] boundary.
+///
+/// One byte is reserved for the terminating NUL. This private x86-64 metadata
+/// slice deliberately does not allocate for longer paths; callers receive
+/// [`Errno::NAMETOOLONG`] before a syscall instead.
+pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
+
+/// A pathname input accepted by [`statat`] and [`stat`].
+///
+/// Implementations borrow an existing C string or form one in a fixed stack
+/// buffer. The callback is invoked while that C string remains live, so the
+/// safe facade never exposes a temporary raw pathname pointer. Byte-oriented
+/// inputs reject interior NULs with [`Errno::INVAL`] and need not be UTF-8.
+pub trait PathArg {
+    /// Runs `callback` with a NUL-terminated representation of this path.
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>;
+}
+
+#[inline]
+fn with_path_bytes<T, F>(bytes: &[u8], callback: F) -> Result<T>
+where
+    F: FnOnce(&CStr) -> Result<T>,
+{
+    if bytes.iter().any(|&byte| byte == 0) {
+        return Err(Errno::INVAL);
+    }
+    if bytes.len() >= SMALL_PATH_BUFFER_SIZE {
+        return Err(Errno::NAMETOOLONG);
+    }
+
+    let mut storage = [0_u8; SMALL_PATH_BUFFER_SIZE];
+    storage[..bytes.len()].copy_from_slice(bytes);
+    // SAFETY: `bytes` has no NUL and is shorter than the buffer, while the
+    // zero-initialized next byte is its sole terminating NUL.
+    let path = unsafe { CStr::from_bytes_with_nul_unchecked(&storage[..=bytes.len()]) };
+    callback(path)
+}
+
+impl PathArg for &CStr {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self)
+    }
+}
+
+impl PathArg for &[u8] {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self, callback)
+    }
+}
+
+impl<const LENGTH: usize> PathArg for &[u8; LENGTH] {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self, callback)
+    }
+}
+
+impl PathArg for &str {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+/// `AT_FDCWD`, the directory token representing the current working directory.
+///
+/// This is a reserved Linux token rather than an owned descriptor. It is
+/// accepted only as the directory argument to [`statat`] in this private
+/// x86-64 path-metadata slice and can never become an owned descriptor.
+pub const CWD: BorrowedFd<'static> =
+    // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
+    // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
+    unsafe { BorrowedFd::borrow_raw(crabc_core::AT_FDCWD) };
+
+bitflags! {
+    /// The closed `fstatat(2)` flag vocabulary admitted by [`statat`].
+    ///
+    /// `SYMLINK_NOFOLLOW` observes a final symlink rather than its target.
+    /// `AT_EMPTY_PATH`, `AT_NO_AUTOMOUNT`, and all unknown bits remain outside
+    /// this private foundation and return [`Errno::INVAL`] before a syscall.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct AtFlags: u32 {
+        /// `AT_SYMLINK_NOFOLLOW`.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
 
 /// The six POSIX filesystem access-pattern policies accepted by Linux
 /// `fadvise64`.
@@ -114,6 +227,46 @@ pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
     unsafe { crabc_core::fs::fstat_raw(fd.as_raw_fd(), stat.as_mut_ptr().cast())? };
     // SAFETY: A successful `fstat` initialized the complete output record.
     Ok(unsafe { stat.assume_init() })
+}
+
+/// Queries x86-64 Linux metadata for `path` relative to `dirfd`.
+///
+/// This is a private, query-only `fstatat(2)` foundation. The returned
+/// [`Stat`] is exactly the 144-byte Linux/x86-64 kernel layout. `dirfd` is
+/// borrowed for the direct syscall, while [`PathArg`] keeps any temporary
+/// pathname storage alive until Linux has consumed it. Only
+/// [`AtFlags::SYMLINK_NOFOLLOW`] is accepted; unknown bits, `AT_EMPTY_PATH`,
+/// and mutating path operations are intentionally not part of this boundary.
+#[inline]
+#[doc(alias = "fstatat")]
+pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<Stat> {
+    let flags = AtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        let mut stat = MaybeUninit::<Stat>::uninit();
+        // SAFETY: `PathArg` supplies a live C string and `Stat` is the complete
+        // x86-64 output layout. The kernel initializes it only on success.
+        unsafe {
+            crabc_core::fs::statat(
+                dirfd.as_raw_fd(),
+                path,
+                stat.as_mut_ptr().cast(),
+                flags.bits(),
+            )?;
+        }
+        // SAFETY: successful `newfstatat` initialized the complete record.
+        Ok(unsafe { stat.assume_init() })
+    })
+}
+
+/// Queries x86-64 Linux metadata for `path` relative to the current directory.
+///
+/// This is [`statat`] with [`CWD`] and no flags. It remains a private,
+/// query-only metadata operation; it does not establish a general x86-64 path
+/// API or filesystem mutation boundary.
+#[inline]
+pub fn stat<P: PathArg>(path: P) -> Result<Stat> {
+    statat(CWD, path, AtFlags::empty())
 }
 
 /// Gives Linux a POSIX filesystem access-pattern advisory through the native

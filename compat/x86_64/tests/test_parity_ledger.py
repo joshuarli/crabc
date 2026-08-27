@@ -159,6 +159,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn(
             "compat/x86_64/x86_getitimer_reference_probe.c", remaining["source_owners"]
         )
+        self.assertIn("compat/x86_64/x86_statat_reference_probe.c", remaining["source_owners"])
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh epoll-reference",
@@ -199,6 +200,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh getitimer-reference",
         )
         self.assertEqual(remaining["native_evidence"][7]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][8]["command"],
+            "./scripts/dev-x86_64.sh statat-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][8]["state"], "required")
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])

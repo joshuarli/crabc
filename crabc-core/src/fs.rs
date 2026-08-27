@@ -505,14 +505,14 @@ pub fn statfs(path: &CStr, buffer: *mut u8) -> Result<()> {
     unsafe { statfs_raw(path.as_ptr().cast(), buffer) }
 }
 
-/// Queries the Linux/AArch64 `struct stat` representation for a C path
-/// relative to `dirfd`.
+/// Queries the target Linux `struct stat` representation for a C path relative
+/// to `dirfd`.
 ///
 /// # Safety
 ///
 /// `path` must point to a readable NUL-terminated pathname and `buffer`
-/// must designate writable storage for the complete target
-/// Linux/AArch64 `struct stat` layout.
+/// must designate writable storage for the complete target Linux `struct stat`
+/// layout. The target-specific native facade owns that output-layout contract.
 #[inline]
 pub unsafe fn statat_raw(
     dirfd: RawFd,
@@ -539,8 +539,9 @@ pub unsafe fn statat_raw(
 ///
 /// # Safety
 ///
-/// `buffer` must designate writable storage for the complete target
-/// Linux/AArch64 `struct stat` layout.
+/// `buffer` must designate writable storage for the complete target Linux
+/// `struct stat` layout. The target-specific native facade owns that
+/// output-layout contract.
 #[inline]
 pub unsafe fn statat(dirfd: RawFd, path: &CStr, buffer: *mut u8, flags: u32) -> Result<()> {
     // SAFETY: `CStr` establishes the pathname contract; the caller

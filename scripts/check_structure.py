@@ -42,7 +42,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter, exact `pollfd` record seam,
 # and privately evidenced packed `epoll_event` and pselect descriptor-bit-vector
-# seams which remain under the planned record-owning family, `fs_x86_64.rs` owns descriptor `fstat` plus file-access advice
+# seams which remain under the planned record-owning family, `fs_x86_64.rs` owns descriptor `fstat`, private CWD/statat path metadata, plus file-access advice
 # and readahead, `process_x86_64.rs` owns read-only identity/session and
 # supplementary-group observations plus privately evidenced resource-limit/
 # resource-usage/process-accounting, getpriority/scheduler-priority, and
