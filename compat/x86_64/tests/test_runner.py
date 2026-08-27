@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -120,6 +120,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_priority_reference.sh', source)
         self.assertIn('run_rlimit_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rlimit_reference.sh', source)
+        self.assertIn('run_umask_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_umask_reference.sh', source)
         self.assertIn('run_rusage_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rusage_reference.sh', source)
         self.assertIn('run_times_reference()', source)
@@ -178,6 +180,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_pidfd_open', source)
         self.assertIn('--test x86_64_rand', source)
         self.assertIn('--test x86_64_rlimit', source)
+        self.assertIn('--test x86_64_umask', source)
         self.assertIn('--test x86_64_rusage', source)
         self.assertIn('--test x86_64_times', source)
         self.assertIn('--test x86_64_scheduler_priority_bounds', source)
@@ -209,6 +212,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/compat/x86_64/run_libc_setjmp.sh', source)
         self.assertIn('run_libc_atomic_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_atomic.sh', source)
+        self.assertIn('run_libc_clone_raw_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_clone_raw.sh', source)
+        self.assertIn('run_libc_signal_foundation_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_signal_foundation.sh', source)
         self.assertIn('run_ldso_relocation_tests()', source)
         self.assertIn('ldso/src/x86_64_relocation.rs', source)
         self.assertIn('rustup run nightly-2026-07-24 rustc --edition=2021 --test', source)
@@ -725,6 +732,56 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('-p crabc-libc', script)
         self.assertNotIn('crabc_libc', rust_probe)
 
+    def test_clone_signal_and_umask_slices_remain_private_or_typed(self) -> None:
+        clone = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clone.rs").read_text(
+            encoding="utf-8"
+        )
+        clone_probe = (ROOT / "compat" / "x86_64" / "libc_clone_raw_probe.c").read_text(
+            encoding="utf-8"
+        )
+        clone_runner = (ROOT / "compat" / "x86_64" / "run_libc_clone_raw.sh").read_text(
+            encoding="utf-8"
+        )
+        signal = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_foundation.rs"
+        ).read_text(encoding="utf-8")
+        signal_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_signal_foundation.sh"
+        ).read_text(encoding="utf-8")
+        umask_probe = (
+            ROOT / "compat" / "x86_64" / "x86_umask_reference_probe.c"
+        ).read_text(encoding="utf-8")
+        umask_runner = (
+            ROOT / "compat" / "x86_64" / "run_x86_umask_reference.sh"
+        ).read_text(encoding="utf-8")
+        umask_test = (ROOT / "crabc-rs" / "tests" / "x86_64_umask.rs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("src/thread/x86_64/clone.s", clone)
+        self.assertIn("__crabc_x86_clone_raw", clone)
+        self.assertNotIn('fn clone(', clone)
+        self.assertIn("CRABC_CLONE_ORACLE", clone_probe)
+        self.assertIn("SIGCHLD", clone_probe)
+        self.assertIn("run_musl_oracle.sh", clone_runner)
+        self.assertIn(".note.GNU-stack", clone_runner)
+        self.assertNotIn("-p crabc-libc", clone_runner)
+
+        self.assertIn("src/signal/sigaction.c", signal)
+        self.assertIn("SA_RESTORER", signal)
+        self.assertIn("crabc_x86_64_signal_restorer", signal)
+        self.assertIn("read_unaligned", signal)
+        self.assertIn("flags as i64 as u64", signal)
+        self.assertIn("run_signal_header_abi.sh", signal_runner)
+        self.assertIn("run_musl_oracle.sh", signal_runner)
+        self.assertNotIn("-p crabc-libc", signal_runner)
+
+        self.assertIn("SYS_umask == 95", umask_probe)
+        self.assertIn("run_in_child", umask_probe)
+        self.assertIn("run_musl_oracle.sh", umask_runner)
+        self.assertIn("RestoreUmask", umask_test)
+        self.assertIn("process::umask", umask_test)
+
     def test_libc_fenv_probe_is_a_fixed_source_only_x87_mxcsr_boundary(self) -> None:
         rust_probe = (ROOT / "compat" / "x86_64" / "libc_fenv_probe.rs").read_text(
             encoding="utf-8"
@@ -1067,6 +1124,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_rand",
                     "--test",
                     "x86_64_rlimit",
+                    "--test",
+                    "x86_64_umask",
                     "--test",
                     "x86_64_rusage",
                     "--test",

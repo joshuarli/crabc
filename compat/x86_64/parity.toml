@@ -98,7 +98,7 @@ id = "facade.direct"
 order = 20
 depends_on = ["oracle.musl-toolchain", "core.architecture"]
 category = "rust-facade"
-description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, getpriority and scheduler-priority bounds, fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield plus direct calling-thread setresuid/setresgid and borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus typed fadvise64/readahead whose broader filesystem.path-core capability remains planned, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation and typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary. The separately evidenced private clock_nanosleep slice remains under facade.record-owning."
+description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, the typed process-global umask exchange, getpriority and scheduler-priority bounds, fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield plus direct calling-thread setresuid/setresgid and borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus typed fadvise64/readahead whose broader filesystem.path-core capability remains planned, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation and typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary. The separately evidenced private clock_nanosleep slice remains under facade.record-owning."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -137,6 +137,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_priority.rs",
   "crabc-rs/tests/x86_64_process_identity.rs",
   "crabc-rs/tests/x86_64_process_session.rs",
+  "crabc-rs/tests/x86_64_umask.rs",
   "crabc-rs/tests/x86_64_rand.rs",
   "crabc-rs/tests/x86_64_scheduler_priority_bounds.rs",
   "crabc-rs/tests/x86_64_sleep.rs",
@@ -159,6 +160,7 @@ source_owners = [
   "compat/x86_64/run_x86_ppoll_reference.sh",
   "compat/x86_64/run_x86_process_identity_reference.sh",
   "compat/x86_64/run_x86_process_session_reference.sh",
+  "compat/x86_64/run_x86_umask_reference.sh",
   "compat/x86_64/run_x86_rand_reference.sh",
   "compat/x86_64/run_x86_relative_sleep_reference.sh",
   "compat/x86_64/run_x86_priority_reference.sh",
@@ -183,6 +185,7 @@ source_owners = [
   "compat/x86_64/x86_ppoll_reference_probe.c",
   "compat/x86_64/x86_process_identity_reference_probe.c",
   "compat/x86_64/x86_process_session_reference_probe.c",
+  "compat/x86_64/x86_umask_reference_probe.c",
   "compat/x86_64/x86_rand_reference_probe.c",
   "compat/x86_64/x86_relative_sleep_reference_probe.c",
   "compat/x86_64/x86_priority_reference_probe.c",
@@ -193,10 +196,10 @@ source_owners = [
   "compat/x86_64/x86_time_reference_probe.c",
   "compat/x86_64/x86_time_observation_reference_probe.c",
 ]
-x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 SCHED_OTHER/FIFO/RR scalar values plus sched_get_priority_max/min syscall values", "x86 PRIO_PROCESS/PGRP/USER plus SYS_getpriority=140 and its [1, 40] success encoding", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 setresuid=117/setresgid=119 through x86 syscall3 rdi/rsi/rdx, unsigned 32-bit uid_t/gid_t, and all-ones no-change words", "x86 futex=202 six-word syscall placement, four-byte AtomicU32 alignment/lifetime, and optional 16-byte align-8 timeout timespec", "x86 144-byte fstat record", "x86 fadvise64=221/readahead=187, POSIX_FADV values, signed loff_t, and size_t", "x86 lseek=8, fsync=74, fdatasync=75, ftruncate=77, signed 64-bit off_t/loff_t, SEEK_SET/CUR/END/DATA/HOLE, direct oversized unsigned-offset conversion with SEEK_SET EINVAL and SEEK_DATA/HOLE ENXIO, and private-memfd position/sync lifecycle", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 msync/mincore/madvise syscall values, MS/MADV values, and 4096-byte residency-vector page unit", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec", "Private clock_nanosleep slice: syscall 230 through x86 syscall4's r10 fourth-argument placement, 16-byte align-8 timespec, relative EINTR initialized remainder, and TIMER_ABSTIME=1 with null absolute remainder; pinned musl returns direct positive errors while the raw syscall uses -1 plus errno"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 umask=95, unsigned 32-bit mode_t, exact prior-mask return, and child-contained process-global exchange", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 SCHED_OTHER/FIFO/RR scalar values plus sched_get_priority_max/min syscall values", "x86 PRIO_PROCESS/PGRP/USER plus SYS_getpriority=140 and its [1, 40] success encoding", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 setresuid=117/setresgid=119 through x86 syscall3 rdi/rsi/rdx, unsigned 32-bit uid_t/gid_t, and all-ones no-change words", "x86 futex=202 six-word syscall placement, four-byte AtomicU32 alignment/lifetime, and optional 16-byte align-8 timeout timespec", "x86 144-byte fstat record", "x86 fadvise64=221/readahead=187, POSIX_FADV values, signed loff_t, and size_t", "x86 lseek=8, fsync=74, fdatasync=75, ftruncate=77, signed 64-bit off_t/loff_t, SEEK_SET/CUR/END/DATA/HOLE, direct oversized unsigned-offset conversion with SEEK_SET EINVAL and SEEK_DATA/HOLE ENXIO, and private-memfd position/sync lifecycle", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 msync/mincore/madvise syscall values, MS/MADV values, and 4096-byte residency-vector page unit", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec", "Private clock_nanosleep slice: syscall 230 through x86 syscall4's r10 fourth-argument placement, 16-byte align-8 timespec, relative EINTR initialized remainder, and TIMER_ABSTIME=1 with null absolute remainder; pinned musl returns direct positive errors while the raw syscall uses -1 plus errno"]
 x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat plus fadvise64/readahead and the complete seek/tell/ftruncate/fsync/fdatasync file-position family, read-only process identity/session plus pidfd_open, getpriority, F_GETLK observation, scheduler-priority bounds, and direct calling-thread setresuid/setresgid no-change/sentinel behavior, gettid/getcpu/sched_yield, borrowed-AtomicU32 futex mismatch/relative-timeout/wake/exchange plus CLOCK_REALTIME-ENOSYS behavior, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, page residency, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations. It also executes privately evidenced packed-epoll, clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, statat path-metadata, and read-only resource-limit/resource-usage/process-accounting regressions owned by the planned record-owning family; the broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat plus fadvise64/readahead and the complete seek/tell/ftruncate/fsync/fdatasync file-position family, read-only process identity/session plus pidfd_open, the typed process-global umask exchange, getpriority, F_GETLK observation, scheduler-priority bounds, and direct calling-thread setresuid/setresgid no-change/sentinel behavior, gettid/getcpu/sched_yield, borrowed-AtomicU32 futex mismatch/relative-timeout/wake/exchange plus CLOCK_REALTIME-ENOSYS behavior, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, page residency, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations. It also executes privately evidenced packed-epoll, clock_nanosleep, contained interval-timer control plus read-only interval-timer query, timerfd, pselect, statat path-metadata, and read-only resource-limit/resource-usage/process-accounting regressions owned by the planned record-owning family; the broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mm-abi-reference", scope = "Pinned-musl x86 mmap/mremap/mprotect/munmap syscall values and the closed mapping/remapping flags admitted by the Rust facade." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mlock-reference", scope = "Pinned-musl x86 mlock/munlock/mlock2 syscall values, MLOCK_ONFAULT, constrained-memlock outcomes, and invalid-range/flag behavior for only the typed per-range Rust locking slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh msync-reference", scope = "Pinned-musl x86 msync syscall value, MS flag combinations, and direct mapping-synchronization behavior for only the typed Rust slice." },
@@ -213,6 +216,7 @@ native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh ppoll-reference", scope = "Pinned-musl x86 ppoll readiness, temporary signal-mask restoration, and pause EINTR behavior for the typed Rust readiness boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-identity-reference", scope = "Pinned-musl x86 scalar and real/effective/saved process identity behavior for the typed Rust observation boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-session-reference", scope = "Pinned-musl x86 process-group/session behavior for typed optional-Pid observations." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh umask-reference", scope = "Pinned-musl x86 umask=95, unsigned mode_t, and child-contained raw/musl mask exchange and restoration for the typed Rust process::umask operation only." },
   { state = "verified", command = "./scripts/dev-x86_64.sh pidfd-open-reference", scope = "Pinned-musl x86 pidfd_open descriptor ownership, nonblocking flag, and direct kernel error behavior." },
   { state = "verified", command = "./scripts/dev-x86_64.sh fcntl-getlk-reference", scope = "Pinned-musl x86 F_GETLK command/layout, unlocked query, and forked conflicting-lock observation for only the typed read-only Rust lock-query slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh scheduler-priority-bounds-reference", scope = "Pinned-musl x86 SCHED_OTHER/FIFO/RR priority minima/maxima and invalid-policy behavior for only the typed read-only Rust bounds slice." },
@@ -272,6 +276,7 @@ capabilities = [
   "process.identity",
   "process.session-observation",
   "process.pidfd-open",
+  "process.umask",
   "thread.futex-basic",
   "thread.identity",
   "thread.credentials-res",
@@ -505,7 +510,6 @@ capabilities = [
   "process.child-ownership",
   "process.fs-credentials",
   "process.resource-limit-mutation",
-  "process.umask",
   "thread.cpu-affinity-observation",
   "thread.cpu-affinity-mutation",
   "thread.scheduler-rr-interval",
@@ -568,8 +572,83 @@ depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
 description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact."
 aarch64_gates = ["abi-probe", "build", "test"]
-source_owners = ["include", "include/bits/alltypes.h", "include/bits/fcntl.h", "include/bits/mman.h", "include/bits/reg.h", "include/bits/setjmp.h", "include/bits/stat.h", "include/bits/syscall.h", "include/fcntl.h", "include/fenv.h", "include/float.h", "include/poll.h", "include/setjmp.h", "include/signal.h", "include/string.h", "include/time.h", "include/unistd.h", "include/sys/mman.h", "include/sys/stat.h", "include/sys/syscall.h", "include/sys/sysinfo.h", "include/sys/types.h", "include/sys/utsname.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "compat/x86_64/sys_reg_header_abi_probe.c", "compat/x86_64/run_sys_reg_header_abi.sh", "compat/x86_64/types_header_abi_probe.c", "compat/x86_64/types_header_abi_probe.cpp", "compat/x86_64/run_types_header_abi.sh", "compat/x86_64/stat_header_abi_probe.c", "compat/x86_64/stat_header_abi_probe.cpp", "compat/x86_64/run_stat_header_abi.sh", "compat/x86_64/time_header_abi_probe.c", "compat/x86_64/time_header_abi_probe.cpp", "compat/x86_64/run_time_header_abi.sh", "compat/x86_64/poll_header_abi_probe.c", "compat/x86_64/poll_header_abi_probe.cpp", "compat/x86_64/run_poll_header_abi.sh", "compat/x86_64/fcntl_header_abi_probe.c", "compat/x86_64/fcntl_header_abi_probe.cpp", "compat/x86_64/run_fcntl_header_abi.sh", "compat/x86_64/unistd_header_abi_probe.c", "compat/x86_64/unistd_header_abi_probe.cpp", "compat/x86_64/run_unistd_header_abi.sh", "compat/x86_64/system_header_abi_probe.c", "compat/x86_64/system_header_abi_probe.cpp", "compat/x86_64/run_system_header_abi.sh", "compat/x86_64/x86_syscall_header_probe.c", "compat/x86_64/run_x86_syscall_header.sh", "compat/x86_64/signal_header_abi_probe.c", "compat/x86_64/signal_header_posix_abi_probe.c", "compat/x86_64/run_signal_header_abi.sh", "compat/x86_64/mman_header_abi_probe.c", "compat/x86_64/mman_header_abi_probe.cpp", "compat/x86_64/run_mman_header_abi.sh", "compat/x86_64/libc_fenv_probe.c", "compat/x86_64/libc_fenv_probe.rs", "compat/x86_64/run_libc_fenv.sh", "libc/src/c_abi/x86_64/fenv.rs", "compat/x86_64/libc_memory_probe.c", "compat/x86_64/libc_memory_probe.rs", "compat/x86_64/run_libc_memory.sh", "libc/src/c_abi/x86_64/memory.rs", "compat/x86_64/libc_setjmp_probe.c", "compat/x86_64/libc_setjmp_probe.rs", "compat/x86_64/run_libc_setjmp.sh", "libc/src/c_abi/x86_64/setjmp.rs", "libc/src/c_abi.rs", "libc/src/lib.rs"]
-x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags", "x86 fcntl flags and flock/file-handle record layouts", "x86 144-byte struct stat, LP64 time, and pollfd record layouts", "x86 SysV direction-flag-clear entry/return convention and musl memcpy/memmove/memset string-instruction kernels", "x86 32-byte x87/MXCSR fenv_t, the six FE exception bits, four rounding encodings, and FE_DFL_ENV", "setjmp's six callee-saved GPRs, post-return stack, instruction pointer, and kernel-sized signal mask"]
+source_owners = [
+  "include",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/mman.h",
+  "include/bits/reg.h",
+  "include/bits/setjmp.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "include/fcntl.h",
+  "include/fenv.h",
+  "include/float.h",
+  "include/poll.h",
+  "include/setjmp.h",
+  "include/signal.h",
+  "include/string.h",
+  "include/time.h",
+  "include/unistd.h",
+  "include/sys/mman.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/sysinfo.h",
+  "include/sys/types.h",
+  "include/sys/utsname.h",
+  "compat/x86_64/project_header_abi_probe.c",
+  "compat/x86_64/run_project_header_abi.sh",
+  "compat/x86_64/sys_reg_header_abi_probe.c",
+  "compat/x86_64/run_sys_reg_header_abi.sh",
+  "compat/x86_64/types_header_abi_probe.c",
+  "compat/x86_64/types_header_abi_probe.cpp",
+  "compat/x86_64/run_types_header_abi.sh",
+  "compat/x86_64/stat_header_abi_probe.c",
+  "compat/x86_64/stat_header_abi_probe.cpp",
+  "compat/x86_64/run_stat_header_abi.sh",
+  "compat/x86_64/time_header_abi_probe.c",
+  "compat/x86_64/time_header_abi_probe.cpp",
+  "compat/x86_64/run_time_header_abi.sh",
+  "compat/x86_64/poll_header_abi_probe.c",
+  "compat/x86_64/poll_header_abi_probe.cpp",
+  "compat/x86_64/run_poll_header_abi.sh",
+  "compat/x86_64/fcntl_header_abi_probe.c",
+  "compat/x86_64/fcntl_header_abi_probe.cpp",
+  "compat/x86_64/run_fcntl_header_abi.sh",
+  "compat/x86_64/unistd_header_abi_probe.c",
+  "compat/x86_64/unistd_header_abi_probe.cpp",
+  "compat/x86_64/run_unistd_header_abi.sh",
+  "compat/x86_64/system_header_abi_probe.c",
+  "compat/x86_64/system_header_abi_probe.cpp",
+  "compat/x86_64/run_system_header_abi.sh",
+  "compat/x86_64/x86_syscall_header_probe.c",
+  "compat/x86_64/run_x86_syscall_header.sh",
+  "compat/x86_64/signal_header_abi_probe.c",
+  "compat/x86_64/signal_header_posix_abi_probe.c",
+  "compat/x86_64/run_signal_header_abi.sh",
+  "compat/x86_64/libc_signal_foundation_probe.c",
+  "compat/x86_64/libc_signal_foundation_probe.rs",
+  "compat/x86_64/run_libc_signal_foundation.sh",
+  "libc/src/c_abi/x86_64/signal_foundation.rs",
+  "compat/x86_64/mman_header_abi_probe.c",
+  "compat/x86_64/mman_header_abi_probe.cpp",
+  "compat/x86_64/run_mman_header_abi.sh",
+  "compat/x86_64/libc_fenv_probe.c",
+  "compat/x86_64/libc_fenv_probe.rs",
+  "compat/x86_64/run_libc_fenv.sh",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "compat/x86_64/libc_memory_probe.c",
+  "compat/x86_64/libc_memory_probe.rs",
+  "compat/x86_64/run_libc_memory.sh",
+  "libc/src/c_abi/x86_64/memory.rs",
+  "compat/x86_64/libc_setjmp_probe.c",
+  "compat/x86_64/libc_setjmp_probe.rs",
+  "compat/x86_64/run_libc_setjmp.sh",
+  "libc/src/c_abi/x86_64/setjmp.rs",
+  "libc/src/c_abi.rs",
+  "libc/src/lib.rs",
+]
+x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags", "x86 fcntl flags and flock/file-handle record layouts", "x86 144-byte struct stat, LP64 time, and pollfd record layouts", "x86 SysV direction-flag-clear entry/return convention and musl memcpy/memmove/memset string-instruction kernels", "x86 32-byte x87/MXCSR fenv_t, the six FE exception bits, four rounding encodings, and FE_DFL_ENV", "setjmp's six callee-saved GPRs, post-return stack, instruction pointer, and kernel-sized signal mask", "musl x86 public 152-byte sigaction to Linux 32-byte kernel-action packing, one-word signal mask, SA_RESTORER, and private syscall-15 restorer"]
 x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes, and the source-only fenv leaf links them through the exact x87/MXCSR fenv_t behavior; the source-only memory leaf links the staged string declarations through fixed x86 memcpy/memmove/memset behavior; the staged sys/reg.h register indices, C/C++ alltypes/sys/types layouts, C/C++ sys/stat, time, poll, fcntl, unistd, sys/utsname, and sys/sysinfo layouts/declarations, complete syscall number namespace, GNU/POSIX signal-frame layouts, C/C++ sys/mman declarations, and setjmp public machine/signal-mask record match musl; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
@@ -585,6 +664,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh system-header-abi", scope = "This compile-only C/C++ sys/utsname and sys/sysinfo public-layout slice is partial evidence; the public sysinfo compatibility tail remains distinct from the Rust kernel-prefix record." },
   { state = "required", command = "./scripts/dev-x86_64.sh syscall-header-abi", scope = "This compile-only complete x86 syscall-number macro slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh signal-header-abi", scope = "This compile-only GNU/POSIX signal-frame layout slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh libc-signal-foundation", scope = "This source-only pinned-musl x86 sigaction-record conversion and syscall-15 restorer leaf proves no public signal export, not C signal behavior or crabc-libc selection." },
   { state = "required", command = "./scripts/dev-x86_64.sh mman-header-abi", scope = "This compile-only C/C++ sys/mman declaration and value slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-setjmp", scope = "This source-only x86 control-transfer and signal-mask slice is partial evidence; it does not select crabc-libc." },
 ]
@@ -622,12 +702,12 @@ id = "libc.pthread-tls"
 order = 80
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts", "libc.posix-runtime"]
 category = "c-abi"
-description = "Pthread, thread-specific data, static/dynamic TLS, cancellation, and fork interactions in the selected C runtime. The isolated x86 i32 atomic leaf is a source-only prerequisite, not pthread/TLS parity or a selected C runtime."
+description = "Pthread, thread-specific data, static/dynamic TLS, cancellation, and fork interactions in the selected C runtime. The isolated x86 i32 atomic and fixed musl-shaped raw process-clone leaves are source-only prerequisites, not pthread/TLS parity or a selected C runtime."
 aarch64_gates = ["pthread-stress", "static-pthread-tls", "signal-process", "libc-test"]
-source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/atomic.rs", "ldso/src/loader.rs", "compat/pthread-stress", "compat/static-pthread-tls", "compat/x86_64/libc_atomic_probe.rs", "compat/x86_64/run_libc_atomic.sh"]
-x86_abi_prerequisites = ["ELF x86-64 initial and dynamic TLS", "%fs thread-pointer convention", "pthread ABI object layouts", "x86 clone and signal/TLS interaction", "source-only locked i32 cmpxchg/xchg/xadd helper contract"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/atomic.rs", "libc/src/c_abi/x86_64/clone.rs", "ldso/src/loader.rs", "compat/pthread-stress", "compat/static-pthread-tls", "compat/x86_64/libc_atomic_probe.rs", "compat/x86_64/run_libc_atomic.sh", "compat/x86_64/libc_clone_raw_probe.c", "compat/x86_64/libc_clone_raw_probe.rs", "compat/x86_64/run_libc_clone_raw.sh"]
+x86_abi_prerequisites = ["ELF x86-64 initial and dynamic TLS", "%fs thread-pointer convention", "pthread ABI object layouts", "x86 clone and signal/TLS interaction", "fixed musl x86 clone entry's seven-argument SysV layout, clone=56 register shuffle, supplied child stack, callback, and exit=60 tail without CLONE_VM/THREAD/SETTLS", "source-only locked i32 cmpxchg/xchg/xadd helper contract"]
 x86_header_prerequisites = ["pthread.h, threads.h, errno.h, and TLS-related installed ABI declarations."]
-native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh libc-atomic", scope = "Source-only native x86 i32 atomic helper instruction/behavior proof; it does not select crabc-libc or complete pthread/TLS parity." }, { state = "required", command = "Define native x86 pthread/TLS differential and static-TLS gates", scope = "The current errno and atomic leaves are insufficient for pthread or TLS parity." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh libc-atomic", scope = "Source-only native x86 i32 atomic helper instruction/behavior proof; it does not select crabc-libc or complete pthread/TLS parity." }, { state = "required", command = "./scripts/dev-x86_64.sh libc-clone-raw", scope = "Source-only pinned-musl x86 process-clone machine-boundary proof for SIGCHLD callback/stack/exit behavior; it has no public clone, pthread, or TLS claim." }, { state = "required", command = "Define native x86 pthread/TLS differential and static-TLS gates", scope = "The current errno, atomic, and raw process-clone leaves are insufficient for pthread or TLS parity." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Pthread/TLS behavioral oracle." }]
 capabilities = ["process.atfork-exit-hooks", "thread.pthread-c11", "time.posix-timer-thread-notify"]
 status = "planned"

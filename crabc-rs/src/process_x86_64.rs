@@ -1,4 +1,4 @@
-//! Bounded Linux/x86-64 process and record-lock observations.
+//! Bounded Linux/x86-64 process operations and record-lock observations.
 //!
 //! This module intentionally admits only scalar identity queries, a
 //! caller-buffer current-working-directory observation, the kernel's
@@ -6,13 +6,15 @@
 //! query/fill protocol, pidfd creation, read-only resource-limit,
 //! resource-usage, and process-accounting observations, read-only
 //! scheduling-priority observations and bounds, and the read-only typed
-//! `fcntl(F_GETLK)` record-lock query. The larger process facade remains
-//! AArch64-only until each of its target-sized records and state transitions
-//! has an independent x86-64 contract.
+//! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.
+//! The larger process facade remains AArch64-only until each of its
+//! target-sized records and state transitions has an independent x86-64
+//! contract.
 
 use bitflags::bitflags;
 
 use crate::buffer::Buffer;
+pub use crate::fs::Mode;
 use crate::{AsFd, OwnedFd, Result};
 
 /// A raw Linux/x86-64 `pid_t` representation.
@@ -706,6 +708,18 @@ pub fn getpid() -> Pid {
 #[inline]
 pub fn getrlimit(resource: Resource) -> Result<Rlimit> {
     crabc_core::process::getrlimit_raw(resource.as_raw()).map(Rlimit::from_kernel)
+}
+
+/// Changes the calling process's file-creation mask and returns the previous
+/// mask through Linux's direct umask syscall.
+///
+/// The mask is process-global state. Callers must coordinate concurrent file
+/// creation while changing it; this operation does not use libc or TLS errno.
+/// The returned value is the exact previous Linux mode mask. This does not
+/// admit x86-64 pathname creation APIs.
+#[inline]
+pub fn umask(mask: Mode) -> Mode {
+    Mode::from_bits_retain(crabc_core::process::umask_raw(mask.bits()))
 }
 
 /// Reads a target process's resource limits through Linux `prlimit64` without

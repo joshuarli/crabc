@@ -159,6 +159,83 @@ pub enum Advice {
 }
 
 bitflags! {
+    /// Linux file-creation permission and process-mask bits.
+    ///
+    /// This preserves the native process::umask vocabulary without admitting
+    /// x86-64 pathname creation APIs. The bitset intentionally retains future
+    /// Linux mode bits, matching the AArch64 facade contract.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct Mode: u32 {
+        /// Owner read permission.
+        const RUSR = 0o400;
+        /// Owner write permission.
+        const WUSR = 0o200;
+        /// Owner execute/search permission.
+        const XUSR = 0o100;
+        /// Group read permission.
+        const RGRP = 0o040;
+        /// Group write permission.
+        const WGRP = 0o020;
+        /// Group execute/search permission.
+        const XGRP = 0o010;
+        /// Other read permission.
+        const ROTH = 0o004;
+        /// Other write permission.
+        const WOTH = 0o002;
+        /// Other execute/search permission.
+        const XOTH = 0o001;
+        /// Owner read/write/execute permission.
+        const RWXU = Self::RUSR.bits() | Self::WUSR.bits() | Self::XUSR.bits();
+        /// Group read/write/execute permission.
+        const RWXG = Self::RGRP.bits() | Self::WGRP.bits() | Self::XGRP.bits();
+        /// Other read/write/execute permission.
+        const RWXO = Self::ROTH.bits() | Self::WOTH.bits() | Self::XOTH.bits();
+        /// Set-user-ID bit.
+        const SUID = 0o4000;
+        /// Set-group-ID bit.
+        const SGID = 0o2000;
+        /// Sticky bit.
+        const STICKY = 0o1000;
+        /// S_ISVTX, the Rustix spelling for the sticky bit.
+        const SVTX = Self::STICKY.bits();
+        /// Preserve future Linux mode bits.
+        const _ = !0;
+    }
+}
+
+/// Raw Linux st_mode bits.
+pub type RawMode = u32;
+
+impl Mode {
+    /// Extracts permission bits from a Linux st_mode value.
+    #[inline]
+    pub const fn from_raw_mode(st_mode: RawMode) -> Self {
+        Self::from_bits_truncate(st_mode & !0o170000)
+    }
+
+    /// Returns this value in the Linux st_mode representation.
+    #[inline]
+    pub const fn as_raw_mode(self) -> RawMode {
+        self.bits()
+    }
+}
+
+impl From<RawMode> for Mode {
+    #[inline]
+    fn from(st_mode: RawMode) -> Self {
+        Self::from_raw_mode(st_mode)
+    }
+}
+
+impl From<Mode> for RawMode {
+    #[inline]
+    fn from(mode: Mode) -> Self {
+        mode.as_raw_mode()
+    }
+}
+
+bitflags! {
     /// Stable Linux `MFD_*` creation flags for [`memfd_create`].
     ///
     /// This is deliberately a closed set: unknown or newer kernel bits are

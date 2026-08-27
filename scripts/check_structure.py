@@ -50,7 +50,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # remain deferred. It also owns read-only identity/session and
 # supplementary-group observations plus privately evidenced resource-limit/
 # resource-usage/process-accounting, getpriority/scheduler-priority, and
-# record-lock observations,
+# record-lock observations, and the explicitly proved process-global umask
+# exchange without admitting pathname creation,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,
@@ -89,10 +90,12 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # deliberate review decision.
 X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/atomic.rs"),
+    Path("libc/src/c_abi/x86_64/clone.rs"),
     Path("libc/src/c_abi/x86_64/fenv.rs"),
     Path("libc/src/c_abi/x86_64/foundation.rs"),
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
+    Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the

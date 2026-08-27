@@ -65,6 +65,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sched-affinity-set-reference  verify pinned-musl x86 controlled CPU-affinity mutation
   priority-reference  verify pinned-musl x86 getpriority ABI and behavior
   rlimit-reference  verify pinned-musl x86 read-only resource-limit ABI and behavior
+  umask-reference  verify pinned-musl x86 process-mask exchange ABI and behavior
   rusage-reference  verify pinned-musl x86 read-only resource-usage ABI and behavior
   times-reference  verify pinned-musl x86 process-accounting ABI and behavior
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
@@ -83,6 +84,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory  run the source-only x86 C memcpy/memmove/memset probe
   libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
   libc-atomic  run the source-only x86 atomic-helper probe
+  libc-clone-raw  run the source-only x86 musl-shaped raw clone probe
+  libc-signal-foundation  run the source-only x86 signal-action packing probe
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
   ldso-image  run the source-only checked x86 ELF image parser tests
 
@@ -90,8 +93,9 @@ This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset, including borrowed-atomic futex wait/wake and the complete typed
-`seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family,
-calling-thread `setresuid`/`setresgid` transitions with typed no-change
+`seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family and the
+typed process-global `umask` exchange, calling-thread `setresuid`/`setresgid`
+transitions with typed no-change
 sentinels,
 plus privately evidenced packed-epoll, clock-nanosleep, read-only
 interval-timer query and contained interval-timer control, timerfd, pselect, resource-limit, resource-usage,
@@ -139,6 +143,7 @@ API, pathname behavior, or broader filesystem semantics.
 `getitimer-reference`, `setitimer-reference`, `timerfd-reference`, `pselect-reference`,
 `poll-reference`, `ppoll-reference`, and `epoll-reference`,
 `process-identity-reference`, `getgroups-reference`, `process-session-reference`,
+`umask-reference`,
 `pidfd-open-reference`, `fcntl-getlk-reference`,
 `scheduler-priority-bounds-reference`, `rlimit-reference`, `rusage-reference`,
 `times-reference`,
@@ -205,6 +210,9 @@ boundary; it does not select scheduling mutation or a C process API.
 `rlimit-reference` proves only the x86 `rlimit64` record and focused read-only
 resource-limit query lifecycle; it does not select resource-limit mutation or
 a C process API.
+`umask-reference` proves only the typed x86 process-mask exchange: syscall 95,
+unsigned 32-bit `mode_t`, and child-contained raw/musl exchange/restoration.
+It does not select a C process API or pathname-creation support.
 `rusage-reference` proves only the x86 initialized `rusage` kernel prefix and
 focused read-only resource-usage observations; it does not select a C process
 API or the broader record-owning facade family.
@@ -226,6 +234,12 @@ its C fixture. It is not a selected C string/runtime artifact or general x86
 C support.
 `libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
 `libc-atomic` compiles only the unintegrated x86 atomic-helper leaf.
+`libc-clone-raw` compiles only the private musl-shaped x86 process-clone
+machine-boundary leaf. It does not provide public `clone`, pthread, or TLS
+support.
+`libc-signal-foundation` compiles only the private musl-shaped x86 public-to-
+kernel signal-action record packer and syscall-15 restorer. It does not install
+or deliver a handler or provide public C signal support.
 `ldso-relocation` compiles only the unintegrated checked relocation source.
 `ldso-image` compiles only the unintegrated checked ELF image parser.
 None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
@@ -494,6 +508,10 @@ run_rlimit_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rlimit_reference.sh
 }
 
+run_umask_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_umask_reference.sh
+}
+
 run_rusage_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rusage_reference.sh
 }
@@ -575,6 +593,14 @@ run_libc_atomic_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_atomic.sh
 }
 
+run_libc_clone_raw_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_clone_raw.sh
+}
+
+run_libc_signal_foundation_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_signal_foundation.sh
+}
+
 run_ldso_relocation_tests() {
     run_in_container bash -ceu '
         test_binary=/tmp/crabc-x86-64-ldso-relocation
@@ -597,7 +623,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -826,6 +852,11 @@ case "$command" in
         ensure_image
         run_rlimit_reference
         ;;
+    umask-reference)
+        [ "$#" -eq 0 ] || fail "umask-reference takes no arguments"
+        ensure_image
+        run_umask_reference
+        ;;
     rusage-reference)
         [ "$#" -eq 0 ] || fail "rusage-reference takes no arguments"
         ensure_image
@@ -896,7 +927,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_ftruncate --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_ftruncate --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)
@@ -933,6 +964,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-atomic takes no arguments"
         ensure_image
         run_libc_atomic_probe
+        ;;
+    libc-clone-raw)
+        [ "$#" -eq 0 ] || fail "libc-clone-raw takes no arguments"
+        ensure_image
+        run_libc_clone_raw_probe
+        ;;
+    libc-signal-foundation)
+        [ "$#" -eq 0 ] || fail "libc-signal-foundation takes no arguments"
+        ensure_image
+        run_libc_signal_foundation_probe
         ;;
     ldso-relocation)
         [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"

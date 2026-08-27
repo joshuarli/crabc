@@ -54,6 +54,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sched-affinity-set-reference
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
+./scripts/dev-x86_64.sh umask-reference
 ./scripts/dev-x86_64.sh rusage-reference
 ./scripts/dev-x86_64.sh times-reference
 ./scripts/dev-x86_64.sh fstat-reference
@@ -72,6 +73,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
+./scripts/dev-x86_64.sh libc-clone-raw
+./scripts/dev-x86_64.sh libc-signal-foundation
 ./scripts/dev-x86_64.sh ldso-relocation
 ./scripts/dev-x86_64.sh ldso-image
 ```
@@ -315,6 +318,11 @@ support or a general x86 facade.
 `getsid` observations. It is an oracle for the typed read-only process
 group/session slice, not process control support.
 
+`umask-reference` executes a child-contained pinned-musl process-mask
+exchange. It pins x86 `umask=95`, unsigned 32-bit `mode_t`, and raw/musl
+old-mask exchange plus restoration for the typed Rust `process::umask` API.
+It admits neither pathname creation nor C process support.
+
 `pidfd-open-reference` executes pinned-musl `pidfd_open(2)` calls, pinning
 descriptor ownership, `PIDFD_NONBLOCK`, and direct kernel error behavior. It
 is evidence for only the typed Rust pidfd-creation slice, not process control
@@ -498,12 +506,24 @@ native behavior/disassembly probe for locked i32 `cmpxchg`, `xchg`, and `xadd`
 helpers. It is a source-only prerequisite: it does not select `crabc-libc` or
 establish pthread, TLS, or C ABI parity.
 
+`libc-clone-raw` compiles only a uniquely named private lexical port of musl
+1.2.6's `src/thread/x86_64/clone.s`. The paired pinned-musl/candidate fixture
+proves the restricted `SIGCHLD` process clone, supplied child stack, callback,
+and exit tail; it rejects public `clone`/`__clone`, runtime, and dynamic-TLS
+dependencies. It does not establish public C clone, pthread, or TLS support.
+
+`libc-signal-foundation` compiles only the private musl-shaped public-to-kernel
+signal-action record conversion and hidden syscall-15 restorer. It checks the
+152-byte public x86 layout against the 32-byte kernel action without installing
+or delivering a signal. It is not public C `sigaction`/`signal` behavior or a
+selected `crabc-libc` artifact.
+
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
 `x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
-`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
+`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`, `x86_64_umask`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
 `x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_readlink`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
 `x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
@@ -544,7 +564,8 @@ rejection. It remains a privately evidenced record-owning slice. The filesystem 
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
 metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 `fadvise64`/`readahead` behavior. The
-process regressions prove typed PID/identity/session observations, read-only
+process regressions prove typed PID/identity/session observations, the
+process-global umask exchange with restore safety, read-only
 supplementary-group query/fill, private interval-timer query plus contained
 control,
 owned nonblocking pidfds, read-only `getpriority`, private read-only

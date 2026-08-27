@@ -77,6 +77,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh libc-memory",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/signal_foundation.rs",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-signal-foundation",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
         self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
         self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "planned")
         for capability in (
@@ -88,6 +96,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.identity",
             "process.session-observation",
             "process.pidfd-open",
+            "process.umask",
             "thread.futex-basic",
             "thread.identity",
             "thread.credentials-res",
@@ -120,12 +129,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
+            "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
             "compat/x86_64/run_x86_file_position_reference.sh",
             "compat/x86_64/x86_file_position_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
             "compat/x86_64/x86_thread_credentials_reference_probe.c",
+            "compat/x86_64/run_x86_umask_reference.sh",
+            "compat/x86_64/x86_umask_reference_probe.c",
         ):
             self.assertIn(source_owner, direct["source_owners"])
         direct_commands = {
@@ -139,6 +151,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh thread-credentials-reference",
             direct_commands,
         )
+        self.assertIn("./scripts/dev-x86_64.sh umask-reference", direct_commands)
         for capability in (
             "io.readiness",
             "io.readiness-epoll",
@@ -358,6 +371,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
         self.assertNotIn("process.resource-limits", direct["capabilities"])
         self.assertIn("process.resource-limits", remaining["capabilities"])
+        self.assertNotIn("process.umask", remaining["capabilities"])
         self.assertIn("process.resource-limits-targeted", remaining["capabilities"])
         self.assertNotIn("process.resource-usage", direct["capabilities"])
         self.assertIn("process.resource-usage", remaining["capabilities"])
@@ -370,9 +384,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         self.assertIn("libc/src/c_abi/x86_64/atomic.rs", pthread_tls["source_owners"])
+        self.assertIn("libc/src/c_abi/x86_64/clone.rs", pthread_tls["source_owners"])
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-atomic",
+        )
+        self.assertEqual(
+            pthread_tls["native_evidence"][1]["command"],
+            "./scripts/dev-x86_64.sh libc-clone-raw",
         )
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
