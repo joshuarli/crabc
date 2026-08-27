@@ -9,8 +9,8 @@
 use core::mem::MaybeUninit;
 
 use crate::syscall::{
-    decode, syscall2, syscall4, SYS_CLOCK_GETRES, SYS_CLOCK_NANOSLEEP, SYS_GETITIMER, SYS_NANOSLEEP,
-    SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    decode, syscall2, syscall3, syscall4, SYS_CLOCK_GETRES, SYS_CLOCK_NANOSLEEP, SYS_GETITIMER,
+    SYS_NANOSLEEP, SYS_SETITIMER, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
 };
 use crate::{RawFd, Result};
 
@@ -153,6 +153,38 @@ pub unsafe fn getitimer_raw(which: i32, value: *mut KernelItimerval) -> Result<(
     // SAFETY: The caller owns the exact output-pointer contract documented
     // above; Linux validates the selector and writes all four words on success.
     decode(unsafe { syscall2(SYS_GETITIMER, which as usize, value as usize) }).map(|_| ())
+}
+
+/// Arms or disarms one Linux/x86-64 process interval timer and returns its
+/// previous setting without using libc or TLS `errno`.
+///
+/// `which` is the raw Linux `ITIMER_*` selector. The native facade owns the
+/// closed safe selector vocabulary and validates the setting before reaching
+/// this boundary.
+///
+/// # Safety
+///
+/// `new_value` must be non-null and point to initialized Linux/x86-64
+/// [`KernelItimerval`] storage for the duration of the syscall. `old_value`
+/// must be null or point to writable storage for one [`KernelItimerval`]
+/// value; Linux initializes a non-null output on success.
+#[inline]
+pub unsafe fn setitimer_raw(
+    which: i32,
+    new_value: *const KernelItimerval,
+    old_value: *mut KernelItimerval,
+) -> Result<()> {
+    // SAFETY: The caller owns both timeval record pointer contracts;
+    // Linux validates the selector and timeval values.
+    decode(unsafe {
+        syscall3(
+            SYS_SETITIMER,
+            which as usize,
+            new_value as usize,
+            old_value as usize,
+        )
+    })
+    .map(|_| ())
 }
 
 /// Reads one x86-64 Linux clock through the validated vDSO, with a direct

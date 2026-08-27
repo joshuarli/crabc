@@ -35,6 +35,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh relative-sleep-reference
 ./scripts/dev-x86_64.sh clock-nanosleep-reference
 ./scripts/dev-x86_64.sh getitimer-reference
+./scripts/dev-x86_64.sh setitimer-reference
 ./scripts/dev-x86_64.sh timerfd-reference
 ./scripts/dev-x86_64.sh pselect-reference
 ./scripts/dev-x86_64.sh poll-reference
@@ -213,8 +214,18 @@ queries. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
 zero/16), `getitimer=36`, all three `ITIMER_*` selectors, canonical results
 from musl and the direct syscall, and invalid-selector `EINVAL`. It does not
 compare separately read values because a real timer can decrement. It is
-private evidence for the bounded query slice only; it does not select
-`setitimer`, `alarm`, `ualarm`, C time APIs, or a general x86 facade.
+private evidence for the bounded query slice only; it does not itself select
+interval-timer control, `alarm`, `ualarm`, C time APIs, or a general x86
+facade.
+
+`setitimer-reference` executes the private x86 contained interval-timer
+control slice. It pins syscall 38 over the established 16-byte `timeval` and
+32-byte `itimerval` records, uses short-lived children for every timer
+mutation, and verifies musl/raw old-setting exchange, replacement, disarm, and
+malformed-microsecond `EINVAL` behavior. The typed Rust facade admits only
+validated microsecond settings and returns the complete prior setting. It does
+not select `alarm`, `ualarm`, C time APIs, broader timer policy, or a
+general x86 facade.
 
 `timerfd-reference` executes a pinned-musl x86 timer-descriptor lifecycle. It
 pins the 32-byte, align-8 `itimerspec` layout (interval/value offsets zero and
@@ -415,7 +426,7 @@ establish pthread, TLS, or C ABI parity.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
-`x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
+`x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
@@ -454,7 +465,8 @@ typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
 metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
 `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, read-only
-supplementary-group query/fill, private read-only interval-timer queries,
+supplementary-group query/fill, private interval-timer query plus contained
+control,
 owned nonblocking pidfds, read-only `getpriority`, private read-only
 resource-limit queries, private read-only
 resource-usage and process-accounting observations, conflicting-lock `F_GETLK`
@@ -480,11 +492,12 @@ realtime-millisecond observations, nondecreasing CPU-time observations, and
 typed relative `nanosleep` completion/interruption with an explicit remainder
 through the validated vDSO/direct-syscall seam. The separately private
 `clock_nanosleep` regression additionally proves relative and absolute
-mode-specific pointer contracts and direct error handling. The private query
-regression also proves closed `getitimer` selectors and validated
-microsecond-duration results without timer mutation. Calendar, interval-timer
-control/other timer policy, timezone, broader clock sleep, clock mutation, and
-C sleep APIs remain outside this direct slice.
+mode-specific pointer contracts and direct error handling. The private
+interval-timer regressions prove closed `getitimer` selectors plus
+child-contained `setitimer` exchange/disarm behavior over validated
+microsecond settings. Calendar, broader interval-timer/other timer policy,
+timezone, broader clock sleep, clock mutation, and C sleep APIs remain outside
+this direct slice.
 
 `ldso-relocation` compiles and runs only the unintegrated
 `ldso/src/x86_64_relocation.rs` source tests under the pinned native image. It

@@ -45,8 +45,8 @@ pub mod collections;
 // `thread::{gettid, sched_getcpu, sched_yield}` plus the private read-only
 // `sched_rr_get_interval`, CPU-affinity observation, and bounded typed
 // CPU-affinity mutation, and bounded `time`
-// clock-query/observation APIs plus private clock-sleep and read-only
-// interval-timer-query slices,
+// clock-query/observation APIs plus private clock-sleep and contained
+// interval-timer query/control slices,
 // and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and

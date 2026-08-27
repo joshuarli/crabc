@@ -93,6 +93,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "memory.vm",
             "time.clock-query",
             "time.clock-sleep",
+            "time.process-interval-control",
         ):
             self.assertNotIn(capability, direct["capabilities"])
             self.assertIn(capability, remaining["capabilities"])
@@ -124,6 +125,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_getitimer.rs", remaining["source_owners"]
         )
         self.assertIn(
+            "crabc-rs/tests/x86_64_setitimer.rs", remaining["source_owners"]
+        )
+        self.assertIn(
             "crabc-rs/tests/x86_64_clock_nanosleep.rs", remaining["source_owners"]
         )
         self.assertIn(
@@ -151,6 +155,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_x86_getitimer_reference.sh", remaining["source_owners"]
         )
         self.assertIn(
+            "compat/x86_64/run_x86_setitimer_reference.sh", remaining["source_owners"]
+        )
+        self.assertIn(
             "compat/x86_64/run_x86_clock_nanosleep_reference.sh",
             remaining["source_owners"],
         )
@@ -165,6 +172,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "compat/x86_64/x86_getitimer_reference_probe.c", remaining["source_owners"]
+        )
+        self.assertIn(
+            "compat/x86_64/x86_setitimer_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn(
             "compat/x86_64/x86_clock_nanosleep_reference_probe.c",
@@ -229,41 +239,46 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(remaining["native_evidence"][7]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][8]["command"],
-            "./scripts/dev-x86_64.sh statat-reference",
+            "./scripts/dev-x86_64.sh setitimer-reference",
         )
         self.assertEqual(remaining["native_evidence"][8]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][9]["command"],
-            "./scripts/dev-x86_64.sh getcwd-reference",
+            "./scripts/dev-x86_64.sh statat-reference",
         )
         self.assertEqual(remaining["native_evidence"][9]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][10]["command"],
-            "./scripts/dev-x86_64.sh readlinkat-reference",
+            "./scripts/dev-x86_64.sh getcwd-reference",
         )
         self.assertEqual(remaining["native_evidence"][10]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][11]["command"],
-            "./scripts/dev-x86_64.sh rr-interval-reference",
+            "./scripts/dev-x86_64.sh readlinkat-reference",
         )
         self.assertEqual(remaining["native_evidence"][11]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][12]["command"],
-            "./scripts/dev-x86_64.sh sched-affinity-reference",
+            "./scripts/dev-x86_64.sh rr-interval-reference",
         )
         self.assertEqual(remaining["native_evidence"][12]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][13]["command"],
-            "./scripts/dev-x86_64.sh sched-affinity-set-reference",
+            "./scripts/dev-x86_64.sh sched-affinity-reference",
         )
         self.assertEqual(remaining["native_evidence"][13]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][14]["command"],
-            "./scripts/dev-x86_64.sh clock-nanosleep-reference",
+            "./scripts/dev-x86_64.sh sched-affinity-set-reference",
         )
         self.assertEqual(remaining["native_evidence"][14]["state"], "required")
         self.assertEqual(
             remaining["native_evidence"][15]["command"],
+            "./scripts/dev-x86_64.sh clock-nanosleep-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][15]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][16]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])

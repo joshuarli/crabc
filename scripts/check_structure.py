@@ -58,8 +58,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # three record-independent task observations, the private read-only
 # round-robin interval query, and bounded CPU-affinity observation/mutation,
 # and `time_x86_64.rs` owns the separately proved clock-query, relative and
-# private clock-nanosleep seams, privately evidenced read-only interval-timer
-# query, and timerfd seams. No other facade
+# private clock-nanosleep seams, privately evidenced interval-timer query and
+# contained-control slices, and timerfd seams. No other facade
 # source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),
@@ -318,6 +318,25 @@ def check_x86_clock_nanosleep_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_setitimer_boundary(errors: list[str]) -> None:
+    """Keep the private x86 interval-timer-control slice contained."""
+
+    time_source = ROOT / "crabc-rs" / "src" / "time_x86_64.rs"
+    text = time_source.read_text(errors="replace")
+    for required in ("pub const fn new", "pub fn setitimer"):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/time_x86_64.rs: private x86 interval-timer slice is missing "
+                f"{required}"
+            )
+    for forbidden in ("pub fn alarm", "pub fn ualarm", "pub struct PosixTimer"):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/time_x86_64.rs: private x86 interval-timer slice must defer "
+                f"{forbidden}"
+            )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
 
@@ -483,6 +502,7 @@ def main() -> int:
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)
     check_x86_clock_nanosleep_boundary(errors)
+    check_x86_setitimer_boundary(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):

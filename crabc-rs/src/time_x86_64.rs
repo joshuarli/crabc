@@ -1,16 +1,15 @@
 //! Bounded native Linux/x86-64 clock queries, relative `nanosleep`, private
-//! `clock_nanosleep`, read-only interval-timer queries, and timerfds.
+//! `clock_nanosleep`, interval-timer control and queries, and timerfds.
 //!
 //! This staged facade admits only validated realtime, monotonic,
 //! monotonic-raw, and process-CPU observations, typed realtime milliseconds,
 //! typed relative sleep and private clock-sleep outcomes. Interrupted sleeps
 //! preserve the kernel's remainder instead of retrying or hiding `EINTR`. It
-//! intentionally
-//! does not expose AArch64 calendar, POSIX-timer, timezone, interval-timer
-//! control, or clock-mutation APIs, nor a C sleep ABI, until their x86-64
-//! records and behavior have independent evidence. The interval-timer query
-//! and timerfd slices are direct kernel boundaries; neither selects a C time
-//! API or promotes x86-64 platform support.
+//! intentionally does not expose AArch64 calendar, POSIX-timer, timezone, or
+//! clock-mutation APIs, nor a C sleep ABI, until their x86-64 records and
+//! behavior have independent evidence. The interval-timer and timerfd slices
+//! are direct kernel boundaries; neither selects a C time API or promotes
+//! x86-64 platform support.
 
 use core::convert::TryFrom;
 use core::mem::MaybeUninit;
@@ -367,12 +366,13 @@ impl TryFrom<i32> for IntervalTimerKind {
     }
 }
 
-/// A validated interval-timer observation returned by Linux `getitimer`.
+/// A validated interval-timer setting accepted by and returned from Linux
+/// `getitimer`/`setitimer`.
 ///
 /// Both durations are non-negative and have microsecond precision, because
 /// Linux reports signed seconds plus a normalized microsecond remainder. The
-/// fields are private: this query-only x86-64 slice exposes no interval-timer
-/// control operation that can consume a caller-manufactured setting.
+/// fields are private so callers can only submit settings made through the
+/// precision- and range-checked [`Self::new`] constructor.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct IntervalTimerValue {
     interval: Duration,
@@ -380,6 +380,24 @@ pub struct IntervalTimerValue {
 }
 
 impl IntervalTimerValue {
+    /// Constructs an interval-timer setting with Linux `timeval` precision.
+    ///
+    /// `setitimer` is a legacy microsecond API. Values with sub-microsecond
+    /// precision are rejected rather than silently rounded at the kernel
+    /// boundary. Seconds outside Linux's signed `timeval.tv_sec` range are
+    /// rejected as well.
+    #[inline]
+    pub const fn new(interval: Duration, value: Duration) -> Option<Self> {
+        if interval.subsec_nanos() % 1_000 != 0
+            || value.subsec_nanos() % 1_000 != 0
+            || interval.as_secs() > i64::MAX as u64
+            || value.as_secs() > i64::MAX as u64
+        {
+            return None;
+        }
+        Some(Self { interval, value })
+    }
+
     /// Returns the interval between expirations, or zero for a one-shot timer.
     #[must_use]
     #[inline]
@@ -444,6 +462,52 @@ pub fn getitimer(
     Ok(IntervalTimerValue { interval, value })
 }
 
+/// Errors returned when controlling a Linux process interval timer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntervalTimerError {
+    /// A duration cannot be represented by Linux's signed microsecond
+    /// `timeval` ABI, or has finer-than-microsecond precision.
+    InvalidSpecification,
+    /// Linux rejected the interval-timer operation.
+    Kernel(Errno),
+}
+
+impl IntervalTimerError {
+    /// Returns the underlying Linux errno, when the failure came from Linux.
+    #[must_use]
+    #[inline]
+    pub const fn kernel_errno(self) -> Option<Errno> {
+        match self {
+            Self::InvalidSpecification => None,
+            Self::Kernel(error) => Some(error),
+        }
+    }
+}
+
+/// Arms or disarms one of Linux's three process interval timers.
+///
+/// The setting uses the same validated microsecond vocabulary returned by
+/// [`getitimer`]. The previous setting is returned after Linux's atomic
+/// `setitimer` exchange. This is process-global state: callers must coordinate
+/// use of the selected timer with other code in the same process. No alarm
+/// aliases or C ABI are involved.
+#[inline]
+pub fn setitimer(
+    kind: IntervalTimerKind,
+    new_value: IntervalTimerValue,
+) -> core::result::Result<IntervalTimerValue, IntervalTimerError> {
+    let new_value = kernel_itimerval_from_interval(new_value);
+    let mut old_value = MaybeUninit::<KernelItimerval>::uninit();
+    // SAFETY: `new_value` is a fully initialized Linux/x86-64 timeval pair
+    // and the output storage is initialized on a successful syscall.
+    unsafe {
+        crabc_core::time::setitimer_raw(kind as i32, &new_value, old_value.as_mut_ptr())
+            .map_err(IntervalTimerError::Kernel)?;
+        let old_value = old_value.assume_init();
+        interval_from_kernel_itimerval(old_value).ok_or(IntervalTimerError::InvalidSpecification)
+    }
+}
+
 /// Converts one signed Linux interval-timer timeval into a canonical Rust
 /// duration. Linux's `getitimer` ABI reports non-negative values with
 /// `tv_usec` in `0..1_000_000`; every other record is rejected.
@@ -456,6 +520,28 @@ fn duration_from_itimerval_timeval(value: KernelItimervalTimeval) -> Option<Dura
         value.tv_sec as u64,
         (value.tv_usec as u32) * 1_000,
     ))
+}
+
+#[inline]
+fn kernel_itimerval_from_interval(value: IntervalTimerValue) -> KernelItimerval {
+    fn timeval(value: Duration) -> KernelItimervalTimeval {
+        KernelItimervalTimeval {
+            tv_sec: value.as_secs() as i64,
+            tv_usec: (value.subsec_nanos() / 1_000) as i64,
+        }
+    }
+    KernelItimerval {
+        it_interval: timeval(value.interval),
+        it_value: timeval(value.value),
+    }
+}
+
+#[inline]
+fn interval_from_kernel_itimerval(value: KernelItimerval) -> Option<IntervalTimerValue> {
+    IntervalTimerValue::new(
+        duration_from_itimerval_timeval(value.it_interval)?,
+        duration_from_itimerval_timeval(value.it_value)?,
+    )
 }
 
 #[cfg(test)]
