@@ -62,6 +62,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh readlinkat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
+./scripts/dev-x86_64.sh thread-credentials-reference
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
@@ -424,6 +425,14 @@ by bounded typed system name/status/load observations. It does not select
 `thread-reference` records pinned-musl `gettid`, `sched_getcpu`, and
 `sched_yield` behavior for the bounded typed thread slice. It does not
 establish pthread, affinity, or scheduling-policy support.
+
+`thread-credentials-reference` records x86 `setresuid=117` and
+`setresgid=119`, their unsigned 32-bit identity words, and musl/raw all-ones
+no-change behavior. The typed Rust boundary maps only `None` to that all-ones
+word and rejects an explicit typed all-ones ID with `EINVAL`. It intentionally
+exposes the direct calling-task kernel operation, not musl's process-wide
+synchronized credential transition; it establishes neither C credential APIs
+nor broader process/thread support.
 
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent

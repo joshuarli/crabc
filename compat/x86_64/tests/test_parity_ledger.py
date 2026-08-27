@@ -66,6 +66,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "process.pidfd-open",
             "thread.futex-basic",
             "thread.identity",
+            "thread.credentials-res",
             "thread.cpu-observation",
             "system.load-average",
             "system.name-observation",
@@ -94,10 +95,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         for source_owner in (
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
+            "crabc-rs/tests/x86_64_thread_credentials.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
             "compat/x86_64/run_x86_file_position_reference.sh",
             "compat/x86_64/x86_file_position_reference_probe.c",
+            "compat/x86_64/run_x86_thread_credentials_reference.sh",
+            "compat/x86_64/x86_thread_credentials_reference_probe.c",
         ):
             self.assertIn(source_owner, direct["source_owners"])
         direct_commands = {
@@ -106,6 +110,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh ftruncate-reference", direct_commands)
         self.assertIn(
             "./scripts/dev-x86_64.sh file-position-reference", direct_commands
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh thread-credentials-reference",
+            direct_commands,
         )
         for capability in (
             "io.readiness",

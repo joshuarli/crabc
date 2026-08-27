@@ -42,8 +42,9 @@ pub mod collections;
 // and supplementary-group observations plus pidfd creation, `rand`, `signal`,
 // `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
-// `thread::{gettid, sched_getcpu, sched_yield}` plus borrowed `AtomicU32`
-// futex wait/wake, the private read-only `sched_rr_get_interval`,
+// `thread::{gettid, sched_getcpu, sched_yield, set_thread_res_uid,
+// set_thread_res_gid}` plus borrowed `AtomicU32` futex wait/wake, the private
+// read-only `sched_rr_get_interval`,
 // CPU-affinity observation and bounded typed mutation, and bounded `time`
 // clock-query, whole-second, and observation APIs plus private clock-sleep
 // and contained interval-timer query/control slices,
@@ -51,7 +52,9 @@ pub mod collections;
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and
 // stays absent until its record family has its own x86 proof; admission must
-// not silently make an AArch64 layout usable on x86-64.
+// not silently make an AArch64 layout usable on x86-64. The credential
+// setters retain direct Linux calling-task scope; they are not musl-style
+// process-wide credential transitions.
 mod eventfd;
 #[cfg(target_arch = "aarch64")]
 pub mod event;

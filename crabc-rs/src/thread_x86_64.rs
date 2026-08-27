@@ -1,9 +1,10 @@
 //! Narrow Linux/x86-64 thread observations and scheduler operations.
 //!
 //! This target-specific slice preserves record-independent thread operations,
-//! borrowed-atomic futex wait/wake, and bounded CPU-affinity observation and
-//! mutation. Credential transitions remain outside this module until their
-//! x86-64 contracts have independent evidence.
+//! borrowed-atomic futex wait/wake, bounded CPU-affinity observation and
+//! mutation, and the direct calling-thread credential boundary. The
+//! credential operations retain Linux's per-task scope rather than emulating
+//! musl's process-wide synchronized transition.
 
 use core::mem::MaybeUninit;
 use core::time::Duration;
@@ -11,6 +12,7 @@ use core::time::Duration;
 use bitflags::bitflags;
 
 use crate::process::Pid;
+pub use crate::process::{Gid, Uid};
 use crate::{Errno, Result};
 
 /// A bounded Linux CPU-affinity mask.
@@ -106,6 +108,80 @@ pub fn gettid() -> Pid {
 #[must_use]
 pub fn sched_getcpu() -> usize {
     crabc_core::thread::sched_getcpu()
+}
+
+/// Sets the calling thread's real, effective, and saved user IDs.
+///
+/// This follows Rustix's `thread::set_thread_res_uid` shape while retaining
+/// Linux's actual credential scope: the raw syscall changes only the calling
+/// kernel task. It does not synchronize the change across the other threads
+/// of a process, and it must not be used as a process-wide credential API.
+/// `None` requests Linux's all-ones no-change word. An explicit
+/// `Some(Uid::from_raw(u32::MAX))` is rejected as [`crate::Errno::INVAL`] so
+/// the typed value cannot silently acquire `None`'s sentinel meaning.
+///
+/// # Warning
+///
+/// This is deliberately the Linux kernel operation, not musl's synchronized
+/// POSIX process credential transition. It affects only the calling task, so
+/// callers must coordinate any code whose assumptions depend on credentials.
+#[inline]
+pub fn set_thread_res_uid<R, E, S>(ruid: R, euid: E, suid: S) -> Result<()>
+where
+    R: Into<Option<Uid>>,
+    E: Into<Option<Uid>>,
+    S: Into<Option<Uid>>,
+{
+    let ruid = checked_uid_word(ruid.into())?;
+    let euid = checked_uid_word(euid.into())?;
+    let suid = checked_uid_word(suid.into())?;
+    crabc_core::thread::setresuid_raw(ruid, euid, suid)
+}
+
+/// Sets the calling thread's real, effective, and saved group IDs.
+///
+/// This follows Rustix's `thread::set_thread_res_gid` shape while retaining
+/// Linux's actual credential scope: the raw syscall changes only the calling
+/// kernel task. It does not synchronize the change across the other threads
+/// of a process, and it must not be used as a process-wide credential API.
+/// `None` requests Linux's all-ones no-change word. An explicit
+/// `Some(Gid::from_raw(u32::MAX))` is rejected as [`crate::Errno::INVAL`] so
+/// the typed value cannot silently acquire `None`'s sentinel meaning.
+///
+/// # Warning
+///
+/// This is deliberately the Linux kernel operation, not musl's synchronized
+/// POSIX process credential transition. It affects only the calling task, so
+/// callers must coordinate any code whose assumptions depend on credentials.
+#[inline]
+pub fn set_thread_res_gid<R, E, S>(rgid: R, egid: E, sgid: S) -> Result<()>
+where
+    R: Into<Option<Gid>>,
+    E: Into<Option<Gid>>,
+    S: Into<Option<Gid>>,
+{
+    let rgid = checked_gid_word(rgid.into())?;
+    let egid = checked_gid_word(egid.into())?;
+    let sgid = checked_gid_word(sgid.into())?;
+    crabc_core::thread::setresgid_raw(rgid, egid, sgid)
+}
+
+#[inline]
+fn checked_uid_word(uid: Option<Uid>) -> Result<u32> {
+    match uid {
+        Some(uid) if uid.as_raw() == u32::MAX => Err(Errno::INVAL),
+        Some(uid) => Ok(uid.as_raw()),
+        None => Ok(u32::MAX),
+    }
+}
+
+#[inline]
+fn checked_gid_word(gid: Option<Gid>) -> Result<u32> {
+    match gid {
+        Some(gid) if gid.as_raw() == u32::MAX => Err(Errno::INVAL),
+        Some(gid) => Ok(gid.as_raw()),
+        None => Ok(u32::MAX),
+    }
 }
 
 /// Reads a Linux task's round-robin scheduling interval.
