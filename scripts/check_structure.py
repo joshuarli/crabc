@@ -89,6 +89,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # deliberate review decision.
 X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/atomic.rs"),
+    Path("libc/src/c_abi/x86_64/fenv.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its

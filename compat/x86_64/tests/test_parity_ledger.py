@@ -52,7 +52,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(self.family(data, "libc.errno-tls")["status"], "foundation-verified")
         self.assertEqual(self.family(data, "ldso.relative-relocation")["status"], "foundation-verified")
         self.assertEqual(self.family(data, "crt.static-pie")["status"], "foundation-verified")
-        self.assertEqual(self.family(data, "libc.headers-layouts")["status"], "planned")
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertIn(
+            "libc/src/c_abi/x86_64/fenv.rs", headers_layouts["source_owners"]
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-fenv",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
         self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
         self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "planned")
         for capability in (

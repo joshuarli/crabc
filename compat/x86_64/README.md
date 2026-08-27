@@ -67,6 +67,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
 ./scripts/dev-x86_64.sh libc-errno-tls
+./scripts/dev-x86_64.sh libc-fenv
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
 ./scripts/dev-x86_64.sh ldso-relocation
@@ -455,6 +456,13 @@ local initial-TLS datum with `R_X86_64_TPOFF*`, no `__tls_get_addr` path, zero
 initialization, and independent main/pthread `errno` slots. It remains a
 source-only leaf rather than a selected `crabc-libc` artifact or a general C
 ABI claim; it is not a musl differential or compatibility-oracle gate.
+
+`libc-fenv` compiles only `libc/src/c_abi/x86_64/fenv.rs`, then runs one C
+fixture against pinned musl and the isolated x86 object with the project
+`<fenv.h>` first. It proves the 32-byte x87/MXCSR `fenv_t` storage, exception
+flag transitions, all four rounding modes, `feholdexcept`/`feupdateenv`, and
+the default-environment path. It is a source-only architecture leaf, not a
+selected `crabc-libc` artifact or general x86 C ABI claim.
 
 `libc-setjmp` compiles only `libc/src/c_abi/x86_64/setjmp.rs`, then runs the
 same C continuation fixture once against pinned musl and once against that
