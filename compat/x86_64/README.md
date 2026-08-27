@@ -68,6 +68,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-syscall
 ./scripts/dev-x86_64.sh libc-errno-tls
 ./scripts/dev-x86_64.sh libc-fenv
+./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
 ./scripts/dev-x86_64.sh ldso-relocation
@@ -463,6 +464,14 @@ fixture against pinned musl and the isolated x86 object with the project
 flag transitions, all four rounding modes, `feholdexcept`/`feupdateenv`, and
 the default-environment path. It is a source-only architecture leaf, not a
 selected `crabc-libc` artifact or general x86 C ABI claim.
+
+`libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
+fixture against pinned musl and the isolated x86 object with project
+`<string.h>` first. It proves the fixed `memcpy`, `memmove`, and `memset`
+algorithms across alignments, lengths, overlap direction, guard-page edges,
+return values, and `memmove`'s direction-flag restoration. It is a source-only
+architecture leaf, not a selected `crabc-libc` artifact or general x86 C ABI
+claim.
 
 `libc-setjmp` compiles only `libc/src/c_abi/x86_64/setjmp.rs`, then runs the
 same C continuation fixture once against pinned musl and once against that

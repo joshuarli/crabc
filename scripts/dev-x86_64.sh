@@ -79,6 +79,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-syscall  run the isolated x86 C-ABI syscall register probe
   libc-errno-tls  run the source-only x86 C errno/initial-TLS probe
   libc-fenv  run the source-only x86 C x87/MXCSR floating-point-environment probe
+  libc-memory  run the source-only x86 C memcpy/memmove/memset probe
   libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
   libc-atomic  run the source-only x86 atomic-helper probe
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
@@ -216,6 +217,9 @@ process API or the broader record-owning facade family.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
 `libc-fenv` compiles only the fixed-musl x86 x87/MXCSR fenv leaf and its C
 fixture. It is not a selected C `fenv_t` artifact or general x86 C support.
+`libc-memory` compiles only the fixed-musl x86 memcpy/memmove/memset leaf and
+its C fixture. It is not a selected C string/runtime artifact or general x86
+C support.
 `libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
 `libc-atomic` compiles only the unintegrated x86 atomic-helper leaf.
 `ldso-relocation` compiles only the unintegrated checked relocation source.
@@ -551,6 +555,10 @@ run_libc_fenv_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_fenv.sh
 }
 
+run_libc_memory_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_memory.sh
+}
+
 run_libc_setjmp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_setjmp.sh
 }
@@ -581,7 +589,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-fenv|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|system-reference|thread-reference|thread-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-fenv|libc-memory|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -897,6 +905,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-fenv takes no arguments"
         ensure_image
         run_libc_fenv_probe
+        ;;
+    libc-memory)
+        [ "$#" -eq 0 ] || fail "libc-memory takes no arguments"
+        ensure_image
+        run_libc_memory_probe
         ;;
     libc-setjmp)
         [ "$#" -eq 0 ] || fail "libc-setjmp takes no arguments"

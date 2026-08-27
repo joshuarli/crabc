@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Source-only native Linux/x86-64 C bulk-memory ABI and behavior evidence.
+#
+# The same focused fixture runs against pinned musl 1.2.6 and the isolated
+# crabc x86 memory leaf plus project headers. This never selects crabc-libc.
+set -euo pipefail
+
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+
+fail() {
+	printf 'ERROR: x86 C memory source-only probe: %s\n' "$*" >&2
+	exit 1
+}
+
+require_native_linux_x86_64() {
+	[ "$(uname -s)" = Linux ] || fail "requires native Linux"
+	case "$(uname -m)" in
+		x86_64|amd64) ;;
+		*) fail "refuses emulation on $(uname -m)" ;;
+	esac
+}
+
+require_tool() {
+	command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+require_native_linux_x86_64
+require_tool cc
+require_tool readelf
+require_tool objdump
+require_tool rustup
+[ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
+
+bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
+
+work_dir="$(mktemp -d /tmp/crabc-x86-64-c-memory.XXXXXX)"
+trap 'rm -rf -- "$work_dir"' EXIT
+object="$work_dir/memory.o"
+reference="$work_dir/musl-memory-reference"
+candidate="$work_dir/crabc-memory-candidate"
+header_trace="$work_dir/header-trace"
+object_symbols="$work_dir/object-symbols"
+object_relocations="$work_dir/object-relocations"
+object_disassembly="$work_dir/object-disassembly"
+candidate_symbols="$work_dir/candidate-symbols"
+candidate_dynamic_symbols="$work_dir/candidate-dynamic-symbols"
+
+cd "$ROOT_DIR"
+"$ORACLE_CC" -std=c11 -fno-builtin compat/x86_64/libc_memory_probe.c -o "$reference"
+"$reference"
+
+cc -E -H -I"$ROOT_DIR/include" compat/x86_64/libc_memory_probe.c \
+	>/dev/null 2>"$header_trace"
+grep -Fq "$ROOT_DIR/include/string.h" "$header_trace" || {
+	fail "candidate fixture did not use the project string header"
+}
+
+rustup run nightly-2026-07-24 rustc --edition=2021 \
+	--target x86_64-unknown-linux-musl \
+	--crate-type=lib \
+	--emit=obj \
+	-C relocation-model=static \
+	-C code-model=small \
+	-C panic=abort \
+	compat/x86_64/libc_memory_probe.rs \
+	-o "$object"
+
+# Save tables before searches so `pipefail` cannot turn a harmless producer
+# SIGPIPE into a flaky assertion failure.
+readelf --symbols --wide "$object" >"$object_symbols"
+readelf --relocs --wide "$object" >"$object_relocations"
+objdump -d "$object" >"$object_disassembly"
+
+for symbol in memcpy __memcpy_fwd memset memmove; do
+	grep -Eq "[[:space:]]${symbol}$" "$object_symbols" \
+		|| fail "object does not define ${symbol}"
+done
+if grep -Eq 'crabc_core|crabc_libc|__tls_get_addr' "$object_relocations"; then
+	fail "source-only memory object depends on a runtime artifact or dynamic TLS"
+fi
+for instruction in 'rep[[:space:]]+movs' 'rep[[:space:]]+stos' 'std' 'cld'; do
+	grep -Eq "$instruction" "$object_disassembly" \
+		|| fail "object lacks ${instruction}"
+done
+
+cc -no-pie -fno-builtin -I"$ROOT_DIR/include" \
+	compat/x86_64/libc_memory_probe.c "$object" -o "$candidate"
+readelf --symbols --wide "$candidate" >"$candidate_symbols"
+readelf --dyn-syms --wide "$candidate" >"$candidate_dynamic_symbols"
+for symbol in memcpy memset memmove; do
+	grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
+		|| fail "candidate does not define ${symbol}"
+done
+if grep -Eq '[[:space:]]UND[[:space:]].*(memcpy|memmove|memset)' \
+	"$candidate_dynamic_symbols"; then
+	fail "candidate leaves a memory symbol to the ambient C runtime"
+fi
+"$candidate"
+
+printf 'x86 C memory source-only probe: PASS\n'

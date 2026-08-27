@@ -58,7 +58,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/fenv.rs", headers_layouts["source_owners"]
         )
         self.assertIn(
+            "libc/src/c_abi/x86_64/memory.rs", headers_layouts["source_owners"]
+        )
+        self.assertIn(
             "./scripts/dev-x86_64.sh libc-fenv",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-memory",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
