@@ -477,7 +477,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_memfd_reference_probe.c', memfd)
         self.assertIn('memfd/sealing ABI/behavior reference', memfd)
         self.assertIn(
-            'syscall=319 commands=1033,1034 mfd=1,2,4 seals=1,2,4,8,16 name=proc-label fd=cloexec-owned lifecycle=allow-empty:add-grow-shrink:final-seal plain=seal-seal errors=EINVAL,EPERM',
+            'syscalls=319,72 commands=1033,1034 mfd=1,2,4 seals=1,2,4,8,16 name=249-ok:250-einval:proc-label fd=cloexec-owned lifecycle=allow-empty:write-live-map-ebusy:grow-shrink-enforced:write-enforced:future-write-existing-map-preserved:direct-write-rejected:new-writable-map-rejected:final-seal plain=seal-seal errors=EINVAL,EPERM,EBUSY,EBADF',
             memfd,
         )
         self.assertIn('run_musl_oracle.sh', memfd)

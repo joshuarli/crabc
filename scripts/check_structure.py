@@ -44,7 +44,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # and privately evidenced packed `epoll_event` and pselect descriptor-bit-vector
 # seams which remain under the planned record-owning family. `fs_x86_64.rs`
 # owns descriptor `fstat`, private CWD/statat path metadata,
-# caller-buffer-only readlinkat, plus file-access advice and readahead.
+# caller-buffer-only readlinkat, plus file-access advice and readahead, and
+# direct bounded anonymous memory-file/seal operations.
 # `process_x86_64.rs` owns only the strict
 # caller-buffer-only `getcwd` slice; allocation-backed getcwd and CWD mutation
 # remain deferred. It also owns read-only identity/session and
@@ -411,6 +412,41 @@ def check_x86_readlinkat_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_memfd_boundary(errors: list[str]) -> None:
+    """Keep the direct x86 memory-file slice narrow and descriptor-based."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub fn memfd_create",
+        "pub fn fcntl_get_seals",
+        "pub fn fcntl_add_seals",
+        "const HUGETLB",
+        "const EXEC",
+    ):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: direct memory-file slice is missing "
+                f"{required}"
+            )
+    if re.search(r"(?m)^\s*const\s+HUGE_", text):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: direct memory-file slice must defer "
+            "MFD_HUGE_* size selectors"
+        )
+    for forbidden in ("pub fn memfd_secret",):
+        if forbidden in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: direct memory-file slice must defer "
+                f"{forbidden}"
+            )
+    if re.search(r"(?m)^\s*pub\s+(?:unsafe\s+)?fn\s+fcntl(?:<|\s*\()", text):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: direct memory-file slice must not expose "
+            "a generic fcntl API"
+        )
+
+
 def main() -> int:
     errors: list[str] = []
     root_manifest = (ROOT / "Cargo.toml").read_text()
@@ -550,6 +586,7 @@ def main() -> int:
     check_root_c_link_boundaries(errors)
     check_x86_getcwd_boundary(errors)
     check_x86_readlinkat_boundary(errors)
+    check_x86_memfd_boundary(errors)
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)
     check_x86_futex_boundary(errors)

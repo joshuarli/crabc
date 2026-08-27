@@ -39,7 +39,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   madvise-reference  verify pinned-musl x86 mapping-advice ABI and behavior
   mincore-reference  verify pinned-musl x86 mapping-residency ABI and behavior
   fs-advice-reference  verify pinned-musl x86 fadvise64/readahead ABI and behavior
-  memfd-reference  verify pinned-musl x86 memfd/sealing ABI and lifecycle
+  memfd-reference  verify direct typed x86 memfd/sealing ABI and lifecycle
   ftruncate-reference  verify pinned-musl x86 descriptor-length ABI and lifecycle
   file-position-reference  verify pinned-musl x86 lseek/fsync/fdatasync ABI and behavior
   rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
@@ -99,6 +99,7 @@ an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset, including borrowed-atomic futex wait/wake and the complete typed
 `seek`/`tell`/`ftruncate`/`fsync`/`fdatasync` file-position family, typed
+anonymous memory-file creation plus bounded seal observation/mutation,
 calling-process `getrlimit`/`setrlimit`, typed supplementary-group query/fill,
 typed read-only `getrusage` observations, typed read-only `times` accounting,
 typed read-only interval-timer and round-robin interval queries, and typed
@@ -131,13 +132,21 @@ their named mapping-synchronization, Linux/POSIX advisory, and page-residency
 boundaries used by the typed Rust facade.
 `fs-advice-reference` establishes only the typed Rust file-access advice and
 readahead boundary; it does not select a C filesystem API.
-`memfd-reference` establishes only the pinned-musl x86 named anonymous
-memfd, descriptor-ownership, and seal lifecycle boundary; it does not select
-a C filesystem API or wider record-owning facade family.
+`memfd-reference` establishes the direct typed x86 `memfd_create` plus
+`F_GET_SEALS`/`F_ADD_SEALS` boundary: descriptor ownership/CLOEXEC, the
+249-byte kernel versus 256-byte facade name limit, Linux-5.10 seal effects
+including `F_SEAL_WRITE`'s live-mapping `EBUSY` guard and
+`F_SEAL_FUTURE_WRITE` preserving preexisting writable shared mappings while
+rejecting direct writes and new writable shared mappings, and direct descriptor
+errors. It excludes a C `fcntl`/header ABI,
+`memfd_secret`, huge-page size selection, executable policy, and broader
+filesystem behavior; the Linux-6.3 `F_SEAL_EXEC` bit is forwarded but not
+proved on the Linux-5.10 baseline.
 `ftruncate-reference` establishes the `ftruncate` component of the
 admitted typed x86 file-position family: syscall 77, the signed 64-bit
-`loff_t` maximum, extend-with-zero-fill and shrink behavior for a private
-memfd, unchanged file position, and direct `EINVAL`/`EBADF` errors. It
+`loff_t` maximum, extend-with-zero-fill and shrink behavior for a fresh
+memfd-backed fixture, unchanged file position, and direct `EINVAL`/`EBADF`
+errors. It
 does not select a C filesystem API, pathname truncation, allocation, or
 durability policy.
 `file-position-reference` establishes the remaining admitted typed x86

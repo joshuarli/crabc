@@ -213,19 +213,27 @@ position-preserving sync calls, and direct oversized-offset `SEEK_SET:EINVAL` an
 `EBADF` errors. It completes only the typed Rust file-position family, not a
 C filesystem API, pathname behavior, or host-filesystem durability claim.
 
-`memfd-reference` executes a pinned-musl x86 `memfd_create`/seal lifecycle.
-It pins `memfd_create=319`; `MFD_CLOEXEC`, `MFD_ALLOW_SEALING`, and
-`MFD_HUGETLB` values `1`/`2`/`4`; `F_ADD_SEALS=1033` and `F_GET_SEALS=1034`;
-and Linux-5.10 `F_SEAL_SEAL`/`SHRINK`/`GROW`/`WRITE`/`FUTURE_WRITE` values
+`memfd-reference` executes the direct typed x86 `memfd_create`/seal lifecycle.
+It pins `memfd_create=319`, raw `fcntl=72`, `MFD_CLOEXEC`,
+`MFD_ALLOW_SEALING`, and `MFD_HUGETLB` values `1`/`2`/`4`,
+`F_ADD_SEALS=1033`/`F_GET_SEALS=1034`, and Linux-5.10
+`F_SEAL_SEAL`/`SHRINK`/`GROW`/`WRITE`/`FUTURE_WRITE` values
 `1`/`2`/`4`/`8`/`16`. It checks named fresh-descriptor ownership and `CLOEXEC`,
-unknown-flag `EINVAL`, 249-byte name acceptance, 250-byte-name `EINVAL`,
-sealing-capable/plain memfd state,
-observable additions, final-seal `EPERM`, and an ineligible pipe's `EINVAL`.
-It is private evidence under the planned `facade.record-owning` family only:
-it does not select `filesystem.memory-file`, `filesystem.seal-observation`,
-`filesystem.seal-mutation`, a C `fcntl`/header ABI, or broader filesystem
-behavior. Huge-page sizing, executable policy, and `F_SEAL_EXEC` (Linux 6.3)
-remain outside this Linux-5.10 slice.
+the 249-byte accepted and 250-byte-kernel-rejected label boundary, sealing
+state, `F_SEAL_WRITE`'s live-writable-mapping `EBUSY` guard followed by write
+rejection, grow/shrink effects, and the `F_SEAL_FUTURE_WRITE` boundary:
+preexisting writable shared mappings stay usable, while direct writes and new
+writable shared mappings get `EPERM`; it also checks final-seal `EPERM` and
+pipe/closed-descriptor errors. The Rust regression separately proves its
+256-byte fixed-stack name rejection before a syscall.
+
+This completes only typed Rust `filesystem.memory-file`,
+`filesystem.seal-observation`, and `filesystem.seal-mutation`. It does not
+select a C `fcntl`/header ABI, `memfd_secret`, broad filesystem behavior, or
+huge-page size/reservation policy. `MFD_HUGETLB` selects only the kernel's
+default huge-page size and leaves resource outcomes direct. `F_SEAL_EXEC` is
+retained and forwarded for newer kernels, but its Linux-6.3 executable-policy
+behavior is unproved on the Linux-5.10 baseline.
 
 `rand-reference` runs a pinned-musl native x86 reference executable for
 `getrandom` syscall/flag values and initialized-length behavior. It does not
@@ -563,14 +571,20 @@ or delivering a signal. It is not public C `sigaction`/`signal` behavior or a
 selected `crabc-libc` artifact.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
-`fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
-`x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
-`x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
-`x86_64_process_session`, `x86_64_setpriority`, `x86_64_fs_credentials`,
-`x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`, `x86_64_setrlimit`, `x86_64_umask`,
-`x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sched_rr_interval`,
-`x86_64_sleep`, `x86_64_statat`, `x86_64_getcwd`, `x86_64_readlink`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
-`x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
+`fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`,
+`x86_64_fcntl_getlk`, `x86_64_fs`, `x86_64_fs_advice`,
+`x86_64_file_position`, `x86_64_ftruncate`, `x86_64_fs_credentials`,
+`x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
+`x86_64_memfd`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`,
+`x86_64_poll`, `x86_64_pselect`, `x86_64_priority`, `x86_64_setpriority`,
+`x86_64_process_identity`, `x86_64_process_session`, `x86_64_pidfd_open`,
+`x86_64_rand`, `x86_64_rlimit`, `x86_64_setrlimit`, `x86_64_umask`,
+`x86_64_rusage`, `x86_64_scheduler_priority_bounds`, `x86_64_sleep`,
+`x86_64_clock_nanosleep`, `x86_64_statat`, `x86_64_getcwd`,
+`x86_64_readlink`, `x86_64_sched_rr_interval`, `x86_64_sched_affinity`,
+`x86_64_sched_setaffinity`, `x86_64_system`, `x86_64_thread`,
+`x86_64_thread_credentials`, `x86_64_time`, `x86_64_timerfd`, and
+`x86_64_times` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
 positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
 sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
@@ -607,7 +621,8 @@ readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves a
 typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
 metadata slice, caller-buffer-only `getcwd` and `readlinkat` output, plus
-`fadvise64`/`readahead` behavior. The
+`fadvise64`/`readahead` behavior and direct bounded anonymous memory-file
+creation plus seal observation/mutation. The
 process regressions prove typed PID/identity/session observations, typed
 calling-process resource-limit query plus child-contained mutation and
 process-global umask exchange with restore safety, typed read-only process

@@ -127,6 +127,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "memory.residency",
             "filesystem.access-advice",
             "filesystem.readahead",
+            "filesystem.memory-file",
+            "filesystem.seal-observation",
+            "filesystem.seal-mutation",
             "io.file-position",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
@@ -145,9 +148,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertNotIn(capability, remaining["capabilities"])
         self.assertIn("crabc-rs/tests/futex.rs", direct["source_owners"])
         self.assertIn("crabc-core/src/thread.rs", direct["source_owners"])
+        self.assertIn("crabc-core/src/io.rs", direct["source_owners"])
         for source_owner in (
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
+            "crabc-rs/tests/x86_64_memfd.rs",
             "crabc-rs/tests/x86_64_thread_credentials.rs",
             "crabc-rs/tests/x86_64_fs_credentials.rs",
             "crabc-rs/tests/x86_64_getgroups.rs",
@@ -160,6 +165,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
+            "compat/x86_64/run_x86_memfd_reference.sh",
+            "compat/x86_64/x86_memfd_reference_probe.c",
             "compat/x86_64/run_x86_file_position_reference.sh",
             "compat/x86_64/x86_file_position_reference_probe.c",
             "compat/x86_64/run_x86_thread_credentials_reference.sh",
@@ -194,6 +201,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             evidence["command"] for evidence in direct["native_evidence"]
         }
         self.assertIn("./scripts/dev-x86_64.sh ftruncate-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh memfd-reference", direct_commands)
         self.assertIn(
             "./scripts/dev-x86_64.sh file-position-reference", direct_commands
         )
@@ -224,9 +232,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.readiness",
             "io.readiness-epoll",
             "memory.vm",
-            "filesystem.memory-file",
-            "filesystem.seal-observation",
-            "filesystem.seal-mutation",
             "time.wall-clock",
             "time.clock-query",
             "time.process-interval-control",
@@ -315,9 +320,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("compat/x86_64/x86_readlinkat_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-core/src/io.rs", remaining["source_owners"])
         self.assertIn("crabc-core/src/syscall_x86_64.rs", remaining["source_owners"])
-        self.assertIn("crabc-rs/tests/x86_64_memfd.rs", remaining["source_owners"])
-        self.assertIn("compat/x86_64/run_x86_memfd_reference.sh", remaining["source_owners"])
-        self.assertIn("compat/x86_64/x86_memfd_reference_probe.c", remaining["source_owners"])
+        self.assertNotIn("crabc-rs/tests/x86_64_memfd.rs", remaining["source_owners"])
+        self.assertNotIn("compat/x86_64/run_x86_memfd_reference.sh", remaining["source_owners"])
+        self.assertNotIn("compat/x86_64/x86_memfd_reference_probe.c", remaining["source_owners"])
         self.assertIn("crabc-core/src/thread.rs", remaining["source_owners"])
         self.assertNotIn("crabc-rs/tests/x86_64_sched_rr_interval.rs", remaining["source_owners"])
         self.assertIn("crabc-rs/src/thread_x86_64.rs", remaining["source_owners"])
@@ -371,10 +376,6 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertEqual(
             remaining["native_evidence"][10]["command"],
-            "./scripts/dev-x86_64.sh memfd-reference",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][11]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
@@ -400,6 +401,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("time.interval-timer-query", remaining["capabilities"])
         self.assertIn("time.clock-sleep", direct["capabilities"])
         self.assertNotIn("time.clock-sleep", remaining["capabilities"])
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct memfd_create=319")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertFalse(
+            any(
+                prerequisite.startswith("Private memory-file/seal")
+                for prerequisite in remaining["x86_abi_prerequisites"]
+            )
+        )
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 typed clock_nanosleep=230")

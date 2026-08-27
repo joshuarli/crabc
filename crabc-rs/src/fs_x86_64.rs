@@ -4,10 +4,12 @@
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
 //! `readlinkat(2)` target reads, file-access advice, file readahead,
 //! descriptor-based file-length mutation, file-position and synchronization
-//! operations, and anonymous memory-file creation with bounded sealing. The
+//! operations, and direct anonymous memory-file creation with bounded sealing.
+//! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
-//! has a distinct 144-byte layout. This private path slice admits only `CWD`
+//! has a distinct 144-byte layout. The private path slice within this module
+//! admits only `CWD`
 //! and `AT_SYMLINK_NOFOLLOW` for metadata, plus the direct caller-buffer
 //! readlink target boundary; `AT_EMPTY_PATH`, a general path module, `statx`,
 //! filesystem statistics, allocation-backed path helpers, and mutating
@@ -24,8 +26,8 @@ use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
 /// The largest byte pathname accepted by the fixed-stack [`PathArg`] boundary.
 ///
-/// One byte is reserved for the terminating NUL. This private x86-64 metadata
-/// slice deliberately does not allocate for longer paths; callers receive
+/// One byte is reserved for the terminating NUL. This fixed-stack x86-64
+/// facade boundary deliberately does not allocate for longer paths; callers receive
 /// [`Errno::NAMETOOLONG`] before a syscall instead.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
@@ -240,8 +242,9 @@ bitflags! {
     ///
     /// This is deliberately a closed set: unknown or newer kernel bits are
     /// rejected by [`MemfdFlags::from_bits`] instead of being silently
-    /// forwarded. Huge-page sizing bits and Linux 6.3 exec-policy flags are
-    /// outside this bounded facade slice.
+    /// forwarded. [`MemfdFlags::HUGETLB`] selects only the kernel's default
+    /// hugetlb page size; `MFD_HUGE_*` size selectors and any huge-page
+    /// allocation policy remain outside this bounded facade slice.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct MemfdFlags: u32 {
@@ -250,7 +253,8 @@ bitflags! {
         /// Permit `F_ADD_SEALS` operations on the returned file.
         const ALLOW_SEALING = 0x0002;
         /// Use hugetlb-backed storage with the kernel's default huge-page
-        /// size. Allocation may fail when no suitable huge pages are reserved.
+        /// size. Allocation remains a direct kernel result; this facade does
+        /// not expose huge-page size selection or reservation policy.
         const HUGETLB = 0x0004;
     }
 }
@@ -258,12 +262,16 @@ bitflags! {
 bitflags! {
     /// Linux `F_SEAL_*` flags returned by [`fcntl_get_seals`].
     ///
-    /// Unknown bits are retained so observations from a newer Linux kernel are
-    /// not silently discarded at the native Rust boundary.
+    /// Linux 5.10 defines the first five flags below. Unknown bits are retained
+    /// so observations from a newer Linux kernel are not silently discarded at
+    /// the native Rust boundary, and requested unknown bits pass unchanged to
+    /// Linux for validation. In particular, [`SealFlags::EXEC`] is kept as an
+    /// exact directly forwarded Linux 6.3+ bit; executable-policy behavior is
+    /// not part of this Linux-5.10 evidence slice.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct SealFlags: u32 {
-        /// Prevent adding or removing seals.
+        /// Prevent adding further seals.
         const SEAL = 0x0001;
         /// Prevent shrinking the inode.
         const SHRINK = 0x0002;
@@ -271,9 +279,15 @@ bitflags! {
         const GROW = 0x0004;
         /// Prevent writes to the inode.
         const WRITE = 0x0008;
-        /// Prevent future writable mappings (Linux 5.1+).
+        /// Prevent future writable shared mappings (Linux 5.1+).
+        ///
+        /// Writable shared mappings created before this seal remain permitted,
+        /// but direct descriptor writes are rejected.
         const FUTURE_WRITE = 0x0010;
-        /// Prevent executable changes (Linux 6.3+).
+        /// Directly forward the Linux 6.3+ executable-change seal.
+        ///
+        /// It is intentionally exposed for API fidelity but is not proved on
+        /// the Linux 5.10 baseline and does not admit executable-policy scope.
         const EXEC = 0x0020;
         /// Preserve future Linux-defined seal bits.
         const _ = !0;
@@ -286,9 +300,13 @@ bitflags! {
 /// byte-oriented NUL-terminated string, rejects interior NUL bytes, and does
 /// not require UTF-8. Byte and string inputs through the no-allocation arm
 /// reject names of 256 bytes or more with [`Errno::NAMETOOLONG`] before the
-/// syscall; a supplied [`CStr`] is borrowed directly. Linux's 249-byte
-/// `memfd_create` name limit (excluding its NUL terminator) remains a direct
-/// kernel error.
+/// syscall; a supplied [`CStr`] is borrowed directly. Linux accepts 249 label
+/// bytes and rejects 250 with its direct [`Errno::INVAL`] result; that kernel
+/// limit remains distinct from the facade's 256-byte conversion limit.
+///
+/// This creates only anonymous memory files. `memfd_secret`, huge-page size
+/// selectors, and broader filesystem policy remain outside the typed x86-64
+/// facade.
 #[inline]
 pub fn memfd_create<P: PathArg>(name: P, flags: MemfdFlags) -> Result<OwnedFd> {
     let flags = MemfdFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
@@ -316,6 +334,14 @@ pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
 ///
 /// The descriptor must have been created with [`MemfdFlags::ALLOW_SEALING`],
 /// and once [`SealFlags::SEAL`] is present no further flags may be added.
+/// [`SealFlags::FUTURE_WRITE`] rejects direct descriptor writes and new shared
+/// writable mappings, while retaining writable shared mappings that existed
+/// before the seal was added.
+/// Unknown requested bits are forwarded unchanged; Linux 5.10 rejects an
+/// unrecognized bit with its direct [`crate::Errno::INVAL`] result. The
+/// [`SealFlags::EXEC`] bit is likewise forwarded unchanged when requested, but
+/// its Linux 6.3+ executable-policy semantics are not part of this Linux-5.10
+/// slice.
 /// Kernel errors such as [`crate::Errno::PERM`] remain direct results without
 /// libc or TLS `errno`.
 #[inline]

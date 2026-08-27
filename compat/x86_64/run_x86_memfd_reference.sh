@@ -27,8 +27,14 @@ probe="$work_dir/x86-memfd-reference"
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_memfd_reference_probe.c" \
     -o "$probe"
-expected='syscall=319 commands=1033,1034 mfd=1,2,4 seals=1,2,4,8,16 name=proc-label fd=cloexec-owned lifecycle=allow-empty:add-grow-shrink:final-seal plain=seal-seal errors=EINVAL,EPERM'
-actual="$("$probe")"
+expected='syscalls=319,72 commands=1033,1034 mfd=1,2,4 seals=1,2,4,8,16 name=249-ok:250-einval:proc-label fd=cloexec-owned lifecycle=allow-empty:write-live-map-ebusy:grow-shrink-enforced:write-enforced:future-write-existing-map-preserved:direct-write-rejected:new-writable-map-rejected:final-seal plain=seal-seal errors=EINVAL,EPERM,EBUSY,EBADF'
+if actual="$("$probe")"; then
+    :
+else
+    status=$?
+    printf 'ERROR: x86 memfd reference probe failed with exit %s\n' "$status" >&2
+    exit "$status"
+fi
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 memfd reference output mismatch\nexpected: %s\nactual: %s\n' \
         "$expected" "$actual" >&2

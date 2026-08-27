@@ -404,7 +404,8 @@ pub fn openat(dirfd: RawFd, path: &CStr, flags: i32, mode: u32) -> Result<RawFd>
 /// `errno`.
 ///
 /// `name` must remain a valid NUL-terminated byte string for the syscall;
-/// the public facade supplies that contract through `Arg`.
+/// the public facade supplies that contract through its target-specific input
+/// boundary.
 #[inline]
 pub fn memfd_create(name: &CStr, flags: u32) -> Result<RawFd> {
     // SAFETY: `CStr` supplies the name pointer and Linux validates the

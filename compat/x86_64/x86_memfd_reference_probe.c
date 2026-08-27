@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 _Static_assert(SYS_memfd_create == 319, "x86 memfd_create syscall number");
+_Static_assert(SYS_fcntl == 72, "x86 fcntl syscall number");
 _Static_assert(MFD_CLOEXEC == 0x0001U, "x86 MFD_CLOEXEC");
 _Static_assert(MFD_ALLOW_SEALING == 0x0002U, "x86 MFD_ALLOW_SEALING");
 _Static_assert(MFD_HUGETLB == 0x0004U, "x86 MFD_HUGETLB");
@@ -61,7 +62,14 @@ int main(void)
     int closed_fd;
     int sealing_fd = -1;
     int plain_fd = -1;
+    int raw_fd = -1;
+    int write_fd = -1;
+    int future_write_fd = -1;
     int pipe_fds[2] = {-1, -1};
+    unsigned char future_byte;
+    void *write_mapping = MAP_FAILED;
+    void *future_mapping = MAP_FAILED;
+    void *new_mapping;
 
     /* Linux 5.10 accepts 249 content bytes; the limit excludes the NUL. */
     memset(boundary_name, 'x', sizeof(boundary_name) - 1);
@@ -80,6 +88,24 @@ int main(void)
     errno = 0;
     if (!expect_error(memfd_create(boundary_name, 0), EINVAL))
         return 13;
+
+    /* Pin the raw three-register fcntl boundary separately from musl's C API. */
+    raw_fd = memfd_create("crabc-x86-memfd-raw-fcntl", MFD_ALLOW_SEALING);
+    if (raw_fd < 0)
+        return 100;
+    if (syscall(SYS_fcntl, raw_fd, F_GET_SEALS) != 0)
+        return 101;
+    if (syscall(SYS_fcntl, raw_fd, F_ADD_SEALS, F_SEAL_SHRINK) != 0 ||
+        syscall(SYS_fcntl, raw_fd, F_GET_SEALS) != F_SEAL_SHRINK)
+        return 102;
+    errno = 0;
+    if (!expect_error(
+            syscall(SYS_fcntl, raw_fd, F_ADD_SEALS, 0x40000000U), EINVAL
+        ) || syscall(SYS_fcntl, raw_fd, F_GET_SEALS) != F_SEAL_SHRINK)
+        return 103;
+    if (close(raw_fd) != 0)
+        return 104;
+    raw_fd = -1;
 
     sealing_fd = memfd_create(name, MFD_CLOEXEC | MFD_ALLOW_SEALING);
     if (sealing_fd < 0)
@@ -104,42 +130,140 @@ int main(void)
     if (fcntl(sealing_fd, F_ADD_SEALS, added_seals) != 0 ||
         fcntl(sealing_fd, F_GET_SEALS) != added_seals)
         return 21;
+    errno = 0;
+    if (!expect_error(ftruncate(sealing_fd, sizeof(payload)), EPERM))
+        return 22;
+    errno = 0;
+    if (!expect_error(ftruncate(sealing_fd, sizeof(payload) - 2), EPERM) ||
+        fcntl(sealing_fd, F_GET_SEALS) != added_seals)
+        return 23;
     if (fcntl(sealing_fd, F_ADD_SEALS, F_SEAL_SEAL) != 0 ||
         fcntl(sealing_fd, F_GET_SEALS) != final_seals)
-        return 22;
+        return 24;
     errno = 0;
     if (!expect_error(fcntl(sealing_fd, F_ADD_SEALS, F_SEAL_WRITE), EPERM) ||
         fcntl(sealing_fd, F_GET_SEALS) != final_seals)
-        return 23;
+        return 25;
+
+    write_fd = memfd_create("crabc-x86-memfd-write", MFD_ALLOW_SEALING);
+    if (write_fd < 0)
+        return 26;
+    if (write(write_fd, payload, sizeof(payload) - 1) !=
+        (ssize_t)(sizeof(payload) - 1))
+        return 27;
+    if (ftruncate(write_fd, 4096) != 0)
+        return 105;
+    write_mapping = mmap(
+        NULL,
+        4096,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        write_fd,
+        0
+    );
+    if (write_mapping == MAP_FAILED)
+        return 106;
+    errno = 0;
+    if (!expect_error(fcntl(write_fd, F_ADD_SEALS, F_SEAL_WRITE), EBUSY) ||
+        fcntl(write_fd, F_GET_SEALS) != 0)
+        return 107;
+    if (munmap(write_mapping, 4096) != 0)
+        return 108;
+    write_mapping = MAP_FAILED;
+    if (fcntl(write_fd, F_ADD_SEALS, F_SEAL_WRITE) != 0 ||
+        fcntl(write_fd, F_GET_SEALS) != F_SEAL_WRITE)
+        return 28;
+    errno = 0;
+    if (!expect_error(pwrite(write_fd, "!", 1, 0), EPERM))
+        return 29;
+
+    future_write_fd = memfd_create(
+        "crabc-x86-memfd-future-write", MFD_ALLOW_SEALING
+    );
+    if (future_write_fd < 0)
+        return 30;
+    if (ftruncate(future_write_fd, 4096) != 0)
+        return 31;
+    future_mapping = mmap(
+        NULL,
+        4096,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        future_write_fd,
+        0
+    );
+    if (future_mapping == MAP_FAILED)
+        return 32;
+    ((unsigned char *)future_mapping)[0] = 'a';
+    if (fcntl(future_write_fd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) != 0 ||
+        fcntl(future_write_fd, F_GET_SEALS) != F_SEAL_FUTURE_WRITE)
+        return 33;
+    ((unsigned char *)future_mapping)[0] = 'b';
+    if (pread(future_write_fd, &future_byte, 1, 0) != 1 || future_byte != 'b')
+        return 34;
+    errno = 0;
+    if (!expect_error(pwrite(future_write_fd, "!", 1, 0), EPERM))
+        return 35;
+    errno = 0;
+    new_mapping = mmap(
+        NULL,
+        4096,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        future_write_fd,
+        0
+    );
+    if (new_mapping != MAP_FAILED) {
+        (void)munmap(new_mapping, 4096);
+        return 36;
+    }
+    if (errno != EPERM)
+        return 37;
+    if (munmap(future_mapping, 4096) != 0)
+        return 38;
+    future_mapping = MAP_FAILED;
 
     plain_fd = memfd_create("crabc-x86-memfd-plain", 0);
     if (plain_fd < 0)
-        return 24;
+        return 39;
     if ((fcntl(plain_fd, F_GETFD) & FD_CLOEXEC) != 0)
-        return 25;
+        return 40;
     if (fcntl(plain_fd, F_GET_SEALS) != F_SEAL_SEAL)
-        return 26;
+        return 41;
     errno = 0;
     if (!expect_error(fcntl(plain_fd, F_ADD_SEALS, F_SEAL_GROW), EPERM))
-        return 27;
+        return 42;
 
     if (pipe(pipe_fds) != 0)
-        return 28;
+        return 43;
     errno = 0;
     if (!expect_error(fcntl(pipe_fds[0], F_GET_SEALS), EINVAL))
-        return 29;
+        return 44;
+    errno = 0;
+    if (!expect_error(fcntl(pipe_fds[0], F_ADD_SEALS, F_SEAL_GROW), EPERM))
+        return 45;
+    errno = 0;
+    if (!expect_error(fcntl(pipe_fds[1], F_ADD_SEALS, F_SEAL_GROW), EINVAL))
+        return 46;
 
     closed_fd = sealing_fd;
     if (close(closed_fd) != 0)
-        return 30;
+        return 47;
     sealing_fd = -1;
     errno = 0;
     if (!expect_error(fcntl(closed_fd, F_GETFD), EBADF))
-        return 31;
-    if (close(plain_fd) != 0 || close(pipe_fds[0]) != 0 ||
+        return 48;
+    errno = 0;
+    if (!expect_error(fcntl(closed_fd, F_GET_SEALS), EBADF))
+        return 49;
+    errno = 0;
+    if (!expect_error(fcntl(closed_fd, F_ADD_SEALS, F_SEAL_GROW), EBADF))
+        return 51;
+    if (close(write_fd) != 0 || close(future_write_fd) != 0 ||
+        close(plain_fd) != 0 || close(pipe_fds[0]) != 0 ||
         close(pipe_fds[1]) != 0)
-        return 32;
+        return 50;
 
-    puts("syscall=319 commands=1033,1034 mfd=1,2,4 seals=1,2,4,8,16 name=proc-label fd=cloexec-owned lifecycle=allow-empty:add-grow-shrink:final-seal plain=seal-seal errors=EINVAL,EPERM");
+    puts("syscalls=319,72 commands=1033,1034 mfd=1,2,4 seals=1,2,4,8,16 name=249-ok:250-einval:proc-label fd=cloexec-owned lifecycle=allow-empty:write-live-map-ebusy:grow-shrink-enforced:write-enforced:future-write-existing-map-preserved:direct-write-rejected:new-writable-map-rejected:final-seal plain=seal-seal errors=EINVAL,EPERM,EBUSY,EBADF");
     return 0;
 }
