@@ -136,6 +136,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.seal-observation",
             "filesystem.seal-mutation",
             "filesystem.cwd",
+            "filesystem.path-metadata",
             "io.file-position",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
@@ -168,6 +169,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_getitimer.rs",
             "crabc-rs/tests/x86_64_timerfd.rs",
             "crabc-rs/tests/x86_64_getcwd.rs",
+            "crabc-rs/tests/x86_64_current_dir_name.rs",
             "crabc-rs/tests/x86_64_clock_nanosleep.rs",
             "crabc-rs/tests/x86_64_sched_rr_interval.rs",
             "crabc-rs/tests/x86_64_sched_affinity.rs",
@@ -417,6 +419,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertIn("filesystem.cwd", direct["capabilities"])
         self.assertNotIn("filesystem.cwd", remaining["capabilities"])
+        self.assertIn("filesystem.path-metadata", direct["capabilities"])
+        self.assertNotIn("filesystem.path-metadata", remaining["capabilities"])
+        self.assertIn(
+            "crabc-rs/tests/x86_64_current_dir_name.rs", direct["source_owners"]
+        )
+        self.assertNotIn(
+            "crabc-rs/tests/x86_64_current_dir_name.rs", remaining["source_owners"]
+        )
         self.assertEqual(remaining["status"], "planned")
         self.assertIn("thread.scheduler-rr-interval", direct["capabilities"])
         self.assertNotIn("thread.scheduler-rr-interval", remaining["capabilities"])
@@ -517,6 +527,14 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
+        getcwd_evidence = next(
+            evidence
+            for evidence in direct["native_evidence"]
+            if evidence["command"] == "./scripts/dev-x86_64.sh getcwd-reference"
+        )
+        self.assertIn("get_current_dir_name", getcwd_evidence["scope"])
+        self.assertIn("newfstatat=262", getcwd_evidence["scope"])
+        self.assertIn("never reads PWD", getcwd_evidence["scope"])
         self.assertFalse(
             any(
                 prerequisite.startswith("Private CPU-affinity observation")

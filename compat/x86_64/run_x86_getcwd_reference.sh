@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 pinned-musl getcwd(2) reference.
+# Native Linux/x86-64 pinned-musl getcwd(2)/logical-PWD reference.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,7 +25,7 @@ probe="$work_dir/x86-getcwd-reference"
 "$ORACLE_CC" -std=c11 \
     "$ROOT_DIR/compat/x86_64/x86_getcwd_reference_probe.c" \
     -o "$probe"
-expected='syscall=79 exact=match zero=musl-EINVAL/raw-ERANGE undersized=ERANGE'
+expected='syscalls=getcwd:79,newfstatat:262 exact=match zero=musl-EINVAL/raw-ERANGE undersized=ERANGE pwd=devino-logical=preserved,mismatch+empty=physical native-snapshot=absolute'
 actual="$($probe)"
 [ "$actual" = "$expected" ] || {
     printf 'ERROR: x86 getcwd reference output mismatch\nexpected: %s\nactual: %s\n' \
@@ -33,4 +33,4 @@ actual="$($probe)"
     exit 1
 }
 
-printf 'x86 pinned-musl getcwd ABI and behavior reference: PASS\n'
+printf 'x86 pinned-musl getcwd/logical-PWD ABI and behavior reference: PASS\n'

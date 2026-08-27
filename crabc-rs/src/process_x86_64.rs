@@ -1,7 +1,8 @@
 //! Bounded Linux/x86-64 process operations and record-lock observations.
 //!
 //! This module intentionally admits only scalar identity queries, a
-//! caller-buffer and alloc-gated current-working-directory observations, the
+//! caller-buffer and alloc-gated physical/logical current-working-directory
+//! observations, the
 //! kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
 //! query/fill protocol, pidfd creation, typed calling-task filesystem
@@ -22,6 +23,8 @@ use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use crate::buffer::Buffer;
+use core::ffi::CStr;
+use core::ptr;
 pub use crate::fs::Mode;
 use crate::{AsFd, OwnedFd, Result};
 
@@ -465,6 +468,106 @@ pub fn getcwd_alloc<B: Into<Vec<u8>>>(reuse: B) -> Result<CString> {
             return Ok(CString::from_vec_with_nul_unchecked(buffer));
         }
     }
+}
+
+/// Returns whether `pwd` is an absolute spelling of the calling process's
+/// current directory.
+//
+// This is deliberately an explicit input rather than an environment lookup.
+// A caller which owns an environment snapshot can pass its `PWD` value here;
+// the value is trusted only after Linux confirms that it names the same
+// `(st_dev, st_ino)` pair as `.`. This preserves logical symlink spellings
+// without making environment state part of the native API.
+#[inline]
+fn logical_pwd_matches_current(pwd: &CStr) -> bool {
+    let bytes = pwd.to_bytes();
+    if bytes.is_empty() || bytes[0] != b'/' {
+        return false;
+    }
+
+    let dot = unsafe { CStr::from_bytes_with_nul_unchecked(b".\0") };
+    let pwd_stat = match crate::fs::stat(pwd) {
+        Ok(stat) => stat,
+        Err(_) => return false,
+    };
+    let dot_stat = match crate::fs::stat(dot) {
+        Ok(stat) => stat,
+        Err(_) => return false,
+    };
+    pwd_stat.st_dev == dot_stat.st_dev && pwd_stat.st_ino == dot_stat.st_ino
+}
+
+/// Copies a validated logical pathname into caller-owned storage.
+#[inline]
+fn copy_cstr_into<Buf: Buffer<u8>>(source: &CStr, mut buffer: Buf) -> Result<Buf::Output> {
+    let source = source.to_bytes_with_nul();
+    let (destination, capacity) = buffer.parts_mut();
+    if capacity < source.len() {
+        return Err(crate::Errno::RANGE);
+    }
+
+    // SAFETY: The capacity check proves that the complete NUL-terminated
+    // source fits in the writable buffer. `ptr::copy` permits a caller to
+    // provide storage which overlaps the borrowed source spelling.
+    unsafe {
+        ptr::copy(source.as_ptr(), destination, source.len());
+        Ok(buffer.assume_init(source.len()))
+    }
+}
+
+/// Returns a logical current-directory spelling when the caller's `PWD`
+/// snapshot is valid, otherwise the physical spelling from Linux `getcwd`.
+///
+/// `PWD` is never read from the process environment. When it is nonempty,
+/// absolute, and names the same directory as `.`, its exact bytes—including
+/// symlink components and non-UTF-8 bytes—are copied into `buffer`. A buffer
+/// too small for that validated spelling returns [`crate::Errno::RANGE`]. All
+/// fallback behavior has the same initialized-prefix and trailing-NUL
+/// contract as [`getcwd`]. Validation is a point-in-time observation, so
+/// callers which permit concurrent current-directory changes must coordinate
+/// them themselves.
+#[inline]
+#[allow(private_interfaces)]
+pub fn get_current_dir_name<Buf: Buffer<u8>>(
+    pwd: Option<&CStr>,
+    buffer: Buf,
+) -> Result<Buf::Output> {
+    if let Some(pwd) = pwd {
+        if logical_pwd_matches_current(pwd) {
+            return copy_cstr_into(pwd, buffer);
+        }
+    }
+    getcwd(buffer)
+}
+
+/// Returns an owned logical current-directory spelling when the caller's
+/// `PWD` snapshot is valid, otherwise the physical spelling from Linux
+/// `getcwd`. The supplied vector is cleared and reused where possible.
+///
+/// This convenience API is allocation-enabled; the bounded
+/// [`get_current_dir_name`] operation is the corresponding no-alloc surface.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn get_current_dir_name_alloc<B: Into<Vec<u8>>>(
+    pwd: Option<&CStr>,
+    reuse: B,
+) -> Result<CString> {
+    if let Some(pwd) = pwd {
+        if logical_pwd_matches_current(pwd) {
+            let source = pwd.to_bytes_with_nul();
+            let mut buffer = reuse.into();
+            buffer.clear();
+            buffer.reserve(source.len());
+            // SAFETY: `reserve` guarantees capacity for the complete source;
+            // the exact NUL-terminated bytes are copied before setting len.
+            unsafe {
+                ptr::copy_nonoverlapping(source.as_ptr(), buffer.as_mut_ptr(), source.len());
+                buffer.set_len(source.len());
+                return Ok(CString::from_vec_with_nul_unchecked(buffer));
+            }
+        }
+    }
+    getcwd_alloc(reuse)
 }
 
 /// A Linux nice value observed or supplied through the native priority facade.

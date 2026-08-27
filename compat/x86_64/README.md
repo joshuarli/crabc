@@ -451,17 +451,30 @@ not complete the broader filesystem path-core capability.
 `statat-reference` records the private x86 144-byte stat record through
 `newfstatat(2)`, both relative to a borrowed directory descriptor and through
 `CWD`, with only `AT_SYMLINK_NOFOLLOW`. It does not expose `AT_EMPTY_PATH`,
-general pathname APIs, filesystem mutation, or promote `filesystem.path-metadata`.
+general stat/path APIs, or filesystem mutation. It is the narrow
+`st_dev`/`st_ino` identity foundation for the separately admitted logical
+current-directory name.
 
-`getcwd-reference` completes only x86 `filesystem.cwd`. Direct syscall 79 and
-pinned musl agree on the exact initialized NUL-terminated caller-buffer prefix
-and undersized-buffer `ERANGE` behavior. The pinned-musl C wrapper instead
-returns `EINVAL` for its zero-size input; the direct Rust facade retains the
-raw-kernel `ERANGE` rather than emulating that wrapper policy. The alloc-gated
+`getcwd-reference` completes x86 `filesystem.cwd` and the contained
+`filesystem.path-metadata` logical-name slice. Direct syscall 79 and pinned
+musl agree on the exact initialized NUL-terminated caller-buffer prefix and
+undersized-buffer `ERANGE` behavior. The pinned-musl C wrapper instead returns
+`EINVAL` for its zero-size input; the direct Rust facade retains the raw-kernel
+`ERANGE` rather than emulating that wrapper policy. The alloc-gated
 `process::getcwd_alloc` clears and reuses a caller vector, retries only
 `ERANGE`, and returns a `CString`; a native child regression puts its CWD
-beyond the initial small buffer. `chdir`, `fchdir`, C APIs, errno TLS, and
-general pathname APIs remain explicitly deferred.
+beyond the initial small buffer.
+
+The same gate proves raw and pinned-musl `newfstatat=262` agreement on the
+x86 144-byte `stat` identity fields. Pinned musl's C
+`get_current_dir_name` reads environment `PWD`; Rust instead takes an explicit
+caller-owned `Option<&CStr>` and never reads the environment. A nonempty
+absolute snapshot that has the same `st_dev`/`st_ino` pair as `.` preserves its
+exact logical spelling, including non-UTF-8 bytes. Mismatched, relative, empty,
+or absent snapshots fall back to physical `getcwd`, and a too-small validated
+buffer returns `RANGE`; alloc-gated logical/physical results are also covered.
+`chdir`, `fchdir`, C APIs, errno TLS, and general stat/path APIs remain
+explicitly deferred.
 
 `readlinkat-reference` executes the private x86 caller-buffer-only
 `readlinkat(2)` slice. It records the initialized target prefix without adding
@@ -472,7 +485,8 @@ deliberately does not emulate. `&str` and byte-slice paths use fixed 256-byte
 stack conversion storage; a borrowed `&CStr` remains caller-owned.
 Allocation-backed readlink helpers, general path APIs, and filesystem/path
 mutation remain deferred; this evidence does not promote
-`filesystem.path-core` or `filesystem.path-metadata`.
+`filesystem.path-core` or widen the contained logical-current-directory
+metadata slice.
 
 `system-reference` records the pinned-musl `uname` and `sysinfo` behavior used
 by bounded typed system name/status/load observations. It does not select

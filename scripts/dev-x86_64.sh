@@ -73,7 +73,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   times-reference  verify pinned-musl x86 process-accounting ABI and behavior
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
   statat-reference  verify pinned-musl x86 private statat ABI and behavior reference
-  getcwd-reference  verify pinned-musl/raw x86 direct typed getcwd behavior
+  getcwd-reference  verify pinned-musl/raw x86 physical and logical current-directory behavior
   readlinkat-reference  verify pinned-musl x86 private caller-buffer readlinkat behavior reference
   system-reference  verify pinned-musl x86 uname/sysinfo ABI and behavior reference
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
@@ -110,10 +110,11 @@ sentinels, and typed scheduling-priority mutation,
 plus bounded typed clock-nanosleep with its relative-remainder and
 absolute-no-remainder modes, direct typed timer descriptors, direct
 select/pselect and packed epoll readiness with masked waits, and caller-buffer
-current-working-directory observation. The dedicated `getcwd-reference` gate
-also covers its alloc-gated retry; contained interval-timer control, private
-statat path-metadata, and caller-buffer-only readlinkat remain privately
-evidenced. None makes the
+and alloc-gated physical and validated-logical current-directory observation.
+The dedicated `getcwd-reference` gate also covers alloc-gated physical retry
+and logical explicit-PWD decisions; private statat remains only its narrow
+identity foundation, while contained interval-timer control and caller-buffer-
+only readlinkat remain privately evidenced. None makes the
 record-owning family selectable.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
@@ -203,14 +204,24 @@ exchange, and malformed-`timeval` `EINVAL` behavior in short-lived child
 processes. It does not select `alarm`, `ualarm`, C time APIs, or promote the
 broader record-owning facade family.
 `statat-reference` proves only the x86 `newfstatat` record with CWD and
-`AT_SYMLINK_NOFOLLOW`; it does not select `AT_EMPTY_PATH`, general path APIs,
-filesystem mutation, or promote the broader record-owning facade family.
-`getcwd-reference` proves the direct x86 typed `process::{getcwd,getcwd_alloc}`
-boundary: raw/pinned-musl `getcwd=79` prefix and `ERANGE` behavior, the
-intentional musl zero-size `EINVAL` versus raw-kernel `ERANGE` difference, and
-an alloc-gated native Rust long-current-directory retry that returns a
-`CString`. It excludes `chdir`/`fchdir`, filesystem mutation, general path
-APIs, C APIs, errno TLS, and the broader record-owning facade family.
+`AT_SYMLINK_NOFOLLOW`; it is the private `st_dev`/`st_ino` identity foundation
+for the separately admitted logical-current-directory name. It does not select
+`AT_EMPTY_PATH`, general stat or path APIs, filesystem mutation, or the
+broader record-owning facade family.
+`getcwd-reference` proves the direct x86 typed
+`process::{getcwd,getcwd_alloc,get_current_dir_name,get_current_dir_name_alloc}`
+boundary. Raw/pinned-musl `getcwd=79` proves physical prefix and `ERANGE`
+behavior, including the intentional musl zero-size `EINVAL` versus raw-kernel
+`ERANGE` difference. Pinned musl's environment-backed
+`get_current_dir_name` and raw/musl `newfstatat=262` establish the matching
+device/inode trust decision; the Rust facade instead receives an explicit
+caller-owned `&CStr` snapshot and requires it to be nonempty and absolute.
+Only a matching snapshot preserves its exact logical spelling; mismatch,
+relative, empty, or absent snapshots fall back to physical `getcwd`. The
+alloc-gated native Rust tests cover physical retry plus logical and fallback
+results. The facade neither reads `PWD` nor selects C `get_current_dir_name`.
+`chdir`/`fchdir`, filesystem mutation, general path APIs, C APIs, errno TLS,
+and the broader record-owning facade family remain excluded.
 `readlinkat-reference` proves only the private x86 caller-buffer-only
 `readlinkat` target query: the caller owns writable storage, the result is a
 non-NUL-terminated initialized prefix, and a short output buffer succeeds with
@@ -615,7 +626,8 @@ run_statat_reference() {
 run_getcwd_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_getcwd_reference.sh
     run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
-        -p crabc-rs --no-default-features --features alloc --test x86_64_getcwd -- --test-threads=1
+        -p crabc-rs --no-default-features --features alloc --test x86_64_getcwd \
+        --test x86_64_current_dir_name -- --test-threads=1
 }
 
 run_readlinkat_reference() {
@@ -1041,7 +1053,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_ftruncate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_ftruncate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)

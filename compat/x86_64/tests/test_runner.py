@@ -143,9 +143,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_getcwd_reference()', source)
         self.assertIn('compat/x86_64/run_x86_getcwd_reference.sh', source)
         self.assertIn(
-            '--no-default-features --features alloc --test x86_64_getcwd -- --test-threads=1',
+            '--no-default-features --features alloc --test x86_64_getcwd',
             source,
         )
+        self.assertIn('--test x86_64_current_dir_name -- --test-threads=1', source)
         self.assertIn('run_readlinkat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_readlinkat_reference.sh', source)
         self.assertIn('run_rr_interval_reference()', source)
@@ -211,6 +212,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_clock_nanosleep', source)
         self.assertIn('--test x86_64_statat', source)
         self.assertIn('--test x86_64_getcwd', source)
+        self.assertIn('--test x86_64_current_dir_name', source)
         self.assertIn('--test x86_64_readlink', source)
         self.assertIn('--test x86_64_sched_rr_interval', source)
         self.assertIn('--test x86_64_sched_affinity', source)
@@ -1299,6 +1301,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_statat",
                     "--test",
                     "x86_64_getcwd",
+                    "--test",
+                    "x86_64_current_dir_name",
                     "--test",
                     "x86_64_readlink",
                     "--test",
