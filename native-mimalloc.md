@@ -10,8 +10,10 @@ The project remains a compatibility-engineering project, not allocator research.
 
 ## Current checkpoint — 2026-08-27
 
-Current capability checkpoint: Gate 5A's bounded persistent mixed-local worker
-witness is complete. Gate 5B's real remote-free integration is next.
+Current capability checkpoint: Gates 5A and 5B are complete. The bounded
+later-worker witnesses now cover persistent mixed-local allocation and joined
+live-owner remote publication/collection; Gate 5C's general owner-exit
+traversal is next.
 
 The implementation has reached an important phase boundary.
 
@@ -44,12 +46,13 @@ At this checkpoint:
 * no performance workload is yet qualified;
 * `libmimalloc-sys` remains the production allocator;
 * crabc-libc does not yet route its malloc family through the Rust engine;
-* Gate 5A proves a bounded persistent page-bearing worker engine, but later workers do not yet own a public, concurrent, or general persistent allocator route;
-* the worker runtime seam still deliberately prevents pointers from crossing its bounded local-only witnesses;
-* integrated remote free, general page-bearing owner exit, reclamation, and pthread stress remain incomplete.
+* Gates 5A and 5B prove bounded persistent local and live-owner remote-free worker engines, but later workers do not yet own a public, concurrent, or general persistent allocator route;
+* the worker runtime seam still deliberately prevents client pointers from crossing its bounded witnesses: the Gate 5B B/C threads receive only opaque publication capabilities;
+* general page-bearing owner exit, reclamation, and pthread stress remain incomplete.
 
-The critical path is now Gate 5B: real remote free while the page owner remains
-alive. Do not add another owner-exit shape before that gate requires it.
+The critical path is now Gate 5C: source-shaped general owner exit with live
+allocations. Do not add another owner-exit shape first; converge the existing
+shape matrix on one validated traversal.
 
 This is no longer primarily a "port another function" problem.
 
@@ -853,9 +856,8 @@ Do not proceed into broad optional APIs, generalized arena features, secure mode
 
 ## Gate 5A — persistent page-bearing pthread lifecycle
 
-Status: complete. The retained test-only worker witness now keeps one engine
-through mixed local allocations and normal teardown; Gate 5B remains the next
-integration gate.
+Status: complete. The retained test-only worker witness keeps one engine
+through mixed local allocations and normal teardown.
 
 Goal: prove that a real later worker can be an allocator owner rather than a pointer-free round trip.
 
@@ -888,6 +890,14 @@ Acceptance:
 * existing narrow page tests remain green.
 
 ## Gate 5B — remote free while owner remains alive
+
+Status: complete. The private live-owner witness fills one small page, passes
+two distinct opaque remote-free capabilities from A to joined B/C pthreads,
+and requires A's ordinary allocation path to false-collect and reuse both
+exact blocks before normal teardown. Focused state auditing proves each of
+three fresh A workers restores PageMap, arena, TLD, and Theap state to the
+retained baseline; the source total-thread sequence remains intentionally
+monotonic.
 
 Goal: pointers genuinely cross threads.
 
@@ -1827,7 +1837,7 @@ Do not hide a regression by weakening its test in the same commit unless the com
 
 ---
 
-# 35. IMMEDIATE NEXT WORK AFTER GATE 5A
+# 35. IMMEDIATE NEXT WORK AFTER GATE 5B
 
 The next agent should **not** pick another page-shape exception.
 
@@ -1862,15 +1872,18 @@ Use mixed allocations.
 Gate 5A is closed by focused Rust state auditing and the prefixed C pthread
 fixture. It does not create a general worker allocator route.
 
-## Step 3 — real remote free (next)
+## Step 3 — real remote free (complete)
 
-Allow a block allocated by worker A to be freed by worker B through the real production protocol.
+Allow blocks allocated by worker A to be freed by joined workers B/C through the real production protocol.
 
-Prove collection and reuse while A remains live.
+The bounded witness fills a small page, transfers two distinct opaque
+capabilities, then proves A's ordinary allocation path collects and reuses
+both exact blocks while A remains live. It includes existing Loom protocol
+models, focused Rust state auditing, and the prefixed C pthread fixture.
 
-Close Gate 5B.
+Gate 5B is closed without adding an owner-exit shape.
 
-## Step 4 — general owner-exit traversal
+## Step 4 — general owner-exit traversal (next)
 
 Implement the source-shaped generic `MI_ABANDON` traversal.
 

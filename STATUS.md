@@ -988,14 +988,18 @@ root, page, or general fork repair.
 The adjacent permanent ticket-zero page owner remains outside that production
 bridge. `compat/allocator/runtime-ticket-zero-adapter` is a separate `no_std`
 C evidence staticlib, not an installed or selected libc
-interface: in one fresh process it exports only seven prefixed operations
+interface: in one fresh process it exports only eight prefixed operations
 (init with `AT_PAGESZ`, malloc, zalloc, realloc, free, a retained narrow
-worker witness, and a persistent mixed-local worker witness) against that
-exact owner. The mixed witness keeps one page engine through simultaneously
-live small, medium, large, singleton, and multi-page singleton blocks; frees
-and reissues local small/medium requests; then frees every block before normal
-attachment teardown. Its Rust state audit proves PageMap registrations and
-arena ownership stay at the retained process baseline while live-TLD and
+worker witness, a persistent mixed-local worker witness, and a bounded
+live-owner remote-free witness) against that exact owner. The mixed witness
+keeps one page engine through simultaneously live small, medium, large,
+singleton, and multi-page singleton blocks; frees and reissues local
+small/medium requests; then frees every block before normal attachment
+teardown. The remote witness makes a fresh worker A fill one small page, then
+starts B/C with opaque publication capabilities for two distinct blocks; after
+both join, A's ordinary allocation collects and reuses both blocks before it
+tears down. Its Rust state audit proves PageMap registrations and arena
+ownership stay at the retained process baseline while live-TLD and
 later-Theap counts return to baseline across three fresh workers. The C
 fixture proves the same repeated pthread boundary, same-arena ticket-zero
 reactivation, and successful-path `errno` preservation; its symbol audit

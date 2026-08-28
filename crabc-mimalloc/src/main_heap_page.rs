@@ -86,6 +86,7 @@ use crate::process_page_map::{
 };
 use crate::single_thread::{
     FreeError, PageAllocatorEngine, RemoteFreePreparationError, RemoteFreeProducer,
+    RemoteFreeProducerPair,
     ThreadExitMappedRegularPostExitAdoptError,
     ThreadExitMappedRegularPostExitAdoptOutcome,
     ThreadExitMappedRegularPostExitAbandonError,
@@ -1973,6 +1974,43 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
         block: NonNull<u8>,
     ) -> Result<RemoteFreeProducer<'owner>, RemoteFreePreparationError> {
         unsafe { self.engine.begin_remote_free(block) }
+    }
+
+    /// Prepares two distinct current blocks for joined remote publication
+    /// while this owner remains live. The pair is the bounded Gate 5B
+    /// multiple-producer route, not a general asynchronous owner API.
+    ///
+    /// # Safety
+    ///
+    /// Both blocks must be distinct current allocations in this exact engine.
+    /// Both producer tokens must publish or cancel before the owner resumes
+    /// allocation, collection, finish, or teardown.
+    #[inline]
+    pub(crate) unsafe fn begin_remote_free_pair<'owner>(
+        &'owner mut self,
+        first: NonNull<u8>,
+        second: NonNull<u8>,
+    ) -> Result<RemoteFreeProducerPair<'owner>, RemoteFreePreparationError> {
+        unsafe { self.engine.begin_remote_free_pair(first, second) }
+    }
+
+    /// Returns the source capacity of one exact current local allocation's
+    /// page. This private lifecycle observation never exposes the page or its
+    /// metadata: its only caller sizes the bounded Gate 5B owner workload
+    /// before transferring one block to a remote producer.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be a current allocation in this exact engine. No remote
+    /// producer may be in flight while this observation runs.
+    #[inline]
+    pub(crate) unsafe fn current_allocation_page_capacity(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<usize> {
+        // SAFETY: the caller proves `block` is current and this engine holds
+        // the exclusive PageMap lifecycle lease for its page lookup.
+        unsafe { self.engine.current_allocation_page_capacity(block) }
     }
 
     /// Consumes the ordinary later-main allocator into its bounded source

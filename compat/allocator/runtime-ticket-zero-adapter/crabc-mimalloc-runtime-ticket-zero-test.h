@@ -55,6 +55,20 @@ int crabc_ticket_zero_test_worker_roundtrip(size_t size);
  */
 int crabc_ticket_zero_test_worker_mixed_roundtrip(void);
 
+/*
+ * After the original thread has freed every adapter allocation, one fresh
+ * pthread may call this to become owner A of a full small-page workload. The
+ * adapter creates and joins two private publisher pthreads B/C; neither
+ * receives an allocation pointer and each publishes only an opaque logical
+ * remote-free token. A then collects both publications, reuses both exact
+ * blocks while still live, frees every remaining block, and completes normal
+ * teardown. The C caller accepts and returns no pointer. On success it returns
+ * 0 and preserves errno; on failure it returns -1 with errno set. It is not
+ * valid on the original thread, a reused worker, or while ticket-zero
+ * allocations are live.
+ */
+int crabc_ticket_zero_test_worker_remote_free_roundtrip(void);
+
 #ifdef __cplusplus
 }
 #endif

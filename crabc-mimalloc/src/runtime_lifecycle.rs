@@ -17,9 +17,9 @@
 //! `MainStaticHeapLease` for the process lifetime, then places one no-page
 //! `MainHeapThreadAttachment` in compiler TLS for each pthread worker that
 //! successfully enters through the runtime. A dormant ticket-zero native page
-//! owner may lend its already-published pair to one such worker for a fully
-//! scoped empty page-engine round trip; the worker finishes only after libc
-//! has run user cleanup handlers and pthread TSD destructors.
+//! owner may lend its already-published pair to one such worker for a bounded
+//! local or joined remote-free page-engine round trip; the worker finishes
+//! only after libc has run user cleanup handlers and pthread TSD destructors.
 //!
 //! It deliberately does not route any `malloc`/`free` call, expose a C symbol,
 //! select a backend, create a public pthread key, or claim general fork
@@ -36,7 +36,9 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
-use crate::config::{LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE};
+use crate::config::{
+    LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE, SMALL_PAGE_SIZE,
+};
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
 };
@@ -46,6 +48,7 @@ use crate::main_theap::MainStaticHeapLease;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
 use crate::process_init::{ProcessMainInitializationStorage, ProcessMainThread};
 use crate::process_arena::{ProcessPageArenaLease, ProcessSharedArenaStorage};
+use crate::single_thread::{RemoteFreeProducer, RemoteFreeProducerPair};
 
 const PROCESS_COLD: u8 = 0;
 const PROCESS_INITIALIZING: u8 = 1;
@@ -98,6 +101,71 @@ pub enum TicketZeroLaterThreadPageResult {
     AllocationFailed,
     Retained,
 }
+
+/// One private, linear remote-free publication capability for a live later
+/// worker page. It is only a friend-boundary wrapper around the source-shaped
+/// engine token: it accepts no client pointer and exposes no allocator state.
+///
+/// The adapter may move it to exactly one joined pthread and call
+/// [`Self::publish`]. If that operation cannot publish, it must return this
+/// value to the runtime callback so the owner can cancel the transfer while it
+/// still holds the exclusive engine lifecycle.
+#[doc(hidden)]
+#[must_use = "the remote-free publication must be published or returned to its runtime callback"]
+pub struct TicketZeroRemoteFreeProducer<'owner> {
+    producer: RemoteFreeProducer<'owner>,
+}
+
+impl<'owner> TicketZeroRemoteFreeProducer<'owner> {
+    /// Publishes this one logical handoff to the live owner page's source
+    /// remote-free head. It never exposes the transferred client pointer.
+    #[inline]
+    pub fn publish(self) -> Result<(), Self> {
+        match self.producer.publish() {
+            Ok(()) => Ok(()),
+            Err((producer, _)) => Err(Self { producer }),
+        }
+    }
+
+}
+
+/// Two opaque source remote-free capabilities for the same stopped worker A.
+/// The adapter may split and move them to two joined publisher pthreads B/C;
+/// neither receiver obtains a client pointer or an owner capability.
+#[doc(hidden)]
+#[must_use = "both remote-free publications must be published or returned to the runtime callback"]
+pub struct TicketZeroRemoteFreeProducerPair<'owner> {
+    producers: RemoteFreeProducerPair<'owner>,
+}
+
+impl<'owner> TicketZeroRemoteFreeProducerPair<'owner> {
+    #[inline]
+    pub fn split(
+        self,
+    ) -> (
+        TicketZeroRemoteFreeProducer<'owner>,
+        TicketZeroRemoteFreeProducer<'owner>,
+    ) {
+        let (first, second) = self.producers.split();
+        (
+            TicketZeroRemoteFreeProducer { producer: first },
+            TicketZeroRemoteFreeProducer { producer: second },
+        )
+    }
+
+    #[inline]
+    fn cancel(self) -> (core::ptr::NonNull<u8>, core::ptr::NonNull<u8>) {
+        self.producers.cancel()
+    }
+}
+
+/// The adapter-supplied, joined two-publisher operation for the private Gate
+/// 5B witness. A higher-ranked function pointer proves the adapter cannot
+/// retain either capability beyond the owner's scoped engine lifetime.
+#[doc(hidden)]
+pub type TicketZeroRemoteFreePublisher = for<'owner> fn(
+    TicketZeroRemoteFreeProducerPair<'owner>,
+) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>>;
 
 // The high two bits are an allocation-free fork admission gate. The low bits
 // count every current later-thread attachment, including one still between its
@@ -930,6 +998,122 @@ fn run_persistent_local_worker_workload(
     Ok(())
 }
 
+// A regular small page has at most this many exact 37-byte requests: source
+// block rounding and page metadata can only decrease the capacity. The
+// read-only engine observation below supplies the exact current capacity, so
+// the owner fills one page without crossing into a successor before B publishes
+// the remote free.
+const PERSISTENT_REMOTE_REQUEST: usize = 37;
+const PERSISTENT_REMOTE_BLOCK_SLOTS: usize = SMALL_PAGE_SIZE / PERSISTENT_REMOTE_REQUEST;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentRemoteWorkerError {
+    AllocationFailed,
+    PublicationFailed,
+    PageCapacityInvalid,
+    ReuseFailed,
+    Free,
+}
+
+#[inline]
+fn free_persistent_remote_worker_block(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    block: &mut Option<core::ptr::NonNull<u8>>,
+) -> Result<(), PersistentRemoteWorkerError> {
+    let block = block.take().ok_or(PersistentRemoteWorkerError::Free)?;
+    // SAFETY: the helper consumes one current block that the remote handoff
+    // never received, or that owner collection returned to this exact engine.
+    unsafe { allocator.free(block) }.map_err(|_| PersistentRemoteWorkerError::Free)
+}
+
+fn free_remaining_persistent_remote_worker_blocks(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    blocks: &mut [Option<core::ptr::NonNull<u8>>; PERSISTENT_REMOTE_BLOCK_SLOTS],
+) -> Result<(), PersistentRemoteWorkerError> {
+    for block in blocks {
+        if block.is_some() {
+            free_persistent_remote_worker_block(allocator, block)?;
+        }
+    }
+    Ok(())
+}
+
+/// Exercises the live-owner half of Gate 5B. The first small page becomes full
+/// before two exact blocks transfer as logical remote publications; the
+/// joined owner's next ordinary allocations perform the source false
+/// collection, receive both exact blocks back, and finish with no client
+/// allocation.
+///
+/// `publish` owns only the two source remote-free capabilities. It cannot
+/// access the worker attachment, page engine, PageMap lease, arena, or client
+/// pointers. The owner remains stopped until the callback returns both tokens
+/// as published or not-published, so this is not an owner-exit or general
+/// asynchronous path.
+fn run_persistent_remote_worker_workload(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    publish: TicketZeroRemoteFreePublisher,
+) -> Result<(), PersistentRemoteWorkerError> {
+    let mut blocks = [None; PERSISTENT_REMOTE_BLOCK_SLOTS];
+    let Some(first) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+        return Err(PersistentRemoteWorkerError::AllocationFailed);
+    };
+    // SAFETY: `first` is the exact current allocation and no remote producer
+    // exists while the owner observes its page's fixed source capacity.
+    let capacity = unsafe { allocator.current_allocation_page_capacity(first) }
+        .filter(|capacity| *capacity >= 2 && *capacity <= PERSISTENT_REMOTE_BLOCK_SLOTS)
+        .ok_or(PersistentRemoteWorkerError::PageCapacityInvalid)?;
+    blocks[0] = Some(first);
+    for slot in blocks.iter_mut().take(capacity).skip(1) {
+        let Some(block) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+            free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+            return Err(PersistentRemoteWorkerError::AllocationFailed);
+        };
+        *slot = Some(block);
+    }
+
+    let first_transferred = blocks[0]
+        .take()
+        .ok_or(PersistentRemoteWorkerError::Free)?;
+    let second_transferred = blocks[1]
+        .take()
+        .ok_or(PersistentRemoteWorkerError::Free)?;
+    // SAFETY: the bounded fixed request filled the target's first small page
+    // before these transfers. Both blocks are current, distinct, and remain
+    // PageMap-published until B/C join and owner A collects them.
+    let producers = unsafe {
+        allocator.begin_remote_free_pair(first_transferred, second_transferred)
+    }
+        .map_err(|_| PersistentRemoteWorkerError::PublicationFailed)?;
+    let producers = TicketZeroRemoteFreeProducerPair { producers };
+    if let Err(producers) = publish(producers) {
+        let (first, second) = producers.cancel();
+        blocks[0] = Some(first);
+        blocks[1] = Some(second);
+        free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentRemoteWorkerError::PublicationFailed);
+    }
+
+    let Some(reused) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+        free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentRemoteWorkerError::AllocationFailed);
+    };
+    let Some(second_reused) = allocator.allocate(PERSISTENT_REMOTE_REQUEST, false) else {
+        blocks[0] = Some(reused);
+        free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentRemoteWorkerError::AllocationFailed);
+    };
+    blocks[0] = Some(reused);
+    blocks[1] = Some(second_reused);
+    free_remaining_persistent_remote_worker_blocks(allocator, &mut blocks)?;
+    if (reused == first_transferred && second_reused == second_transferred)
+        || (reused == second_transferred && second_reused == first_transferred)
+    {
+        Ok(())
+    } else {
+        Err(PersistentRemoteWorkerError::ReuseFailed)
+    }
+}
+
 /// Runs one complete persistent later-worker page-engine lifecycle against
 /// the dormant ticket-zero process pair.
 ///
@@ -979,6 +1163,77 @@ pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterTh
         }
         (Some(PersistentWorkerResult::AllocationFailed), ThreadFinishResult::Finished) => {
             TicketZeroLaterThreadPageResult::AllocationFailed
+        }
+        (_, ThreadFinishResult::Retained)
+        | (_, _) if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
+            || RUNTIME_PROCESS.state.load(Ordering::Acquire) == PROCESS_RETAINED =>
+        {
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        _ => TicketZeroLaterThreadPageResult::Unavailable,
+    }
+}
+
+/// Runs one complete live-owner remote-free lifecycle against the dormant
+/// ticket-zero process pair.
+///
+/// The current fresh worker is owner A. It retains one ordinary page engine,
+/// gives the supplied joined publisher the one opaque source remote-free
+/// capability for B, then collects and reuses the returned block while A is
+/// still alive. The capability carries no client pointer and the caller must
+/// return it only after B has published or failed without publication. This
+/// remains a test-only bounded witness: it does not create concurrent page
+/// engines, owner-exit handling, or a libc allocation route.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_remote_free_roundtrip(
+    publish: TicketZeroRemoteFreePublisher,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    enum RemoteWorkerResult {
+        Completed,
+        AllocationFailed,
+        PublicationFailed,
+        ReuseFailed,
+    }
+
+    let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
+        let slot = current_thread_slot();
+        let attachment = slot.attachment.as_mut().ok_or(())?;
+        let mut allocator = MainHeapThreadProcessPageAllocator::begin(attachment, pair)
+            .map_err(|_| ())?;
+        let workload = run_persistent_remote_worker_workload(&mut allocator, publish);
+        allocator.finish().map_err(|_| ())?;
+        match workload {
+            Ok(()) => Ok(RemoteWorkerResult::Completed),
+            Err(PersistentRemoteWorkerError::AllocationFailed) => {
+                Ok(RemoteWorkerResult::AllocationFailed)
+            }
+            Err(PersistentRemoteWorkerError::PublicationFailed) => {
+                Ok(RemoteWorkerResult::PublicationFailed)
+            }
+            Err(PersistentRemoteWorkerError::ReuseFailed) => Ok(RemoteWorkerResult::ReuseFailed),
+            Err(PersistentRemoteWorkerError::PageCapacityInvalid | PersistentRemoteWorkerError::Free) => {
+                Err(())
+            }
+        }
+    });
+    let finish = finish_current_thread_after_user_destructors();
+    match (page_result, finish) {
+        (Some(RemoteWorkerResult::Completed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::Completed
+        }
+        (Some(RemoteWorkerResult::AllocationFailed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::AllocationFailed
+        }
+        (Some(RemoteWorkerResult::PublicationFailed | RemoteWorkerResult::ReuseFailed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::Unavailable
         }
         (_, ThreadFinishResult::Retained)
         | (_, _) if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
@@ -1615,5 +1870,144 @@ mod tests {
         })
         .join()
         .expect("the runtime alternates the one process pair between ticket zero and one persistent worker");
+    }
+
+    fn publish_remote_from_scoped_test_thread<'owner>(
+        producers: TicketZeroRemoteFreeProducerPair<'owner>,
+    ) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>> {
+        let (first, second) = producers.split();
+        thread::scope(|scope| {
+            let first = scope.spawn(move || first.publish());
+            let second = scope.spawn(move || second.publish());
+            match first
+                .join()
+                .expect("the first remote publisher remains bounded by its owner join")
+            {
+                Ok(()) => {}
+                Err(_) => panic!("the first remote publisher accepts its exact source block"),
+            }
+            match second
+                .join()
+                .expect("the second remote publisher remains bounded by its owner join")
+            {
+                Ok(()) => {}
+                Err(_) => panic!("the second remote publisher accepts its exact source block"),
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn dormant_ticket_zero_page_owner_collects_repeated_live_worker_remote_frees() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this test supplies the one fresh runtime slot and keeps
+            // every source/process owner alive through the permanent fixture.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let first = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(37, false)
+                })
+                .expect("the ticket-zero owner starts its first page engine")
+                .expect("the first ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    unsafe { owner.free(first) }
+                })
+                .expect("the ticket-zero owner remains callable")
+                .expect("the first ticket-zero block frees into the dormant state");
+
+            let baseline = persistent_worker_state_audit(runtime, arena_storage, main_static, subprocess);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(baseline.shared_later_theap_count, 0);
+
+            for worker_number in 1..=3 {
+                thread::spawn(move || {
+                    // SAFETY: this fixture keeps the permanent process owner
+                    // and its shared main Heap lease process-static while A
+                    // owns one engine and its scoped B publisher joins.
+                    let process_owner = unsafe { runtime.active_owner() }
+                        .expect("the process owner stays published for remote owner A");
+                    let config = process_owner
+                        .ready()
+                        .and_then(|ready| ready.memory_config())
+                        .expect("remote owner A observes the frozen process config");
+                    let main_heap = unsafe { runtime.active_main_heap() }
+                        .expect("remote owner A copies the ticket-zero main Heap witness");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(_) => panic!("remote owner A begins its normal shared-main attachment"),
+                    };
+
+                    let completed = runtime.with_dormant_page_pair(|pair| {
+                        let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                            .map_err(|_| ())?;
+                        run_persistent_remote_worker_workload(
+                            &mut allocator,
+                            publish_remote_from_scoped_test_thread,
+                        )
+                        .expect("A collects and reuses B's live remote publication");
+                        allocator.finish().map_err(|_| ())
+                    });
+                    assert_eq!(
+                        completed,
+                        Some(()),
+                        "the dormant ticket-zero pair admits completed remote owner A {worker_number}"
+                    );
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("remote owner A tears down after B has joined and all pages are empty");
+                })
+                .join()
+                .expect("each live remote-free owner remains on its fresh worker thread");
+
+                let after_worker =
+                    persistent_worker_state_audit(runtime, arena_storage, main_static, subprocess);
+                let expected = PersistentWorkerStateAudit {
+                    total_thread_count: baseline.total_thread_count + worker_number,
+                    ..baseline
+                };
+                assert_eq!(
+                    after_worker, expected,
+                    "remote owner A {worker_number} leaves no PageMap, arena, TLD, or Theap residue"
+                );
+            }
+
+            let resumed = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(73, false)
+                })
+                .expect("ticket zero reactivates after every remote owner joins")
+                .expect("the reactivated ticket-zero allocation succeeds");
+            runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    unsafe { owner.free(resumed) }
+                })
+                .expect("the resumed ticket-zero owner stays callable")
+                .expect("the reactivated ticket-zero block frees normally");
+        })
+        .join()
+        .expect("the isolated runtime restores its retained baseline after repeated live remote frees");
     }
 }

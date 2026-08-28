@@ -415,6 +415,8 @@ pub(crate) enum RemoteFreePreparationError {
     ForeignPage,
     /// The client pointer does not recover one initialized current block.
     InvalidBlock(FreeListError),
+    /// Two requested client aliases recover the same current source block.
+    DuplicateBlock,
     /// The page's source owner identity or low owned bit changed unexpectedly.
     InvalidOwnerState,
     /// This live page is neither an active matching regular member nor an
@@ -474,6 +476,28 @@ impl<'owner> RemoteFreeProducer<'owner> {
     #[inline]
     pub(crate) fn cancel(self) -> NonNull<u8> {
         self.client_block
+    }
+}
+
+/// Two distinct linear remote-free transfers sharing one stopped owner. This
+/// is the smallest source-faithful multiple-producer capability: both tokens
+/// retain the same owner borrow, but each owns one distinct canonical block
+/// and may publish concurrently through the page's atomic remote head.
+#[must_use = "every paired remote-free producer must be published or returned to the owner"]
+pub(crate) struct RemoteFreeProducerPair<'owner> {
+    first: RemoteFreeProducer<'owner>,
+    second: RemoteFreeProducer<'owner>,
+}
+
+impl<'owner> RemoteFreeProducerPair<'owner> {
+    #[inline]
+    pub(crate) fn split(self) -> (RemoteFreeProducer<'owner>, RemoteFreeProducer<'owner>) {
+        (self.first, self.second)
+    }
+
+    #[inline]
+    pub(crate) fn cancel(self) -> (NonNull<u8>, NonNull<u8>) {
+        (self.first.cancel(), self.second.cancel())
     }
 }
 
@@ -30936,6 +30960,27 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         self.finish_quiescent().map(|_| ())
     }
 
+    /// Reads one exact current allocation's source page capacity without
+    /// exposing page metadata. The caller retains this engine's lifecycle
+    /// lease and must not have a remote producer in flight.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be current in this exact engine while its PageMap entry is
+    /// still published.
+    #[inline]
+    pub(crate) unsafe fn current_allocation_page_capacity(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<usize> {
+        // SAFETY: the caller retains the engine's PageMap lifecycle lease and
+        // proves this exact block remains current and page-mapped.
+        let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
+        // SAFETY: the map-published page remains initialized for this owner
+        // read and no producer may concurrently change its non-atomic fields.
+        Some(unsafe { page.as_ref().capacity() as usize })
+    }
+
     /// Looks up one current page while the caller holds this lifecycle's
     /// external exclusion. The detached metadata owner uses this only in a
     /// focused identity regression; no raw page lifetime escapes the lock.
@@ -32097,6 +32142,50 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// preserve the raw page/block lifetime and join the worker before owner
     /// collection, retirement, or teardown.
     pub(crate) unsafe fn begin_remote_free<'owner>(
+        &'owner mut self,
+        block: NonNull<u8>,
+    ) -> Result<RemoteFreeProducer<'owner>, RemoteFreePreparationError> {
+        // SAFETY: this public preparation entry repeats the exact-current
+        // block and owner-quiescence contract documented above.
+        unsafe { self.prepare_remote_free(block) }
+    }
+
+    /// Prepares two distinct joined remote publications while one owner stays
+    /// stopped. Both tokens borrow the same engine, so no owner operation can
+    /// resume until the caller has joined, published, or cancelled both.
+    ///
+    /// # Safety
+    ///
+    /// Each block must be a distinct exact current allocation from this
+    /// engine. Each returned token must publish or be cancelled before the
+    /// owner allocates, collects, retires, finishes, or drops.
+    pub(crate) unsafe fn begin_remote_free_pair<'owner>(
+        &'owner mut self,
+        first: NonNull<u8>,
+        second: NonNull<u8>,
+    ) -> Result<RemoteFreeProducerPair<'owner>, RemoteFreePreparationError> {
+        if first == second {
+            return Err(RemoteFreePreparationError::DuplicateBlock);
+        }
+        let engine: *mut Self = self;
+        // SAFETY: the pair retains this one exclusive owner borrow for both
+        // preflights and the caller's eventual joined publication. The first
+        // preflight has not published or mutated page ownership, so the raw
+        // reborrow below cannot race an owner operation.
+        let first = unsafe { (&mut *engine).prepare_remote_free(first) }?;
+        // SAFETY: preparation reads only source page metadata. The first
+        // token is still local, and its erased owner borrow prevents a safe
+        // engine operation until this pair is resolved.
+        let second = unsafe { (&mut *engine).prepare_remote_free(second) }?;
+        if first.canonical_block == second.canonical_block {
+            return Err(RemoteFreePreparationError::DuplicateBlock);
+        }
+        Ok(RemoteFreeProducerPair { first, second })
+    }
+
+    /// Shared read-only preflight for one scoped remote producer. The caller
+    /// retains the unique owner borrow in the returned zero-sized capability.
+    unsafe fn prepare_remote_free<'owner>(
         &'owner mut self,
         block: NonNull<u8>,
     ) -> Result<RemoteFreeProducer<'owner>, RemoteFreePreparationError> {

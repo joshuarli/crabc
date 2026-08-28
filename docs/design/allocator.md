@@ -502,7 +502,7 @@ backing skips the path, decommit failure restores availability plus immediate
 retry state, and only the external owner may unmap the complete mapping.
 This is bounded engine evidence, not an exported production allocator: the
 crate still has no production public operation, libc integration, integrated
-process/TLS lifecycle, general thread teardown, integrated remote-free routing,
+process/TLS lifecycle, general thread teardown, general remote-free routing,
 general fork protocol, or backend selection. The present Milestone 5 foundations are intentionally
 narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, the
 older lock-serialized caller-storage registry substrate, and one distinct
@@ -724,19 +724,20 @@ it empty, and then completes the normal no-page attachment teardown before
 ticket zero may reactivate. The seam is not called by libc, admits no
 concurrent or general later-worker page engine, and does not alter the C
 backend or repair a fork child. A separate `no_std` evidence staticlib,
-`compat/allocator/runtime-ticket-zero-adapter`, exposes seven prefixed C calls
+`compat/allocator/runtime-ticket-zero-adapter`, exposes eight prefixed C calls
 to a fresh test process: init with `AT_PAGESZ`, malloc, zalloc, realloc, free,
 a retained narrow worker round trip, and a pointer-private persistent
-mixed-local worker round trip. The latter holds one page engine while multiple
-small, medium, large, singleton, and multi-page singleton blocks are live,
-frees and reissues local small/medium requests, frees every block, and then
-performs normal attachment teardown. Its isolated Rust state audit verifies
-that PageMap registration/submap state and the retained arena stay at baseline
-while live-TLD and later-Theap counts return to baseline across repeated
-workers. Its exact-symbol audit rejects ordinary `malloc`/`free` and `mi_*`
-exports; the direct C fixture confirms that same repeated pthread boundary,
-same-arena ticket-zero reactivation, and successful-path `errno` preservation.
-It intentionally has no shutdown because the source owner is process-lifetime.
+mixed-local worker round trip, and a live-owner remote-free round trip. The
+remote witness keeps worker A's engine live while two joined publisher workers
+B/C each receive only one opaque publication capability. A's next ordinary
+allocations false-collect and reuse both blocks before normal teardown. Its
+isolated Rust state audit verifies that PageMap registration/submap state and
+the retained arena stay at baseline while live-TLD and later-Theap counts
+return to baseline across repeated workers. Its exact-symbol audit rejects
+ordinary `malloc`/`free` and `mi_*` exports; the direct C fixture confirms that
+same repeated pthread boundary, same-arena ticket-zero reactivation, and
+successful-path `errno` preservation. It intentionally has no shutdown because
+the source owner is process-lifetime.
 That test ABI does not make the runtime seam a
 crabc libc ABI, a selected backend, a pointer-domain fallback, or a fork
 repair mechanism. `main_heap_page.rs` now binds one current

@@ -1,7 +1,7 @@
 //! Test-only prefixed C ABI for the private ticket-zero runtime page owner.
 //!
 //! This crate is deliberately outside `crabc-libc` and is linked only by the
-//! allocator evidence harness. Its seven `crabc_ticket_zero_test_*` exports
+//! allocator evidence harness. Its eight `crabc_ticket_zero_test_*` exports
 //! exercise one process's original thread plus one fresh scoped worker through
 //! the hidden Rust runtime seam; they are neither `malloc`/`free`
 //! interposition symbols nor a production backend-selection mechanism.
@@ -20,9 +20,11 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroPageAllocationResult,
-    TicketZeroPageFreeResult, initialize_process, ticket_zero_allocate,
-    ticket_zero_free, ticket_zero_later_thread_page_roundtrip,
-    ticket_zero_later_thread_persistent_local_workload, ticket_zero_reallocate,
+    TicketZeroPageFreeResult, TicketZeroRemoteFreeProducer,
+    TicketZeroRemoteFreeProducerPair, initialize_process,
+    ticket_zero_allocate, ticket_zero_free, ticket_zero_later_thread_page_roundtrip,
+    ticket_zero_later_thread_persistent_local_workload,
+    ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,
 };
 
 const ENOMEM: c_int = 12;
@@ -39,9 +41,28 @@ const ADAPTER_RETAINED: u8 = 3;
 // `crabc_mimalloc::runtime_lifecycle`.
 static ADAPTER_STATE: AtomicU8 = AtomicU8::new(ADAPTER_COLD);
 
+// Linux/AArch64 musl's opaque `pthread_t` is one pointer-sized value. The
+// adapter never inspects it; it writes exactly one native C ABI value for the
+// create call and gives that unchanged value back to join. This test-only
+// bridge remains in the adapter rather than making the no_std engine depend
+// on pthread APIs or a public thread abstraction.
+type Pthread = *mut c_void;
+
+struct RemotePublishContext<'owner> {
+    producer: Option<TicketZeroRemoteFreeProducer<'owner>>,
+    published: bool,
+}
+
 unsafe extern "C" {
     fn __errno_location() -> *mut c_int;
     fn abort() -> !;
+    fn pthread_create(
+        thread: *mut Pthread,
+        attributes: *const c_void,
+        start: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        argument: *mut c_void,
+    ) -> c_int;
+    fn pthread_join(thread: Pthread, result: *mut *mut c_void) -> c_int;
 }
 
 #[panic_handler]
@@ -99,6 +120,88 @@ fn fail_stop_pointer_contract() -> ! {
     // no-return C boundary makes failure explicit instead of routing it to
     // libc's unrelated mimalloc backend.
     unsafe { abort() }
+}
+
+/// The private B-side C thread entry receives only a pointer to its opaque
+/// publication capability. It never receives a client allocation pointer or
+/// touches owner A's attachment, page engine, map, or arena.
+unsafe extern "C" fn publish_remote_free_from_pthread(argument: *mut c_void) -> *mut c_void {
+    let context = match unsafe { argument.cast::<RemotePublishContext<'_>>().as_mut() } {
+        Some(context) => context,
+        None => return ptr::null_mut(),
+    };
+    let Some(producer) = context.producer.take() else {
+        return ptr::null_mut();
+    };
+    match producer.publish() {
+        Ok(()) => context.published = true,
+        Err(producer) => context.producer = Some(producer),
+    }
+    ptr::null_mut()
+}
+
+/// Creates and joins B/C while A's runtime callback still holds its exclusive
+/// engine borrow. The two source publications may race in their shared atomic
+/// head. Once either pthread starts, a create/join/publication failure has no
+/// safe token-reassembly continuation, so this test-only process stops rather
+/// than guessing at remote ownership.
+fn publish_remote_frees_in_joined_pthreads<'owner>(
+    producers: TicketZeroRemoteFreeProducerPair<'owner>,
+) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>> {
+    let (first, second) = producers.split();
+    let mut first_context = RemotePublishContext {
+        producer: Some(first),
+        published: false,
+    };
+    let mut second_context = RemotePublishContext {
+        producer: Some(second),
+        published: false,
+    };
+    let mut first_thread = ptr::null_mut();
+    let created = unsafe {
+        pthread_create(
+            &mut first_thread,
+            ptr::null(),
+            publish_remote_free_from_pthread,
+            core::ptr::from_mut(&mut first_context).cast(),
+        )
+    };
+    if created != 0 {
+        // SAFETY: no producer thread began, but the split pair cannot be
+        // reconstructed at this C-only test boundary.
+        unsafe { abort() }
+    }
+    let mut second_thread = ptr::null_mut();
+    let created = unsafe {
+        pthread_create(
+            &mut second_thread,
+            ptr::null(),
+            publish_remote_free_from_pthread,
+            core::ptr::from_mut(&mut second_context).cast(),
+        )
+    };
+    if created != 0 {
+        // SAFETY: first_thread may already access its stack context.
+        unsafe { abort() }
+    }
+    let mut ignored_first_result = ptr::null_mut();
+    let mut ignored_second_result = ptr::null_mut();
+    if unsafe { pthread_join(first_thread, &mut ignored_first_result) } != 0
+        || unsafe { pthread_join(second_thread, &mut ignored_second_result) } != 0
+    {
+        // SAFETY: a failed join cannot prove that its publisher stopped
+        // touching the corresponding stack context.
+        unsafe { abort() }
+    }
+    if first_context.published && second_context.published {
+        debug_assert!(first_context.producer.is_none());
+        debug_assert!(second_context.producer.is_none());
+        Ok(())
+    } else {
+        // SAFETY: a protocol failure can leave one publisher consumed and the
+        // other local; do not invent a partial remote-free recovery route.
+        unsafe { abort() }
+    }
 }
 
 /// Initializes the one process-lifetime ticket-zero test owner.
@@ -265,6 +368,39 @@ pub unsafe extern "C" fn crabc_ticket_zero_test_worker_mixed_roundtrip() -> c_in
         return -1;
     }
     match ticket_zero_later_thread_persistent_local_workload() {
+        TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
+        TicketZeroLaterThreadPageResult::AllocationFailed => {
+            set_errno(ENOMEM);
+            -1
+        }
+        TicketZeroLaterThreadPageResult::Unavailable | TicketZeroLaterThreadPageResult::Retained => {
+            set_errno(EBUSY);
+            -1
+        }
+    }
+}
+
+/// Attaches this fresh worker as remote-free owner A, starts and joins one
+/// private publisher pthread B, then collects and reuses B's handoff before
+/// normal A teardown.
+///
+/// # Safety
+///
+/// The caller must invoke this only on one fresh pthread after init and after
+/// every ticket-zero adapter allocation has freed. The caller receives no
+/// allocation pointer; the adapter transports only its opaque logical
+/// publication capability to B while A's engine remains borrowed. B finishes
+/// before A collects, allocates again, or tears down. Success preserves errno.
+/// This is a test-only live-owner remote-free witness, not a public allocator
+/// operation, concurrent allocator route, or owner-exit path.
+#[no_mangle]
+pub unsafe extern "C" fn crabc_ticket_zero_test_worker_remote_free_roundtrip() -> c_int {
+    let saved_errno = errno_value();
+    if !is_ready() {
+        set_errno(EBUSY);
+        return -1;
+    }
+    match ticket_zero_later_thread_remote_free_roundtrip(publish_remote_frees_in_joined_pthreads) {
         TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
         TicketZeroLaterThreadPageResult::AllocationFailed => {
             set_errno(ENOMEM);

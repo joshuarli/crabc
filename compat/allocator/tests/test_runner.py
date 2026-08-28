@@ -1406,7 +1406,7 @@ class ContractTests(unittest.TestCase):
         header = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
         self.assertEqual(
             RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header),
-            {"expected_adapter_symbol_count": 7},
+            {"expected_adapter_symbol_count": 8},
         )
 
     def test_adapted_api_fixture_rejects_unexplained_omission_and_symbol_drift(self) -> None:
