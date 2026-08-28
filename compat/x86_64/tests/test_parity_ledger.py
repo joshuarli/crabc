@@ -144,6 +144,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.status-flags",
             "io.advisory-flock",
             "filesystem.descriptor-transfer",
+            "filesystem.descriptor-range-copy",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
             "process.scheduling-priority-mutation",
@@ -168,6 +169,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_fcntl_flags.rs",
             "crabc-rs/tests/x86_64_flock.rs",
             "crabc-rs/tests/x86_64_sendfile.rs",
+            "crabc-rs/tests/x86_64_copy_file_range.rs",
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
@@ -199,6 +201,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_flock_reference_probe.c",
             "compat/x86_64/run_x86_sendfile_reference.sh",
             "compat/x86_64/x86_sendfile_reference_probe.c",
+            "compat/x86_64/run_x86_copy_file_range_reference.sh",
+            "compat/x86_64/x86_copy_file_range_reference_probe.c",
             "compat/x86_64/run_x86_epoll_reference.sh",
             "compat/x86_64/x86_epoll_reference_probe.c",
             "compat/x86_64/run_x86_pselect_reference.sh",
@@ -301,6 +305,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("./scripts/dev-x86_64.sh flock-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sendfile-reference", direct_commands)
+        self.assertIn(
+            "./scripts/dev-x86_64.sh copy-file-range-reference", direct_commands
+        )
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct flock=73")
@@ -310,6 +317,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct sendfile=40")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct copy_file_range=326")
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
@@ -358,6 +371,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_sendfile.rs",
             "compat/x86_64/run_x86_sendfile_reference.sh",
             "compat/x86_64/x86_sendfile_reference_probe.c",
+            "crabc-rs/tests/x86_64_copy_file_range.rs",
+            "compat/x86_64/run_x86_copy_file_range_reference.sh",
+            "compat/x86_64/x86_copy_file_range_reference_probe.c",
             "crabc-rs/tests/x86_64_sync.rs",
             "compat/x86_64/run_x86_sync_reference.sh",
             "compat/x86_64/x86_sync_reference_probe.c",

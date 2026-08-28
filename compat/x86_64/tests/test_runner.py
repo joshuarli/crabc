@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -132,6 +132,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_sendfile_reference()', source)
         self.assertIn('compat/x86_64/run_x86_sendfile_reference.sh', source)
         self.assertIn('--test x86_64_sendfile -- --test-threads=1', source)
+        self.assertIn('run_copy_file_range_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_copy_file_range_reference.sh', source)
+        self.assertIn('--test x86_64_copy_file_range -- --test-threads=1', source)
         self.assertIn('run_scheduler_priority_bounds_reference()', source)
         self.assertIn('compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh', source)
         self.assertIn('run_priority_reference()', source)
@@ -205,6 +208,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_fcntl_flags', source)
         self.assertIn('--test x86_64_flock', source)
         self.assertIn('--test x86_64_sendfile', source)
+        self.assertIn('--test x86_64_copy_file_range', source)
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_fs_advice', source)
         self.assertIn('--test x86_64_file_position', source)
@@ -433,6 +437,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         sendfile_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_sendfile_reference.sh"
+        ).read_text(encoding="utf-8")
+        copy_file_range_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_copy_file_range_reference.sh"
         ).read_text(encoding="utf-8")
         scheduler_priority_bounds_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_scheduler_priority_bounds_reference.sh"
@@ -718,6 +725,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_musl_oracle.sh', sendfile_reference)
         self.assertIn('socket', sendfile_reference)
         self.assertNotIn('-p crabc-libc', sendfile_reference)
+        self.assertIn('x86_copy_file_range_reference_probe.c', copy_file_range_reference)
+        self.assertIn('copy_file_range(2) reference', copy_file_range_reference)
+        self.assertIn('syscall=326 off_t=signed64', copy_file_range_reference)
+        self.assertIn('run_musl_oracle.sh', copy_file_range_reference)
+        self.assertIn('flags=zero-only', copy_file_range_reference)
+        self.assertIn('sendfile-splice-fallback=excluded', copy_file_range_reference)
+        self.assertNotIn('-p crabc-libc', copy_file_range_reference)
         self.assertIn('x86_scheduler_priority_bounds_reference_probe.c', scheduler_priority_bounds_reference)
         self.assertIn('scheduler-priority bounds reference', scheduler_priority_bounds_reference)
         self.assertNotIn('-p crabc-libc', scheduler_priority_bounds_reference)
@@ -1337,6 +1351,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_flock",
                     "--test",
                     "x86_64_sendfile",
+                    "--test",
+                    "x86_64_copy_file_range",
                     "--test",
                     "x86_64_fs",
                     "--test",

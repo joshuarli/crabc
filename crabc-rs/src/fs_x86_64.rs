@@ -5,9 +5,9 @@
 //! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, file-access advice, file readahead,
-//! descriptor-based file-length mutation, descriptor-to-descriptor transfer,
-//! file-position and synchronization operations, system-wide and
-//! descriptor-associated filesystem synchronization, and direct anonymous
+//! descriptor-based file-length mutation, descriptor-to-descriptor transfer
+//! and descriptor-range copying, file-position and synchronization operations,
+//! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
 //! memory-file creation with bounded
 //! sealing.
 //! The
@@ -619,6 +619,72 @@ pub fn sendfile<OutFd: AsFd, InFd: AsFd>(
         offset,
         count,
     )
+}
+
+/// Copies up to `len` bytes between the supplied descriptors through Linux
+/// `copy_file_range(2)`.
+///
+/// A supplied `off_in` or `off_out` is an explicit in/out byte position. Its
+/// descriptor's shared position remains unchanged, while the supplied value
+/// advances by the copied byte count. With `None`, Linux uses and advances
+/// that descriptor's shared position. A short copy, including zero at end of
+/// input, is returned as its actual byte count.
+///
+/// Explicit offsets and their requested ranges must fit signed Linux
+/// `loff_t`. The wrapper stages both offsets in local initialized values and
+/// commits them only after a successful syscall, so an error leaves caller
+/// offsets unchanged. The syscall borrows raw descriptor values for the call;
+/// passing a reference or [`BorrowedFd`] retains Rust descriptor ownership,
+/// while an owning `AsFd` passed by value follows ordinary Rust move/drop
+/// semantics. This boundary always passes zero Linux copy flags and does not
+/// admit copy flags, sendfile/splice fallbacks, pathname operations, a C ABI,
+/// or general file-copy policy.
+#[inline]
+pub fn copy_file_range<InFd: AsFd, OutFd: AsFd>(
+    in_fd: InFd,
+    off_in: Option<&mut u64>,
+    out_fd: OutFd,
+    off_out: Option<&mut u64>,
+    len: usize,
+) -> Result<usize> {
+    let len_as_u64 = len as u64;
+    let max_loff_t = i64::MAX as u64;
+    let in_initial = off_in.as_ref().map(|offset| **offset);
+    let out_initial = off_out.as_ref().map(|offset| **offset);
+    let range_fits = |offset: Option<u64>| {
+        offset.map_or(true, |offset| {
+            offset <= max_loff_t
+                && len_as_u64 <= max_loff_t
+                && offset
+                    .checked_add(len_as_u64)
+                    .map_or(false, |end| end <= max_loff_t)
+        })
+    };
+    if !range_fits(in_initial) || !range_fits(out_initial) {
+        return Err(Errno::INVAL);
+    }
+
+    let mut in_offset = in_initial;
+    let mut out_offset = out_initial;
+    let in_fd = in_fd.as_fd();
+    let out_fd = out_fd.as_fd();
+    let copied = crabc_core::fs::copy_file_range(
+        in_fd.as_raw_fd(),
+        in_offset.as_mut(),
+        out_fd.as_raw_fd(),
+        out_offset.as_mut(),
+        len,
+    )?;
+
+    // Commit only after a successful syscall. In particular, this prevents a
+    // partially updated kernel in/out pointer from escaping on an error.
+    if let (Some(offset), Some(updated)) = (off_in, in_offset) {
+        *offset = updated;
+    }
+    if let (Some(offset), Some(updated)) = (off_out, out_offset) {
+        *offset = updated;
+    }
+    Ok(copied)
 }
 
 /// The Linux file-position origins accepted by [`seek`].

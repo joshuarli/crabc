@@ -5,6 +5,7 @@ This closed, native Linux/x86_64 lane is foundation evidence named by
 the separately admitted direct `crabc-rs` subset for the
 `x86_64-unknown-linux-musl` target, including only the proved `fs::flock`
 whole-file advisory locking, `fs::sendfile` descriptor transfer,
+`fs::copy_file_range` descriptor-range copying,
 `fs::sync` system-wide and `fs::syncfs`
 descriptor-associated filesystem synchronization and
 `io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
@@ -59,6 +60,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-status-reference
 ./scripts/dev-x86_64.sh flock-reference
 ./scripts/dev-x86_64.sh sendfile-reference
+./scripts/dev-x86_64.sh copy-file-range-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh rr-interval-reference
 ./scripts/dev-x86_64.sh sched-affinity-reference
@@ -436,6 +438,19 @@ or kernel descriptor ownership transfer. Passing a reference or `BorrowedFd`
 retains Rust descriptor ownership; an owning `AsFd` passed by value follows
 ordinary Rust move/drop semantics.
 
+`copy-file-range-reference` executes pinned-musl/raw x86 evidence plus its
+focused Rust regression for `fs::copy_file_range`. It pins syscall `326` and
+signed 64-bit `off_t`: explicit input and output offsets are staged and commit
+only after a successful copy without moving either shared descriptor position,
+while a null offset advances that descriptor's shared position. The
+regular-file fixture proves short and EOF-zero results at fixed zero flags; the
+raw and pinned-musl explicit-offset forms agree. Its C fixture records raw/
+musl negative-offset `EOVERFLOW`, nonzero-flag `EINVAL`, and closed-descriptor
+`EBADF`; the typed Rust boundary instead rejects unrepresentable unsigned
+offset/ranges with `Errno::INVAL` before either `AsFd` conversion. It does not
+select C APIs or errno TLS, pathname operations, copy flags, sendfile/splice
+fallbacks, filesystem-copy policy, or durability.
+
 `scheduler-priority-bounds-reference` executes a pinned-musl x86 probe for the
 `SCHED_OTHER`/`SCHED_FIFO`/`SCHED_RR` priority minima and maxima, raw syscall
 values, and invalid-policy behavior. It establishes only the typed Rust
@@ -694,6 +709,7 @@ selected `crabc-libc` artifact.
 `x86_64_fcntl_getlk`, `x86_64_fcntl_flags`, `x86_64_fs`, `x86_64_fs_advice`,
 `x86_64_flock`,
 `x86_64_sendfile`,
+`x86_64_copy_file_range`,
 `x86_64_file_position`, `x86_64_sync`, `x86_64_syncfs`, `x86_64_sync_file_range`, `x86_64_ftruncate`,
 `x86_64_fs_credentials`,
 `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
@@ -728,6 +744,13 @@ EOF-zero transfers, output bytes, and the signed-offset/closed-descriptor
 error boundaries. It makes no socket, network, splice, pathname, C API, or
 durability claim. The syscall does not transfer kernel descriptor ownership;
 the public `AsFd` argument semantics remain ordinary Rust value semantics. The
+copy-file-range regression proves only direct descriptor inputs exercised
+through borrowed handles, independently optional explicit offsets whose updates
+are staged until kernel success, null-offset shared-position advancement, short
+and EOF-zero transfers, and the unsigned-range/error boundaries. It makes no
+C API, errno-TLS, pathname, copy-flag, sendfile/splice-fallback,
+filesystem-copy-policy, or durability claim. The syscall borrows raw descriptor
+values; the public `AsFd` arguments retain ordinary Rust value semantics. The
 global-sync regression proves only the unit-returning system-wide `sync(2)`
 request after dirtying a disposable regular file; it deliberately makes no
 timing, per-file, crash, or storage-media durability assertion. The

@@ -569,6 +569,74 @@ def check_x86_sendfile_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_copy_file_range_boundary(errors: list[str]) -> None:
+    """Keep x86 copy_file_range staged, flagless, and descriptor-only."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    start = fs_text.find("pub fn copy_file_range<")
+    end = fs_text.find("\n/// The Linux file-position origins", start)
+    if start < 0 or end < 0:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: admitted x86 copy_file_range slice is missing"
+        )
+        return
+    copy_text = fs_text[start:end]
+    for required in (
+        "off_in: Option<&mut u64>",
+        "off_out: Option<&mut u64>",
+        "checked_add(len_as_u64)",
+        "let mut in_offset = in_initial;",
+        "let mut out_offset = out_initial;",
+        "crabc_core::fs::copy_file_range(",
+        "in_offset.as_mut(),",
+        "out_offset.as_mut(),",
+        "if let (Some(offset), Some(updated)) = (off_in, in_offset)",
+        "if let (Some(offset), Some(updated)) = (off_out, out_offset)",
+    ):
+        if required not in copy_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 copy_file_range slice "
+                f"is missing {required}"
+            )
+    if "flags:" in copy_text or "crabc_core::io::sendfile(" in copy_text:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: admitted x86 copy_file_range slice must "
+            "stay flagless and must not add a sendfile fallback"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_text = core_source.read_text(errors="replace")
+    start = core_text.find("pub fn copy_file_range(")
+    end = core_text.find("\n/// Requests synchronization", start)
+    if start < 0 or end < 0:
+        errors.append(
+            "crabc-core/src/fs.rs: admitted x86 copy_file_range seam is missing"
+        )
+        return
+    core_copy_text = core_text[start:end]
+    for required in ("syscall6(", "SYS_COPY_FILE_RANGE,", "len,", "            0,"):
+        if required not in core_copy_text:
+            errors.append(
+                "crabc-core/src/fs.rs: admitted x86 copy_file_range seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for required in (
+        "pub(crate) const SYS_COPY_FILE_RANGE: usize = 326",
+        'in("r10") arg3',
+        'in("r8") arg4',
+        'in("r9") arg5',
+    ):
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 copy_file_range "
+                f"ABI proof is missing {required}"
+            )
+
+
 def check_x86_sync_file_range_boundary(errors: list[str]) -> None:
     """Keep the admitted x86 range-writeback operation closed and typed."""
 
@@ -872,6 +940,7 @@ def main() -> int:
     check_x86_fcntl_status_flags_boundary(errors)
     check_x86_flock_boundary(errors)
     check_x86_sendfile_boundary(errors)
+    check_x86_copy_file_range_boundary(errors)
     check_x86_sync_file_range_boundary(errors)
     check_x86_syncfs_boundary(errors)
     check_x86_sync_boundary(errors)

@@ -65,6 +65,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   fcntl-status-reference  verify pinned-musl/raw x86 fcntl status-flag behavior
   flock-reference  verify pinned-musl/raw x86 advisory whole-file flock behavior
   sendfile-reference  verify pinned-musl/raw x86 descriptor-to-descriptor sendfile behavior
+  copy-file-range-reference  verify pinned-musl/raw x86 descriptor-range copy behavior
   scheduler-priority-bounds-reference  verify pinned-musl x86 scheduler-priority bounds
   rr-interval-reference  verify pinned-musl x86 read-only round-robin interval behavior
   sched-affinity-reference  verify pinned-musl x86 direct typed CPU-affinity observation
@@ -177,6 +178,16 @@ select a C API, errno TLS, pathname opening, socket/network or splice
 semantics, durability, or kernel descriptor ownership transfer. Passing a
 reference or `BorrowedFd` retains Rust descriptor ownership; an owning `AsFd`
 passed by value follows ordinary Rust move/drop semantics.
+`copy-file-range-reference` establishes only direct typed Rust
+`fs::copy_file_range` descriptor-range copying: x86 `copy_file_range=326`,
+two optional mutable input/output offsets with staged success-only commit,
+shared-position advancement when either offset is null, short and EOF-zero
+transfers, and fixed zero flags. Its C fixture records raw/pinned-musl negative
+offset `EOVERFLOW`, nonzero-flag `EINVAL`, and closed-descriptor `EBADF`; the
+typed Rust boundary rejects unrepresentable unsigned ranges with `Errno::INVAL`
+before either `AsFd` conversion. It does not select C APIs or errno TLS,
+pathname operations, copy flags, sendfile/splice fallbacks, filesystem copy
+policy, or durability.
 `memfd-reference` establishes the direct typed x86 `memfd_create` plus
 `F_GET_SEALS`/`F_ADD_SEALS` boundary: descriptor ownership/CLOEXEC, the
 249-byte kernel versus 256-byte facade name limit, Linux-5.10 seal effects
@@ -229,6 +240,7 @@ broader filesystem behavior.
 `pidfd-open-reference`, `fcntl-getlk-reference`, `fcntl-status-reference`,
 `flock-reference`,
 `sendfile-reference`,
+`copy-file-range-reference`,
 `sync-reference`, `syncfs-reference`, `sync-file-range-reference`,
 `scheduler-priority-bounds-reference`, `rlimit-reference`, `rusage-reference`,
 `times-reference`,
@@ -685,6 +697,12 @@ run_sendfile_reference() {
         -p crabc-rs --no-default-features --test x86_64_sendfile -- --test-threads=1
 }
 
+run_copy_file_range_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_copy_file_range_reference.sh
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --test x86_64_copy_file_range -- --test-threads=1
+}
+
 run_scheduler_priority_bounds_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh
 }
@@ -843,7 +861,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -1087,6 +1105,11 @@ case "$command" in
         ensure_image
         run_sendfile_reference
         ;;
+    copy-file-range-reference)
+        [ "$#" -eq 0 ] || fail "copy-file-range-reference takes no arguments"
+        ensure_image
+        run_copy_file_range_reference
+        ;;
     scheduler-priority-bounds-reference)
         [ "$#" -eq 0 ] || fail "scheduler-priority-bounds-reference takes no arguments"
         ensure_image
@@ -1202,7 +1225,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)
