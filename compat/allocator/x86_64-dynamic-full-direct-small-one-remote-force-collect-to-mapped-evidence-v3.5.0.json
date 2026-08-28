@@ -185,6 +185,6 @@
   },
   "harness_dependency": {
     "path": "compat/allocator/x86_64_regular_small_evidence.py",
-    "sha256": "325e47567009e8fa2135acf08e221bad22f4ac5c47f16a1c900827aa518aecfc"
+    "sha256": "107ba91ffe9590d4805d0d2cf1096b1a3c4f9f9cf60c889cf2a2b0a63ac1f2bd"
   }
 }

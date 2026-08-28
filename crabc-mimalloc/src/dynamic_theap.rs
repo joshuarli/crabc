@@ -2262,7 +2262,6 @@ mod tests {
         DynamicThreadExitFullNonDirectSmallPagesAbandonFailure,
         DynamicThreadExitFullNonDirectSmallPagesFreeResult,
         DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure,
-        DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonError,
         DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonFailure,
         DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult,
         DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure,

@@ -4,7 +4,7 @@
   "profile": "linux-x86_64-private-live-owner-full-medium-one-remote-unfull-reuse",
   "harness_dependency": {
     "path": "compat/allocator/x86_64_live_owner_full_medium_remote_release_evidence.py",
-    "sha256": "9698d390758108d41bbb588a3545ed981c5861a2fb18451c2d2fa48ce4c3739b"
+    "sha256": "81685d488e051c8fe55d81c9f9e16865a77c8ef62cd4d3565b814683a5b4809c"
   },
   "target": {
     "architecture": "x86_64",

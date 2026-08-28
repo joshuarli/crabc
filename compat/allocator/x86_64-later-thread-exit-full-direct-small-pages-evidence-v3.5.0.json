@@ -15,7 +15,7 @@
   },
   "harness_dependency": {
     "path": "compat/allocator/x86_64_dynamic_full_non_direct_small_homogeneous_aggregate_evidence.py",
-    "sha256": "50d94941051cf2ffb37f3b5928f83e20fd326a7d7661be777c008ab3d7d4c5b1"
+    "sha256": "6149060593ffd7f000f46912b984394b3f484dc077b034d3e3934b716b0fe016"
   },
   "scope": {
     "aarch64_status_reused": false,

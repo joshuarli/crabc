@@ -6086,11 +6086,9 @@ mod tests {
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
-    use crate::types::{
-        BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
-    };
+    use crate::types::{BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED_MAPPED};
     #[cfg(target_arch = "x86_64")]
-    use crate::types::{MemoryKind, PageKind};
+    use crate::types::{MemoryKind, PageKind, THREAD_ID_ABANDONED};
     use crabc_core::Errno;
     use std::thread;
 
@@ -14206,21 +14204,54 @@ mod tests {
             assert_eq!(first_blocks.len(), trace.capacity);
             assert_eq!(second_blocks.len(), trace.capacity);
 
-            let lookup_page = |block: NonNull<u8>| unsafe {
-                page_map.page_map().unwrap().checked_lookup(block.as_ptr())
+            // The post-exit route owns the source-plain PageMap boundary.
+            // Every observation therefore completes inside its short
+            // exclusion closure and returns only scalars, never a Page
+            // pointer or reference that could outlive the closure.
+            let observe = |route: &MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'_>,
+                           block_address: usize| {
+                route
+                    .page_map_access
+                    .with_page_map(|map| {
+                        let page = NonNull::new(unsafe {
+                            map.checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                                block_address,
+                            ))
+                        });
+                        let Some(page) = page else {
+                            return None;
+                        };
+                        let page_ref = unsafe { page.as_ref() };
+                        Some((
+                            page.as_ptr().expose_provenance(),
+                            page_ref.abandoned_test_thread_id(),
+                            page_ref.is_queue_detached(),
+                            page_ref.remote_free_test_head(),
+                            page_ref.used(),
+                        ))
+                    })
+                    .expect("the direct-small route retains one short PageMap observation")
             };
-            let first_page_after_thread_done = NonNull::new(lookup_page(first_blocks[0]))
+            let (
+                first_page_identity_after_thread_done,
+                first_thread_id_after_thread_done,
+                first_queue_detached_after_thread_done,
+                first_remote_free_head_after_thread_done,
+                first_used_after_thread_done,
+            ) = observe(&route, first_blocks[0].as_ptr().addr())
                 .expect("the first direct-small page remains PageMap-published after worker teardown");
-            let second_page_after_thread_done = NonNull::new(lookup_page(second_blocks[0]))
+            let (
+                second_page_identity_after_thread_done,
+                second_thread_id_after_thread_done,
+                second_queue_detached_after_thread_done,
+                second_remote_free_head_after_thread_done,
+                second_used_after_thread_done,
+            ) = observe(&route, second_blocks[0].as_ptr().addr())
                 .expect("the second direct-small page remains PageMap-published after worker teardown");
-            let first_page_map_registered_after_thread_done = first_page_after_thread_done
-                .as_ptr()
-                .expose_provenance()
-                == trace.first_page_identity;
-            let second_page_map_registered_after_thread_done = second_page_after_thread_done
-                .as_ptr()
-                .expose_provenance()
-                == trace.second_page_identity;
+            let first_page_map_registered_after_thread_done =
+                first_page_identity_after_thread_done == trace.first_page_identity;
+            let second_page_map_registered_after_thread_done =
+                second_page_identity_after_thread_done == trace.second_page_identity;
             let first_page_map_all_slices_registered_after_thread_done =
                 trace.slice_count == 1 && first_page_map_registered_after_thread_done;
             let second_page_map_all_slices_registered_after_thread_done =
@@ -14240,37 +14271,27 @@ mod tests {
                 abandoned_map.bitmap_is_clear(trace.first_slice);
             let second_abandoned_bitmap_clear_after_thread_done =
                 abandoned_map.bitmap_is_clear(trace.second_slice);
-            let first_unmapped_after_thread_done = unsafe {
-                first_page_after_thread_done.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED
-            } && first_abandoned_bitmap_clear_after_thread_done;
-            let second_unmapped_after_thread_done = unsafe {
-                second_page_after_thread_done.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED
-            } && second_abandoned_bitmap_clear_after_thread_done;
-            let first_abandoned_after_thread_done = unsafe {
-                matches!(
-                    first_page_after_thread_done.as_ref().abandoned_test_thread_id(),
-                    THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
-                )
-            };
-            let second_abandoned_after_thread_done = unsafe {
-                matches!(
-                    second_page_after_thread_done.as_ref().abandoned_test_thread_id(),
-                    THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
-                )
-            };
-            let first_queue_detached_after_thread_done = unsafe {
-                first_page_after_thread_done.as_ref().is_queue_detached()
-                    && first_page_after_thread_done.as_ref().remote_free_test_head() == 0
-            };
-            let second_queue_detached_after_thread_done = unsafe {
-                second_page_after_thread_done.as_ref().is_queue_detached()
-                    && second_page_after_thread_done.as_ref().remote_free_test_head() == 0
-            };
-            let first_used_after_thread_done = unsafe { first_page_after_thread_done.as_ref().used() };
-            let second_used_after_thread_done = unsafe { second_page_after_thread_done.as_ref().used() };
-            let abandoned_count_after_thread_done = route.test_abandoned_count().unwrap_or(usize::MAX);
+            let first_unmapped_after_thread_done =
+                first_thread_id_after_thread_done == THREAD_ID_ABANDONED
+                    && first_abandoned_bitmap_clear_after_thread_done;
+            let second_unmapped_after_thread_done =
+                second_thread_id_after_thread_done == THREAD_ID_ABANDONED
+                    && second_abandoned_bitmap_clear_after_thread_done;
+            let first_abandoned_after_thread_done = matches!(
+                first_thread_id_after_thread_done,
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let second_abandoned_after_thread_done = matches!(
+                second_thread_id_after_thread_done,
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let first_queue_detached_after_thread_done =
+                first_queue_detached_after_thread_done && first_remote_free_head_after_thread_done == 0;
+            let second_queue_detached_after_thread_done =
+                second_queue_detached_after_thread_done && second_remote_free_head_after_thread_done == 0;
+            let abandoned_count_after_thread_done = route
+                .test_abandoned_count_for_bin(trace.bin)
+                .unwrap_or(usize::MAX);
             assert!(
                 first_page_map_registered_after_thread_done
                     && second_page_map_registered_after_thread_done
@@ -14309,11 +14330,11 @@ mod tests {
                 Ok(_) => panic!("the first direct-small member remains live after its first consumer free"),
                 Err(_) => panic!("the first direct-small member remains source-unmapped after its first consumer free"),
             };
-            let first_page_after_first_consumer_free = NonNull::new(lookup_page(first_blocks[1]))
+            let (_, _, _, _, first_used_after_first_consumer_free) = observe(
+                &route,
+                first_blocks[1].as_ptr().addr(),
+            )
                 .expect("the first member remains PageMap-published after its first consumer free");
-            let first_used_after_first_consumer_free = unsafe {
-                first_page_after_first_consumer_free.as_ref().used()
-            };
             assert_eq!(
                 first_used_after_first_consumer_free,
                 trace.capacity,
@@ -14333,21 +14354,25 @@ mod tests {
                     Err(_) => panic!("the first direct-small member remains source-unmapped through its partial-head prefix"),
                 };
             }
-            let first_page_after_unmapped_prefix =
-                NonNull::new(lookup_page(first_blocks[partial_head_lag_unmapped_free_count]))
-                    .expect("the first member remains PageMap-published through the partial-head prefix");
-            let first_used_after_unmapped_prefix = unsafe {
-                first_page_after_unmapped_prefix.as_ref().used()
-            };
-            let first_unmapped_after_unmapped_prefix = unsafe {
-                first_page_after_unmapped_prefix.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED
-                    && first_page_after_unmapped_prefix.as_ref().remote_free_test_head()
+            let (
+                _,
+                first_thread_id_after_unmapped_prefix,
+                _,
+                first_remote_free_head_after_unmapped_prefix,
+                first_used_after_unmapped_prefix,
+            ) = observe(
+                &route,
+                first_blocks[partial_head_lag_unmapped_free_count].as_ptr().addr(),
+            )
+                .expect("the first member remains PageMap-published through the partial-head prefix");
+            let first_unmapped_after_unmapped_prefix =
+                first_thread_id_after_unmapped_prefix == THREAD_ID_ABANDONED
+                    && first_remote_free_head_after_unmapped_prefix
                         == first_blocks[partial_head_lag_unmapped_free_count - 1]
                             .as_ptr()
                             .addr()
-            } && abandoned_map.bitmap_is_clear(trace.first_slice)
-                && route.test_abandoned_count() == Some(0);
+                && abandoned_map.bitmap_is_clear(trace.first_slice)
+                && route.test_abandoned_count_for_bin(trace.bin) == Some(0);
             assert!(
                 first_unmapped_after_unmapped_prefix
                     && first_used_after_unmapped_prefix == trace.capacity - 8,
@@ -14363,21 +14388,26 @@ mod tests {
                 Ok(_) => panic!("the first direct-small mapping boundary retains live blocks"),
                 Err(_) => panic!("the first direct-small mapping boundary publishes its static-main pair"),
             };
-            let first_page_after_mapped_boundary = NonNull::new(lookup_page(
-                first_blocks[partial_head_lag_mapped_transition_free_count],
-            ))
+            let (
+                _,
+                first_thread_id_after_mapped_boundary,
+                _,
+                first_remote_free_head_after_mapped_boundary,
+                first_used_after_mapped_boundary,
+            ) = observe(
+                &route,
+                first_blocks[partial_head_lag_mapped_transition_free_count]
+                    .as_ptr()
+                    .addr(),
+            )
             .expect("the first member remains PageMap-published after its mapping boundary");
-            let first_used_after_mapped_boundary = unsafe {
-                first_page_after_mapped_boundary.as_ref().used()
-            };
             let first_abandoned_bitmap_set_after_reabandon_boundary =
                 !abandoned_map.bitmap_is_clear(trace.first_slice);
-            let first_mapped_after_mapped_boundary = unsafe {
-                first_page_after_mapped_boundary.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED_MAPPED
-                    && first_page_after_mapped_boundary.as_ref().remote_free_test_head() == 0
-            } && first_abandoned_bitmap_set_after_reabandon_boundary
-                && route.test_abandoned_count() == Some(1);
+            let first_mapped_after_mapped_boundary =
+                first_thread_id_after_mapped_boundary == THREAD_ID_ABANDONED_MAPPED
+                    && first_remote_free_head_after_mapped_boundary == 0
+                && first_abandoned_bitmap_set_after_reabandon_boundary
+                && route.test_abandoned_count_for_bin(trace.bin) == Some(1);
             assert!(
                 first_mapped_after_mapped_boundary
                     && first_used_after_mapped_boundary == trace.capacity - 10,
@@ -14410,7 +14440,11 @@ mod tests {
                 Err(_) => panic!("the first terminal free releases its mapped direct-small member"),
             };
             let first_terminal_released_only = route.test_remaining_pages() == 1;
-            let first_page_map_unregistered_after_terminal_free = lookup_page(first_blocks[0]).is_null();
+            let first_page_map_unregistered_after_terminal_free = observe(
+                &route,
+                first_blocks[0].as_ptr().addr(),
+            )
+            .is_none();
             let first_arena_page_bitmap_clear_after_terminal_free = unsafe { arena.pages() }
                 .expect("the ordinary arena bitmap remains available")
                 .is_clear_range(trace.first_slice, 1)
@@ -14421,25 +14455,27 @@ mod tests {
                 == Some(true);
             let first_abandoned_bitmap_clear_after_terminal_free =
                 abandoned_map.bitmap_is_clear(trace.first_slice);
-            let second_page_after_first_terminal = NonNull::new(lookup_page(second_blocks[0]))
+            let (
+                second_page_identity_after_first_terminal,
+                second_thread_id_after_first_terminal,
+                _,
+                second_remote_free_head_after_first_terminal,
+                second_used_after_first_terminal,
+            ) = observe(&route, second_blocks[0].as_ptr().addr())
                 .expect("the second direct-small member remains published after the first terminal release");
-            let second_page_map_registered_after_first_terminal = second_page_after_first_terminal
-                .as_ptr()
-                .expose_provenance()
-                == trace.second_page_identity;
+            let second_page_map_registered_after_first_terminal =
+                second_page_identity_after_first_terminal == trace.second_page_identity;
             let second_arena_page_bitmap_set_after_first_terminal = unsafe { arena.pages() }
                 .expect("the ordinary arena bitmap remains available")
                 .is_set_range(trace.second_slice, 1)
                 == Some(true);
-            let second_unmapped_after_first_terminal = unsafe {
-                second_page_after_first_terminal.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED
-                    && second_page_after_first_terminal.as_ref().remote_free_test_head() == 0
-            } && abandoned_map.bitmap_is_clear(trace.second_slice)
-                && route.test_abandoned_count() == Some(0);
-            let second_used_after_first_terminal = unsafe { second_page_after_first_terminal.as_ref().used() };
+            let second_unmapped_after_first_terminal =
+                second_thread_id_after_first_terminal == THREAD_ID_ABANDONED
+                    && second_remote_free_head_after_first_terminal == 0
+                && abandoned_map.bitmap_is_clear(trace.second_slice)
+                && route.test_abandoned_count_for_bin(trace.bin) == Some(0);
             let abandoned_count_after_first_terminal =
-                route.test_abandoned_count().unwrap_or(usize::MAX);
+                route.test_abandoned_count_for_bin(trace.bin).unwrap_or(usize::MAX);
             let second_page_retained_after_first_terminal =
                 second_page_map_registered_after_first_terminal
                     && second_arena_page_bitmap_set_after_first_terminal
@@ -14462,11 +14498,11 @@ mod tests {
                 Ok(_) => panic!("the second direct-small member remains live after its first consumer free"),
                 Err(_) => panic!("the second direct-small member remains source-unmapped after its first consumer free"),
             };
-            let second_page_after_first_consumer_free = NonNull::new(lookup_page(second_blocks[1]))
+            let (_, _, _, _, second_used_after_first_consumer_free) = observe(
+                &route,
+                second_blocks[1].as_ptr().addr(),
+            )
                 .expect("the second member remains PageMap-published after its first consumer free");
-            let second_used_after_first_consumer_free = unsafe {
-                second_page_after_first_consumer_free.as_ref().used()
-            };
             assert_eq!(
                 second_used_after_first_consumer_free,
                 trace.capacity,
@@ -14486,21 +14522,25 @@ mod tests {
                     Err(_) => panic!("the second direct-small member remains source-unmapped through its partial-head prefix"),
                 };
             }
-            let second_page_after_unmapped_prefix =
-                NonNull::new(lookup_page(second_blocks[partial_head_lag_unmapped_free_count]))
-                    .expect("the second member remains PageMap-published through the partial-head prefix");
-            let second_used_after_unmapped_prefix = unsafe {
-                second_page_after_unmapped_prefix.as_ref().used()
-            };
-            let second_unmapped_after_unmapped_prefix = unsafe {
-                second_page_after_unmapped_prefix.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED
-                    && second_page_after_unmapped_prefix.as_ref().remote_free_test_head()
+            let (
+                _,
+                second_thread_id_after_unmapped_prefix,
+                _,
+                second_remote_free_head_after_unmapped_prefix,
+                second_used_after_unmapped_prefix,
+            ) = observe(
+                &route,
+                second_blocks[partial_head_lag_unmapped_free_count].as_ptr().addr(),
+            )
+                .expect("the second member remains PageMap-published through the partial-head prefix");
+            let second_unmapped_after_unmapped_prefix =
+                second_thread_id_after_unmapped_prefix == THREAD_ID_ABANDONED
+                    && second_remote_free_head_after_unmapped_prefix
                         == second_blocks[partial_head_lag_unmapped_free_count - 1]
                             .as_ptr()
                             .addr()
-            } && abandoned_map.bitmap_is_clear(trace.second_slice)
-                && route.test_abandoned_count() == Some(0);
+                && abandoned_map.bitmap_is_clear(trace.second_slice)
+                && route.test_abandoned_count_for_bin(trace.bin) == Some(0);
             assert!(
                 second_unmapped_after_unmapped_prefix
                     && second_used_after_unmapped_prefix == trace.capacity - 8,
@@ -14516,23 +14556,28 @@ mod tests {
                 Ok(_) => panic!("the second direct-small mapping boundary retains live blocks"),
                 Err(_) => panic!("the second direct-small mapping boundary publishes its static-main pair"),
             };
-            let second_page_after_mapped_boundary = NonNull::new(lookup_page(
-                second_blocks[partial_head_lag_mapped_transition_free_count],
-            ))
+            let (
+                _,
+                second_thread_id_after_mapped_boundary,
+                _,
+                second_remote_free_head_after_mapped_boundary,
+                second_used_after_mapped_boundary,
+            ) = observe(
+                &route,
+                second_blocks[partial_head_lag_mapped_transition_free_count]
+                    .as_ptr()
+                    .addr(),
+            )
             .expect("the second member remains PageMap-published after its mapping boundary");
-            let second_used_after_mapped_boundary = unsafe {
-                second_page_after_mapped_boundary.as_ref().used()
-            };
             let second_abandoned_bitmap_set_after_reabandon_boundary =
                 !abandoned_map.bitmap_is_clear(trace.second_slice);
-            let second_mapped_after_mapped_boundary = unsafe {
-                second_page_after_mapped_boundary.as_ref().abandoned_test_thread_id()
-                    == THREAD_ID_ABANDONED_MAPPED
-                    && second_page_after_mapped_boundary.as_ref().remote_free_test_head() == 0
-            } && second_abandoned_bitmap_set_after_reabandon_boundary
-                && route.test_abandoned_count() == Some(1);
+            let second_mapped_after_mapped_boundary =
+                second_thread_id_after_mapped_boundary == THREAD_ID_ABANDONED_MAPPED
+                    && second_remote_free_head_after_mapped_boundary == 0
+                && second_abandoned_bitmap_set_after_reabandon_boundary
+                && route.test_abandoned_count_for_bin(trace.bin) == Some(1);
             let abandoned_count_after_second_boundary =
-                route.test_abandoned_count().unwrap_or(usize::MAX);
+                route.test_abandoned_count_for_bin(trace.bin).unwrap_or(usize::MAX);
             assert!(
                 second_mapped_after_mapped_boundary
                     && second_used_after_mapped_boundary == trace.capacity - 10,
@@ -14566,7 +14611,21 @@ mod tests {
                 }
                 Err(_) => panic!("the final direct-small free releases its mapped aggregate member"),
             };
-            let second_page_map_unregistered_after_terminal_free = lookup_page(second_blocks[0]).is_null();
+            // The final `ReleasedAll` consumed the short post-exit capability.
+            // Reopen one ordinary lifecycle only for this terminal scalar
+            // lookup, then finish that same lifecycle.
+            let final_lifecycle = page_map
+                .begin_page_lifecycle()
+                .expect("the released aggregate route reopens the process-map lifecycle");
+            let second_page_map_unregistered_after_terminal_free = unsafe {
+                final_lifecycle
+                    .page_map()
+                    .expect("the reopened lifecycle retains the map")
+                    .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                        second_blocks[0].as_ptr().addr(),
+                    ))
+            }
+            .is_null();
             let second_arena_page_bitmap_clear_after_terminal_free = unsafe { arena.pages() }
                 .expect("the ordinary arena bitmap remains available")
                 .is_clear_range(trace.second_slice, 1)
@@ -14584,8 +14643,7 @@ mod tests {
             } else {
                 usize::MAX
             };
-            let page_map_reopened_after_terminal_free =
-                matches!(page_map.begin_page_lifecycle().and_then(|lease| lease.finish()), Ok(()));
+            let page_map_reopened_after_terminal_free = final_lifecycle.finish().is_ok();
             let route_empty_after_final_terminal = terminal_route_released_all
                 && abandoned_count_after_final_terminal == 0
                 && page_map_reopened_after_terminal_free;

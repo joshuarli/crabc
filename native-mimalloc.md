@@ -9,7 +9,7 @@ The crucial framing is: **do not design a new allocator**. Produce a provenance-
 
 ## Handoff — 2026-08-27
 
-### Current slice — later-main mapped two-block large post-exit route
+### Latest completed checkpoint — later-main mapped two-block large post-exit route
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_two_block_large_to_process_route`
 now ports one deliberately disjoint `MI_ABANDON` shape: the departing
@@ -39,7 +39,7 @@ The offline `allocator --full` adapter lane also passes, then exits with its
 documented later-milestone status because integrated lifecycle/remote-free/
 pthread evidence remains incomplete.
 
-### Current slice — dormant ticket-zero/later-worker page handoff
+### Latest completed checkpoint — dormant ticket-zero/later-worker page handoff
 
 `MainStaticRuntimeFirstArenaPageAllocator` now carries the permanent
 ticket-zero `MainStaticProcessPageSession` inside `RuntimeProcessStorage`. It
@@ -87,7 +87,7 @@ pinned Linux/AArch64 image. `allocator --full` records this adapter evidence
 and exits with its documented later-milestone status until the broader
 routing/lifecycle gates are complete.
 
-### Current slice — later-main mixed full singleton/regular aggregate route
+### Latest completed checkpoint — later-main mixed full singleton/regular aggregate route
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_singleton_or_regular_pages_to_process_route`
 now ports one bounded heterogeneous `src/theap.c` `BIN_FULL` owner-exit image:
@@ -122,7 +122,7 @@ at 130 items and 134 implemented/unit-verified entries; the quick C
 differential gate also passes, including its five test-only Loom schedules and
 the separate production initial-exec TLS code-generation proof.
 
-### Current slice — dynamic mixed full singleton/regular aggregate route
+### Latest completed checkpoint — dynamic mixed full singleton/regular aggregate route
 
 `DynamicThreadExitDrain::abandon_full_singleton_or_regular_pages` now ports
 the bounded heterogeneous `src/theap.c` `BIN_FULL` owner-exit image containing
@@ -155,7 +155,7 @@ Loom schedules clear the production `CARGO_ENCODED_RUSTFLAGS` because they
 model atomic ordering without touching compiler TLS; the separate codegen gate
 continues to prove the production initial-exec TLS requirement.
 
-### Current slice — later-main mixed full medium/large aggregate route
+### Latest completed checkpoint — later-main mixed full medium/large aggregate route
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_or_large_pages_to_process_route`
 now ports one deliberately bounded heterogeneous `src/theap.c` `BIN_FULL`
@@ -185,7 +185,7 @@ full queue scans outside the one consuming transition remain absent.
 The two focused regressions and the complete 579-test `crabc-mimalloc`
 library suite pass in the pinned Linux/AArch64 container.
 
-### Current slice — dynamic mixed full medium/large aggregate route
+### Latest completed checkpoint — dynamic mixed full medium/large aggregate route
 
 `DynamicThreadExitDrain::abandon_full_medium_or_large_pages` now ports the
 matching bounded dynamic-drain `src/theap.c` `BIN_FULL` class. Its complete
@@ -208,7 +208,7 @@ fills one medium and one large page and proves both spans release; the complete
 singleton, OS, malformed span, allocation-time, reclaim/adoption/requeue,
 scan, producer, concurrent, and general owner-exit paths remain absent.
 
-### Current slice — ticket-zero first fresh-page default arena
+### Latest completed checkpoint — ticket-zero first fresh-page default arena
 
 `ProcessSharedArenaStorage::reserve_default_os_arena` now ports the first
 automatic `src/arena.c:341-406` `mi_arena_reserve` decision for the frozen
@@ -460,19 +460,18 @@ allocation-time, producer, and concurrent routing remain absent. The dynamic
 and later-main mixed-size regressions prove independent sequential terminal
 release alongside the existing same-size, sole-page, and collection-failure
 boundaries.
-## Scope amendment — 2026-08-25
+## Historical x86-64 evidence scope amendment — 2026-08-25
 
-The user has explicitly reopened a native Linux/x86-64 little-endian
-`crabc-mimalloc` parity lane. This amendment changes only the fixed
-allocator's validation target. The public `crabc` runtime and production
-allocator integration remain Linux/AArch64; x86 work is private evidence only,
-must run on native x86-64 Linux, must not use AArch64 emulation, and must not
-introduce a generic portability layer or claim public x86 support/default
-promotion. The AArch64-only production statements below remain authoritative
-for that production profile; new x86 work must use architecture-qualified
-contracts, reports, and status.
+The user previously opened a native Linux/x86-64 little-endian
+`crabc-mimalloc` parity lane. It changed only the fixed allocator's validation
+target. That lane is now paused: retained material is private historical
+evidence, not a backlog. The public `crabc` runtime and production allocator
+integration remain Linux/AArch64; x86 evidence must be native, must not use
+AArch64 emulation, and must not introduce a generic portability layer or claim
+public x86 support/default promotion. The AArch64-only production statements
+below remain authoritative for that production profile.
 
-### Remaining native x86-64 allocator-parity work
+### Historical native x86-64 allocator-parity handoff
 
 - [ ] Resolve the target-local source API/mode/test/symbol coverage ledger's
   remaining mode-dependent forms, unselected C/C++ inline/override forms,
@@ -1490,8 +1489,9 @@ and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
 `compat/allocator/ratchet-v3.5.0.json` snapshot with 125 items and 129
-implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
-before broadening the newly proven post-TLS arena/OS-singleton or
+implemented/unit-verified statuses. If explicitly resumed, begin with a fresh
+source/lifecycle review before broadening the newly proven post-TLS
+arena/OS-singleton or
 dynamic-full-singleton-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-aggregate/dynamic-full-large-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-aggregate/full-medium/full-medium-aggregate/full-large/full-large-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small, mapped-medium-pair, or mapped-two-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
@@ -1662,9 +1662,9 @@ The project has five separate outcomes. Track them independently.
 A. Pure-Rust engine
 
 `crabc-mimalloc` implements the Linux/AArch64-applicable mimalloc v3.5.0
-allocator engine in Rust. The reopened native x86-64 profile validates the
-same fixed engine against x86-64 source applicability, but does not add public
-allocator integration:
+allocator engine in Rust. The paused native x86-64 evidence profile records
+the same fixed engine against x86-64 source applicability, but does not add
+public allocator integration:
 
 - `#![no_std]`
 - no dependency on `alloc`
@@ -1699,7 +1699,7 @@ C. mimalloc feature parity
 
 All public v3.5.0 interfaces and compile-time modes applicable to
 Linux/AArch64 are mechanically inventoried and assigned an explicit status;
-the reopened x86-64 parity profile requires a separate architecture-qualified
+the paused x86-64 evidence profile retains a separate architecture-qualified
 inventory and status.
 
 Do not manually guess the public API from memory. Derive the inventory from
@@ -3538,7 +3538,7 @@ mechanically and without relying on prose optimism:
 - Can the exact C oracle and all reports be reproduced offline?
 - Does the default crabc artifact contain any C mimalloc code?
 
-The most important element is the **two-stage notion of completion**. The Rust backend can become suitable for crabc’s ordinary `malloc` ABI before every optional arena, subprocess, visitation, and secure-mode API is finished. But the project should continue until the machine-readable v3.5.0 ledger reaches full Linux/AArch64-applicable parity and the separately reopened native x86-64 parity track has its own complete architecture-qualified evidence. Conversely, even 100% API coverage is insufficient to justify making it default until the thread, fork, memory-use, and non-inferiority gates pass; x86 parity alone never makes an x86 backend public or default.
+The most important element is the **two-stage notion of completion**. The Rust backend can become suitable for crabc’s ordinary `malloc` ABI before every optional arena, subprocess, visitation, and secure-mode API is finished. If allocator work resumes, it should continue until the machine-readable v3.5.0 ledger reaches full Linux/AArch64-applicable parity and the separately paused native x86-64 evidence track has its own complete architecture-qualified evidence. Conversely, even 100% API coverage is insufficient to justify making it default until the thread, fork, memory-use, and non-inferiority gates pass; x86 parity alone never makes an x86 backend public or default.
 
 [1]: https://github.com/microsoft/mimalloc/releases/tag/v3.5.0 "https://github.com/microsoft/mimalloc/releases/tag/v3.5.0"
 [2]: https://microsoft.github.io/mimalloc/group__heap.html "https://microsoft.github.io/mimalloc/group__heap.html"

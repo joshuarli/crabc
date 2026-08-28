@@ -692,7 +692,7 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     environment = os.environ.copy()
     environment["CARGO_INCREMENTAL"] = "0"
     try:
-        execution = run.command_record(command, cwd=ROOT, environment=environment)
+        execution = run.command_record(command, cwd=ROOT, env=environment)
         run.require_success(execution, "Rust unmapped-reabandon fixture")
         passed = run.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"]))
     except run.HarnessError as error:

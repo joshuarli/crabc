@@ -1201,7 +1201,7 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict:
     environment = os.environ.copy()
     environment["CARGO_INCREMENTAL"] = "0"
     try:
-        execution = RUNNER.command_record(command, cwd=ROOT, environment=environment)
+        execution = RUNNER.command_record(command, cwd=ROOT, env=environment)
         RUNNER.require_success(
             execution, "Rust later-thread-exit full-direct-small aggregate fixture"
         )

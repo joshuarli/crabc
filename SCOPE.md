@@ -68,7 +68,9 @@ The existing `crabc-mimalloc` native Linux/x86-64 evidence remains a private
 fixed-allocator profile against the pinned C oracle. It is useful preserved
 evidence but does not itself establish x86 libc, loader, CRT, Rust-facade, or
 public-platform support; those are owned by the staged runtime program above.
-It never authorizes AArch64 emulation or a generic portability layer.
+All fixed-mimalloc implementation, evidence expansion, integration, and
+performance work is paused pending explicit reprioritization. It never
+authorizes AArch64 emulation or a generic portability layer.
 
 ---
 
@@ -191,9 +193,9 @@ compatibility engineering, not an allocator-design project:
 - Preserve upstream algorithms, data structures, memory orderings, lifecycle
   behavior, and valid-program observable behavior until parity is established.
 - The production integration profile is Linux/AArch64 little-endian. The
-  explicitly reopened native Linux/x86-64 little-endian profile is limited to
-  this fixed port's parity evidence; do not add architecture or operating-
-  system abstractions for a possible port.
+  preserved native Linux/x86-64 little-endian evidence is private and paused;
+  it does not authorize new allocator work, architecture or operating-system
+  abstractions, or a public-platform claim.
 - An algorithmic divergence needs a written design note, deterministic
   differential evidence, and performance evidence before it is accepted.
 - The exact pinned C implementation remains a mandatory test and differential

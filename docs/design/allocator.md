@@ -2,6 +2,11 @@
 
 ## Purpose and status
 
+> **Status: paused.** This document preserves fixed-mimalloc provenance,
+> boundaries, implementation context, and evidence. It is not an active
+> backlog; resume implementation, evidence expansion, integration, or
+> performance work only after an explicit reprioritization.
+
 `crabc` may replace the C allocator implementation in its production graph
 with a provenance-preserving, pure-Rust semantic port of a fixed mature
 allocator. This is a narrow compatibility exception to the project rule
@@ -13,9 +18,9 @@ mapping register, and update procedure are in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md).
 
 The current production `libmimalloc-sys` 0.1.49 backend bundles mimalloc
-v3.3.2. It remains the default during this work, but it is not the exact
-v3.5.0 C oracle: the pinned v3.5.0 archive must be built separately for the
-Rust-port differential and performance baseline.
+v3.3.2. It remains the default while the port is paused, but it is not the
+exact v3.5.0 C oracle: the pinned v3.5.0 archive must be built separately for
+the Rust-port differential and performance baseline if work resumes.
 
 The workspace now contains the `crabc-mimalloc` crate with source-mapped
 configuration, arithmetic, types, provenance, atomic operations, size classes,
@@ -1764,13 +1769,13 @@ readiness or promotion claim follows from this slice.
 
 The production integration profile is Linux/AArch64 little-endian, with Linux
 5.10 as the kernel floor and support for valid Linux/AArch64 page sizes. The
-user has explicitly reopened a second, native Linux/x86-64 little-endian
-parity profile for the fixed allocator port. That profile is evidence-only:
-it has no public `crabc` allocator integration or default-promotion claim,
-must run on native x86-64 Linux, and must not use AArch64 emulation. RISC-V,
-macOS, Windows, big-endian, 32-bit, and portability scaffolds remain out of
-scope. Both allocator profiles must be `#![no_std]`, must not depend on
-`alloc` or libc, and must not compile C or C++ in the production allocator.
+fixed allocator retains a paused, native Linux/x86-64 little-endian historical
+evidence profile. It has no public `crabc` allocator integration or
+default-promotion claim, must run on native x86-64 Linux, and must not use
+AArch64 emulation. RISC-V, macOS, Windows, big-endian, 32-bit, and portability
+scaffolds remain out of scope. Both allocator profiles must be `#![no_std]`,
+must not depend on `alloc` or libc, and must not compile C or C++ in the
+production allocator.
 
 The x86-64 profile's bounded artifact evidence separately compiles the pinned
 normal-release static source set, observes its archive members, and compiles
@@ -1961,13 +1966,15 @@ implementation becomes the default only in a final isolated promotion change.
 
 ## Evidence and promotion
 
-Track the outcomes separately for each architecture profile:
+If allocator work is explicitly resumed, track the outcomes separately for
+each architecture profile:
 
 1. AArch64 readiness to back crabc's `malloc` family without changing its C
    ABI;
 2. parity for every Linux/AArch64-applicable public mimalloc v3.5.0 `mi_*`
    interface and compile-time mode; and
-3. native x86-64 parity for the explicitly selected mimalloc profile.
+3. the paused native x86-64 historical evidence profile for the fixed
+   mimalloc port.
 
 The x86-64 parity outcome is never a libc-readiness or public-platform
 outcome. It cannot promote an x86 allocator backend or change the public

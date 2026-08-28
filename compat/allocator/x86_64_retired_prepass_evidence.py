@@ -484,7 +484,7 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     target_dir = temporary / "rust-target"; command = rust_command(cargo, target_dir)
     environment = os.environ.copy(); environment["CARGO_INCREMENTAL"] = "0"
     try:
-        execution = run.command_record(command, cwd=ROOT, environment=environment); run.require_success(execution, "Rust retired-prepass fixture")
+        execution = run.command_record(command, cwd=ROOT, env=environment); run.require_success(execution, "Rust retired-prepass fixture")
         passed = run.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"]))
     except run.HarnessError as error:
         raise EvidenceError(str(error)) from error

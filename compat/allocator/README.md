@@ -1,9 +1,15 @@
 # Allocator-port evidence contract
 
+> **Status: paused.** This document preserves fixed-mimalloc source,
+> contracts, and native evidence as a handoff. Its commands reproduce existing
+> private evidence; they are not an active allocator backlog. Resume
+> implementation, ledger expansion, differential work, performance work, or
+> backend integration only after an explicit reprioritization.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the Linux/AArch64 production-oriented semantic port of
-pinned mimalloc v3.5.0 and its explicitly reopened native Linux/x86-64
-little-endian parity profile. The x86-64 profile is evidence-only: it does not
+pinned mimalloc v3.5.0 and its preserved native Linux/x86-64 little-endian
+historical evidence profile. The x86-64 profile is evidence-only: it does not
 authorize public x86 `crabc` support, public allocator integration,
 default-backend promotion, AArch64 emulation, allocator invention, a
 cross-platform abstraction, or a runtime allocator-selection system. The
@@ -826,7 +832,7 @@ model covers current mapping and page-map ownership. The pinned image does not
 currently contain Miri, so forced-`cfg(miri)` execution is smoke evidence only
 and is never reported as a Miri pass.
 
-## Canonical commands
+## Recorded reproduction commands (paused)
 
 Run the harness through the pinned Linux/AArch64 development image:
 
@@ -843,7 +849,8 @@ Run the harness through the pinned Linux/AArch64 development image:
 ./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
 ```
 
-`allocator --quick` is the current ordinary development gate. It verifies the
+`allocator --quick` is the former ordinary development gate, retained to
+reproduce evidence. It verifies the
 annotated tag and archive identities, regenerates the checked-in contracts in
 memory, checks them and the source-map ratchet, and builds all five exact C
 oracle profiles. Its ignored report is

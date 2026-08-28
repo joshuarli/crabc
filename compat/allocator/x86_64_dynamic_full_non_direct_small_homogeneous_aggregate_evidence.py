@@ -971,7 +971,7 @@ def build_rust_trace(cargo, temporary):
     environment = os.environ.copy()
     environment["CARGO_INCREMENTAL"] = "0"
     try:
-        execution = RUNNER.command_record(command, cwd=ROOT, environment=environment)
+        execution = RUNNER.command_record(command, cwd=ROOT, env=environment)
         RUNNER.require_success(execution, "Rust dynamic-full-non-direct-small-homogeneous aggregate fixture")
         passed = RUNNER.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"]))
     except RUNNER.HarnessError as error:

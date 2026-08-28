@@ -4,7 +4,7 @@
   "profile": "linux-x86_64-private-medium-full-regular-retire-force-release",
   "harness_dependency": {
     "path": "compat/allocator/x86_64_regular_small_evidence.py",
-    "sha256": "325e47567009e8fa2135acf08e221bad22f4ac5c47f16a1c900827aa518aecfc"
+    "sha256": "107ba91ffe9590d4805d0d2cf1096b1a3c4f9f9cf60c889cf2a2b0a63ac1f2bd"
   },
   "target": {"architecture":"x86_64","endianness":"little","rust_target":"x86_64-unknown-linux-musl","system":"linux"},
   "upstream": {"archive_root":"mimalloc-3.5.0","revision":"18b08671c9302247bfb682286e6bf3cc1773f801","version":"3.5.0"},

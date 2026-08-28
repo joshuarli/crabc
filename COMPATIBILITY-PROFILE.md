@@ -58,6 +58,10 @@ capability**, not a Rust wrapper for every exported C symbol.
 
 ## Allocation and cryptography
 
+- Fixed-mimalloc implementation, evidence expansion, backend integration, and
+  performance work is paused pending explicit reprioritization. The retained
+  port contract and private evidence remain available for review and future
+  resumption; they are not an active backlog.
 - Allocator invention remains outside project scope. The one fixed exception
   is a provenance-preserving Rust semantic port of mimalloc v3.5.0 for
   Linux/AArch64 little-endian, governed by
@@ -68,13 +72,12 @@ capability**, not a Rust wrapper for every exported C symbol.
   performance evidence. The C allocation ABI remains observable-boundary test
   work owned by `crabc-libc`; `crabc-rs` uses normal Rust allocation rather
   than exposing C allocation APIs.
-- The fixed allocator program also has an explicitly reopened native
-  Linux/x86-64 little-endian parity profile. It is evidence-only: it does not
-  make x86-64 a supported `crabc` platform, does not provide public x86
-  allocator integration or default-backend promotion, and must run on native
-  x86-64 Linux rather than through AArch64 emulation. Its ledgers and reports
-  remain architecture-specific and must not be merged into the AArch64
-  public-support contract.
+- The fixed allocator program retains private native Linux/x86-64
+  little-endian evidence as a paused historical profile. It does not make
+  x86-64 a supported `crabc` platform, provide public x86 allocator
+  integration or default-backend promotion, or authorize AArch64 emulation.
+  Its ledgers and reports remain architecture-specific and must not be merged
+  into the AArch64 public-support contract.
 - `crabc` does not implement cryptographic hashes, password hashing, TLS,
   X.509, certificate validation, PRNG/DRBGs, or public-/symmetric-key
   algorithms. OS entropy such as `getrandom` is in scope. A compatibility API

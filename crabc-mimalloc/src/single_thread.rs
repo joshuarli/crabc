@@ -10509,6 +10509,7 @@ impl<'attachment, 'main, 'arena, 'map>
             #[cfg(test)]
             page_commit_on_demand: _,
             shutdown_complete: _,
+            ..
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
@@ -10945,6 +10946,7 @@ impl<'attachment, 'main, 'arena, 'map>
             #[cfg(test)]
             page_commit_on_demand: _,
             shutdown_complete: _,
+            ..
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());

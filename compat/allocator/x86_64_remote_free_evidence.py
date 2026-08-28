@@ -753,7 +753,7 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     command = rust_trace_command(cargo, target_dir)
     environment = os.environ.copy()
     environment["CARGO_INCREMENTAL"] = "0"
-    execution = run.command_record(command, cwd=ROOT, environment=environment)
+    execution = run.command_record(command, cwd=ROOT, env=environment)
     try:
         run.require_success(execution, "Rust live-owner remote-free fixture")
         passed = run.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"]))

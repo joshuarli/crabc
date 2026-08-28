@@ -3,7 +3,7 @@
   "profile": "linux-x86_64-private-dynamic-arena-singleton-post-exit",
   "target": {"architecture": "x86_64", "endianness": "little", "rust_target": "x86_64-unknown-linux-musl", "system": "linux"},
   "upstream": {"archive_root": "mimalloc-3.5.0", "revision": "18b08671c9302247bfb682286e6bf3cc1773f801", "version": "3.5.0"},
-  "harness_dependency": {"path": "compat/allocator/x86_64_dynamic_full_singleton_homogeneous_aggregate_evidence.py", "sha256": "7e889028f09f78fc4539237e41d9498b1e5adda75cc7a7205ff1c21315d7ba76"},
+  "harness_dependency": {"path": "compat/allocator/x86_64_dynamic_full_singleton_homogeneous_aggregate_evidence.py", "sha256": "33ff3c3e35be114be5005d2b6c524966f380b3b97f5df3a67f79a7879d8efd74"},
   "scope": {"aarch64_status_reused": false, "c_oracle_one_full_arena_singleton_only": true, "c_oracle_real_thread_done_join_and_terminal_consumer_free": true, "c_rust_common_facts_only": true, "emulation_accepted": false, "general_abandonment_or_adoption_claimed": false, "general_lifecycle_claimed": false, "general_remote_free_routing_claimed": false, "native_linux_x86_64_required": true, "private_engine_evidence_only": true, "public_crabc_support": false, "public_mi_api_claimed": false, "public_x86_libc_or_ldso_support": false, "real_pinned_c_mi_free_trigger": true, "rust_scoped_thread_and_join_observed": true},
   "tls": {"compiler_model": "initial-exec", "mimalloc_model": "MI_TLS_MODEL_LOCAL", "thread_pointer_path": "x86_64-fs-tls-slot-fallback"},
   "source_anchors": [

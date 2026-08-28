@@ -583,7 +583,7 @@ class InventoryTests(unittest.TestCase):
                 rust_target="x86_64-unknown-linux-musl",
             )
         command = command_record.call_args.args[0]
-        environment = command_record.call_args.kwargs["environment"]
+        environment = command_record.call_args.kwargs["env"]
         self.assertEqual(
             command,
             [

@@ -320,7 +320,7 @@ def validate_normalized_rust_command(command):
 def build_rust_probe(cargo, temporary):
     target_dir = temporary / "rust-target"; command = rust_test_command(cargo, target_dir); environment = os.environ.copy(); environment["CARGO_INCREMENTAL"] = "0"
     try:
-        execution = RUNNER.command_record(command, cwd=ROOT, environment=environment); RUNNER.require_success(execution, "Rust detached-arena lifecycle fixture")
+        execution = RUNNER.command_record(command, cwd=ROOT, env=environment); RUNNER.require_success(execution, "Rust detached-arena lifecycle fixture")
         passed = RUNNER.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"]))
     except RUNNER.HarnessError as error:
         raise _base.EvidenceError(str(error)) from error
