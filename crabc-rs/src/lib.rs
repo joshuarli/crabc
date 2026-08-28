@@ -34,8 +34,11 @@ pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
 // (eventfd counters plus bounded poll/ppoll/pause, select/pselect, and packed
-// epoll readiness with temporary signal masks), descriptor `fs::fstat`, and
-// typed filesystem-capacity observation through
+// epoll readiness with temporary signal masks), the staged typed `fs`
+// pathname-lifecycle and namespace batch (metadata, open/create,
+// directories/nodes/removal, permission/ownership, links, caller-buffer
+// readlink, and ordinary/no-replace/exchange rename), descriptor `fs::fstat`,
+// and typed filesystem-capacity observation through
 // `fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs,
 // fstatvfs}`,
 // direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}` and direct
@@ -43,10 +46,8 @@ pub mod collections;
 // timestamp-mutation family: `fs::{Timespec, Timestamps, UTIME_NOW,
 // UTIME_OMIT, futimens}` plus `utimensat`, `futimes`, `futimesat`, `lutimes`,
 // `utimes`, and `utime` for bounded directory-relative, current-directory,
-// final-symlink, and whole-second forms, plus private CWD/AT_SYMLINK_NOFOLLOW
-// `statat` metadata, direct caller-buffer and
-// alloc-gated `process::getcwd` observations, and
-// caller-buffer-only `fs::readlinkat_raw` slices,
+// final-symlink, and whole-second forms, plus direct caller-buffer and
+// alloc-gated `process::getcwd` observations,
 // `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking, direct
 // `fs::sendfile` descriptor transfer, direct `fs::copy_file_range`
 // descriptor-range copying, direct `fs::posix_fallocate` mode-zero

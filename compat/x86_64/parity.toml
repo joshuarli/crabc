@@ -145,9 +145,15 @@ source_owners = [
   "crabc-rs/tests/x86_64_getgroups.rs",
   "crabc-rs/tests/x86_64_getcwd.rs",
   "crabc-rs/tests/x86_64_current_dir_name.rs",
+  "crabc-rs/tests/x86_64_path_lifecycle.rs",
+  "crabc-rs/tests/x86_64_namespace.rs",
   "crabc-rs/tests/x86_64_getitimer.rs",
   "crabc-rs/tests/x86_64_setitimer.rs",
   "crabc-rs/tests/x86_64_timerfd.rs",
+  "compat/x86_64/run_x86_path_lifecycle_reference.sh",
+  "compat/x86_64/x86_path_lifecycle_reference_probe.c",
+  "compat/x86_64/run_x86_namespace_reference.sh",
+  "compat/x86_64/x86_namespace_reference_probe.c",
   "crabc-rs/tests/x86_64_sched_rr_interval.rs",
   "crabc-rs/tests/x86_64_sched_affinity.rs",
   "crabc-rs/tests/x86_64_sched_setaffinity.rs",
@@ -345,6 +351,8 @@ native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh priority-reference", scope = "Pinned-musl x86 PRIO_PROCESS/PGRP/USER selectors, getpriority's encoded raw success range, and missing-process behavior for only the typed read-only Rust priority slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh setpriority-reference", scope = "Pinned-musl x86 setpriority=141, closed PRIO selectors/nice values, child-contained raw/musl calling-process set/read/no-op exchange, invalid-selector EINVAL, and missing process/group/user target ESRCH for the typed Rust scheduling-priority mutation only; it excludes scheduler-policy mutation and C process APIs." },
   { state = "verified", command = "./scripts/dev-x86_64.sh fstat-reference", scope = "Pinned-musl x86 144-byte fstat record and regular-file behavior for the bounded descriptor slice; it does not complete filesystem.path-core." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh path-lifecycle-reference", scope = "Pinned-musl/raw x86 staged typed pathname lifecycle: 144-byte stat records; descriptor-relative openat/newfstatat metadata; create/truncate; mkdirat; typed mknodat and FIFO; unlinkat/rmdir; fchmod/fchmodat; and safe same-owner/group fchown/fchownat no-op observations. It excludes a public C ABI/errno TLS, AT_EMPTY_PATH, statx, CWD mutation, and aggregate filesystem.path-core selection." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh namespace-reference", scope = "Pinned-musl/raw x86 staged typed namespace lifecycle: descriptor-relative hard/symbolic links, caller-buffer readlinkat exact/truncated non-NUL prefixes, and ordinary/no-replace/exchange renameat2. It excludes allocation-backed path helpers, AT_EMPTY_PATH, whiteout, a public C ABI/errno TLS, and aggregate filesystem.path-core selection." },
   { state = "verified", command = "./scripts/dev-x86_64.sh statfs-reference", scope = "Pinned-musl/raw x86 statfs/fstatfs capacity metadata and typed Rust fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs, fstatvfs}; private Linux filesystem-statistics records and musl's statfs-to-statvfs mapping, including its first-filesystem-id-word rule, only. It excludes public C structs/ABI, allocator and errno TLS, pathname mutation, and broader filesystem metadata/path support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh access-reference", scope = "Pinned-musl/raw x86 `access`/`faccessat`/`faccessat2` evidence for typed Rust fs::{access, accessat}: legacy `faccessat=269` is the three-argument CWD or descriptor-relative real-credential check, and nonempty closed `AccessAtFlags` uses `faccessat2=439`. It proves F_OK/R_OK success, missing-path ENOENT, a dangling final symlink's follow versus NOFOLLOW result, invalid mode/flag EINVAL, and a child-contained root fixture where a differing real UID yields R_OK EACCES while AT_EACCESS retains effective-root success. The fixed-stack PathArg boundary rejects interior NULs and 256-byte inputs before the syscall. It excludes pathname mutation, allocation-backed path helpers, C APIs/errno TLS, and broader filesystem.path-core." },
   { state = "verified", command = "./scripts/dev-x86_64.sh getcwd-reference", scope = "Pinned-musl/raw x86 direct typed process::{getcwd,getcwd_alloc,get_current_dir_name,get_current_dir_name_alloc}: getcwd=79 returns the exact initialized NUL-terminated caller-buffer prefix and empty/undersized buffers return raw ERANGE, while musl's zero-size EINVAL wrapper policy is deliberately not emulated. Raw/musl newfstatat=262 over the 144-byte x86 stat layout's st_dev/st_ino identity fields establishes the identity decision behind musl's environment-backed logical-PWD spelling; Rust deliberately accepts an explicit nonempty absolute &CStr snapshot instead, never reads PWD, preserves its exact validated bytes, and otherwise falls back to physical getcwd. Focused Rust tests cover mismatch/relative/empty/absent fallback, non-UTF-8 spelling, RANGE, and alloc logical/physical results; the existing alloc-gated long-CWD regression retries only ERANGE. CWD mutation, general stat/path APIs, C APIs, errno TLS, and record-owning-family selection remain excluded." },
@@ -467,6 +475,11 @@ capabilities = [
   "time.relative-sleep",
   "time.sleep-aliases",
   "time.clock-sleep",
+  "filesystem.create-file",
+  "filesystem.special-nodes",
+  "filesystem.ownership",
+  "filesystem.pathname-truncate",
+  "filesystem.remove-dispatch",
 ]
 status = "foundation-verified"
 
@@ -475,7 +488,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. The private CWD/AT_SYMLINK_NOFOLLOW statat identity slice and caller-buffer-only readlinkat observation remain privately evidenced here; the broad family remains planned and non-selectable."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. The aggregate filesystem.path-core and process-global CWD mutation remain planned and non-selectable despite the staged direct pathname-lifecycle and namespace batch."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -504,26 +517,17 @@ source_owners = [
 x86_abi_prerequisites = [
   "Per-record x86 layout and syscall proof before admission",
   "x86 signal, socket, time, stat, and poll record layouts",
-  "Private statat slice: x86 144-byte stat record, newfstatat=262, AT_FDCWD=-100, and only zero flags or AT_SYMLINK_NOFOLLOW; it remains the narrow identity foundation for the admitted logical-current-directory name, while AT_EMPTY_PATH, general stat/path APIs, and mutation remain excluded",
-  "Private readlinkat slice: direct readlinkat=267 into caller-owned writable bytes, returned initialized prefix is not NUL-terminated, short buffers return their truncated prefix, and zero length returns EINVAL; pinned-musl's C wrapper instead returns an empty successful result, which the direct facade deliberately does not emulate; string/byte paths use fixed stack conversion storage, borrowed CStr paths remain caller-owned, and allocation, general path APIs, and filesystem mutation remain excluded",
 ]
 x86_header_prerequisites = ["Published Rust types must correspond to x86 Linux ABI records without borrowing AArch64 constants or layouts."]
 native_evidence = [
-  { state = "required", command = "./scripts/dev-x86_64.sh statat-reference", scope = "Private pinned-musl x86 statat ABI and CWD/AT_SYMLINK_NOFOLLOW identity observations only; it is a foundation for the separately admitted logical-current-directory name. AT_EMPTY_PATH, general stat/path APIs, filesystem mutation, and the record-owning family remain excluded." },
-  { state = "required", command = "./scripts/dev-x86_64.sh readlinkat-reference", scope = "Private pinned-musl x86 caller-buffer-only readlinkat behavior: no-NUL initialized target prefix, short-buffer truncation, and raw-kernel zero-length EINVAL versus musl-wrapper empty-success observation; allocation-backed path APIs, path/filesystem mutation, filesystem.path-core, the contained logical-current-directory metadata slice, and the record-owning family remain excluded." },
   { state = "required", command = "Define closed native x86 facade family runners", scope = "Each remaining record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." },
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]
 capabilities = [
   "filesystem.canonicalize",
-  "filesystem.remove-dispatch",
+  "filesystem.cwd-mutation",
   "process.root-change",
   "filesystem.extended-metadata",
-  "filesystem.create-file",
-  "filesystem.special-nodes",
-  "filesystem.ownership",
-  "filesystem.pathname-truncate",
-  "filesystem.cwd-mutation",
   "filesystem.path-core",
   "filesystem.directory-stream",
   "filesystem.directory-position",

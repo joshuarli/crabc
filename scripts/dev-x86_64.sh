@@ -43,6 +43,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ftruncate-reference  verify pinned-musl x86 descriptor-length ABI and lifecycle
   statfs-reference  verify pinned-musl/raw x86 filesystem-capacity metadata ABI and behavior
   timestamp-reference  verify pinned-musl/raw x86 timestamp-mutation ABI and behavior
+  path-lifecycle-reference  verify pinned-musl/raw x86 pathname metadata and lifecycle ABI and behavior
+  namespace-reference  verify pinned-musl/raw x86 links, symbolic links, and rename ABI and behavior
   posix-fallocate-reference  verify pinned-musl x86 POSIX range-allocation ABI and behavior
   fallocate-reference  verify pinned-musl/raw x86 general range-allocation ABI and behavior
   file-position-reference  verify pinned-musl x86 lseek/fsync/fdatasync ABI and behavior
@@ -131,15 +133,21 @@ CPU-affinity observation/mutation, and typed
 process-global `umask` exchange,
 calling-thread `setresuid`/`setresgid` transitions with typed no-change
 sentinels, and typed scheduling-priority mutation,
-plus bounded typed clock-nanosleep with its relative-remainder and
+plus a staged pathname lifecycle and namespace boundary for metadata,
+open/create, directories and FIFO nodes, pathname truncate, removal,
+permissions/ownership, hard and symbolic links, caller-buffer `readlinkat`,
+and ordinary/no-replace/exchange rename, plus bounded typed clock-nanosleep with its relative-remainder and
 absolute-no-remainder modes, direct typed timer descriptors, direct
 select/pselect and packed epoll readiness with masked waits, and caller-buffer
 and alloc-gated physical and validated-logical current-directory observation.
 The dedicated `getcwd-reference` gate also covers alloc-gated physical retry
-and logical explicit-PWD decisions; private statat remains only its narrow
-identity foundation, while caller-buffer-only readlinkat remains privately
-evidenced. The interval-timer-control slice is admitted only through the typed
-Rust facade; none of these commands selects the C record-owning family.
+and logical explicit-PWD decisions. `path-lifecycle-reference` and
+`namespace-reference` prove only their named direct Rust facade boundaries:
+they exclude `AT_EMPTY_PATH`, `statx`, allocation-backed path helpers,
+canonicalization, directory streams, temporary-object lifecycle, extended
+attributes, and CWD mutation. The interval-timer-control slice is admitted
+only through the typed Rust facade; none of these commands selects the C
+record-owning family.
 `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
@@ -337,8 +345,7 @@ timer/signal delivery policy, and broader timer control remain excluded.
 `statat-reference` proves only the x86 `newfstatat` record with CWD and
 `AT_SYMLINK_NOFOLLOW`; it is the private `st_dev`/`st_ino` identity foundation
 for the separately admitted logical-current-directory name. It does not select
-`AT_EMPTY_PATH`, general stat or path APIs, filesystem mutation, or the
-broader record-owning facade family.
+`AT_EMPTY_PATH` or the aggregate `filesystem.path-core` capability.
 `getcwd-reference` proves the direct x86 typed
 `process::{getcwd,getcwd_alloc,get_current_dir_name,get_current_dir_name_alloc}`
 boundary. Raw/pinned-musl `getcwd=79` proves physical prefix and `ERANGE`
@@ -358,8 +365,8 @@ and the broader record-owning facade family remain excluded.
 non-NUL-terminated initialized prefix, and a short output buffer succeeds with
 its truncated prefix. Its direct raw kernel boundary rejects a zero-length
 buffer with `EINVAL`, unlike musl's empty successful C-wrapper result. It does
-not select allocation-backed path APIs, path mutation, or promote the broader
-record-owning facade family.
+not select allocation-backed path APIs or the aggregate
+`filesystem.path-core` capability.
 `rr-interval-reference` proves the direct typed x86 read-only
 `sched_rr_get_interval` query: PID zero and an explicit `gettid` select the
 calling task, and that explicit task ID remains addressable from the initial
@@ -649,6 +656,18 @@ run_timestamp_reference() {
         --test x86_64_timestamp_paths -- --test-threads=1
 }
 
+run_path_lifecycle_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_path_lifecycle_reference.sh
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --test x86_64_path_lifecycle -- --test-threads=1
+}
+
+run_namespace_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_namespace_reference.sh
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --test x86_64_namespace -- --test-threads=1
+}
+
 run_posix_fallocate_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_posix_fallocate_reference.sh
     run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
@@ -936,7 +955,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -1069,6 +1088,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "timestamp-reference takes no arguments"
         ensure_image
         run_timestamp_reference
+        ;;
+    path-lifecycle-reference)
+        [ "$#" -eq 0 ] || fail "path-lifecycle-reference takes no arguments"
+        ensure_image
+        run_path_lifecycle_reference
+        ;;
+    namespace-reference)
+        [ "$#" -eq 0 ] || fail "namespace-reference takes no arguments"
+        ensure_image
+        run_namespace_reference
         ;;
     posix-fallocate-reference)
         [ "$#" -eq 0 ] || fail "posix-fallocate-reference takes no arguments"
@@ -1320,7 +1349,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_capacity --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_futimens --test x86_64_timestamp_paths --test x86_64_posix_fallocate --test x86_64_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_capacity --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_futimens --test x86_64_timestamp_paths --test x86_64_path_lifecycle --test x86_64_namespace --test x86_64_posix_fallocate --test x86_64_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)

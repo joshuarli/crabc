@@ -42,11 +42,11 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter, exact `pollfd` record seam,
 # direct select/pselect descriptor-bit-vector seam, and packed `epoll_event`
-# readiness with temporary signal masks. `fs_x86_64.rs`
-# owns descriptor `fstat`, direct access/accessat permission observation,
-# private CWD/statat path metadata, caller-buffer-only readlinkat, plus
-# file-access advice and readahead, and direct bounded anonymous memory-file/
-# seal operations.
+# readiness with temporary signal masks. `fs_x86_64.rs` owns descriptor
+# `fstat`, direct access/accessat permission observation, the separately
+# proved pathname-lifecycle/namespace batch, caller-buffer-only readlinkat,
+# file-access advice/readahead, and direct bounded anonymous memory-file/seal
+# operations.
 # `process_x86_64.rs` owns caller-buffer and alloc-gated `getcwd`
 # observations; CWD mutation remains deferred. It also owns read-only identity/session and
 # supplementary-group query/fill plus proved calling-task filesystem-credential
@@ -432,7 +432,7 @@ def check_x86_access_boundary(errors: list[str]) -> None:
 
 
 def check_x86_capacity_metadata_boundary(errors: list[str]) -> None:
-    """Keep x86 filesystem-capacity metadata typed, direct, and closed."""
+    """Keep x86 filesystem-capacity metadata typed, direct, and Rust-only."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     text = fs_source.read_text(errors="replace")
@@ -453,14 +453,11 @@ def check_x86_capacity_metadata_boundary(errors: list[str]) -> None:
                 "crabc-rs/src/fs_x86_64.rs: admitted x86 capacity-metadata slice is missing "
                 f"{required}"
             )
-    for forbidden in (
-        r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
-        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:open|openat|openat2)(?:<|\s*\()",
-    ):
+    for forbidden in (r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',):
         if re.search(forbidden, text):
             errors.append(
                 "crabc-rs/src/fs_x86_64.rs: capacity-metadata slice must remain "
-                "Rust-only and must not add pathname opening"
+                "Rust-only"
             )
 
 
@@ -656,7 +653,7 @@ def check_x86_timestamp_boundary(errors: list[str]) -> None:
 
 
 def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
-    """Keep direct x86 status flags narrower than pathname or generic fcntl APIs."""
+    """Keep direct x86 status flags narrower than generic fcntl APIs."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     text = fs_source.read_text(errors="replace")
@@ -677,14 +674,12 @@ def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
             )
 
     for forbidden in (
-        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+open(?:<|\s*\()",
-        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+openat(?:<|\s*\()",
         r"(?m)^pub\s+(?:unsafe\s+)?fn\s+fcntl(?:<|\s*\()",
     ):
         if re.search(forbidden, text):
             errors.append(
                 "crabc-rs/src/fs_x86_64.rs: admitted x86 fcntl status-flag slice "
-                "must defer pathname opening and generic fcntl"
+                "must defer generic fcntl"
             )
 
 
@@ -738,7 +733,7 @@ def check_x86_flock_boundary(errors: list[str]) -> None:
 
 
 def check_x86_sendfile_boundary(errors: list[str]) -> None:
-    """Keep direct x86 sendfile descriptor-only and separate from splice/path/C APIs."""
+    """Keep direct x86 sendfile separate from splice, openat2, and C APIs."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     fs_text = fs_source.read_text(errors="replace")
@@ -758,13 +753,13 @@ def check_x86_sendfile_boundary(errors: list[str]) -> None:
 
     for forbidden in (
         r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:splice|vmsplice|tee)(?:<|\s*\()",
-        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:open|openat|openat2)(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+openat2(?:<|\s*\()",
         r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
     ):
         if re.search(forbidden, fs_text):
             errors.append(
                 "crabc-rs/src/fs_x86_64.rs: admitted x86 sendfile slice must defer "
-                "splice-family, pathname-opening, and C ABI expansion"
+                "splice-family, openat2, and C ABI expansion"
             )
 
     core_io_source = ROOT / "crabc-core" / "src" / "io.rs"
@@ -957,25 +952,99 @@ def check_x86_sync_boundary(errors: list[str]) -> None:
         )
 
 
+def check_x86_path_lifecycle_boundary(errors: list[str]) -> None:
+    """Keep the staged x86 pathname batch typed, direct, and explicitly bounded."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub struct UnlinkAtFlags: u32",
+        "pub struct LinkAtFlags: u32",
+        "pub struct RenameFlags: u32",
+        "pub struct ChownFlags: u32",
+        "pub enum FileType",
+        "pub type Dev = u64",
+        "pub const FIFO_DEVICE: Dev = 0",
+        "pub fn truncate<",
+        "pub fn lstat<",
+        "pub fn openat<",
+        "pub fn open<",
+        "pub fn create<",
+        "pub fn mkdirat<",
+        "pub fn mkdir<",
+        "pub fn mknodat<",
+        "pub fn mkfifoat<",
+        "pub fn mkfifo<",
+        "pub fn unlinkat<",
+        "pub fn unlink<",
+        "pub fn rmdir<",
+        "pub fn linkat<",
+        "pub fn link<",
+        "pub fn symlinkat<",
+        "pub fn symlink<",
+        "pub fn renameat<",
+        "pub fn renameat_with<",
+        "pub fn rename<",
+        "pub fn fchmod<",
+        "pub fn chmodat<",
+        "pub fn chmod<",
+        "pub fn fchown<",
+        "pub fn chownat<",
+        "pub fn chown<",
+        "pub fn lchown<",
+        "FileType::Unknown || mode.bits() & !0o7777 != 0",
+        "RenameFlags::NOREPLACE",
+        "RenameFlags::EXCHANGE",
+        "ownership_words(owner, group)?",
+        "u32::MAX",
+        "crabc_core::fs::openat(",
+        "crabc_core::fs::truncate(",
+        "crabc_core::fs::mkdirat(",
+        "crabc_core::fs::mknodat(",
+        "crabc_core::fs::unlinkat(",
+        "crabc_core::fs::linkat(",
+        "crabc_core::fs::symlinkat(",
+        "crabc_core::fs::renameat2(",
+        "crabc_core::fs::fchmod(",
+        "crabc_core::fs::fchmodat(",
+        "crabc_core::fs::fchown(",
+        "crabc_core::fs::fchownat(",
+    ):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: staged x86 pathname lifecycle is missing "
+                f"{required}"
+            )
+
+    for forbidden in (
+        r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:openat2|statx|chdir|fchdir|canonicalize)(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:readlinkat|readlink)(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:opendir|fdopendir|readdir|closedir)(?:<|\s*\()",
+    ):
+        if re.search(forbidden, text):
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: staged x86 pathname lifecycle must "
+                "defer the broader path-core API"
+            )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
-    """Keep the private x86 readlinkat slice caller-buffer-only and read-only."""
+    """Keep the x86 readlinkat API caller-buffer-only without blocking its namespace use."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     text = fs_source.read_text(errors="replace")
     if "pub fn readlinkat_raw<" not in text:
-        errors.append("crabc-rs/src/fs_x86_64.rs: private readlinkat slice is missing")
+        errors.append("crabc-rs/src/fs_x86_64.rs: staged readlinkat slice is missing")
     for forbidden in (
         "pub fn readlinkat<",
         "pub fn readlink<",
-        "pub fn unlink",
-        "pub fn rename",
-        "pub fn symlink",
         "CString",
         "Vec<",
     ):
         if forbidden in text:
             errors.append(
-                "crabc-rs/src/fs_x86_64.rs: private readlinkat slice must defer "
+                "crabc-rs/src/fs_x86_64.rs: staged readlinkat slice must defer "
                 f"{forbidden}"
             )
 
@@ -1153,6 +1222,7 @@ def main() -> int:
     )
     check_root_c_link_boundaries(errors)
     check_x86_getcwd_boundary(errors)
+    check_x86_path_lifecycle_boundary(errors)
     check_x86_readlinkat_boundary(errors)
     check_x86_memfd_boundary(errors)
     check_x86_rr_interval_boundary(errors)

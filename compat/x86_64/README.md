@@ -606,6 +606,36 @@ general stat/path APIs, or filesystem mutation. It is the narrow
 `st_dev`/`st_ino` identity foundation for the separately admitted logical
 current-directory name.
 
+`path-lifecycle-reference` is the staged private pathname-lifecycle and
+metadata batch. Its pinned-musl/raw x86 oracle and focused Rust regressions
+cover the 144-byte `stat` record, descriptor-relative `openat`/`newfstatat`
+metadata, regular-file creation and `truncate`, `mkdirat`, typed special-node
+creation with an unprivileged FIFO fixture, `unlinkat`/`rmdir`, `fchmod`/
+`fchmodat`, and safe same-owner/group
+`fchown`/`fchownat` no-op ownership observations. It proves exact inode/type
+records, final-symlink follow/no-follow metadata selection, fixed flag
+validation, and the fixture’s representative `ENOENT`/`EINVAL` outcomes. The
+closed x86 syscall
+numbers are `openat=257`, `mkdirat=258`, `mknodat=259`, `fchownat=260`,
+`newfstatat=262`, `unlinkat=263`, `fchmodat=268`, `fchmod=91`,
+`fchown=93`, and `truncate=76`. The typed API admits special-node kinds, while
+this unprivileged oracle exercises only FIFO creation and leaves direct kernel
+privilege/filesystem policy visible. This is staged private Rust evidence only;
+it does not make x86 runtime support public, select a C ABI or `errno` TLS, or
+complete the aggregate `filesystem.path-core` capability.
+
+`namespace-reference` is the separate staged namespace portion of this batch:
+hard and symbolic links, caller-buffer `readlinkat`, and descriptor-relative
+`renameat2` lifecycle operations. It proves exact link target bytes and inode
+identity, final-link selection, short-buffer behavior, fixed rename/link flag
+validation, and the fixture’s representative missing-path and
+invalid-operation outcomes. This is private staged evidence and does not make
+x86 runtime support public or select a C ABI/`errno` TLS. `AT_EMPTY_PATH`,
+`statx`, canonicalization, CWD mutation, directory streams/positions and
+raw-directory APIs, named/anonymous temporary-file lifecycle, xattrs,
+allocation-backed path helpers, and broader filesystem policy remain future
+work.
+
 `access-reference` completes the record-free direct
 `fs::{access, accessat}` permission-observation slice. It pins x86
 `access=21`, legacy `faccessat=269`, and flags-bearing `faccessat2=439`; Rust
@@ -649,9 +679,9 @@ instead returns an empty successful result, which the direct Rust facade
 deliberately does not emulate. `&str` and byte-slice paths use fixed 256-byte
 stack conversion storage; a borrowed `&CStr` remains caller-owned.
 Allocation-backed readlink helpers, general path APIs, and filesystem/path
-mutation remain deferred; this evidence does not promote
-`filesystem.path-core` or widen the contained logical-current-directory
-metadata slice.
+mutation remain deferred outside the staged pathname-lifecycle batch; this
+evidence does not by itself promote `filesystem.path-core` or widen the
+contained logical-current-directory metadata slice.
 
 `system-reference` records the pinned-musl `uname` and `sysinfo` behavior used
 by bounded typed system name/status/load observations. It does not select
@@ -864,10 +894,10 @@ acceptance, periodic-setting inspection, epoll readiness, exact expiration reads
 invalid record/flag/descriptor handling. The filesystem
 regression proves a
 typed descriptor `fstat` record, typed `statfs`/`fstatfs` capacity metadata
-with its derived `statvfs` views, a private descriptor-relative/CWD `statat`
-metadata slice, direct `access`/`accessat` real/effective-credential
-observations, caller-buffer and alloc-gated `getcwd` plus caller-buffer-only
-`readlinkat` output, plus
+with its derived `statvfs` views, the staged descriptor-relative pathname
+lifecycle and namespace batch, direct `access`/`accessat`
+real/effective-credential observations, caller-buffer and alloc-gated `getcwd`
+plus caller-buffer-only `readlinkat` output, plus
 `fadvise64`/`readahead` behavior and direct bounded anonymous memory-file
 creation plus seal observation/mutation. The
 process regressions prove typed PID/identity/session observations, typed

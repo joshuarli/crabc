@@ -1,14 +1,17 @@
-//! Deliberately narrow Linux/x86-64 filesystem observations and memory-file operations.
+//! Staged Linux/x86-64 filesystem operations and memory-file support.
 //!
-//! This module admits descriptor-based `fstat(2)`, a deliberately narrow
-//! query-only `statat(2)` path-metadata boundary, caller-buffer-only
-//! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
+//! This module admits descriptor-based `fstat(2)`, `statat(2)` path metadata,
+//! caller-buffer-only `readlinkat(2)` target reads, `access(2)` and
+//! `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, filesystem-capacity observation through `statfs(2)` and
-//! `fstatfs(2)` plus derived `statvfs` views, file-access advice, file
-//! readahead, descriptor-based file-length and timestamp mutation, and closed
-//! pathname timestamp mutation through a fixed-stack path boundary, fixed-mode
-//! descriptor-range allocation,
+//! `fstatfs(2)` plus derived `statvfs` views, a bounded pathname lifecycle
+//! and namespace slice through `openat(2)`, `newfstatat(2)`, `mkdirat(2)`,
+//! `mknodat(2)`, `unlinkat(2)`, `linkat(2)`, `symlinkat(2)`, `renameat2(2)`,
+//! `fchmodat(2)`, `fchownat(2)`, and `truncate(2)`, file-access advice,
+//! file readahead, descriptor-based file-length and timestamp mutation, and
+//! closed pathname timestamp mutation through a fixed-stack path boundary,
+//! fixed-mode descriptor-range allocation,
 //! descriptor-to-descriptor transfer and descriptor-range copying,
 //! file-position and synchronization operations,
 //! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
@@ -17,13 +20,11 @@
 //! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
-//! has a distinct 144-byte layout. The private metadata path slice admits only
-//! `CWD` and `AT_SYMLINK_NOFOLLOW`, while the direct permission-observation
-//! slice has its own closed access mode and flag types. The caller-buffer
-//! readlink target boundary remains private. `AT_EMPTY_PATH`, a general path
-//! module, `statx`, allocation-backed path helpers, and pathname mutation
-//! other than the closed timestamp family remain outside this staged target
-//! boundary until they have their own x86-64 evidence.
+//! has a distinct 144-byte layout. The pathname lifecycle slice uses explicit
+//! current-directory or borrowed-directory authority and operation-specific
+//! `AT_*` flag types. `AT_EMPTY_PATH`, `statx`, allocation-backed path
+//! helpers, canonicalization, directory streams, temporary-object lifecycle,
+//! extended attributes, and CWD mutation remain separate x86 work.
 
 use bitflags::bitflags;
 use crate::buffer::Buffer;
@@ -31,7 +32,10 @@ use core::ffi::CStr;
 use core::mem::MaybeUninit;
 use core::num::NonZeroU64;
 
-use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
+use crate::{
+    process::{Gid, Uid},
+    AsFd, BorrowedFd, Errno, OwnedFd, Result,
+};
 
 bitflags! {
     /// The bounded Linux `fallocate` modes supported by this facade.
@@ -77,14 +81,13 @@ bitflags! {
 }
 
 bitflags! {
-    /// Known Linux/x86-64 `O_*` values for [`fcntl_getfl`] and
+    /// Known Linux/x86-64 `O_*` values for [`openat`], [`fcntl_getfl`], and
     /// [`fcntl_setfl`].
     ///
-    /// This type is deliberately admitted only for direct open-file-
-    /// description status-flag observation and mutation. It is not an
-    /// admission of x86-64 `open(2)`, `openat(2)`, pathname resolution, or a
-    /// general C `fcntl` facade. Unknown bits are retained so callers can
-    /// faithfully observe and forward future kernel-defined status bits.
+    /// Unknown bits are retained so callers can faithfully observe and forward
+    /// future kernel-defined status bits. At the pathname boundary they are
+    /// passed directly to Linux rather than interpreted as a portability or
+    /// fallback policy.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct OFlags: u32 {
@@ -175,9 +178,9 @@ pub enum FlockOperation {
 /// [`Errno::NAMETOOLONG`] before a syscall instead.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
-/// A pathname or memory-file name input accepted by [`access`], [`accessat`],
-/// [`statat`], [`stat`], [`statfs`], [`statvfs`], [`readlinkat_raw`], the
-/// timestamp-mutation family, and [`memfd_create`].
+/// A pathname or memory-file name input accepted by the staged path lifecycle,
+/// [`access`], [`accessat`], [`statat`], [`stat`], [`statfs`], [`statvfs`],
+/// [`readlinkat_raw`], the timestamp-mutation family, and [`memfd_create`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
 /// buffer. The callback is invoked while that C string remains live, so the
@@ -260,9 +263,8 @@ impl PathArg for &str {
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
-/// accepted only as the directory argument to [`accessat`], [`statat`],
-/// [`readlinkat_raw`], and [`utimensat`], and can never become an owned
-/// descriptor.
+/// accepted only as the directory argument to staged `*at` operations and can
+/// never become an owned descriptor.
 pub const CWD: BorrowedFd<'static> =
     // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
     // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
@@ -273,11 +275,67 @@ bitflags! {
     ///
     /// `SYMLINK_NOFOLLOW` observes a final symlink rather than its target.
     /// `AT_EMPTY_PATH`, `AT_NO_AUTOMOUNT`, and all unknown bits remain outside
-    /// this private foundation and return [`Errno::INVAL`] before a syscall.
+    /// this staged metadata boundary and return [`Errno::INVAL`] before a syscall.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct AtFlags: u32 {
         /// `AT_SYMLINK_NOFOLLOW`.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`unlinkat`].
+    ///
+    /// This is intentionally separate from [`AtFlags`]: `AT_REMOVEDIR` is
+    /// meaningful only to `unlinkat(2)`, so a metadata flag cannot become a
+    /// removal request by accident.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct UnlinkAtFlags: u32 {
+        /// Remove an empty directory rather than a non-directory entry.
+        const REMOVEDIR = 0x0000_0200;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`linkat`].
+    ///
+    /// The direct x86-64 lifecycle slice admits only the final-link-follow
+    /// selection. `AT_EMPTY_PATH` and all other `AT_*` forms are excluded.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct LinkAtFlags: u32 {
+        /// Follow a final symbolic link at the source path.
+        const SYMLINK_FOLLOW = 0x0000_0400;
+    }
+}
+
+bitflags! {
+    /// Linux `renameat2(2)` flags admitted by [`renameat_with`].
+    ///
+    /// The no-replace and exchange operations are ordinary namespace
+    /// transitions. Whiteout creation is filesystem- and privilege-specific,
+    /// so it remains outside this staged Rust boundary.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct RenameFlags: u32 {
+        /// Fail when the destination already exists.
+        const NOREPLACE = 0x0000_0001;
+        /// Atomically exchange two existing directory entries.
+        const EXCHANGE = 0x0000_0002;
+    }
+}
+
+bitflags! {
+    /// Flags accepted by [`chownat`].
+    ///
+    /// Ownership changes have their own closed flag type because Linux reuses
+    /// `AT_*` bit values across unrelated operations.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+    pub struct ChownFlags: u32 {
+        /// Change a final symbolic link itself rather than its target.
         const SYMLINK_NOFOLLOW = 0x0000_0100;
     }
 }
@@ -303,7 +361,7 @@ bitflags! {
     /// Flags accepted by [`accessat`].
     ///
     /// This operation-specific type is intentionally distinct from
-    /// [`AtFlags`], whose closed vocabulary belongs to the private `statat`
+    /// [`AtFlags`], whose closed vocabulary belongs to the staged `statat`
     /// metadata boundary. Linux reuses these flag bits across unrelated
     /// `*at` syscalls; keeping the types separate prevents an access flag from
     /// silently becoming a valid metadata flag. Unknown bits are rejected
@@ -424,9 +482,11 @@ pub enum Advice {
 bitflags! {
     /// Linux file-creation permission and process-mask bits.
     ///
-    /// This preserves the native process::umask vocabulary without admitting
-    /// x86-64 pathname creation APIs. The bitset intentionally retains future
-    /// Linux mode bits, matching the AArch64 facade contract.
+    /// This is shared by the staged x86-64 pathname lifecycle and the native
+    /// process::umask vocabulary. The bitset intentionally retains future
+    /// Linux mode bits, matching the AArch64 facade contract. Individual
+    /// operations such as [`mknodat`] may deliberately validate a narrower
+    /// subset before entering the kernel.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct Mode: u32 {
@@ -469,6 +529,16 @@ bitflags! {
 
 /// Raw Linux st_mode bits.
 pub type RawMode = u32;
+
+/// Linux `dev_t` used by [`mknodat`].
+///
+/// Linux/x86-64 carries this value in one 64-bit syscall argument. FIFO
+/// creation always uses [`FIFO_DEVICE`]; character and block device creation
+/// retains the kernel's ordinary privilege and device-number checks.
+pub type Dev = u64;
+
+/// The device number required when creating a FIFO.
+pub const FIFO_DEVICE: Dev = 0;
 
 /// Seconds in a Linux/x86-64 `timespec`.
 pub type Secs = i64;
@@ -570,6 +640,62 @@ impl From<Mode> for RawMode {
     #[inline]
     fn from(mode: Mode) -> Self {
         mode.as_raw_mode()
+    }
+}
+
+/// A file kind encoded in Linux `st_mode` values.
+///
+/// [`FileType::Unknown`] is an observation-only result and cannot be used by
+/// [`mknodat`] to create an arbitrary file type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileType {
+    /// `S_IFREG`.
+    RegularFile,
+    /// `S_IFDIR`.
+    Directory,
+    /// `S_IFLNK`.
+    Symlink,
+    /// `S_IFIFO`.
+    Fifo,
+    /// `S_IFSOCK`.
+    Socket,
+    /// `S_IFCHR`.
+    CharacterDevice,
+    /// `S_IFBLK`.
+    BlockDevice,
+    /// An unrecognized Linux file kind.
+    Unknown,
+}
+
+impl FileType {
+    /// Interprets the file-kind bits in a Linux `st_mode` value.
+    #[inline]
+    pub const fn from_raw_mode(st_mode: RawMode) -> Self {
+        match st_mode & 0o170000 {
+            0o100000 => Self::RegularFile,
+            0o040000 => Self::Directory,
+            0o120000 => Self::Symlink,
+            0o010000 => Self::Fifo,
+            0o140000 => Self::Socket,
+            0o020000 => Self::CharacterDevice,
+            0o060000 => Self::BlockDevice,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Returns this value in the Linux `st_mode` representation.
+    #[inline]
+    pub const fn as_raw_mode(self) -> RawMode {
+        match self {
+            Self::RegularFile => 0o100000,
+            Self::Directory => 0o040000,
+            Self::Symlink => 0o120000,
+            Self::Fifo => 0o010000,
+            Self::Socket => 0o140000,
+            Self::CharacterDevice => 0o020000,
+            Self::BlockDevice => 0o060000,
+            Self::Unknown => 0o170000,
+        }
     }
 }
 
@@ -700,6 +826,21 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     }
 
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
+}
+
+/// Sets the length of a pathname-selected file.
+///
+/// This is the direct Linux `truncate(2)` operation through the fixed-stack
+/// [`PathArg`] boundary. Values above the signed `loff_t` range return
+/// [`Errno::INVAL`] before pathname conversion or syscall entry. It does not
+/// resolve a descriptor, allocate, or provide a C ABI wrapper.
+#[inline]
+pub fn truncate<P: PathArg>(path: P, length: u64) -> Result<()> {
+    if length > i64::MAX as u64 {
+        return Err(Errno::INVAL);
+    }
+
+    path.into_with_c_str(|path| crabc_core::fs::truncate(path, length as i64))
 }
 
 /// Sets access and modification timestamps relative to `dirfd`.
@@ -1260,6 +1401,20 @@ const _: [(); 72] = [(); core::mem::offset_of!(Stat, st_atime)];
 const _: [(); 88] = [(); core::mem::offset_of!(Stat, st_mtime)];
 const _: [(); 104] = [(); core::mem::offset_of!(Stat, st_ctime)];
 
+impl Stat {
+    /// Returns the file kind encoded in [`Self::st_mode`].
+    #[inline]
+    pub const fn file_type(self) -> FileType {
+        FileType::from_raw_mode(self.st_mode)
+    }
+
+    /// Returns the permission and special bits encoded in [`Self::st_mode`].
+    #[inline]
+    pub const fn mode(self) -> Mode {
+        Mode::from_raw_mode(self.st_mode)
+    }
+}
+
 bitflags! {
     /// Linux mount flags reported by [`StatFs`] and [`StatVfs`].
     ///
@@ -1451,12 +1606,11 @@ pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
 
 /// Queries x86-64 Linux metadata for `path` relative to `dirfd`.
 ///
-/// This is a private, query-only `fstatat(2)` foundation. The returned
-/// [`Stat`] is exactly the 144-byte Linux/x86-64 kernel layout. `dirfd` is
-/// borrowed for the direct syscall, while [`PathArg`] keeps any temporary
-/// pathname storage alive until Linux has consumed it. Only
-/// [`AtFlags::SYMLINK_NOFOLLOW`] is accepted; unknown bits, `AT_EMPTY_PATH`,
-/// and mutating path operations are intentionally not part of this boundary.
+/// The returned [`Stat`] is exactly the 144-byte Linux/x86-64 kernel layout.
+/// `dirfd` is borrowed for the direct syscall, while [`PathArg`] keeps any
+/// temporary pathname storage alive until Linux has consumed it. Only
+/// [`AtFlags::SYMLINK_NOFOLLOW`] is admitted; `AT_EMPTY_PATH`,
+/// `AT_NO_AUTOMOUNT`, and `statx` remain separate staged x86 work.
 #[inline]
 #[doc(alias = "fstatat")]
 pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<Stat> {
@@ -1481,12 +1635,365 @@ pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Resul
 
 /// Queries x86-64 Linux metadata for `path` relative to the current directory.
 ///
-/// This is [`statat`] with [`CWD`] and no flags. It remains a private,
-/// query-only metadata operation; it does not establish a general x86-64 path
-/// API or filesystem mutation boundary.
+/// This is [`statat`] with [`CWD`] and no flags.
 #[inline]
 pub fn stat<P: PathArg>(path: P) -> Result<Stat> {
     statat(CWD, path, AtFlags::empty())
+}
+
+/// Queries x86-64 Linux metadata for a final symbolic link itself.
+#[inline]
+pub fn lstat<P: PathArg>(path: P) -> Result<Stat> {
+    statat(CWD, path, AtFlags::SYMLINK_NOFOLLOW)
+}
+
+/// Opens `path` relative to `dirfd` through Linux `openat(2)`.
+///
+/// The directory descriptor is borrowed and a successful direct syscall
+/// transfers its fresh descriptor into [`OwnedFd`]. `O_*` meanings remain
+/// Linux/x86-64 meanings: this facade supplies no portability mapping, libc
+/// wrapper, or fallback. `create_mode` is meaningful only when Linux sees a
+/// creation flag, and the process umask remains a kernel/process policy.
+#[inline]
+pub fn openat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    oflags: OFlags,
+    create_mode: Mode,
+) -> Result<OwnedFd> {
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::openat(
+            dirfd.as_raw_fd(),
+            path,
+            oflags.bits() as i32,
+            create_mode.bits(),
+        )
+        .map(|fd| {
+            // SAFETY: successful Linux `openat` transfers one fresh,
+            // non-negative descriptor into this RAII owner.
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        })
+    })
+}
+
+/// Opens `path` relative to the process current directory.
+#[inline]
+pub fn open<P: PathArg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<OwnedFd> {
+    openat(CWD, path, oflags, create_mode)
+}
+
+/// Creates or truncates a current-directory-relative file with `creat(2)`
+/// semantics.
+///
+/// The returned descriptor is write-only. Linux applies the process umask to
+/// `mode` when creating the entry; no close-on-exec policy is implied.
+#[inline]
+#[doc(alias = "creat")]
+pub fn create<P: PathArg>(path: P, mode: Mode) -> Result<OwnedFd> {
+    openat(
+        CWD,
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
+        mode,
+    )
+}
+
+/// Creates a directory relative to `dirfd`.
+///
+/// The fixed-stack path and borrowed directory descriptor remain live only
+/// through the direct `mkdirat(2)` syscall. Linux applies the process umask.
+#[inline]
+pub fn mkdirat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode) -> Result<()> {
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| crabc_core::fs::mkdirat(dirfd.as_raw_fd(), path, mode.bits()))
+}
+
+/// Creates a current-directory-relative directory.
+#[inline]
+pub fn mkdir<P: PathArg>(path: P, mode: Mode) -> Result<()> {
+    mkdirat(CWD, path, mode)
+}
+
+/// Creates a Linux filesystem node relative to `dirfd`.
+///
+/// The file kind and permission/special bits are separate so callers cannot
+/// accidentally override the requested type through `mode`. [`FileType::Unknown`]
+/// is observation-only and rejected. `dev` is Linux's 64-bit `dev_t`; use
+/// [`FIFO_DEVICE`] for [`FileType::Fifo`]. Character and block device policy
+/// remains the kernel's direct privilege and filesystem decision.
+#[inline]
+pub fn mknodat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    file_type: FileType,
+    mode: Mode,
+    dev: Dev,
+) -> Result<()> {
+    if file_type == FileType::Unknown || mode.bits() & !0o7777 != 0 {
+        return Err(Errno::INVAL);
+    }
+
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::mknodat(
+            dirfd.as_raw_fd(),
+            path,
+            file_type.as_raw_mode() | mode.bits(),
+            dev,
+        )
+    })
+}
+
+/// Creates a FIFO node relative to `dirfd`.
+#[inline]
+pub fn mkfifoat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, mode: Mode) -> Result<()> {
+    mknodat(dirfd, path, FileType::Fifo, mode, FIFO_DEVICE)
+}
+
+/// Creates a current-directory-relative FIFO node.
+#[inline]
+pub fn mkfifo<P: PathArg>(path: P, mode: Mode) -> Result<()> {
+    mkfifoat(CWD, path, mode)
+}
+
+/// Removes a path relative to `dirfd`.
+///
+/// [`UnlinkAtFlags::REMOVEDIR`] selects removal of an empty directory. The
+/// closed flag type excludes `AT_EMPTY_PATH` and unrelated `AT_*` meanings.
+#[inline]
+pub fn unlinkat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    flags: UnlinkAtFlags,
+) -> Result<()> {
+    let flags = UnlinkAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| crabc_core::fs::unlinkat(dirfd.as_raw_fd(), path, flags.bits()))
+}
+
+/// Removes a current-directory-relative non-directory entry.
+#[inline]
+pub fn unlink<P: PathArg>(path: P) -> Result<()> {
+    unlinkat(CWD, path, UnlinkAtFlags::empty())
+}
+
+/// Removes a current-directory-relative empty directory.
+#[inline]
+pub fn rmdir<P: PathArg>(path: P) -> Result<()> {
+    unlinkat(CWD, path, UnlinkAtFlags::REMOVEDIR)
+}
+
+/// Creates a hard link between paths relative to their directory descriptors.
+///
+/// [`LinkAtFlags::SYMLINK_FOLLOW`] selects final-source-link resolution. This
+/// safe boundary deliberately excludes `AT_EMPTY_PATH` and its descriptor
+/// linking semantics.
+#[inline]
+pub fn linkat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd,
+    old_path: P,
+    new_dirfd: QFd,
+    new_path: Q,
+    flags: LinkAtFlags,
+) -> Result<()> {
+    let flags = LinkAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let old_dirfd = old_dirfd.as_fd();
+    let new_dirfd = new_dirfd.as_fd();
+    old_path.into_with_c_str(|old_path| {
+        new_path.into_with_c_str(|new_path| {
+            crabc_core::fs::linkat(
+                old_dirfd.as_raw_fd(),
+                old_path,
+                new_dirfd.as_raw_fd(),
+                new_path,
+                flags.bits(),
+            )
+        })
+    })
+}
+
+/// Creates a hard link relative to the process current directory.
+#[inline]
+pub fn link<P: PathArg, Q: PathArg>(old_path: P, new_path: Q) -> Result<()> {
+    linkat(CWD, old_path, CWD, new_path, LinkAtFlags::empty())
+}
+
+/// Creates a symbolic link relative to `new_dirfd`.
+///
+/// The link target is stored as supplied and is not resolved at creation.
+#[inline]
+pub fn symlinkat<P: PathArg, Q: PathArg, Fd: AsFd>(
+    target: P,
+    new_dirfd: Fd,
+    new_path: Q,
+) -> Result<()> {
+    let new_dirfd = new_dirfd.as_fd();
+    target.into_with_c_str(|target| {
+        new_path.into_with_c_str(|new_path| {
+            crabc_core::fs::symlinkat(target, new_dirfd.as_raw_fd(), new_path)
+        })
+    })
+}
+
+/// Creates a current-directory-relative symbolic link.
+#[inline]
+pub fn symlink<P: PathArg, Q: PathArg>(target: P, new_path: Q) -> Result<()> {
+    symlinkat(target, CWD, new_path)
+}
+
+/// Renames a path or directory without special Linux rename flags.
+#[inline]
+pub fn renameat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd,
+    old_path: P,
+    new_dirfd: QFd,
+    new_path: Q,
+) -> Result<()> {
+    renameat_with(
+        old_dirfd,
+        old_path,
+        new_dirfd,
+        new_path,
+        RenameFlags::empty(),
+    )
+}
+
+/// Renames a path or directory using the admitted Linux `renameat2(2)` flags.
+///
+/// [`RenameFlags::NOREPLACE`] and [`RenameFlags::EXCHANGE`] are mutually
+/// exclusive; their combination and unknown flag bits return [`Errno::INVAL`]
+/// before path conversion or syscall entry. Whiteout creation remains outside
+/// this filesystem- and privilege-dependent staged boundary.
+#[inline]
+pub fn renameat_with<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
+    old_dirfd: PFd,
+    old_path: P,
+    new_dirfd: QFd,
+    new_path: Q,
+    flags: RenameFlags,
+) -> Result<()> {
+    let flags = RenameFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    if flags.contains(RenameFlags::NOREPLACE) && flags.contains(RenameFlags::EXCHANGE) {
+        return Err(Errno::INVAL);
+    }
+
+    let old_dirfd = old_dirfd.as_fd();
+    let new_dirfd = new_dirfd.as_fd();
+    old_path.into_with_c_str(|old_path| {
+        new_path.into_with_c_str(|new_path| {
+            crabc_core::fs::renameat2(
+                old_dirfd.as_raw_fd(),
+                old_path,
+                new_dirfd.as_raw_fd(),
+                new_path,
+                flags.bits(),
+            )
+        })
+    })
+}
+
+/// Renames a path or directory relative to the process current directory.
+#[inline]
+pub fn rename<P: PathArg, Q: PathArg>(old_path: P, new_path: Q) -> Result<()> {
+    renameat(CWD, old_path, CWD, new_path)
+}
+
+/// Changes permissions for an open file or directory.
+#[inline]
+pub fn fchmod<Fd: AsFd>(fd: Fd, mode: Mode) -> Result<()> {
+    crabc_core::fs::fchmod(fd.as_fd().as_raw_fd(), mode.bits())
+}
+
+/// Changes permissions for `path` relative to `dirfd`.
+///
+/// Linux cannot change a symbolic link's mode. Passing exactly
+/// [`AtFlags::SYMLINK_NOFOLLOW`] returns [`Errno::OPNOTSUPP`] without a
+/// syscall; all other flags are rejected before syscall entry.
+#[inline]
+#[doc(alias = "fchmodat")]
+pub fn chmodat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    mode: Mode,
+    flags: AtFlags,
+) -> Result<()> {
+    let flags = AtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    if flags == AtFlags::SYMLINK_NOFOLLOW {
+        return Err(Errno::OPNOTSUPP);
+    }
+    if !flags.is_empty() {
+        return Err(Errno::INVAL);
+    }
+
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| crabc_core::fs::fchmodat(dirfd.as_raw_fd(), path, mode.bits(), 0))
+}
+
+/// Changes permissions for a current-directory-relative path.
+#[inline]
+pub fn chmod<P: PathArg>(path: P, mode: Mode) -> Result<()> {
+    chmodat(CWD, path, mode, AtFlags::empty())
+}
+
+/// Converts optional typed ownership IDs to Linux's `fchown*` words.
+///
+/// Linux reserves all ones as the no-change sentinel. `None` is the only way
+/// to request that meaning: an all-ones typed ID is rejected instead of being
+/// silently treated as absence.
+#[inline]
+fn ownership_words(owner: Option<Uid>, group: Option<Gid>) -> Result<(u32, u32)> {
+    let owner = match owner {
+        Some(owner) if owner.as_raw() == u32::MAX => return Err(Errno::INVAL),
+        Some(owner) => owner.as_raw(),
+        None => u32::MAX,
+    };
+    let group = match group {
+        Some(group) if group.as_raw() == u32::MAX => return Err(Errno::INVAL),
+        Some(group) => group.as_raw(),
+        None => u32::MAX,
+    };
+    Ok((owner, group))
+}
+
+/// Changes ownership for an open file or directory.
+#[inline]
+pub fn fchown<Fd: AsFd>(fd: Fd, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    let (owner, group) = ownership_words(owner, group)?;
+    crabc_core::fs::fchown(fd.as_fd().as_raw_fd(), owner, group)
+}
+
+/// Changes ownership for `path` relative to `dirfd`.
+///
+/// [`ChownFlags::SYMLINK_NOFOLLOW`] selects the final symbolic link itself.
+/// `AT_EMPTY_PATH` and all other cross-syscall flag meanings are excluded.
+#[inline]
+#[doc(alias = "fchownat")]
+pub fn chownat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    owner: Option<Uid>,
+    group: Option<Gid>,
+    flags: ChownFlags,
+) -> Result<()> {
+    let (owner, group) = ownership_words(owner, group)?;
+    let flags = ChownFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::fchownat(dirfd.as_raw_fd(), path, owner, group, flags.bits())
+    })
+}
+
+/// Changes ownership for a path, following a final symbolic link.
+#[inline]
+pub fn chown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    chownat(CWD, path, owner, group, ChownFlags::empty())
+}
+
+/// Changes ownership for a final symbolic link itself.
+#[inline]
+pub fn lchown<P: PathArg>(path: P, owner: Option<Uid>, group: Option<Gid>) -> Result<()> {
+    chownat(CWD, path, owner, group, ChownFlags::SYMLINK_NOFOLLOW)
 }
 
 /// Reads a symbolic-link target relative to `dirfd` into caller-owned storage.
