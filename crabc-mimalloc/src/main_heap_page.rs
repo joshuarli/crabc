@@ -20839,7 +20839,7 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_mapped_regular_pages_route_tears_down_and_releases_mixed_pages() {
+    fn later_thread_exit_mixed_regular_pages_collects_pre_exit_remote_and_routes_post_exit_free() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -20963,6 +20963,28 @@ mod tests {
                     assert_eq!(unsafe { first_page.as_ref().used() }, 2);
                     assert_eq!(unsafe { second_page.as_ref().used() }, 1);
 
+                    // SAFETY: `second` is still the exact live large-page
+                    // allocation from this owner. Its scoped publisher joins
+                    // before A enters the source owner-exit traversal, so
+                    // that traversal must force-collect it and release the
+                    // now-empty large page while preserving the live small
+                    // and medium pages for post-exit routing.
+                    let producer = unsafe { allocator.begin_remote_free(second) }
+                        .expect("the live large page admits its joined pre-exit remote publisher");
+                    thread::scope(|scope| {
+                        let publisher = scope.spawn(move || producer.publish());
+                        match publisher
+                            .join()
+                            .expect("the joined pre-exit remote publisher completes")
+                        {
+                            Ok(()) => {}
+                            Err((producer, _)) => {
+                                let _ = producer.cancel();
+                                panic!("the large page publishes its exact remote client before owner exit");
+                            }
+                        }
+                    });
+
                     let small_memory = small_page_ref.memid();
                     let small_slice = small_memory
                         .arena_memory()
@@ -21011,7 +21033,7 @@ mod tests {
                         Err(MainHeapThreadAttachmentError::TornDown),
                         "the aggregate route tears down the old Theap/TLD before client frees"
                     );
-                    assert_eq!(route.test_remaining_pages(), 3);
+                    assert_eq!(route.test_remaining_pages(), 2);
                     assert_eq!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(small_first.as_ptr()) },
                         small_page.as_ptr(),
@@ -21022,64 +21044,68 @@ mod tests {
                         first_page.as_ptr(),
                         "the first abandoned page remains routed after teardown"
                     );
-                    assert_eq!(
-                        unsafe { page_map.page_map().unwrap().checked_lookup(second.as_ptr()) },
-                        second_page.as_ptr(),
-                        "the second abandoned page remains routed after teardown"
-                    );
-
-                    let route = match unsafe { route.remote_free_after_thread_exit(small_first) } {
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => route,
-                        Ok(_) => panic!("one of two retained direct-small clients cannot release its page"),
-                        Err(_) => panic!("the first direct-small client remains routable"),
-                    };
-                    let route = match unsafe { route.remote_free_after_thread_exit(first) } {
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => route,
-                        Ok(_) => panic!("one of two retained medium clients cannot release its page"),
-                        Err(_) => panic!("the first medium client remains routable"),
-                    };
-                    let route = match unsafe { route.remote_free_after_thread_exit(second) } {
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => route,
-                        Ok(_) => panic!("the large page releases while both small and medium pages remain routed"),
-                        Err(_) => panic!("the large page releases through the aggregate route"),
-                    };
-                    assert_eq!(route.test_remaining_pages(), 2);
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(second.as_ptr()) }.is_null(),
-                        "the released second page unregisters only its own span"
+                        "exit collection releases the large page whose joined remote free made it empty"
                     );
                     assert_eq!(
                         unsafe { arena.pages() }.unwrap().is_clear_range(second_slice, 1),
                         Some(true),
-                        "the released large page clears its ordinary arena bit"
+                        "exit collection clears the large page's ordinary arena bit before post-exit routing"
                     );
                     assert_eq!(
                         unsafe { arena.slices_free() }
                             .unwrap()
                             .is_set_range(second_slice, second_slice_count),
                         Some(true),
-                        "the released large page returns its complete arena span"
-                    );
-                    assert_eq!(
-                        unsafe { arena.pages() }.unwrap().is_clear_range(first_slice, 1),
-                        Some(false),
-                        "the medium page remains ordinary-arena owned until its final client free"
+                        "exit collection returns the large page's complete arena span"
                     );
 
+                    let small_first_address = small_first.as_ptr().addr();
+                    let route = thread::scope(|scope| {
+                        let free = scope.spawn(move || {
+                            let small_first = NonNull::new(
+                                core::ptr::with_exposed_provenance_mut::<u8>(small_first_address),
+                            )
+                            .expect("the post-exit logical handoff retains its non-null client address");
+                            // SAFETY: after A's completed page-drain teardown,
+                            // B owns the consuming aggregate route and this
+                            // exact remaining direct-small client.
+                            unsafe { route.remote_free_after_thread_exit(small_first) }
+                        });
+                        match free
+                            .join()
+                            .expect("the post-exit remote client free joins before further route use")
+                        {
+                            Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => route,
+                            Ok(_) => panic!("one of two retained direct-small clients cannot release its page"),
+                            Err(_) => panic!("the first post-exit remote client remains routable"),
+                        }
+                    });
+                    let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => route,
+                        Ok(_) => panic!("one of two retained medium clients cannot release its page"),
+                        Err(_) => panic!("the first medium client remains routable"),
+                    };
                     let route = match unsafe { route.remote_free_after_thread_exit(small_remaining) } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => route,
-                        Ok(_) => panic!("the final direct-small client releases one page while medium remains routed"),
+                        Ok(_) => panic!("the final direct-small client releases while the medium page remains routed"),
                         Err(_) => panic!("the final direct-small client releases through the aggregate route"),
                     };
                     assert_eq!(route.test_remaining_pages(), 1);
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(small_first.as_ptr()) }.is_null(),
-                        "the final direct-small free unregisters its page"
+                        "the released direct-small page unregisters only its own span"
                     );
                     assert_eq!(
                         unsafe { arena.pages() }.unwrap().is_clear_range(small_slice, 1),
                         Some(true),
-                        "the final direct-small free clears its ordinary arena bit"
+                        "the released direct-small page clears its ordinary arena bit"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(first_slice, 1),
+                        Some(false),
+                        "the medium page remains ordinary-arena owned until its final client free"
                     );
 
                     match unsafe { route.remote_free_after_thread_exit(first_remaining) } {
