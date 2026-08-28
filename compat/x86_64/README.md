@@ -15,7 +15,10 @@ the bounded timestamp-mutation family headed by
 directory-relative, current-directory, final-symlink, and whole-second forms,
 `fs::sync` system-wide and `fs::syncfs`
 descriptor-associated filesystem synchronization and
-`io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
+`io::{sync_file_range, SyncFileRangeFlags}` range-writeback request, plus
+typed native socket/address transport for socket lifecycle, IPv4/IPv6 endpoint
+values, loopback datagrams and streams, named socket options, and
+vectored/batched messages; it is not
 public x86_64 runtime support.
 
 Run it only on a native Linux x86_64 host:
@@ -85,6 +88,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh times-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh statfs-reference
+./scripts/dev-x86_64.sh socket-transport-reference
 ./scripts/dev-x86_64.sh statat-reference
 ./scripts/dev-x86_64.sh getcwd-reference
 ./scripts/dev-x86_64.sh readlinkat-reference
@@ -636,6 +640,16 @@ raw-directory APIs, named/anonymous temporary-file lifecycle, xattrs,
 allocation-backed path helpers, and broader filesystem policy remain future
 work.
 
+`socket-transport-reference` is the staged direct socket/address transport
+batch. Its pinned-musl/raw x86 probe and focused Rust regressions prove native
+Linux LP64 `iovec`/`msghdr`/`mmsghdr`, IPv4/IPv6 socket-address, and
+socket-storage layouts; Unix-pair traffic; IPv4/IPv6 UDP and IPv4 TCP loopback lifecycle;
+typed local/peer endpoint values; `accept4` close-on-exec/nonblocking flags;
+shutdown; the named `SOL_SOCKET` option set; fixed `SIOCATMARK`; and ordinary
+vectored and batched messages. It is Rust-only evidence: C socket/errno APIs,
+resolver/netdb state, network-device ioctls, ancillary-control buffers,
+Unix-domain address values, and general x86 runtime support remain excluded.
+
 `access-reference` completes the record-free direct
 `fs::{access, accessat}` permission-observation slice. It pins x86
 `access=21`, legacy `faccessat=269`, and flags-bearing `faccessat2=439`; Rust
@@ -899,7 +913,8 @@ lifecycle and namespace batch, direct `access`/`accessat`
 real/effective-credential observations, caller-buffer and alloc-gated `getcwd`
 plus caller-buffer-only `readlinkat` output, plus
 `fadvise64`/`readahead` behavior and direct bounded anonymous memory-file
-creation plus seal observation/mutation. The
+creation plus seal observation/mutation, and the staged native socket/address
+transport family. The
 process regressions prove typed PID/identity/session observations, typed
 calling-process and bounded live-target resource-limit query plus
 child-contained mutation and process-global umask exchange with restore
@@ -916,7 +931,8 @@ the named select/pselect and epoll operations, timerfd policy beyond the named
 typed descriptor operations,
 signalfd, target resource-limit mutation, C `struct rusage` or `struct tms` support, broader
 filesystem path-core behavior, CWD mutation or allocation-backed path-core helpers,
-global locking policy, wider mapping policy, other
+global locking policy, wider mapping policy, network interface/device,
+resolver, netdb, and other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.
 

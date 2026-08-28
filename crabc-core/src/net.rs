@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 socket operations.
+//! Stateless Linux LP64 socket operations.
 
 use core::mem::MaybeUninit;
 
@@ -639,7 +639,7 @@ pub unsafe fn recvfrom_raw(
     })
 }
 
-/// One Linux/AArch64 message header assembled privately for `sendmsg` and
+/// One Linux LP64 message header assembled privately for `sendmsg` and
 /// `recvmsg`. The public native facade supplies only typed borrowed iovecs;
 /// callers cannot provide a raw `msghdr`, ancillary pointer, or address
 /// pointer through this seam.
@@ -653,6 +653,16 @@ struct MessageHeader {
     control_length: usize,
     flags: u32,
 }
+
+const _: () = assert!(core::mem::size_of::<MessageHeader>() == 56);
+const _: () = assert!(core::mem::align_of::<MessageHeader>() == 8);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, name) == 0);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, name_length) == 8);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, iovecs) == 16);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, iovec_count) == 24);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, control) == 32);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, control_length) == 40);
+const _: () = assert!(core::mem::offset_of!(MessageHeader, flags) == 48);
 
 /// Sends one ordinary vectored message on a connected socket through the
 /// Linux `sendmsg` ABI.
@@ -733,7 +743,7 @@ pub unsafe fn recvmsg_raw(
     Ok((bytes, header.flags))
 }
 
-/// Sends an array of Linux/AArch64 private `mmsghdr` records.
+/// Sends an array of private Linux LP64 `mmsghdr` records.
 ///
 /// The records are assembled by the native facade. This raw seam keeps
 /// the Linux `mmsghdr` layout out of the public Rust API while preserving
@@ -742,7 +752,7 @@ pub unsafe fn recvmsg_raw(
 /// # Safety
 ///
 /// `messages` must be null when `count` is zero, or point to `count`
-/// initialized, contiguous AArch64 `mmsghdr` records. Every nested
+/// initialized, contiguous Linux LP64 `mmsghdr` records. Every nested
 /// header and iovec must satisfy Linux's read-only send contract, and the
 /// records remain valid for the syscall duration.
 #[inline]
@@ -765,7 +775,7 @@ pub unsafe fn sendmmsg_raw(
     })
 }
 
-/// Receives an array of Linux/AArch64 private `mmsghdr` records.
+/// Receives an array of private Linux LP64 `mmsghdr` records.
 ///
 /// `timeout` is the optional mutable Linux `timespec` consumed and
 /// updated by `recvmmsg`; callers must observe the value after the call.
@@ -775,7 +785,7 @@ pub unsafe fn sendmmsg_raw(
 /// # Safety
 ///
 /// `messages` must be null when `count` is zero, or point to `count`
-/// initialized, contiguous AArch64 `mmsghdr` records. Every nested
+/// initialized, contiguous Linux LP64 `mmsghdr` records. Every nested
 /// header and iovec must satisfy Linux's writable receive contract, and
 /// `timeout` must be null or point to writable `timespec` storage. All
 /// pointed-to records and buffers remain valid for the syscall duration.

@@ -18,7 +18,8 @@ use crate::buffer::Buffer;
 use crate::io::IoSlice;
 use crate::{AsFd, OwnedFd, Result};
 
-/// Linux network-device ioctl operations.
+/// Linux network-device ioctl operations (AArch64-only pending x86 ABI proof).
+#[cfg(target_arch = "aarch64")]
 #[path = "netdevice.rs"]
 pub mod netdevice;
 
@@ -820,14 +821,15 @@ impl<'a> MsgIoSliceMut<'a> {
     }
 }
 
-/// One private Linux/AArch64 `mmsghdr` record used by [`sendmmsg`] and
+/// One private Linux LP64 `mmsghdr` record used by [`sendmmsg`] and
 /// [`recvmmsg`].
 ///
 /// The public wrapper deliberately contains no C header, ancillary buffer, or
 /// raw pointer API. A send record borrows its [`IoSlice`] array; a receive
 /// record borrows its [`MsgIoSliceMut`] array. The record is exactly the
-/// kernel's 64-byte AArch64 shape so a slice of wrappers can be passed to the
-/// direct syscall without a temporary allocation.
+/// kernel's 64-byte Linux LP64 shape on both admitted architectures so a
+/// slice of wrappers can be passed to the direct syscall without a temporary
+/// allocation.
 #[repr(C)]
 struct MMsgHeader {
     name: *mut u8,
@@ -844,6 +846,15 @@ struct MMsgHeader {
 }
 
 const _: () = assert!(core::mem::size_of::<MMsgHeader>() == 64);
+const _: () = assert!(core::mem::align_of::<MMsgHeader>() == 8);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, name) == 0);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, name_length) == 8);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, iovecs) == 16);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, iovec_count) == 24);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, control) == 32);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, control_length) == 40);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, flags) == 48);
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, message_length) == 56);
 
 /// A borrowed Linux batched-message record.
 ///
@@ -1268,6 +1279,22 @@ struct SockaddrIn6 {
     scope_id: u32,
 }
 
+// These private records cross the direct syscall boundary. Keep their
+// architecture-independent Linux LP64 contracts executable: x86-64 and
+// AArch64 both use the same sizes for the supported IPv4/IPv6 forms.
+const _: () = assert!(size_of::<SockaddrIn>() == 16);
+const _: () = assert!(core::mem::align_of::<SockaddrIn>() == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, family) == 0);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, port) == 2);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, address) == 4);
+const _: () = assert!(size_of::<SockaddrIn6>() == 28);
+const _: () = assert!(core::mem::align_of::<SockaddrIn6>() == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, family) == 0);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, port) == 2);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, flow_info) == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, address) == 8);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, scope_id) == 24);
+
 enum EncodedSocketAddress {
     V4(SockaddrIn),
     V6(SockaddrIn6),
@@ -1316,6 +1343,10 @@ fn encode_socket_address(address: SocketAddress) -> Result<EncodedSocketAddress>
 struct SockaddrStorage {
     bytes: [u8; 128],
 }
+
+const _: () = assert!(size_of::<SockaddrStorage>() == 128);
+const _: () = assert!(core::mem::align_of::<SockaddrStorage>() == 8);
+const _: () = assert!(core::mem::offset_of!(SockaddrStorage, bytes) == 0);
 
 fn read_u16_native(bytes: &[u8], offset: usize) -> u16 {
     // SAFETY: Callers validate that the returned sockaddr length covers this
@@ -1379,7 +1410,7 @@ pub fn connect<Fd: AsFd>(fd: Fd, address: SocketAddress) -> Result<()> {
     let fd = fd.as_fd();
     let encoded = encode_socket_address(address)?;
     let (address, address_length) = encoded.as_raw();
-    // SAFETY: `encoded` is the exact Linux/AArch64 sockaddr layout and remains
+    // SAFETY: `encoded` is the exact Linux LP64 sockaddr layout and remains
     // alive for the duration of the direct syscall.
     unsafe { crabc_core::net::connect_raw(fd.as_raw_fd(), address, address_length) }
 }
@@ -1395,7 +1426,7 @@ pub fn bind<Fd: AsFd>(fd: Fd, address: SocketAddress) -> Result<()> {
     let fd = fd.as_fd();
     let encoded = encode_socket_address(address)?;
     let (address, address_length) = encoded.as_raw();
-    // SAFETY: `encoded` is the exact Linux/AArch64 sockaddr layout and remains
+    // SAFETY: `encoded` is the exact Linux LP64 sockaddr layout and remains
     // alive for the duration of the direct syscall.
     unsafe { crabc_core::net::bind_raw(fd.as_raw_fd(), address, address_length) }
 }
@@ -1545,7 +1576,7 @@ pub fn sendmsg<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], flags: SendFlags) -> R
 
 /// Sends several ordinary connected messages through Linux `sendmmsg`.
 ///
-/// The records are private AArch64 `mmsghdr` values assembled by
+/// The records are private Linux LP64 `mmsghdr` values assembled by
 /// [`MMsgHdr::new_send`]. Linux returns the number of records completed, not
 /// an all-or-nothing status; every completed record's byte count remains
 /// available through [`MMsgHdr::bytes`]. Thus a short count is a successful
@@ -1581,7 +1612,7 @@ pub fn sendto<Fd: AsFd>(
     let encoded = encode_socket_address(address)?;
     let (address, address_length) = encoded.as_raw();
     // SAFETY: `buffer` is readable for its exact length. `encoded` is the
-    // exact Linux/AArch64 sockaddr layout and stays alive for the syscall.
+    // exact Linux LP64 sockaddr layout and stays alive for the syscall.
     unsafe {
         crabc_core::net::sendto_raw(
             fd.as_raw_fd(),

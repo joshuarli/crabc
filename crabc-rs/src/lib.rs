@@ -106,7 +106,11 @@ pub mod mm;
 pub mod mm;
 #[cfg(target_arch = "aarch64")]
 pub mod mount;
-#[cfg(target_arch = "aarch64")]
+// Socket transport and allocation-free address/message values have a native
+// Linux LP64 record proof on both admitted architectures. Network-device
+// ioctl records remain AArch64-only inside `net::netdevice` until their x86
+// interface ABI receives a separate evidence slice.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod net;
 #[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 pub mod netdb;

@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|socket-transport-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -180,6 +180,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_namespace_reference()', source)
         self.assertIn('compat/x86_64/run_x86_namespace_reference.sh', source)
         self.assertIn('--test x86_64_namespace -- --test-threads=1', source)
+        self.assertIn('run_socket_transport_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_socket_transport_reference.sh', source)
+        self.assertIn('--test x86_64_socket_transport -- --test-threads=1', source)
         path_lifecycle_runner = (
             ROOT / 'compat/x86_64/run_x86_path_lifecycle_reference.sh'
         ).read_text(encoding='utf-8')
@@ -192,10 +195,28 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         namespace_test = (
             ROOT / 'crabc-rs/tests/x86_64_namespace.rs'
         ).read_text(encoding='utf-8')
+        socket_transport_runner = (
+            ROOT / 'compat/x86_64/run_x86_socket_transport_reference.sh'
+        ).read_text(encoding='utf-8')
+        socket_transport_probe = (
+            ROOT / 'compat/x86_64/x86_socket_transport_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        socket_transport_test = (
+            ROOT / 'crabc-rs/tests/x86_64_socket_transport.rs'
+        ).read_text(encoding='utf-8')
         self.assertIn('x86_path_lifecycle_reference_probe.c', path_lifecycle_runner)
         self.assertIn('x86_namespace_reference_probe.c', namespace_runner)
         self.assertIn('x86_64_path_lifecycle_is_descriptor_relative_and_typed', path_lifecycle_test)
         self.assertIn('x86_64_namespace_lifecycle_is_descriptor_relative', namespace_test)
+        self.assertIn('x86_socket_transport_reference_probe.c', socket_transport_runner)
+        self.assertIn('SYS_accept4 == 288', socket_transport_probe)
+        self.assertIn('SYS_accept == 43', socket_transport_probe)
+        self.assertIn('SYS_ioctl == 16', socket_transport_probe)
+        self.assertIn('SIOCATMARK', socket_transport_probe)
+        self.assertIn('ipv6_case', socket_transport_probe)
+        self.assertIn('raw_recvmmsg', socket_transport_probe)
+        self.assertIn('socketpair_transports_vectored_bytes_and_shutdown_is_typed', socket_transport_test)
+        self.assertIn('ipv6_datagram_round_trip_preserves_native_endpoint_encoding', socket_transport_test)
         self.assertIn('run_statat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_statat_reference.sh', source)
         self.assertIn('run_getcwd_reference()', source)
@@ -1450,6 +1471,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_path_lifecycle",
                     "--test",
                     "x86_64_namespace",
+                    "--test",
+                    "x86_64_socket_transport",
                     "--test",
                     "x86_64_posix_fallocate",
                     "--test",

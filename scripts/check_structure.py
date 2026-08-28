@@ -30,6 +30,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/event_x86_64.rs"),
     Path("crabc-core/src/lib.rs"),
     Path("crabc-core/src/mm_x86_64.rs"),
+    Path("crabc-core/src/net.rs"),
     Path("crabc-core/src/signal_x86_64.rs"),
     Path("crabc-core/src/system_x86_64.rs"),
     Path("crabc-core/src/tests.rs"),
@@ -57,6 +58,8 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # explicitly proved process-global umask exchange
 # without admitting pathname creation,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
+# `net.rs` owns the direct Linux LP64 socket/address transport boundary while
+# keeping network-device ioctls AArch64-only pending their own x86 ABI proof,
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
@@ -73,6 +76,7 @@ X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/fs_x86_64.rs"),
     Path("crabc-rs/src/lib.rs"),
     Path("crabc-rs/src/mm_x86_64.rs"),
+    Path("crabc-rs/src/net.rs"),
     Path("crabc-rs/src/pipe.rs"),
     Path("crabc-rs/src/process_x86_64.rs"),
     Path("crabc-rs/src/signal.rs"),
@@ -1029,6 +1033,99 @@ def check_x86_path_lifecycle_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_socket_transport_boundary(errors: list[str]) -> None:
+    """Keep the staged x86 socket boundary typed, direct, and interface-free."""
+
+    facade_text = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
+    net_text = (ROOT / "crabc-rs" / "src" / "net.rs").read_text(errors="replace")
+    core_text = (ROOT / "crabc-core" / "src" / "net.rs").read_text(errors="replace")
+
+    for required in (
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\npub mod net;',
+        '#[cfg(all(feature = "alloc", target_arch = "aarch64"))]\npub mod netdb;',
+    ):
+        if required not in facade_text:
+            errors.append(
+                "crabc-rs/src/lib.rs: staged x86 socket transport is missing "
+                f"its explicit module boundary {required!r}"
+            )
+
+    netdevice_boundary = (
+        '#[cfg(target_arch = "aarch64")]\n#[path = "netdevice.rs"]\npub mod netdevice;'
+    )
+    if netdevice_boundary not in net_text:
+        errors.append(
+            "crabc-rs/src/net.rs: network-device ioctls must remain AArch64-only "
+            "until their x86 ABI evidence exists"
+        )
+
+    for required in (
+        "pub fn socketpair(",
+        "pub fn socket(",
+        "pub fn connect<",
+        "pub fn bind<",
+        "pub fn listen<",
+        "pub fn accept<",
+        "pub fn accept_with<",
+        "pub fn acceptfrom<",
+        "pub fn acceptfrom_with<",
+        "pub fn getsockname<",
+        "pub fn getpeername<",
+        "pub fn shutdown<",
+        "pub fn send<",
+        "pub fn recv<",
+        "pub fn sendmsg<",
+        "pub fn recvmsg<",
+        "pub fn sendmmsg<",
+        "pub fn recvmmsg<",
+        "pub fn sendto<",
+        "pub fn recvfrom<",
+        "pub fn sockatmark<",
+        "pub fn socket_type<",
+        "pub fn socket_protocol<",
+        "pub fn socket_cookie<",
+        "pub fn socket_domain<",
+        "pub fn socket_acceptconn<",
+        "pub fn set_socket_broadcast<",
+        "pub fn socket_broadcast<",
+        "pub fn set_socket_oobinline<",
+        "pub fn socket_oobinline<",
+        "size_of::<MMsgHeader>() == 64",
+        "offset_of!(MMsgHeader, message_length) == 56",
+        "size_of::<SockaddrIn>() == 16",
+        "size_of::<SockaddrIn6>() == 28",
+        "size_of::<SockaddrStorage>() == 128",
+    ):
+        if required not in net_text:
+            errors.append(
+                "crabc-rs/src/net.rs: staged x86 socket transport is missing "
+                f"{required}"
+            )
+
+    for required in (
+        "size_of::<MessageHeader>() == 56",
+        "offset_of!(MessageHeader, flags) == 48",
+        "SYS_SOCKET",
+        "SYS_ACCEPT4",
+        "SYS_SENDMMSG",
+        "SYS_RECVMMSG",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/net.rs: staged x86 socket transport is missing "
+                f"{required}"
+            )
+
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:setsockopt|getsockopt|ioctl)(?:<|\s*\()",
+        net_text,
+    ):
+        errors.append(
+            "crabc-rs/src/net.rs: staged x86 socket transport must not expose "
+            "a generic socket-option or ioctl API"
+        )
+
+
 def check_x86_readlinkat_boundary(errors: list[str]) -> None:
     """Keep the x86 readlinkat API caller-buffer-only without blocking its namespace use."""
 
@@ -1223,6 +1320,7 @@ def main() -> int:
     check_root_c_link_boundaries(errors)
     check_x86_getcwd_boundary(errors)
     check_x86_path_lifecycle_boundary(errors)
+    check_x86_socket_transport_boundary(errors)
     check_x86_readlinkat_boundary(errors)
     check_x86_memfd_boundary(errors)
     check_x86_rr_interval_boundary(errors)
