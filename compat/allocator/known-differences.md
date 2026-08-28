@@ -537,8 +537,29 @@ result may refine it only when it can prove retained ownership.
   The separate full-large aggregate accepts only the corresponding
   `PageKind::Large` members, each with its own rounded bin, with the same
   complete preflight plus every member's exact 64-slice arena/PageMap span;
-  terminal release proves and removes that complete span. A fifth per-member full
-  non-direct-small aggregate accepts only two or more ordinary `PageKind::Small`
+  terminal release proves and removes that complete span. A fifth bounded mixed
+  medium/large aggregate accepts two or more full arena `BIN_FULL` members only
+  when at least one member has each regular kind. Every member independently
+  proves its rounded static-main bin, full state, empty local free list, and
+  exact one-slice medium or 64-slice large span. It preserves source force ->
+  false collection -> full-queue/page-count detachment -> unmapped abandonment
+  before old-Theap/TLD teardown; every sequential free re-resolves its PageMap
+  member, claims the low owner bit before selecting its exact static-main
+  bitmap/count capability, and terminally releases only that member. A sixth
+  bounded mixed singleton/regular aggregate accepts only two or more full arena
+  `BIN_FULL` members with at least one `PageKind::Singleton` and at least one
+  regular `PageKind::Medium` or `PageKind::Large`. A singleton proves `BIN_HUGE`,
+  `reserved == used == 1`, zero retirement, an empty local free list, and an
+  exact rounded span; a regular member proves an ordinary static-main bin,
+  `reserved > 1`, `used == reserved`, zero retirement, an empty local free
+  list, and its exact medium or large span. The route preserves source force ->
+  false collection -> full-queue/page-count detach -> unmapped abandonment
+  before old-Theap/TLD teardown. Every free classifies a fresh PageMap member:
+  a singleton takes only the raw empty terminal tail, while a regular member
+  claims its low owner bit before selecting its exact static-main bitmap/count
+  pair and normal collector tail. Terminal release removes only that member;
+  the map route closes only after both source-tail counts reach zero. A seventh
+  per-member full non-direct-small aggregate accepts only two or more ordinary `PageKind::Small`
   arena members, each with its own `SMALL_SIZE_MAX < block_size <=
   SMALL_MAX_OBJ_SIZE` bin, every direct slot and `BIN_FULL` empty, zero
   retirement countdown, empty local free list, and one paired-arena slice per
@@ -546,7 +567,7 @@ result may refine it only when it can prove retained ownership.
   source force -> false collection -> ordinary-bin removal with the proven
   no-op direct-cache update -> page-count detach -> ordinary unmapped
   abandonment, then uses free.c's normal collector to re-resolve, reabandon,
-  and release each one-slice member independently. A sixth homogeneous full
+  and release each one-slice member independently. An eighth homogeneous full
   direct-small aggregate accepts two or more same-bin ordinary `PageKind::Small`
   arena members with `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, full
   state, zero retirement countdowns, empty local free lists, and one
@@ -557,9 +578,10 @@ result may refine it only when it can prove retained ownership.
   abandonment runs for every member. Each later free re-resolves PageMap
   membership, uses the partial collector, and preserves its just-pushed head
   through the source accounting lag before mapped reabandonment or terminal
-  release. All six aggregate routes enforce their own complete class/geometry
+  release. All eight aggregate routes enforce their own complete class/geometry
   preflight before collection; the full-medium route admits distinct rounded
-  medium bins, while mixed classes remain rejected. Stale/mixed direct-cache
+  medium bins, while the bounded medium/large and singleton/regular routes
+  admit only their separately sealed heterogeneous `BIN_FULL` pairs. Stale/mixed direct-cache
   images, remote-force nonfull state, allocation-time adoption/reclaim/requeue,
   and concurrent routing remain absent. Distinct source-specific predecessors accept one sole full
   medium, non-direct-small, or direct-small page with one joined remote free:
@@ -1132,7 +1154,38 @@ existing teardown. A sole, arena-backed, non-singleton,
   malformed-span, existing queue/direct, allocation-time,
   reclaim/adoption/requeue, scan, producer, or concurrent case remains absent,
   while a collection failure retains the drain.
-  `DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fifth
+  `DynamicThreadExitDrain::abandon_full_medium_or_large_pages` is a fifth
+  separate sequential dynamic aggregate, not a general heterogeneous `BIN_FULL`
+  traversal. It admits two or more full arena regular members only when at
+  least one is medium and one is large; every other queue/direct entry is
+  empty. Each member independently proves its rounded bin, full state, zero
+  retirement countdown, empty local free list, matching dynamic bitmap/count
+  capability, and exact one-slice medium or 64-slice large PageMap span. Source
+  force -> false collection -> full-queue/page-count detach -> unmapped
+  abandonment runs for every member. The route retains only the dynamic drain
+  and count; each canonical free re-resolves its PageMap member, claims the low
+  owner bit, derives only that member's exact dynamic map, follows the normal
+  failed-reclaim tail, and releases only that member's exact span. Homogeneous
+  queues, small/direct-small, singleton, OS, malformed spans, allocation-time,
+  reclaim/adoption/requeue, scans, producers, and concurrent routing remain
+  absent.
+  `DynamicThreadExitDrain::abandon_full_singleton_or_regular_pages` is a sixth
+  separate sequential dynamic aggregate, not a general heterogeneous
+  `BIN_FULL` traversal. It admits two or more full arena members only when at
+  least one is `PageKind::Singleton` and at least one is a regular
+  `PageKind::Medium` or `PageKind::Large`; every other queue/direct entry is
+  empty. Every singleton independently proves `BIN_HUGE`, `reserved == used ==
+  1`, and its rounded arena span; every regular member proves its rounded bin,
+  full state, matching dynamic bitmap/count capability, and exact one-slice or
+  64-slice span. Source force -> false collection -> full-queue/page-count
+  detach -> unmapped abandonment runs for every member. The route retains only
+  the dynamic drain and count: singleton frees take the raw empty
+  failed-reclaim tail, while regular frees claim their low owner bit before the
+  normal failed-reclaim tail. Each member releases only its exact span.
+  Homogeneous queues, regular-only mixed medium/large queues, small/direct-
+  small, OS, malformed spans, allocation-time, reclaim/adoption/requeue,
+  scans, producers, and concurrent routing remain absent.
+  `DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a seventh
   separate sequential dynamic aggregate, not a general ordinary-bin traversal:
   it is proven through that exact ordinary source fixture and requires two or
   more full `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin,
@@ -1153,7 +1206,7 @@ existing teardown. A sole, arena-backed, non-singleton,
   reclaim/adoption/requeue, scan, producer, and concurrent cases remain absent,
   while a collection failure retains the drain; production ordinary dynamic
   allocation remains sealed.
-  `DynamicThreadExitDrain::abandon_full_direct_small_pages` is a sixth
+  `DynamicThreadExitDrain::abandon_full_direct_small_pages` is an eighth
   separate sequential dynamic aggregate, not a general ordinary-bin traversal:
   it is proven through that exact ordinary source fixture and requires two or
   more full `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin,

@@ -121,6 +121,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crabc-mimalloc-runtime-ticket-zero-adapter"
+version = "0.3.0"
+dependencies = [
+ "crabc-mimalloc",
+]
+
+[[package]]
 name = "crabc-mimalloc-test-adapter"
 version = "0.3.0"
 dependencies = [

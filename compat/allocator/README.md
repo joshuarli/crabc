@@ -16,15 +16,16 @@ process-shared arena sidecar, its first lazy default-reservation policy, its
 one ticket-zero first ordinary fresh-page connection, and bounded ticket-zero
 and later-thread page
 engines over their matched pair, including one all-free later-main exit drain
-and its eight sole-page handoffs (a full arena singleton, an OS-aligned
+and its nine sole-page handoffs (a full arena singleton, an OS-aligned
 singleton linked through `Heap::os_abandoned_pages` until its final release, a mapped medium
 one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
-reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
-route with exact full-medium, full-large, full-non-direct-small, and full-direct-small
-one-joined-remote-free force-collection predecessors), six bounded later-main
+reabandon after the source mostly-used boundary, a nonfull mapped small-or-medium post-exit
+route, and an exact two-block large post-exit route with its complete 64-slice span, with exact full-medium, full-large, full-non-direct-small, and full-direct-small
+one-joined-remote-free force-collection predecessors), eight bounded later-main
 full-page aggregate routes (arena singleton, homogeneous OS singleton, medium,
-and large `BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
+large, bounded mixed medium/large, and bounded mixed singleton/regular
+`BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
 members), and one aggregate regular
 small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
@@ -94,7 +95,7 @@ first-arena policy. It has only that bounded first ticket-zero connection from t
 default-reserve policy to a fresh-page miss; it does not model the C
 `mi_page_map_empty` pre-root or an existing-arena search,
 and has no concurrent/general later-thread page routing, general owner exit
-beyond the recorded all-free later-main scan, its eight sole-page handoffs, and
+beyond the recorded all-free later-main scan, its nine sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
 Only the explicit consuming medium and direct-small handoffs (immediate-head,
 exhausted fully committed scalar extension, exact prefix-covered extension, or
@@ -196,11 +197,12 @@ no-page teardown. It can also consume a live engine into a post-fast-slot drain
 that force-collects every queue (including full), releases only all-free pages
 in PageMap -> `pages_main` -> metadata -> slice order, and finishes that pass
 even if an earlier page remains live. It then retains the post-fast-slot owner
-rather than abandoning a general live page. Eight explicit, disjoint handoffs
+rather than abandoning a general live page. Nine explicit, disjoint handoffs
 require the drain's sole page with every other queue/direct slot empty: a full
 one-block arena singleton, an OS-aligned singleton, a mapped one-block medium
 page, full medium and full large `BIN_FULL` pages, full non-direct-small and
-direct-small regular-bin pages, and a nonfull small-or-medium page. The full
+direct-small regular-bin pages, a nonfull small-or-medium page, and a distinct
+exactly-two-block large page. The full
 arena singleton false-collects, queue-detaches, and unmapped-abandons while
 preserving the PageMap registration/lifecycle lease; its final client free
 takes the raw failed-reclaim empty result and releases PageMap ->
@@ -331,7 +333,39 @@ non-large, OS-backed, malformed-span, allocation-time, reclaim/adoption/requeue,
 scan, producer, and concurrent cases remain outside this route; a collection
 failure retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fifth
+`DynamicThreadExitDrain::abandon_full_medium_or_large_pages` is a fifth bounded
+dynamic aggregate. It accepts the complete full arena `BIN_FULL` image only
+when it contains two or more regular members with at least one medium and one
+large page. Every direct entry and other queue is empty; every member proves
+its rounded bin, full state, zero retirement countdown, empty local free list,
+matching dynamic bitmap/count capability, and its exact one-slice medium or
+64-slice large span. It preserves force -> false collection -> full-queue/
+page-count detach -> unmapped abandonment. The returned
+`DynamicThreadExitFullMediumOrLargePagesRoute` retains only the dynamic drain
+and count: each sequential free re-resolves PageMap, claims the low owner bit
+before selecting its exact dynamic map and normal collector tail, and releases
+only that member's exact span. Homogeneous queues, small/direct-small,
+singleton, OS, malformed, allocation-time, reclaim/requeue, scan, producer,
+and concurrent cases remain absent.
+
+`DynamicThreadExitDrain::abandon_full_singleton_or_regular_pages` is a sixth
+bounded dynamic aggregate. It admits the complete full arena `BIN_FULL` image
+only when it contains two or more members with at least one singleton and at
+least one medium or large regular page; every direct entry and other queue is
+empty. A singleton independently proves `BIN_HUGE`, `reserved == used == 1`,
+and its rounded arena span. A regular member independently proves its rounded
+bin, `reserved > 1`, `used == reserved`, matching dynamic bitmap/count
+capability, and exact one-slice medium or 64-slice large span. Force -> false
+collection -> full-queue/page-count detach -> unmapped abandonment runs for
+every member. The returned `DynamicThreadExitFullSingletonOrRegularPagesRoute`
+stores only the drain and count: singleton frees take the raw terminal tail,
+while regular frees claim their low owner bit before selecting the normal
+collector tail. Each release is limited to its exact PageMap -> dynamic
+ordinary bit -> metadata -> arena span. Homogeneous queues, regular-only mixed
+medium/large queues, small/direct-small, OS, malformed, allocation-time,
+reclaim/requeue, scan, producer, and concurrent cases remain absent.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a seventh
 bounded dynamic aggregate, not a general ordinary-bin traversal. It is proven
 only through the exact ordinary `true`/`2` fixture and admits two or more full
 `MemoryKind::Arena` `PageKind::Small` members across ordinary bins, each with
@@ -353,7 +387,7 @@ allocation-time, reclaim/adoption/requeue, scan, producer, and concurrent cases
 remain outside this route; a collection failure retains the drain. Production
 ordinary dynamic allocation remains sealed.
 
-`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a sixth bounded
+`DynamicThreadExitDrain::abandon_full_direct_small_pages` is an eighth bounded
 dynamic aggregate, not a general ordinary-bin traversal. It is proven only
 through the exact ordinary `true`/`2` fixture and admits two or more full
 `MemoryKind::Arena` `PageKind::Small` members in one ordinary bin, with one
@@ -589,8 +623,8 @@ terminal page release, or metadata reuse. The later page owner proves normal
 map/bitmap/fresh/release/producer ordering plus the all-free scan, one
 preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
 mapped empty-before-reclaim handoff, four full source-unmapped routes (medium,
-large, non-direct small, and direct small), and one sole nonfull small-or-medium process
-route whose linear client frees begin after actual old Theap/TLD teardown. Its
+large, non-direct small, and direct small), one sole nonfull small-or-medium process
+route, and one exact two-block large process route whose linear client frees begin after actual old Theap/TLD teardown. The large route retains its complete 64-slice span through the second free. Its
 separate full-medium, full-large, full-non-direct-small, and
 full-direct-small predecessors each accept one joined remote free only: force
 collection makes the full source page `reserved - 1` used, then false
@@ -647,9 +681,21 @@ client frees re-resolve PageMap membership, claim the low owner bit, then
 select that member's exact static-main bitmap/count capability, independently
 cross the source unmapped-to-mapped threshold, and release one complete large
 span at a time. Sole pages and mixed medium/large full queues reject before
-mutation; the route has no adoption, reclaim, requeue, scanning, or concurrent
-routing.
-A fourth, separately typed full non-direct-small aggregate route accepts two or
+mutation from this homogeneous route; it has no adoption, reclaim, requeue,
+scanning, or concurrent routing.
+A separately typed full medium-or-large aggregate route accepts two or more
+full arena members in `BIN_FULL` only when the queue contains at least one
+medium and one large member, every direct slot and other queue is empty, and
+each member proves its rounded static-main bin, full state, empty local free
+list, and exact span (one slice for medium and 64 slices for large). It
+preserves force -> false collection -> full-queue/page-count detach -> unmapped
+abandonment before old-Theap/TLD teardown. Each sequential free re-resolves its
+PageMap member, claims the low owner bit before selecting its exact static-main
+bitmap/count capability and normal collector tail, and terminally releases only
+that member. Homogeneous queues, small/direct-small, singleton, OS, malformed,
+allocation-time, reclaim/requeue, scan, producer, and concurrent cases remain
+absent.
+A sixth, separately typed full non-direct-small aggregate route accepts two or
 more arena `PageKind::Small` members across ordinary source bins, each with its
 own rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and static-main
 bin, full state, zero-retirement countdown, empty local free list, and exact
@@ -664,7 +710,7 @@ bitmap/count pair, independently cross each member's mostly-used boundary, and
 release one one-slice member at a time. Sole pages, direct-small geometry/cache
 images, mixed classes, allocation-time adoption, reclaim, requeue, scanning,
 and concurrent routing remain absent.
-A fifth, separately typed full direct-small aggregate route accepts two or
+A seventh, separately typed full direct-small aggregate route accepts two or
 more arena `PageKind::Small` members across ordinary source bins. Each member
 has its own rounded `block_size <= SMALL_SIZE_MAX`, static-main bin, full
 state, `reserved >= 16`, zero-retirement countdown, empty local free list, and
@@ -799,7 +845,11 @@ only in `Cargo.lock` do not satisfy or fail that selected-graph judge. It then
 runs the five test-only Loom schedules over the shared production remote-head
 publication/detach and abandoned owner-claim/unown loops and records their
 exact pass count separately from the
-ordinary unit suite.
+ordinary unit suite. That test command explicitly clears
+`CARGO_ENCODED_RUSTFLAGS`: the model does not access a compiler-TLS root, and
+the pinned nightly cannot link its `std`/Loom test binary with the production
+initial-exec TLS setting. The dedicated TLS-codegen judge below remains the
+sole evidence for that production setting.
 
 The quick gate also invokes the dedicated allocator compiler-TLS judge. It
 builds one default-off probe codegen unit with
@@ -853,6 +903,8 @@ snapshot after review; the normal gate never updates its own baseline.
 | `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
 | `adapted/test-api-m4.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
+| `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, six-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including one scoped worker round trip. |
+| `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
 | `port-map.toml` | Source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. |
 | `ratchet-v3.5.0.json` | Reviewed inventory hashes, counts, and non-regression baseline. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences. |

@@ -213,7 +213,10 @@ release in PageMap -> `pages_main` -> metadata -> slice order after old-Theap
 teardown; the large route validates its complete 64-slice span. The process
 route can keep one sole
 nonfull small-or-medium page mapped while its linear
-client frees finish after the old Theap/TLD is gone. A direct small member is
+client frees finish after the old Theap/TLD is gone. A distinct client-free-only
+route accepts one nonfull large page with exactly two client blocks, proves its
+complete fixed 64-slice PageMap span and source leading `pages_main` bit before
+and after source collection, and releases that entire span on the second free. A direct small member is
 recognized by rounded source block size, preflights its exact
 `pages_free_direct` range, and clears that range with queue removal before the
 former Theap page count drops; the small partial-free tail retains its source
@@ -354,8 +357,43 @@ the TLD list, clears/frees the Theap metadata, tears down the TLD, and releases
 the shared-main lifetime count. The main attachment rejects teardown while that
 count is nonzero. The private libc bridge invokes this direct no-page
 attach/finish path for real pthread workers, but never enters the page session.
-It is therefore not a page-bearing pthread/TLS lifecycle or allocation-routing
-claim. `main_heap_page.rs` now binds one current
+It is therefore not a page-bearing production pthread/TLS lifecycle or
+allocation-routing claim. Separately, `MainStaticProcessPageSession` is the one internal bridge
+for the Rust lifetime gap between a ticket-zero page session and a copied
+shared-main lease. It validates the ordinary zero-page static image, then
+permanently closes main-image teardown before issuing that lease. The static
+Theap stays current-thread-only; its Heap installation and fresh-page pointer
+association take only short `shared_heap_projection_lock` views, so a later
+*no-page* TLD/Theap may attach and detach without an aliased `&mut Heap`.
+Its focused regression completes that later lifecycle and then one ticket-zero
+ordinary page allocation/free under the paired PageMap lease. This permanent
+session now has one private lazy `MainStaticRuntimeFirstArenaPageAllocator` in
+`runtime_lifecycle.rs`: it is created only from the original ticket-zero
+thread, retains no mapping until a valid first request, and keeps its
+`ProcessPageMapMutationLease` while its bounded engine has live page state.
+After the engine proves its full local image empty, it returns only that
+Rust-side aliasing lease while retaining the permanent session and
+already-published first arena; a later ticket-zero request may reactivate
+sequentially through that same arena without a new reservation. The internal
+state still disables the prior no-page-only fork-preservation predicate as soon
+as the permanent page authority exists. While dormant, it may lend only the
+already-published map/arena pair to one fresh test worker that has entered the
+existing later-main attachment: the worker owns one scoped engine, must return
+it empty, and then completes the normal no-page attachment teardown before
+ticket zero may reactivate. The seam is not called by libc, admits no
+concurrent or general later-worker page engine, and does not alter the C
+backend or repair a fork child. A separate `no_std` evidence staticlib,
+`compat/allocator/runtime-ticket-zero-adapter`, exposes six prefixed C calls to
+a fresh test process: init with `AT_PAGESZ`, malloc, zalloc, realloc, free,
+and a pointer-free worker round trip. Its exact-symbol audit rejects ordinary
+`malloc`/`free` and `mi_*` exports, and its direct fixture proves first-page
+activation, replacement copying, zeroing, exact free, all-free dormant
+handoff, the worker's scoped allocation/free plus normal attachment teardown,
+same-arena ticket-zero reactivation, and successful-path `errno` preservation.
+It intentionally has no shutdown because the source owner is process-lifetime.
+That test ABI does not make the runtime seam a
+crabc libc ABI, a selected backend, a pointer-domain fallback, or a fork
+repair mechanism. `main_heap_page.rs` now binds one current
 `MainHeapThreadAttachment` to the same matching `ProcessPageArenaLease` before
 it borrows the attachment as a page session. It verifies subprocess and frozen
 configuration before map acquisition, serializes the complete engine and one
@@ -499,6 +537,27 @@ terminal free validates and releases only that member through PageMap ->
 map route. Homogeneous queues, small/direct-small, singleton, OS, huge,
 malformed spans, remote-force nonfull state, allocation-time adoption, reclaim,
 requeue, scans, producers, and concurrent routing remain absent.
+
+`MainHeapThreadProcessPageExitDrain::abandon_full_singleton_or_regular_pages_to_process_route`
+is a fourth, separately typed `BIN_FULL` aggregate for one narrower
+heterogeneous source mix: two or more full arena members with at least one
+`PageKind::Singleton` and at least one regular `PageKind::Medium` or
+`PageKind::Large`. Every direct entry and every other queue must be empty. A
+singleton proves `BIN_HUGE`, `reserved == used == 1`, zero retirement, an
+empty local free list, and its exact rounded span; every regular member proves
+an ordinary static-main bin, `reserved > 1`, `used == reserved`, zero
+retirement, an empty local free list, and its exact medium or large span. It
+preserves source force -> false collection, full-queue/page-count detach, and
+initially-unmapped abandonment before old-Theap/TLD teardown. The linear route
+keeps no raw member list: each free classifies a current PageMap member, then a
+singleton takes its raw empty terminal tail while a regular member claims its
+low owner bit before selecting its exact static-main bitmap/count pair and
+normal collector tail. A terminal free releases only that member through
+PageMap -> `pages_main` -> metadata -> its exact arena span; the aggregate map
+route closes only after both source-tail counts reach zero. Homogeneous,
+regular-only medium/large, small/direct-small, OS, huge, allocation-time
+adoption, reclaim/requeue, scanning, producer, and concurrent routing remain
+outside this boundary.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_pages_to_process_route`
 is a fourth, separately typed aggregate boundary for two or more full arena
@@ -913,7 +972,44 @@ OS-backed, malformed-span, preexisting queue/direct state, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
 detach; a collection fault retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fifth,
+`DynamicThreadExitDrain::abandon_full_medium_or_large_pages` is a fifth,
+separately typed post-TLS dynamic aggregate boundary. It admits a complete
+two-or-more member `BIN_FULL` queue only when every member is a full arena
+medium or large page and at least one member has each kind. Every direct slot
+and other queue must be empty; each member independently proves its rounded
+dynamic bin, zero retirement countdown, empty local free list, matching
+dynamic bitmap/count capability, and exact one-slice medium or 64-slice large
+PageMap span. Source force -> false collection -> full-queue/page-count detach
+-> unmapped abandonment runs for each member. The returned
+`DynamicThreadExitFullMediumOrLargePagesRoute` retains only the dynamic drain
+and count: each sequential canonical free re-resolves its PageMap member,
+claims the low owner bit before deriving that member's dynamic map, follows the
+normal unmapped or mapped failed-reclaim tail, and releases only that member's
+exact PageMap -> dynamic ordinary bit -> metadata -> arena span. The final
+release returns the empty drain. Homogeneous queues, small/direct-small,
+singleton, OS, malformed spans, allocation-time reclaim/adoption/requeue,
+scans, producers, and concurrent routing remain absent.
+
+`DynamicThreadExitDrain::abandon_full_singleton_or_regular_pages` is a sixth,
+separately typed post-TLS dynamic aggregate boundary. It admits the complete
+two-or-more member `BIN_FULL` image only when it contains at least one full
+arena singleton and at least one full arena medium or large page; every direct
+slot and other queue is empty. Singleton members independently prove
+`BIN_HUGE`, `reserved == used == 1`, and their rounded arena span. Regular
+members independently prove their rounded dynamic bin, `reserved > 1`, `used
+== reserved`, matching dynamic bitmap/count capability, and exact one-slice
+medium or 64-slice large span. Source force -> false collection -> full-queue/
+page-count detach -> unmapped abandonment runs for every member. The returned
+`DynamicThreadExitFullSingletonOrRegularPagesRoute` retains only the drain and
+count: a singleton free takes the raw terminal failed-reclaim tail, whereas a
+regular free claims its low owner bit before selecting the normal unmapped or
+mapped tail. Each release is limited to its exact PageMap -> dynamic ordinary
+bit -> metadata -> arena span. Homogeneous queues, regular-only mixed
+medium/large queues, small/direct-small, OS, malformed spans, allocation-time,
+reclaim/adoption/requeue, scans, producers, and concurrent routing remain
+absent.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a seventh,
 separately typed post-TLS dynamic aggregate boundary. It is exercised only by
 the exact ordinary dynamic `true`/`2` fixture, while the production ordinary
 page-session boundary remains sealed. It admits exactly two or more full
@@ -934,7 +1030,7 @@ mixed-bin/class, direct-small, `BIN_FULL`, OS-backed, malformed-span,
 allocation-time, reclaim/adoption/requeue, scan, producer, and concurrent cases
 reject before detach; a collection fault retains the drain.
 
-`DynamicThreadExitDrain::abandon_full_direct_small_pages` is a sixth,
+`DynamicThreadExitDrain::abandon_full_direct_small_pages` is an eighth,
 separately typed post-TLS dynamic aggregate boundary. It is exercised only by
 the exact ordinary dynamic `true`/`2` fixture, while the production ordinary
 page-session boundary remains sealed. It admits exactly two or more full

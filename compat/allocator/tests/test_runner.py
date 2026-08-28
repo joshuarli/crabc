@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -509,6 +510,40 @@ void *crabc_test_malloc(size_t size);
             ["crabc_test_init", "crabc_test_malloc"],
         )
 
+    def test_runtime_ticket_zero_adapter_symbol_contract_requires_exact_exports(self) -> None:
+        expected = [
+            "crabc_ticket_zero_test_free",
+            "crabc_ticket_zero_test_init",
+            "crabc_ticket_zero_test_malloc",
+        ]
+        self.assertEqual(
+            RUNNER.validate_runtime_ticket_zero_adapter_symbols(
+                ["_init", *expected, "rust_eh_personality"], expected
+            ),
+            {"exported_symbol_count": 3, "symbols": expected},
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "missing symbols"):
+            RUNNER.validate_runtime_ticket_zero_adapter_symbols(expected[:-1], expected)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unexpected symbols"):
+            RUNNER.validate_runtime_ticket_zero_adapter_symbols(
+                [*expected, "crabc_ticket_zero_test_unreviewed"], expected
+            )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "forbidden allocator exports"):
+            RUNNER.validate_runtime_ticket_zero_adapter_symbols(
+                [*expected, "malloc", "mi_malloc"], expected
+            )
+
+    def test_runtime_ticket_zero_adapter_header_inventory_extracts_only_declarations(self) -> None:
+        header = """
+int crabc_ticket_zero_test_init(size_t page_size);
+void *crabc_ticket_zero_test_malloc(size_t size);
+#define hidden crabc_ticket_zero_test_malloc((size))
+"""
+        self.assertEqual(
+            RUNNER.runtime_ticket_zero_adapter_header_function_names(header),
+            ["crabc_ticket_zero_test_init", "crabc_ticket_zero_test_malloc"],
+        )
+
     def test_native_static_library_parser_preserves_rustc_link_order(self) -> None:
         output = """
    Compiling crabc-mimalloc-test-adapter v0.3.0
@@ -520,6 +555,16 @@ note: native-static-libs: -lgcc_s -lc
             RUNNER.parse_native_static_libraries("Finished release\n")
         with self.assertRaisesRegex(RUNNER.HarnessError, "invalid native static library"):
             RUNNER.parse_native_static_libraries("native-static-libs: -lgcc_s /ambient/libbad.a\n")
+
+    def test_optional_native_static_library_parser_accepts_a_no_std_empty_tail(self) -> None:
+        self.assertEqual(
+            RUNNER.parse_optional_native_static_libraries("native-static-libs: \n"),
+            [],
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "invalid native static library"):
+            RUNNER.parse_optional_native_static_libraries(
+                "native-static-libs: /ambient/libbad.a\n"
+            )
 
     def test_rust_layout_comparison_names_missing_and_mismatched_values(self) -> None:
         c_layout = {
@@ -559,6 +604,18 @@ note: native-static-libs: -lgcc_s -lc
 
 
 class ContractTests(unittest.TestCase):
+    def test_loom_model_clears_production_rustflags(self) -> None:
+        record = {
+            "status": 0,
+            "stderr": "",
+            "stdout": "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 579 filtered out; finished in 0.01s\n",
+        }
+        with mock.patch.object(RUNNER, "command_record", return_value=record) as command_record:
+            report = RUNNER.loom_remote_free_model()
+
+        self.assertEqual(command_record.call_args.kwargs["env"]["CARGO_ENCODED_RUSTFLAGS"], "")
+        self.assertEqual(report["cargo_encoded_rustflags"], [])
+
     def test_pin_is_complete_and_names_the_exact_archive(self) -> None:
         pin = RUNNER.load_pin()
         self.assertEqual(pin["version"], "3.5.0")
@@ -592,6 +649,14 @@ class ContractTests(unittest.TestCase):
                 "omitted_test_count": 21,
                 "selected_test_count": 33,
             },
+        )
+
+    def test_runtime_ticket_zero_adapter_contract_is_exact_and_reviewed(self) -> None:
+        contract = RUNNER.read_json(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
+        header = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
+        self.assertEqual(
+            RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header),
+            {"expected_adapter_symbol_count": 6},
         )
 
     def test_adapted_api_fixture_rejects_unexplained_omission_and_symbol_drift(self) -> None:

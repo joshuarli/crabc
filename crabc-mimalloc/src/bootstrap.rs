@@ -392,7 +392,7 @@ impl ExclusiveTheapSession<'_> {
             Page::publish_fresh_exclusive_owner_at(
                 metadata,
                 &mut state.theap,
-                &mut state.heap,
+                &state.heap,
                 owner,
                 block_size,
                 page_offset,
@@ -413,7 +413,7 @@ impl ExclusiveTheapSession<'_> {
     pub(crate) fn associate_page(&mut self, page: &mut Page) {
         let owner = self.owner;
         let state = self.state_mut();
-        page.associate_exclusive_owner(&mut state.theap, &mut state.heap, owner);
+        page.associate_exclusive_owner(&mut state.theap, &state.heap, owner);
     }
 
     /// Clears a local-page association before metadata reuse.

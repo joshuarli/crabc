@@ -43,6 +43,16 @@ ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
 TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
 TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
 TEST_ADAPTER_FIXTURE = TEST_ADAPTER_ROOT / "allocator-fixture-wrapper.c"
+RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT = (
+    ALLOCATOR_ROOT / "runtime-ticket-zero-test-v3.5.0.json"
+)
+RUNTIME_TICKET_ZERO_ADAPTER_ROOT = ALLOCATOR_ROOT / "runtime-ticket-zero-adapter"
+RUNTIME_TICKET_ZERO_ADAPTER_HEADER = (
+    RUNTIME_TICKET_ZERO_ADAPTER_ROOT / "crabc-mimalloc-runtime-ticket-zero-test.h"
+)
+RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE = (
+    RUNTIME_TICKET_ZERO_ADAPTER_ROOT / "runtime-ticket-zero-fixture.c"
+)
 TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
 TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
@@ -1934,11 +1944,18 @@ def require_tool(name: str) -> str:
     return resolved
 
 
-def command_record(command: Sequence[str], *, cwd: Path, input_text: str | None = None) -> dict[str, Any]:
+def command_record(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+    input_text: str | None = None,
+) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             list(command),
             cwd=cwd,
+            env=env,
             input=input_text,
             text=True,
             capture_output=True,
@@ -2095,11 +2112,29 @@ def parse_upstream_api_test_summary(output: str) -> dict[str, int]:
 def parse_native_static_libraries(output: str) -> list[str]:
     """Retain rustc's exact ordered native link tail for the static adapter."""
 
-    matches = re.findall(r"(?m)^\s*(?:note:\s*)?native-static-libs:\s*(.*?)\s*$", output)
+    matches = re.findall(
+        r"(?m)^[ \t]*(?:note:[ \t]*)?native-static-libs:[ \t]*(.*?)[ \t]*$",
+        output,
+    )
     if len(matches) != 1:
         raise HarnessError("Rust adapter native-static-libs record is absent or ambiguous")
     libraries = matches[0].split()
     if not libraries or any(not re.fullmatch(r"-l[A-Za-z0-9_.+-]+", item) for item in libraries):
+        raise HarnessError("Rust adapter has an invalid native static library record")
+    return libraries
+
+
+def parse_optional_native_static_libraries(output: str) -> list[str]:
+    """Parse a native link tail when a no_std staticlib needs none."""
+
+    matches = re.findall(
+        r"(?m)^[ \t]*(?:note:[ \t]*)?native-static-libs:[ \t]*(.*?)[ \t]*$",
+        output,
+    )
+    if len(matches) != 1:
+        raise HarnessError("Rust adapter native-static-libs record is absent or ambiguous")
+    libraries = matches[0].split()
+    if any(not re.fullmatch(r"-l[A-Za-z0-9_.+-]+", item) for item in libraries):
         raise HarnessError("Rust adapter has an invalid native static library record")
     return libraries
 
@@ -2252,6 +2287,7 @@ FORBIDDEN_ADAPTER_ALLOCATOR_EXPORTS = frozenset(
     }
 )
 ADAPTER_SYMBOL_PREFIX = "crabc_test_"
+RUNTIME_TICKET_ZERO_ADAPTER_SYMBOL_PREFIX = "crabc_ticket_zero_test_"
 
 
 def adapter_header_function_names(header: str) -> list[str]:
@@ -2296,6 +2332,110 @@ def validate_adapter_dynamic_symbols(
     if unexpected:
         raise HarnessError("unexpected adapter symbols: " + ", ".join(unexpected))
     return {"exported_symbol_count": len(actual), "symbols": actual}
+
+
+def runtime_ticket_zero_adapter_header_function_names(header: str) -> list[str]:
+    """Inventory the private ticket-zero C evidence declarations."""
+
+    names = re.findall(
+        rf"(?m)^[^#\n;]*\b({re.escape(RUNTIME_TICKET_ZERO_ADAPTER_SYMBOL_PREFIX)}[A-Za-z0-9_]+)\s*\([^;{{]*\)\s*;",
+        header,
+    )
+    return sorted(set(names))
+
+
+def validate_runtime_ticket_zero_adapter_symbols(
+    symbols: Sequence[str], expected_symbols: Sequence[str]
+) -> dict[str, Any]:
+    """Require exactly the narrow process-lifetime evidence C ABI."""
+
+    expected = sorted(set(expected_symbols))
+    if len(expected) != len(expected_symbols) or not expected:
+        raise HarnessError(
+            "runtime ticket-zero adapter symbol contract must be non-empty and duplicate-free"
+        )
+    invalid_expected = [
+        name
+        for name in expected
+        if not name.startswith(RUNTIME_TICKET_ZERO_ADAPTER_SYMBOL_PREFIX)
+    ]
+    if invalid_expected:
+        raise HarnessError(
+            "runtime ticket-zero adapter symbol contract contains non-prefixed names: "
+            + ", ".join(invalid_expected)
+        )
+    defined = set(symbols)
+    forbidden = sorted(
+        name
+        for name in defined
+        if name.startswith("mi_") or name in FORBIDDEN_ADAPTER_ALLOCATOR_EXPORTS
+    )
+    if forbidden:
+        raise HarnessError(
+            "runtime ticket-zero adapter has forbidden allocator exports: "
+            + ", ".join(forbidden)
+        )
+    actual = sorted(
+        name
+        for name in defined
+        if name.startswith(RUNTIME_TICKET_ZERO_ADAPTER_SYMBOL_PREFIX)
+    )
+    missing = sorted(set(expected).difference(actual))
+    unexpected = sorted(set(actual).difference(expected))
+    if missing:
+        raise HarnessError(
+            "runtime ticket-zero adapter missing symbols: " + ", ".join(missing)
+        )
+    if unexpected:
+        raise HarnessError(
+            "runtime ticket-zero adapter has unexpected symbols: " + ", ".join(unexpected)
+        )
+    return {"exported_symbol_count": len(actual), "symbols": actual}
+
+
+def validate_runtime_ticket_zero_adapter_contract(
+    contract: Mapping[str, Any], adapter_header: str
+) -> dict[str, Any]:
+    """Validate the separate C witness without widening the M4 adapter."""
+
+    if (
+        contract.get("format") != 1
+        or contract.get("schema") != "crabc-mimalloc-runtime-ticket-zero-test"
+    ):
+        raise HarnessError("runtime ticket-zero adapter contract has an unknown schema")
+    if contract.get("adapter_package") != "crabc-mimalloc-runtime-ticket-zero-adapter":
+        raise HarnessError("runtime ticket-zero adapter contract names the wrong Cargo package")
+    if (
+        contract.get("header")
+        != "compat/allocator/runtime-ticket-zero-adapter/crabc-mimalloc-runtime-ticket-zero-test.h"
+    ):
+        raise HarnessError("runtime ticket-zero adapter contract names the wrong header")
+    if (
+        contract.get("fixture")
+        != "compat/allocator/runtime-ticket-zero-adapter/runtime-ticket-zero-fixture.c"
+    ):
+        raise HarnessError("runtime ticket-zero adapter contract names the wrong fixture")
+    expected_symbols = contract.get("expected_adapter_symbols")
+    if not isinstance(expected_symbols, list) or not all(
+        isinstance(symbol, str) for symbol in expected_symbols
+    ):
+        raise HarnessError("runtime ticket-zero adapter contract has invalid expected symbols")
+    if runtime_ticket_zero_adapter_header_function_names(adapter_header) != sorted(expected_symbols):
+        raise HarnessError(
+            "runtime ticket-zero adapter header declarations differ from its contract"
+        )
+    compile_requirements = contract.get("compile_requirements")
+    if not isinstance(compile_requirements, dict):
+        raise HarnessError("runtime ticket-zero adapter contract has no compile requirements")
+    if compile_requirements.get("target") != PRODUCTION_RUST_TARGET:
+        raise HarnessError("runtime ticket-zero adapter target differs from the native contract")
+    for field in ("expected_dynamic_dependencies", "native_static_libs"):
+        value = compile_requirements.get(field)
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise HarnessError(
+                f"runtime ticket-zero adapter contract has invalid {field}"
+            )
+    return {"expected_adapter_symbol_count": len(expected_symbols)}
 
 
 def validate_release_symbol_contract(
@@ -2773,7 +2913,14 @@ def rust_layout_probe(
 
 
 def loom_remote_free_model() -> dict[str, Any]:
-    """Run the bounded scheduler over the production remote-head CAS loops."""
+    """Run the bounded scheduler over the production remote-head CAS loops.
+
+    This test-only model uses Loom's `std` scheduler and never accesses an
+    allocator compiler-TLS root. Its atomic-ordering evidence must not inherit
+    the production AArch64 initial-exec TLS model: on the pinned nightly that
+    combination produces an invalid test link, while `compiler_tls_codegen`
+    separately proves the production requirement.
+    """
 
     command = [
         "cargo",
@@ -2788,11 +2935,14 @@ def loom_remote_free_model() -> dict[str, Any]:
         "--",
         "--test-threads=1",
     ]
-    record = command_record(command, cwd=ROOT)
+    environment = os.environ.copy()
+    environment["CARGO_ENCODED_RUSTFLAGS"] = ""
+    record = command_record(command, cwd=ROOT, env=environment)
     require_success(record, "Rust allocator remote-free Loom model")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     return {
         "command": command,
+        "cargo_encoded_rustflags": [],
         "passed_test_count": parse_rust_test_count(output),
         "status": "passed",
     }
@@ -2926,6 +3076,88 @@ def build_test_adapter(
     }
 
 
+def build_runtime_ticket_zero_adapter(
+    readelf: str,
+    nm: str,
+    contract: Mapping[str, Any],
+) -> tuple[Path, list[str], dict[str, Any]]:
+    """Build and audit the separate no_std runtime page-owner test ABI."""
+
+    artifact_root = REPORT_ROOT / "runtime-ticket-zero-adapter"
+    cargo_target = artifact_root / "cargo-target"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    package = str(contract["adapter_package"])
+    clean_command = [
+        "cargo",
+        "clean",
+        "--package",
+        package,
+        "--target",
+        PRODUCTION_RUST_TARGET,
+        "--release",
+        "--target-dir",
+        str(cargo_target),
+    ]
+    clean_record = command_record(clean_command, cwd=ROOT)
+    require_success(clean_record, "runtime ticket-zero adapter clean build boundary")
+    rustc_command = [
+        "cargo",
+        "rustc",
+        "--locked",
+        "--package",
+        package,
+        "--target",
+        PRODUCTION_RUST_TARGET,
+        "--release",
+        "--target-dir",
+        str(cargo_target),
+        "--",
+        "--print=native-static-libs",
+    ]
+    rustc_record = command_record(rustc_command, cwd=ROOT)
+    require_success(rustc_record, "runtime ticket-zero adapter staticlib/cdylib build")
+    native_libraries = parse_optional_native_static_libraries(
+        str(rustc_record["stdout"]) + "\n" + str(rustc_record["stderr"])
+    )
+    compile_requirements = contract["compile_requirements"]
+    assert isinstance(compile_requirements, dict)
+    expected_native_libraries = compile_requirements["native_static_libs"]
+    assert isinstance(expected_native_libraries, list)
+    if native_libraries != expected_native_libraries:
+        raise HarnessError(
+            "runtime ticket-zero adapter native static library order differs from the contract"
+        )
+
+    release_root = cargo_target / PRODUCTION_RUST_TARGET / "release"
+    static_library = release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.a"
+    shared_library = release_root / "libcrabc_mimalloc_runtime_ticket_zero_adapter.so"
+    expected_symbols = contract["expected_adapter_symbols"]
+    assert isinstance(expected_symbols, list)
+    shared_symbols = validate_runtime_ticket_zero_adapter_symbols(
+        defined_dynamic_symbols(readelf, shared_library), expected_symbols
+    )
+    archive_symbols = validate_runtime_ticket_zero_adapter_symbols(
+        archive_defined_symbols(nm, static_library), expected_symbols
+    )
+    needed = dynamic_dependencies(readelf, shared_library)
+    expected_dependencies = compile_requirements["expected_dynamic_dependencies"]
+    assert isinstance(expected_dependencies, list)
+    if needed != expected_dependencies:
+        raise HarnessError(
+            "runtime ticket-zero adapter dynamic dependency set differs from the contract"
+        )
+    return static_library, native_libraries, {
+        "archive": artifact_record(static_library),
+        "archive_symbols": archive_symbols,
+        "clean_command": clean_command,
+        "dynamic_dependencies": needed,
+        "native_static_libraries": native_libraries,
+        "rustc_command": rustc_command,
+        "shared_library": artifact_record(shared_library),
+        "shared_symbols": shared_symbols,
+    }
+
+
 def run_test_adapter_fixtures(
     compiler: str,
     source: Path,
@@ -3022,6 +3254,51 @@ def run_test_adapter_fixtures(
     }
 
 
+def run_runtime_ticket_zero_adapter_fixture(
+    compiler: str,
+    static_library: Path,
+    native_libraries: Sequence[str],
+) -> dict[str, Any]:
+    """Run one fresh process through the permanent ticket-zero C witness."""
+
+    artifact_root = REPORT_ROOT / "runtime-ticket-zero-adapter"
+    fixture_binary = artifact_root / "runtime-ticket-zero-fixture"
+    fixture_command = [
+        compiler,
+        "-std=c11",
+        "-O2",
+        "-fPIE",
+        "-pie",
+        "-ftls-model=initial-exec",
+        "-pthread",
+        "-I",
+        str(RUNTIME_TICKET_ZERO_ADAPTER_ROOT),
+        str(RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE),
+        str(static_library),
+        *native_libraries,
+        "-o",
+        str(fixture_binary),
+    ]
+    fixture_build = command_record(fixture_command, cwd=ROOT)
+    require_success(fixture_build, "runtime ticket-zero C fixture build")
+    fixture_run = command_record((str(fixture_binary),), cwd=ROOT)
+    if (
+        fixture_run["status"] != 0
+        or fixture_run["stdout"] != "runtime ticket-zero allocator ok\n"
+    ):
+        raise HarnessError(
+            "runtime ticket-zero C fixture failed: "
+            f"status={fixture_run['status']} stdout={fixture_run['stdout']!r} "
+            f"stderr={fixture_run['stderr']!r}"
+        )
+    return {
+        "artifact": artifact_record(fixture_binary),
+        "build_command": fixture_command,
+        "run_command": [str(fixture_binary)],
+        "stdout": str(fixture_run["stdout"]),
+    }
+
+
 def milestone0_report(pin: Mapping[str, str], archive: Path, source: Path, profiles: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "c_oracle": {
@@ -3073,12 +3350,18 @@ def run_milestone0(
             adapted_contract,
             require_tool("patch"),
         )
+        runtime_ticket_zero_contract = read_json(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
+        runtime_ticket_zero_summary = validate_runtime_ticket_zero_adapter_contract(
+            runtime_ticket_zero_contract,
+            RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8"),
+        )
         port_map = load_port_map()
         check_ratchet(port_map)
         if check_only:
             return {
                 "adapted_test_contract": adapted_summary,
                 "adapted_test_patch": adapted_patch,
+                "runtime_ticket_zero_test_contract": runtime_ticket_zero_summary,
                 "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
                 "port_map": port_map_counts(port_map),
                 "status": "checked",
@@ -3112,6 +3395,7 @@ def run_milestone0(
         report["rust_release_layout"] = rust_layout
         report["adapted_test_contract"] = adapted_summary
         report["adapted_test_patch"] = adapted_patch
+        report["runtime_ticket_zero_test_contract"] = runtime_ticket_zero_summary
         if include_test_adapter:
             nm = require_tool("nm")
             static_library, native_libraries, adapter_build = build_test_adapter(
@@ -3127,6 +3411,17 @@ def run_milestone0(
                     static_library,
                     native_libraries,
                     adapted_contract,
+                ),
+            }
+            runtime_static_library, runtime_native_libraries, runtime_adapter_build = (
+                build_runtime_ticket_zero_adapter(readelf, nm, runtime_ticket_zero_contract)
+            )
+            report["runtime_ticket_zero_test_adapter"] = {
+                "build": runtime_adapter_build,
+                "fixture": run_runtime_ticket_zero_adapter_fixture(
+                    compiler,
+                    runtime_static_library,
+                    runtime_native_libraries,
                 ),
             }
         write_json(REPORT_ROOT / "latest.json", report)

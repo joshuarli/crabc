@@ -33,7 +33,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use crate::main_theap::{
     MainStaticAttachmentStorage, MainStaticHeapFoundation,
     MainStaticHeapFoundationError, MainStaticHeapLease, MainStaticTheapAttachment,
-    MainStaticTheapError,
+    MainStaticPageSessionError, MainStaticProcessPageSession,
+    MainStaticProcessPageSessionError, MainStaticTheapError,
 };
 use crate::main_static_page::{
     MainStaticFirstArenaPageAllocator, MainStaticFirstArenaPageAllocatorBeginError,
@@ -421,6 +422,14 @@ pub(crate) enum ProcessMainFirstArenaPageAllocatorError {
     PageOwner(MainStaticFirstArenaPageAllocatorBeginError),
 }
 
+/// A refusal while converting the retained ticket-zero attachment into its
+/// one permanent page-session owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessMainProcessPageSessionError {
+    Process(ProcessMainInitError),
+    PageSession(MainStaticProcessPageSessionError),
+}
+
 /// A refusal while deriving the already-published process arena from the
 /// immutable source-order process-ready witness.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -451,6 +460,30 @@ impl ProcessMainThread {
             return Err(ProcessMainInitError::Retained);
         }
         self.attachment.as_mut().ok_or(ProcessMainInitError::Retained)
+    }
+
+    /// Converts the ticket-zero page authority into its one permanent static
+    /// page session.
+    ///
+    /// The returned owner has no Rust borrow of this coordinator. Instead it
+    /// permanently closes `teardown`, so its explicitly derived shared-main
+    /// Heap lease can drive later no-page thread lifecycle work while ticket
+    /// zero retains the static page state. This is an ownership transition,
+    /// not a general allocator start or a C ABI/backend selection.
+    pub(crate) fn begin_process_lifetime_page_session(
+        &self,
+    ) -> Result<MainStaticProcessPageSession, ProcessMainProcessPageSessionError> {
+        if self.state != ProcessMainThreadState::Attached {
+            return Err(ProcessMainProcessPageSessionError::Process(
+                ProcessMainInitError::Retained,
+            ));
+        }
+        let attachment = self.attachment.as_ref().ok_or(
+            ProcessMainProcessPageSessionError::Process(ProcessMainInitError::Retained),
+        )?;
+        attachment
+            .begin_process_lifetime_page_session()
+            .map_err(ProcessMainProcessPageSessionError::PageSession)
     }
 
     /// Reconstructs the one immutable process map/arena pair after a bounded
@@ -587,6 +620,7 @@ impl Drop for ProcessMainThread {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arena::ArenaId;
     use crate::bootstrap::empty_default_theap_ptr;
     use crate::compiler_tls::{
         default_theap, fast_slot_peek, roots_are_pristine_for_main_static_attachment,
@@ -595,8 +629,9 @@ mod tests {
     use crate::main_heap_page::MainHeapThreadProcessPageAllocator;
     use crate::main_heap_thread::MainHeapThreadAttachment;
     use crate::meta::MetaAllocator;
-    use crate::os::{fault, PageSize};
-    use crate::process_arena::ProcessSharedArenaStorage;
+    use crate::os::{fault, MapAccess, PageSize};
+    use crate::process_arena::{ProcessPageArenaLease, ProcessSharedArenaStorage};
+    use crate::single_thread::PageAllocatorEngine;
     use crate::subproc::GenericThreadTicketError;
     use crate::tld::{ThreadLocalDataError, ThreadLocalDataOwner};
     use crate::types::Theap;
@@ -988,5 +1023,105 @@ mod tests {
         })
         .join()
         .expect("process-ready first-arena reuse fixture completes");
+    }
+
+    #[test]
+    fn process_lifetime_static_page_session_keeps_ticket_zero_pages_sound_with_a_later_main_lease() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(
+                    config,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("source-order startup creates ticket zero before the permanent session");
+
+            let session = owner
+                .begin_process_lifetime_page_session()
+                .expect("the empty ticket-zero image converts to one permanent page owner");
+            let main_heap = session.shared_main_heap_lease();
+            assert!(matches!(
+                owner
+                    .attachment_mut()
+                    .expect("the permanent session retains the ticket-zero attachment")
+                    .page_session(),
+                Err(MainStaticPageSessionError::ProcessPageSessionLive)
+            ), "the permanent session excludes a second borrowed static page owner");
+
+            thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        let mut later = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap, metadata, config,
+                            )
+                        } {
+                            Ok(attachment) => attachment,
+                            Err(_) => panic!("the persistent static lease admits one later no-page owner"),
+                        };
+                        later
+                            .finish_after_user_destructors()
+                            .expect("the later no-page owner detaches before ticket-zero page use");
+                    })
+                    .join()
+                    .expect("the later no-page lifecycle stays current-thread local");
+            });
+
+            let page_map = owner
+                .ready()
+                .and_then(ProcessMainReadyLease::page_map)
+                .expect("the permanent session keeps the process map witness ready");
+            let arena = match arena_storage.reserve_one_os_arena(
+                page_map,
+                crate::config::ARENA_MIN_SIZE,
+                MapAccess::Committed,
+            ) {
+                Ok(arena) => arena,
+                Err(_) => panic!("one explicit process arena is available for the static page proof"),
+            };
+            let pair = ProcessPageArenaLease::join(page_map, arena)
+                .expect("the static page engine receives its exact map/arena pair");
+            let lifecycle = pair
+                .begin_page_lifecycle()
+                .expect("the static process page lifecycle claims the plain map boundary");
+            let arena = pair
+                .arena()
+                .expect("the paired source arena remains published");
+            let page_map = lifecycle
+                .page_map()
+                .expect("the page lifecycle grants the static engine its map view");
+            // SAFETY: `session` is the one permanent ticket-zero page owner,
+            // and `lifecycle` remains live beside the exact paired arena for
+            // this complete ordinary allocation/free engine.
+            let mut engine = unsafe {
+                PageAllocatorEngine::activate_main_static(session, arena, ArenaId::none(), page_map)
+            };
+            let block = engine
+                .allocate(37, false)
+                .expect("ticket zero allocates after the later no-page owner detached");
+            // SAFETY: `block` is the one live allocation from this exact
+            // static engine and has not escaped the test.
+            unsafe { engine.free(block) }
+                .expect("the ticket-zero page lifecycle frees its allocation");
+            assert!(matches!(
+                engine.finish(),
+                Ok(())
+            ), "the static page engine releases every page before its session is retained");
+            lifecycle
+                .finish()
+                .expect("the empty static page engine releases the map lifecycle");
+            assert!(matches!(
+                owner.teardown(),
+                Err(MainStaticTheapError::ProcessPageSessionLive)
+            ), "the copied permanent shared-main lease cannot be followed by main-image teardown");
+        })
+        .join()
+        .expect("process-lifetime ticket-zero/static-main ownership fixture completes");
     }
 }

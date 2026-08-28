@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-runtime-ticket-zero-test",
+  "upstream": {
+    "project": "microsoft/mimalloc",
+    "version": "3.5.0",
+    "tag": "v3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
+  },
+  "source_regions": [
+    "src/init.c:151-157,305-360,377-421",
+    "src/arena.c:341-406,525-569,674-723,781-821,951-1114,1129-1213,1240-1282",
+    "src/page-map.c:228-365",
+    "src/alloc.c:29-159,379-451"
+  ],
+  "adapter_package": "crabc-mimalloc-runtime-ticket-zero-adapter",
+  "header": "compat/allocator/runtime-ticket-zero-adapter/crabc-mimalloc-runtime-ticket-zero-test.h",
+  "fixture": "compat/allocator/runtime-ticket-zero-adapter/runtime-ticket-zero-fixture.c",
+  "expected_adapter_symbols": [
+    "crabc_ticket_zero_test_free",
+    "crabc_ticket_zero_test_init",
+    "crabc_ticket_zero_test_malloc",
+    "crabc_ticket_zero_test_realloc",
+    "crabc_ticket_zero_test_worker_roundtrip",
+    "crabc_ticket_zero_test_zalloc"
+  ],
+  "caller_contract": [
+    "The fixture is one fresh Linux/AArch64 process and calls init once with its original thread's nonzero AT_PAGESZ value.",
+    "Every allocation, reallocation, and free is serialized on that original thread.",
+    "After the original thread frees every adapter allocation, one fresh pthread may make one pointer-free worker round trip; it creates and finishes one scoped later-main page engine before its normal worker teardown.",
+    "Only current pointers returned by this adapter may reach its realloc or free entry points.",
+    "No shutdown is exposed: the permanent source-shaped ticket-zero page owner remains live until process exit.",
+    "The adapter exports no malloc, free, or mi_* ELF symbol and never selects crabc-libc's production backend."
+  ],
+  "fixture_observations": [
+    "init, malloc, realloc, zalloc, and free preserve the caller's errno on their successful paths",
+    "the first ordinary allocation activates one real ticket-zero page-owner allocation",
+    "realloc preserves the initialized prefix",
+    "zalloc returns zeroed bytes",
+    "after all exact allocations free, the owner releases only its Rust PageMap lifecycle lease",
+    "one fresh worker can borrow that dormant published pair for an empty scoped later-main page-engine round trip and finish its normal attachment",
+    "ticket zero reactivates afterward through the same first arena"
+  ],
+  "compile_requirements": {
+    "language": "C11",
+    "compiler": "musl-gcc from the pinned Linux/AArch64 container",
+    "target": "aarch64-unknown-linux-musl",
+    "rust_staticlib": "libcrabc_mimalloc_runtime_ticket_zero_adapter.a",
+    "expected_dynamic_dependencies": [],
+    "native_static_libs": []
+  }
+}

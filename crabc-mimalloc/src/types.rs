@@ -2132,7 +2132,7 @@ impl Page {
     pub(crate) fn associate_exclusive(
         &mut self,
         theap: &mut Theap,
-        heap: &mut Heap,
+        heap: &Heap,
         thread_id: LiveThreadId,
     ) {
         self.associate_exclusive_owner(theap, heap, TheapOwner::Live(thread_id));
@@ -2145,12 +2145,16 @@ impl Page {
     pub(crate) fn associate_exclusive_owner(
         &mut self,
         theap: &mut Theap,
-        heap: &mut Heap,
+        heap: &Heap,
         owner: TheapOwner,
     ) {
         debug_assert!(theap.matches_owner(owner));
         self.theap = core::ptr::from_mut(theap);
-        self.heap = core::ptr::from_mut(heap);
+        // A fresh page records this address but does not mutate its Heap.
+        // Heap-list and arena-pages changes retain their own synchronized
+        // source boundaries, so this association must not manufacture an
+        // exclusive Rust projection of the process-static main Heap.
+        self.heap = core::ptr::from_ref(heap).cast_mut();
         self.xthread_id
             .store(owner.thread_id(), core::sync::atomic::Ordering::Release);
         // The source's owner bit permits access to the non-atomic page fields.
@@ -2172,7 +2176,7 @@ impl Page {
     pub(crate) fn publish_fresh_exclusive(
         &mut self,
         theap: &mut Theap,
-        heap: &mut Heap,
+        heap: &Heap,
         thread_id: LiveThreadId,
         block_size: usize,
         page_offset: usize,
@@ -2201,7 +2205,7 @@ impl Page {
     pub(crate) fn publish_fresh_exclusive_owner(
         &mut self,
         theap: &mut Theap,
-        heap: &mut Heap,
+        heap: &Heap,
         owner: TheapOwner,
         block_size: usize,
         page_offset: usize,
@@ -2263,7 +2267,7 @@ impl Page {
     pub(crate) unsafe fn publish_fresh_exclusive_at(
         metadata: NonNull<Self>,
         theap: &mut Theap,
-        heap: &mut Heap,
+        heap: &Heap,
         thread_id: LiveThreadId,
         block_size: usize,
         page_offset: usize,
@@ -2294,7 +2298,7 @@ impl Page {
     pub(crate) unsafe fn publish_fresh_exclusive_owner_at(
         mut metadata: NonNull<Self>,
         theap: &mut Theap,
-        heap: &mut Heap,
+        heap: &Heap,
         owner: TheapOwner,
         block_size: usize,
         page_offset: usize,

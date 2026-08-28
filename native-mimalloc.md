@@ -1,6 +1,152 @@
 The crucial framing is: **do not design a new allocator**. Produce a provenance-preserving, semantically faithful Rust port of a fixed upstream mimalloc v3 release, then optimize only where measurement shows the Rust translation diverges. The objective is to remove the C allocator from the production dependency graph while retaining mimalloc’s design, behavior, and performance—not to create “mimalloc-inspired” machinery.
 
-## Handoff — 2026-08-26
+## Handoff — 2026-08-27
+
+### Current slice — later-main mapped two-block large post-exit route
+
+`MainHeapThreadProcessPageExitDrain::abandon_mapped_two_block_large_to_process_route`
+now ports one deliberately disjoint `MI_ABANDON` shape: the departing
+later-main owner has exactly one initially nonfull `PageKind::Large` arena page
+with `MEDIUM_MAX_OBJ_SIZE < block_size <= LARGE_MAX_OBJ_SIZE`, `reserved > 2`,
+`used == 2`, no direct-cache image, no other queue member, zero retirement,
+and its complete fixed 64-slice span. It preserves source force collection,
+false collection, queue/page-count detach, static-main bitmap/count
+publication, and unown before the old Theap/TLD tears down. The generic
+small-or-medium entry remains disjoint.
+
+The returned linear process route is client-free-only. Its first free retains
+every PageMap registration and `pages_main` bit across the entire large span;
+its second free clears the bitmap/count pairing, unregisters all 64 PageMap
+entries, clears the source ordinary static-arena bit, retires metadata, and returns the
+complete span. `ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullLargeTwoBlock`
+therefore cannot enter the existing allocation-time adoption/requeue edge. The
+focused regressions prove the two-free lifecycle and full-span release, and
+that a one-block large page rejects before collection or detach. One or three
+blocks, another page, direct-cache state, aggregates, producers, concurrency,
+and general large-page routing remain outside this slice.
+
+The two focused regressions, the complete 586-test `crabc-mimalloc` library
+suite, and the offline allocator ratchet check pass in the pinned
+Linux/AArch64 container (134 source items; 138 implemented and unit-verified).
+The offline `allocator --full` adapter lane also passes, then exits with its
+documented later-milestone status because integrated lifecycle/remote-free/
+pthread evidence remains incomplete.
+
+### Current slice — dormant ticket-zero/later-worker page handoff
+
+`MainStaticRuntimeFirstArenaPageAllocator` now carries the permanent
+ticket-zero `MainStaticProcessPageSession` inside `RuntimeProcessStorage`. It
+starts with no mapping and only reserves the frozen source default arena when
+its first valid ordinary request needs a fresh page. While pages are live, the
+stored engine and its `ProcessPageMapMutationLease` remain process-owned. Once
+that engine proves every page, queue, direct entry, retired record, and pending
+OS release empty, it returns only the Rust aliasing lease: the permanent
+session and its already-published first arena stay process-owned, static
+teardown remains closed, and the next ticket-zero request may reactivate
+against that same arena without a second reservation. The runtime's short
+`READY -> BUSY` transition keeps the native owner on its exact ticket-zero
+TPIDR_EL0 image and prevents recursive mutable entry.
+
+The preceding permanent session is now deliberately constructed from a shared
+`ProcessMainThread` view, rather than by making an aliased mutable process
+owner beside the already-published `MainStaticHeapLease`. It still validates
+the zero-page roots and images, permanently closes main teardown, and permits
+later *no-page* main-Heap attachments through the existing projection lock.
+Once the page owner starts—even before it maps—the existing no-page fork
+preservation predicate rejects it conservatively; child repair remains out of
+scope.
+
+The isolated runtime-storage regression proves the owner is mapping-free at
+startup, allocates and frees one real ticket-zero block through the first
+source arena, lets one later main-heap attachment borrow that same published
+pair only while ticket zero is dormant, restores its normal empty worker
+teardown, then reactivates ticket zero. It also disables no-page fork
+preservation. A distinct `no_std`
+`crabc-mimalloc-runtime-ticket-zero-adapter` now exposes exactly six
+*test-only prefixed* C symbols in a fresh process: init with the caller's
+`AT_PAGESZ`, malloc, zalloc, realloc, free, and one pointer-free worker round
+trip. Its direct fixture proves first-allocation activation, realloc prefix
+preservation, zeroing, exact free, the all-free dormant handoff, one fresh
+pthread's scoped page-engine allocation/free and normal attachment teardown,
+same-arena ticket-zero reactivation, and successful-path `errno` preservation.
+The evidence adapter has no unprefixed `malloc`/`free` or `mi_*` export, no
+dynamic dependency, no process-exit shutdown or external reuse path, and no
+relation to `crabc-libc`'s production ABI.
+`crabc-libc` still does not call this seam, `libmimalloc-sys` remains the C
+allocator backend, and there is no concurrent or general later-worker page
+engine, fork repair, or backend switch. The focused regression, complete
+584-test `crabc-mimalloc` library suite, and direct C fixture pass in the
+pinned Linux/AArch64 image. `allocator --full` records this adapter evidence
+and exits with its documented later-milestone status until the broader
+routing/lifecycle gates are complete.
+
+### Current slice — later-main mixed full singleton/regular aggregate route
+
+`MainHeapThreadProcessPageExitDrain::abandon_full_singleton_or_regular_pages_to_process_route`
+now ports one bounded heterogeneous `src/theap.c` `BIN_FULL` owner-exit image:
+two or more full arena members with at least one `PageKind::Singleton` and at
+least one regular `PageKind::Medium` or `PageKind::Large`. Every direct slot and
+every other queue is empty. Singleton members prove `BIN_HUGE`, `reserved ==
+used == 1`, zero retirement, an empty local free list, and an exact rounded
+span; regular members prove an ordinary static-main bin, `reserved > 1`, `used
+== reserved`, zero retirement, an empty local free list, and their exact
+medium or large span. Source order remains force -> false collection ->
+full-queue/page-count detach -> unmapped abandonment before old-Theap/TLD
+teardown.
+
+`ThreadExitFullSingletonOrRegularPagesPostExitParts` composes only the two
+source-specific post-exit facts plus an aggregate terminal count; it stores no
+raw former-Theap page list. Each free classifies a fresh PageMap registration.
+The singleton takes only the raw empty failed-reclaim tail; the regular member
+claims its low owner bit before selecting the exact static-main bitmap/count
+pair and normal unmapped-or-mapped tail. A terminal release removes only that
+member's PageMap -> `pages_main` -> metadata -> exact arena span, and the map
+route closes only after both tails have released. The focused later-main
+regression fills one singleton and one medium page, proves the singleton
+release, observes the regular static-main bitmap/count publication, then
+proves the final regular release. Homogeneous queues, regular-only mixed
+medium/large queues, small/direct-small, OS, huge, malformed spans,
+allocation-time claim/adoption/reclaim/requeue, scans, producers, concurrent
+frees, and general owner-exit traversal remain absent.
+
+The focused regression and the complete 580-test `crabc-mimalloc` library
+suite pass in the pinned Linux/AArch64 container. The allocator ratchet checks
+at 130 items and 134 implemented/unit-verified entries; the quick C
+differential gate also passes, including its five test-only Loom schedules and
+the separate production initial-exec TLS code-generation proof.
+
+### Current slice — dynamic mixed full singleton/regular aggregate route
+
+`DynamicThreadExitDrain::abandon_full_singleton_or_regular_pages` now ports
+the bounded heterogeneous `src/theap.c` `BIN_FULL` owner-exit image containing
+two or more full arena pages, at least one `PageKind::Singleton` and at least
+one regular `PageKind::Medium` or `PageKind::Large`. Every member independently
+proves full state, zero retirement, an empty local free list, and its exact
+arena/PageMap span; singleton members additionally prove `BIN_HUGE` and
+`reserved == used == 1`, while regular members prove their ordinary bin,
+`reserved > 1`, and matching dynamic bitmap/count capability. Every direct
+slot and other queue is empty. The route preserves force -> false collection ->
+full-queue/page-count detach -> unmapped abandonment while retaining the
+dynamic drain rather than taking later-main teardown.
+
+`DynamicThreadExitFullSingletonOrRegularPagesRoute` carries only that drain
+and a member count. Each client free re-resolves its PageMap member. A
+singleton follows the raw terminal failed-reclaim tail and releases its own
+rounded span; a regular member claims its low owner bit before selecting its
+dynamic map and follows the normal unmapped-or-mapped collector tail. The
+focused native regression fills one singleton and one medium page, proves the
+singleton release, observes the medium unmapped-to-mapped transition, and
+then proves the medium release. It is not a general heterogeneous registry:
+homogeneous queues, regular-only mixed medium/large queues, small/direct-small,
+OS, malformed spans, allocation-time, reclaim/adoption/requeue, scan,
+producer, concurrent, and general owner-exit paths remain absent.
+
+The focused regression and the complete 579-test `crabc-mimalloc` library
+suite pass in the pinned Linux/AArch64 container. The complete allocator quick
+gate also passes with the 129-item/133-implemented ratchet. Its five test-only
+Loom schedules clear the production `CARGO_ENCODED_RUSTFLAGS` because they
+model atomic ordering without touching compiler TLS; the separate codegen gate
+continues to prove the production initial-exec TLS requirement.
 
 ### Current slice — later-main mixed full medium/large aggregate route
 
@@ -29,8 +175,31 @@ small/direct-small, singleton, OS, huge, malformed spans, remote-force
 nonfull, allocation-time adoption/reclaim/requeue, producers, concurrency, and
 full queue scans outside the one consuming transition remain absent.
 
-The two focused regressions and the complete 577-test `crabc-mimalloc`
+The two focused regressions and the complete 579-test `crabc-mimalloc`
 library suite pass in the pinned Linux/AArch64 container.
+
+### Current slice — dynamic mixed full medium/large aggregate route
+
+`DynamicThreadExitDrain::abandon_full_medium_or_large_pages` now ports the
+matching bounded dynamic-drain `src/theap.c` `BIN_FULL` class. Its complete
+source queue has two or more full arena regular pages, at least one
+`PageKind::Medium` and one `PageKind::Large`, an empty direct-cache/other-queue
+image, and independently proven rounded dynamic bins, zero retirement, empty
+local free lists, and exact one-slice medium or 64-slice large arena/PageMap
+spans. It preserves force -> false collection -> full-queue/page-count detach
+-> unmapped abandonment while retaining the dynamic drain rather than taking
+the later-main Theap/TLD teardown path.
+
+`DynamicThreadExitFullMediumOrLargePagesRoute` carries only that drain and a
+member count. Each sequential client free re-resolves its PageMap member,
+claims the low owner bit, derives only that member's dynamic bitmap/count map,
+uses the shared normal-collector failed-reclaim tail, and releases just that
+member's PageMap -> dynamic ordinary bit -> metadata -> exact arena span. The
+final release returns the empty dynamic drain. The end-to-end native regression
+fills one medium and one large page and proves both spans release; the complete
+579-test library suite passes. Homogeneous queues, small/direct-small,
+singleton, OS, malformed span, allocation-time, reclaim/adoption/requeue,
+scan, producer, concurrent, and general owner-exit paths remain absent.
 
 ### Current slice — ticket-zero first fresh-page default arena
 
@@ -93,7 +262,7 @@ can commit metadata, publish one page, and complete its normal page-map,
 bitmap, metadata, and slice-release lifecycle.
 
 Native Linux/AArch64 focused reservation tests and the complete
-`crabc-mimalloc` library suite passed (575 tests). The allocator ledger and
+`crabc-mimalloc` library suite passed (578 tests). The allocator ledger and
 ratchet must remain synchronized with this checkpoint. The next slice should
 remain a separately source-shaped owner or lifecycle boundary; do not broaden
 this explicit reservation entry into automatic routing or a registry scan.
@@ -203,9 +372,9 @@ producers, concurrent frees, and general owner exit remain outside the
 boundary.
 
 The paired distinct-bin regressions pass in the native Linux/AArch64
-container, together with the complete `crabc-mimalloc` library suite (575
+container, together with the complete `crabc-mimalloc` library suite (578
 tests), all five `remote_free` Loom schedules, and the allocator quick runner.
-The completed mapping remains ratcheted at 126 items and 130
+The completed mapping remains ratcheted at 128 items and 132
 implemented/unit-verified statuses.
 
 ### Previous checkpoint — private no-page process/pthread runtime lifecycle
@@ -992,8 +1161,8 @@ attachment remains a test-only seam; the production no-page bridge now uses
 this coordinator after initial TLS/guard setup and before constructors.
 
 General producer routing, concurrent/general shared/later-thread page-bearing
-ownership, remaining heterogeneous full classes beyond the bounded
-medium/large aggregate plus singleton/unmapped/huge owner-exit pages and
+ownership, remaining heterogeneous full classes beyond the bounded dynamic and
+later-main medium/large aggregate routes plus singleton/unmapped/huge owner-exit pages and
 behavior beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, the
 full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/mixed-medium-large/full-non-direct-small/full-direct-small aggregate routes, sole small-or-medium route (apart
@@ -1022,10 +1191,10 @@ pairing or unmapped abandonment to `src/arena.c:1304-1424`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit
-client-free transfer has twelve narrow forms: the sole full-medium route,
+client-free transfer has thirteen narrow forms: the sole full-medium route,
 full-large route, full non-direct-small route, full direct-small route,
 full-singleton, homogeneous full-OS-singleton, full-medium, full-large,
-full-non-direct-small, and full-direct-small aggregate routes, sole
+mixed-medium-large, full-non-direct-small, and full-direct-small aggregate routes, sole
 small-or-medium route, and
 aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
@@ -1188,7 +1357,7 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current pinned Linux/AArch64 container
-`cargo test -p crabc-mimalloc --lib` run passes all 575 tests, including
+`cargo test -p crabc-mimalloc --lib` run passes all 578 tests, including
 `dynamic_thread_exit_mapped_medium_pair_route_releases_distinct_bin_pages_in_source_order`,
 `dynamic_thread_exit_mapped_medium_pair_route_rejects_a_non_pair_before_detach`,
 and `dynamic_thread_exit_mapped_medium_pair_route_retains_force_collection_failure`.

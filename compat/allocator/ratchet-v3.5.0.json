@@ -8,15 +8,15 @@
   "format": 1,
   "port_map_counts": {
     "differential_verified": 12,
-    "exported": 1,
-    "implemented": 131,
-    "item_count": 127,
+    "exported": 2,
+    "implemented": 138,
+    "item_count": 134,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 131
+    "unit_verified": 138
   },
-  "port_map_sha256": "bdec947636e120191cfd3210f00b82d4588ec942d3fe36ecc4fcfa36c750a3db",
+  "port_map_sha256": "0e3e2b5bd57d8715d4724b59c69ffa1fbe3e66f08b9d00c13fb94bdb98b150b5",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -122,6 +122,11 @@
       "unit_verified"
     ],
     "item:src/alloc.c:prefixed-one-thread-c-test-adapter-and-selected-upstream-api-fixture": [
+      "exported",
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/alloc.c:private-ticket-zero-runtime-page-owner-prefixed-c-evidence-adapter": [
       "exported",
       "implemented",
       "unit_verified"
@@ -263,10 +268,18 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/init.c:private-lazy-ticket-zero-runtime-first-arena-page-owner": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/init.c:private-no-page-process-pthread-runtime-lifecycle": [
       "implemented",
       "unit_verified",
       "stress_verified"
+    ],
+    "item:src/init.c:ticket-zero-process-lifetime-page-session-with-shared-main-lease": [
+      "implemented",
+      "unit_verified"
     ],
     "item:src/init.c:ticket-zero-process-static-main-heap-default-theap-attachment": [
       "implemented",
@@ -400,6 +413,14 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/theap.c:dynamic-post-tls-mixed-full-medium-large-aggregate-route": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:dynamic-post-tls-mixed-full-singleton-regular-aggregate-route": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/theap.c:dynamic-thread-exit-full-direct-small-one-remote-force-collect-to-mapped-handoff": [
       "implemented",
       "unit_verified"
@@ -520,7 +541,15 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/theap.c:later-main-mapped-two-block-large-post-exit-route": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/theap.c:later-main-mixed-full-medium-large-aggregate-post-exit-route": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:later-main-mixed-full-singleton-regular-aggregate-post-exit-route": [
       "implemented",
       "unit_verified"
     ],

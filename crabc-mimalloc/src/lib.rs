@@ -102,9 +102,11 @@ pub use test_context::{
 #[doc(hidden)]
 pub mod __crabc_runtime {
     pub use crate::runtime_lifecycle::{
-        ThreadAttachResult, ThreadFinishResult, after_fork_child,
+        ThreadAttachResult, ThreadFinishResult, TicketZeroLaterThreadPageResult,
+        TicketZeroPageAllocationResult, TicketZeroPageFreeResult, after_fork_child,
         after_fork_parent, attach_current_thread, before_fork,
         finish_current_thread_after_user_destructors, initialize_process,
-        process_is_active,
+        process_is_active, ticket_zero_allocate, ticket_zero_free,
+        ticket_zero_later_thread_page_roundtrip, ticket_zero_reallocate,
     };
 }
