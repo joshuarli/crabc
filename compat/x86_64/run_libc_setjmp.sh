@@ -3,7 +3,8 @@
 #
 # This runner compares a focused C fixture with the pinned musl 1.2.6 oracle,
 # then links that same fixture with the isolated crabc x86 assembly object and
-# project header tree. It never selects the AArch64-only crabc-libc root.
+# project header tree. It does not build the selected archive; that separate
+# artifact use is bootstrap-only.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

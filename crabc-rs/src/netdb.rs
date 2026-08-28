@@ -1,12 +1,11 @@
-//! Owned hosts, services, and protocols snapshots.
+//! Owned conventional netdb snapshots.
 //!
-//! `from_bytes` parses a caller-owned snapshot and `from_system` reads one of
-//! the three conventional files (`/etc/hosts`, `/etc/services`, or
-//! `/etc/protocols`) through crabc's direct Linux file APIs. The resulting
-//! databases own every text field, preserve source order for enumeration, and
-//! never expose libc's static netdb storage or a process-global cursor. Lookup
-//! results are cloned owned records, so callers can retain them after the
-//! database is dropped.
+//! `from_bytes` parses a caller-owned `/etc/hosts`, `/etc/services`, or
+//! `/etc/protocols` snapshot and `from_system` reads it through crabc's direct
+//! Linux file APIs. The resulting databases own every text field, preserve
+//! source order for enumeration, and never expose libc's static netdb storage
+//! or a process-global cursor. Lookup results are cloned owned records, so
+//! callers can retain them after the database is dropped.
 //!
 //! Text fields are strict UTF-8 and may not contain NUL bytes; bytes are never
 //! converted lossily. Blank and comment-only lines are ignored. A non-empty
@@ -14,7 +13,7 @@
 //! rejects the complete snapshot with [`NetDbError::InvalidInput`] rather than
 //! being silently discarded. System files are bounded to one mebibyte before
 //! parsing and direct file errors are returned as [`NetDbError::System`]. This
-//! deliberately covers only these three files: it does not implement
+//! deliberately covers only these conventional files: it does not implement
 //! `/etc/networks`, NSS, provider plugins, resolver policy, or global C ABI
 //! enumeration.
 
@@ -22,7 +21,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::resolver::IpAddress;
+use crate::net::IpAddress;
 
 /// Errors from parsing or loading a netdb text snapshot.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

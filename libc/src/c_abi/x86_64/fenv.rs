@@ -1,4 +1,4 @@
-//! Linux/x86-64 source-only C floating-point-environment leaf.
+//! Linux/x86-64 selected static C floating-point-environment leaf.
 //!
 //! Provenance is fixed to musl 1.2.6 (`9fa28ece75d8a2191de7c5bb53bed224c5947417`),
 //! under musl's MIT license recorded in its `COPYRIGHT` file. The source map is
@@ -14,9 +14,10 @@
 //!
 //! The intentional implementation difference is lexical only: the fixed
 //! assembly is carried by Rust's `global_asm!` and the tiny generic wrappers
-//! live in this one `no_std` source file. This remains a source-only evidence
-//! leaf until the wider x86 `crabc-libc` composition is selected; it must not
-//! be mistaken for a complete C runtime or public x86 support claim.
+//! live in this one `no_std` source file. The selected x86 static archive
+//! exposes exactly this fenv surface through its freestanding artifact gate;
+//! it must not be mistaken for a complete C runtime or public x86 support
+//! claim.
 
 use core::ffi::c_int;
 

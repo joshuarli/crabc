@@ -4,6 +4,10 @@
 #include <features.h>
 #include <sys/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef unsigned long nfds_t;
 
 struct pollfd {
@@ -34,6 +38,10 @@ int poll(struct pollfd [], nfds_t, int);
 #include <time.h>
 int ppoll(struct pollfd [], nfds_t, const struct timespec *__restrict,
           const sigset_t *__restrict);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

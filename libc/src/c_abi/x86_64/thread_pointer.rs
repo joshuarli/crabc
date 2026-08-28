@@ -7,8 +7,9 @@
 //! bounded: this leaf stops before musl's `__pthread_self()`/`TP_OFFSET`
 //! arithmetic, returning only an opaque current-thread identity rather than a
 //! project-defined TCB layout. The isolated native probe selects this file
-//! directly; `crabc-libc` remains AArch64-only until the complete x86 C ABI and
-//! runtime are proven.
+//! directly; it is not one of the separately evidenced x86 static C ABI
+//! leaves. The complete public C runtime remains Linux/AArch64-only until the
+//! x86 C ABI and runtime are proven.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 thread-pointer leaf requires little-endian Linux/x86-64");

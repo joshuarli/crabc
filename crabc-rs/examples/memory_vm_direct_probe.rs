@@ -2,7 +2,9 @@
 
 #![no_std]
 
-use crabc_rs::mm::{self, MapFlags, MlockAllFlags, PosixAdvice, ProtFlags};
+use crabc_rs::mm::{self, MapFlags, MlockAllFlags, ProtFlags};
+#[cfg(target_arch = "aarch64")]
+use crabc_rs::mm::PosixAdvice;
 use crabc_rs::process::kernel_brk;
 
 const PAGE_SIZE: usize = 4096;
@@ -37,11 +39,15 @@ pub extern "C" fn crabc_rs_memory_vm_direct_probe() -> i32 {
         Err(error) => return -error.raw(),
     };
 
+    // POSIX advice has its own staged x86 boundary. Keep this shared AArch64
+    // probe's existing advice check out of the private x86 VM-control proof.
+    #[cfg(target_arch = "aarch64")]
     let advisory = unsafe { mm::posix_madvise(mapping, PAGE_SIZE, PosixAdvice::Normal) };
     let legacy = unsafe { mm::remap_file_pages(mapping, PAGE_SIZE, 0) };
     let unlocked = mm::mlockall(MlockAllFlags::CURRENT).map(|_| mm::munlockall());
     let unmapped = unsafe { mm::munmap(mapping, PAGE_SIZE) };
 
+    #[cfg(target_arch = "aarch64")]
     if let Err(error) = advisory {
         return -error.raw();
     }

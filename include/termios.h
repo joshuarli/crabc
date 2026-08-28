@@ -1,14 +1,21 @@
 #ifndef _TERMIOS_H
 #define _TERMIOS_H
 
-#include <sys/types.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <features.h>
+
+#define __NEED_pid_t
+#define __NEED_struct_winsize
+#include <bits/alltypes.h>
 
 typedef unsigned char cc_t;
 typedef unsigned int speed_t;
 typedef unsigned int tcflag_t;
 #define NCCS 32
 struct termios { tcflag_t c_iflag, c_oflag, c_cflag, c_lflag; cc_t c_line; cc_t c_cc[NCCS]; speed_t __ispeed, __ospeed; };
-struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 
 #define VEOF 4
 #define VEOL 11
@@ -80,6 +87,21 @@ struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 #define B9600 0000015
 #define B19200 0000016
 #define B38400 0000017
+#define B57600 0010001
+#define B115200 0010002
+#define B230400 0010003
+#define B460800 0010004
+#define B500000 0010005
+#define B576000 0010006
+#define B921600 0010007
+#define B1000000 0010010
+#define B1152000 0010011
+#define B1500000 0010012
+#define B2000000 0010013
+#define B2500000 0010014
+#define B3000000 0010015
+#define B3500000 0010016
+#define B4000000 0010017
 #define CSIZE 0000060
 #define CS5 0000000
 #define CS6 0000020
@@ -111,12 +133,21 @@ struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 #define TCOOFF 0
 #define TCOON 1
 
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define EXTA 0000016
+#define EXTB 0000017
+#define CBAUD 0010017
+#define CBAUDEX 0010000
+#define CIBAUD 002003600000
+#endif
+
 speed_t cfgetispeed(const struct termios *);
 speed_t cfgetospeed(const struct termios *);
 int cfsetispeed(struct termios *, speed_t);
 int cfsetospeed(struct termios *, speed_t);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int cfsetspeed(struct termios *, speed_t);
+void cfmakeraw(struct termios *);
 #endif
 int tcdrain(int);
 int tcflow(int, int);
@@ -127,5 +158,9 @@ pid_t tcgetsid(int);
 int tcsendbreak(int, int);
 int tcsetattr(int, int, const struct termios *);
 int tcsetwinsize(int, const struct winsize *);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -1,10 +1,10 @@
-//! Linux/x86-64 source-only `setjmp` continuation boundary.
+//! Linux/x86-64 selected static `setjmp` continuation boundary.
 //!
-//! This leaf is intentionally not selected by `crabc-libc`: its target root
-//! and surrounding C ABI state remain Linux/AArch64-only until the complete
-//! x86 runtime is proven. The standalone native probe links this exact SysV
-//! assembly with one C fixture to establish the x86 machine-context and
-//! signal-mask contract without pretending that an x86 libc artifact exists.
+//! The selected x86 static `crabc-libc` composition admits this exact SysV
+//! assembly with the bulk-memory and fenv primitives. Its freestanding C
+//! fixture proves the machine-context and signal-mask contract without
+//! pretending that a general x86 libc, CRT, pthread/TLS lifecycle, or public
+//! x86 runtime exists.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 setjmp leaf requires little-endian Linux/x86-64");

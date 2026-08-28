@@ -7,36 +7,37 @@
 //! one-word kernel mask, unconditional `SA_RESTORER` insertion, and private
 //! syscall-15 restorer selection. It deliberately omits the public
 //! `sigaction` wrapper's signal validation, handler bookkeeping, signal-mask
-//! policy, syscall, errno, and old-action conversion.
+//! policy, syscall, errno, and old-action conversion. The typed helpers below
+//! are private composition machinery for the separately selected static
+//! signal-control artifact; the C-visible packing bridge remains probe-only.
 //!
-//! This file exports no public signal API and never installs or delivers a
-//! handler.
+//! This file exports no public signal API. Its one hidden restorer symbol is
+//! an x86 signal-frame implementation detail, not a C entry point.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 signal foundation requires little-endian Linux/x86-64");
 
-use core::ffi::c_void;
-
 #[repr(C)]
-#[allow(dead_code)]
-struct PublicSigAction {
-    handler: usize,
-    mask: [u64; 16],
-    flags: i32,
-    padding: i32,
-    restorer: usize,
+#[derive(Clone, Copy)]
+pub(super) struct PublicSigAction {
+    pub(super) handler: usize,
+    pub(super) mask: [u64; PUBLIC_SIGSET_WORDS],
+    pub(super) flags: i32,
+    pub(super) padding: i32,
+    pub(super) restorer: usize,
 }
 
 #[repr(C)]
-#[allow(dead_code)]
-struct KernelSigAction {
-    handler: usize,
-    flags: u64,
-    restorer: usize,
-    mask: u64,
+#[derive(Clone, Copy)]
+pub(super) struct KernelSigAction {
+    pub(super) handler: usize,
+    pub(super) flags: u64,
+    pub(super) restorer: usize,
+    pub(super) mask: u64,
 }
 
-const SA_RESTORER: u64 = 0x0400_0000;
+pub(super) const PUBLIC_SIGSET_WORDS: usize = 16;
+pub(super) const SA_RESTORER: u64 = 0x0400_0000;
 
 const _: [(); 152] = [(); core::mem::size_of::<PublicSigAction>()];
 const _: [(); 8] = [(); core::mem::align_of::<PublicSigAction>()];
@@ -71,6 +72,12 @@ unsafe extern "C" {
     fn crabc_x86_64_signal_restorer() -> !;
 }
 
+/// Return the private syscall-15 restorer's address.
+#[inline]
+pub(super) fn restorer_address() -> usize {
+    crabc_x86_64_signal_restorer as *const () as usize
+}
+
 /// Pack a valid public musl record into Linux's 32-byte `rt_sigaction` record.
 ///
 /// This fixed-source leaf always adds the private non-returning syscall-15
@@ -82,10 +89,9 @@ unsafe extern "C" {
 /// `public` must be valid to read a complete musl x86 `struct sigaction` and
 /// `kernel` must be valid to write a complete Linux kernel action record for
 /// this call.
-#[no_mangle]
-pub unsafe extern "C" fn crabc_x86_64_signal_action_pack(
-    public: *const c_void,
-    kernel: *mut c_void,
+pub(super) unsafe fn pack_public_action(
+    public: *const PublicSigAction,
+    kernel: *mut KernelSigAction,
 ) {
     // Read only the fixed public fields consumed by musl's conversion through
     // raw unaligned operations. That preserves the unsafe caller contract
@@ -107,7 +113,7 @@ pub unsafe extern "C" fn crabc_x86_64_signal_action_pack(
     // reference validity checks and their panic path.
     unsafe {
         core::ptr::write_unaligned(
-            kernel.cast::<KernelSigAction>(),
+            kernel,
             KernelSigAction {
                 handler,
                 // Musl first assigns the signed public `int` field to the
@@ -115,9 +121,42 @@ pub unsafe extern "C" fn crabc_x86_64_signal_action_pack(
                 // `SA_RESTORER`. Preserve that sign extension for otherwise
                 // unrecognised high flag bits too.
                 flags: (flags as i64 as u64) | SA_RESTORER,
-                restorer: crabc_x86_64_signal_restorer as *const () as usize,
+                restorer: restorer_address(),
                 mask,
             },
         );
+    }
+}
+
+/// Expand Linux's compact old-action record into musl's partial public x86
+/// record update used by the selected static C artifact.
+///
+/// Linux returns one signal-mask word. Musl writes only the public handler,
+/// that word, and flags, deliberately preserving the caller-resident tail,
+/// padding, and nonstandard restorer field. Keep that observable partial-write
+/// contract instead of manufacturing a fully initialized public record.
+///
+/// # Safety
+///
+/// `kernel` must be valid to read one complete Linux kernel action record and
+/// `public` must be valid to write the handler, first mask word, and flags of
+/// one musl x86 `struct sigaction`.
+#[allow(dead_code)] // The source-only packing probe intentionally does not query old actions.
+pub(super) unsafe fn unpack_kernel_action(
+    kernel: *const KernelSigAction,
+    public: *mut PublicSigAction,
+) {
+    // SAFETY: the caller gives a complete kernel record. An unaligned read
+    // keeps this private ABI helper free of Rust-reference assumptions.
+    let kernel = unsafe { core::ptr::read_unaligned(kernel) };
+    let public = public.cast::<u8>();
+
+    // SAFETY: the caller gives a complete writable public record. These exact
+    // offsets are the x86 musl public ABI fields which its sigaction wrapper
+    // updates after a successful kernel query; all other bytes stay untouched.
+    unsafe {
+        core::ptr::write_unaligned(public.cast::<usize>(), kernel.handler);
+        core::ptr::write_unaligned(public.add(8).cast::<u64>(), kernel.mask);
+        core::ptr::write_unaligned(public.add(136).cast::<i32>(), kernel.flags as i32);
     }
 }

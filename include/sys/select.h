@@ -7,6 +7,10 @@
 #define __NEED_sigset_t
 #include <bits/alltypes.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef __DEFINED_struct_timeval
 #define __DEFINED_struct_timeval
 struct timeval {
@@ -24,5 +28,9 @@ typedef struct { unsigned long fds_bits[FD_SETSIZE / (8 * sizeof(unsigned long))
 
 int select(int, fd_set *__restrict, fd_set *__restrict, fd_set *__restrict, struct timeval *__restrict);
 int pselect(int, fd_set *__restrict, fd_set *__restrict, fd_set *__restrict, const struct timespec *__restrict, const sigset_t *__restrict);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

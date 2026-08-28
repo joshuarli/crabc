@@ -5,7 +5,8 @@ use core::ffi::CStr;
 use crate::{RawFd, Result};
 use crate::syscall::{decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_COPY_FILE_RANGE, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FADVISE64, SYS_FALLOCATE, SYS_FCHMOD, SYS_FCHMODAT, SYS_FCHOWN, SYS_FCHOWNAT, SYS_FDATASYNC, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_FSTAT, SYS_FSTATFS, SYS_FSYNC, SYS_FTRUNCATE, SYS_GETDENTS64, SYS_GETXATTR, SYS_LGETXATTR, SYS_LINKAT, SYS_LISTXATTR, SYS_LLISTXATTR, SYS_LREMOVEXATTR, SYS_LSEEK, SYS_LSETXATTR, SYS_MEMFD_CREATE, SYS_MKDIRAT, SYS_MKNODAT, SYS_NEWFSTATAT, SYS_OPENAT, SYS_OPENAT2, SYS_READAHEAD, SYS_READLINKAT, SYS_REMOVEXATTR, SYS_RENAMEAT2, SYS_SETXATTR, SYS_STATFS, SYS_STATX, SYS_SYMLINKAT, SYS_SYNC, SYS_SYNCFS, SYS_TRUNCATE, SYS_UNLINKAT, SYS_UTIMENSAT};
 
-// This is the private Linux/AArch64 wire layout for `struct statx`.
+// This is the private Linux statx wire layout for the admitted AArch64 and
+// x86-64 syscall targets.
 // Keep it private: callers receive a typed facade value, while this type
 // makes the output pointer passed to the kernel carry the exact ABI size
 // and alignment contract.
@@ -417,7 +418,7 @@ pub fn memfd_create(name: &CStr, flags: u32) -> Result<RawFd> {
     decode_i32(unsafe { syscall2(SYS_MEMFD_CREATE, name.as_ptr() as usize, flags as usize) })
 }
 
-/// Queries the Linux/AArch64 `struct statx` representation for a C path.
+/// Queries the Linux `struct statx` representation for a C path.
 ///
 /// This is a direct, stateless syscall seam. It intentionally propagates
 /// `ENOSYS` instead of emulating musl's compatibility fallback or caching
@@ -427,7 +428,7 @@ pub fn memfd_create(name: &CStr, flags: u32) -> Result<RawFd> {
 ///
 /// `path` must point to a readable NUL-terminated pathname and `buffer`
 /// must designate writable, correctly aligned storage for the complete
-/// 256-byte Linux/AArch64 `struct statx` layout.
+/// 256-byte Linux `struct statx` layout.
 #[inline]
 pub unsafe fn statx_raw(
     dirfd: RawFd,

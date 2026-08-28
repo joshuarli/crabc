@@ -6,6 +6,10 @@
 #error "this probe requires native Linux/x86-64 little-endian LP64"
 #endif
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
+
 #include <stddef.h>
 #include <sys/sysinfo.h>
 #include <sys/utsname.h>
@@ -13,7 +17,13 @@
 _Static_assert(SI_LOAD_SHIFT == 16, "musl SI_LOAD_SHIFT");
 _Static_assert(sizeof(struct utsname) == 390, "x86 utsname size");
 _Static_assert(_Alignof(struct utsname) == 1, "x86 utsname alignment");
-_Static_assert(offsetof(struct utsname, machine) == 260, "x86 utsname machine offset");
+_Static_assert(offsetof(struct utsname, nodename) == 65 &&
+    offsetof(struct utsname, machine) == 260 &&
+    offsetof(struct utsname, domainname) == 325,
+    "x86 GNU utsname field offsets");
+_Static_assert(sizeof(((struct utsname *)0)->nodename) == 65 &&
+    sizeof(((struct utsname *)0)->domainname) == 65,
+    "x86 GNU utsname hostname/domain field widths");
 _Static_assert(sizeof(struct sysinfo) == 368, "x86 sysinfo size");
 _Static_assert(_Alignof(struct sysinfo) == 8, "x86 sysinfo alignment");
 _Static_assert(offsetof(struct sysinfo, uptime) == 0, "sysinfo uptime offset");

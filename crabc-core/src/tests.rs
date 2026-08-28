@@ -142,6 +142,122 @@ fn x86_64_openat_mode_and_direct_io_follow_the_kernel_abi() {
 
 #[cfg(target_arch = "x86_64")]
 #[test]
+fn x86_64_gettimeofday_writes_one_normalized_private_record() {
+    #[repr(C)]
+    struct GuardedWallClock {
+        value: crate::time::KernelWallClockParts,
+        trailing_guard: [u8; 32],
+    }
+
+    let mut output = GuardedWallClock {
+        value: crate::time::KernelWallClockParts {
+            seconds: 0,
+            microseconds: 0,
+        },
+        trailing_guard: [0xa5; 32],
+    };
+
+    // SAFETY: `value` is one aligned, live private timeval record. The guard
+    // makes the direct x86 syscall's exact output-record boundary observable.
+    unsafe { crate::time::gettimeofday_raw(core::ptr::addr_of_mut!(output.value)) }
+        .expect("direct x86 gettimeofday initializes the private timeval record");
+
+    assert!(
+        (0..1_000_000).contains(&output.value.microseconds),
+        "Linux normalizes successful timeval microseconds"
+    );
+    assert_eq!(output.trailing_guard, [0xa5; 32]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn x86_64_posix_timer_writes_exact_id_and_old_setting_records() {
+    #[repr(C)]
+    struct KernelSigevent {
+        value: usize,
+        signal: i32,
+        notify: i32,
+        padding: [i32; 12],
+    }
+
+    #[repr(C)]
+    struct GuardedTimerId {
+        value: i32,
+        trailing_guard: [u8; 32],
+    }
+
+    #[repr(C)]
+    struct GuardedTimerSpec {
+        value: crate::time::KernelItimerspec,
+        trailing_guard: [u8; 32],
+    }
+
+    const _: () = assert!(core::mem::size_of::<KernelSigevent>() == 64);
+    const _: () = assert!(core::mem::align_of::<KernelSigevent>() == 8);
+
+    let event = KernelSigevent {
+        value: 0,
+        signal: 0,
+        // `SIGEV_NONE`: create a timer with no signal or callback side effect.
+        notify: 1,
+        padding: [0; 12],
+    };
+    let mut timer_id = GuardedTimerId {
+        value: -1,
+        trailing_guard: [0xa5; 32],
+    };
+
+    // SAFETY: `event` is one initialized private 64-byte x86-64 sigevent,
+    // and `timer_id.value` is aligned writable storage for the kernel's i32
+    // output. Its guard makes that output boundary observable.
+    let status = unsafe {
+        crate::time::timer_create_raw(
+            1,
+            core::ptr::addr_of!(event).cast(),
+            core::ptr::addr_of_mut!(timer_id.value),
+        )
+    }
+    .expect("direct x86 timer_create initializes a private timer ID");
+    assert_eq!(status, 0);
+    assert!(timer_id.value >= 0);
+    assert_eq!(timer_id.trailing_guard, [0xa5; 32]);
+
+    let disarmed = crate::time::KernelItimerspec {
+        it_interval: crate::time::KernelTimespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        it_value: crate::time::KernelTimespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+    };
+    let mut old = GuardedTimerSpec {
+        value: disarmed,
+        trailing_guard: [0x5a; 32],
+    };
+
+    // `timer_settime` has four x86-64 syscall arguments. A successful old
+    // setting proves that its fourth pointer reached the required `r10`
+    // register, while the guard proves Linux wrote exactly one itimerspec.
+    let operation = unsafe {
+        crate::time::timer_settime_raw(
+            timer_id.value,
+            0,
+            core::ptr::addr_of!(disarmed),
+            core::ptr::addr_of_mut!(old.value),
+        )
+    };
+    let delete = crate::time::timer_delete_raw(timer_id.value);
+    operation.expect("direct x86 timer_settime returns the old private record");
+    delete.expect("delete direct x86 SIGEV_NONE evidence timer");
+
+    assert_eq!(old.value, disarmed);
+    assert_eq!(old.trailing_guard, [0x5a; 32]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
 fn x86_64_futex_wait_and_wake_preserve_the_six_word_kernel_call() {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;

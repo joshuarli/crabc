@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 resolver operations.
+//! Stateless Linux LP64 resolver transport operations.
 
 use crate::{net, Result};
 
@@ -16,6 +16,8 @@ const SOCK_NONBLOCK: u32 = 0x0000_0800;
 pub const SOCK_CLOEXEC: u32 = 0x0008_0000;
 /// `MSG_NOSIGNAL`, used for the datagram send operation.
 pub const MSG_NOSIGNAL: u32 = 0x4000;
+/// `MSG_TRUNC`, used to learn whether a bounded datagram buffer lost data.
+const MSG_TRUNC: u32 = 0x20;
 /// DNS Internet class.
 pub const CLASS_IN: u16 = 1;
 /// DNS address record.
@@ -128,6 +130,29 @@ struct SockaddrIn6 {
     address: [u8; 16],
     scope_id: u32,
 }
+
+const _: () = assert!(core::mem::size_of::<PollFd>() == 8);
+const _: () = assert!(core::mem::align_of::<PollFd>() == 4);
+const _: () = assert!(core::mem::offset_of!(PollFd, fd) == 0);
+const _: () = assert!(core::mem::offset_of!(PollFd, events) == 4);
+const _: () = assert!(core::mem::offset_of!(PollFd, revents) == 6);
+const _: () = assert!(core::mem::size_of::<Timespec>() == 16);
+const _: () = assert!(core::mem::align_of::<Timespec>() == 8);
+const _: () = assert!(core::mem::offset_of!(Timespec, seconds) == 0);
+const _: () = assert!(core::mem::offset_of!(Timespec, nanoseconds) == 8);
+const _: () = assert!(core::mem::size_of::<SockaddrIn>() == 16);
+const _: () = assert!(core::mem::align_of::<SockaddrIn>() == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, family) == 0);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, port) == 2);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, address) == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn, zero) == 8);
+const _: () = assert!(core::mem::size_of::<SockaddrIn6>() == 28);
+const _: () = assert!(core::mem::align_of::<SockaddrIn6>() == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, family) == 0);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, port) == 2);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, flow_info) == 4);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, address) == 8);
+const _: () = assert!(core::mem::offset_of!(SockaddrIn6, scope_id) == 24);
 
 const POLLIN: i16 = 0x0001;
 const POLLOUT: i16 = 0x0004;
@@ -344,32 +369,57 @@ impl<'packet> DnsResponse<'packet> {
     }
 }
 
+/// Validates a DNS compression pointer and returns its prior target.
+///
+/// RFC 1035 compression points to an earlier domain-name occurrence in the
+/// message body. Checking that invariant prevents a framing-only parser from
+/// accepting a header byte, dangling, forward, or cyclic pointer without
+/// expanding it.
+fn compression_target(packet: &[u8], offset: usize) -> Result<usize> {
+    let next = offset.checked_add(1).ok_or_else(malformed)?;
+    if next >= packet.len() {
+        return Err(malformed());
+    }
+    let target = ((packet[offset] as usize & 0x3f) << 8) | packet[next] as usize;
+    if target < 12 || target >= offset {
+        return Err(malformed());
+    }
+    Ok(target)
+}
+
 fn skip_name(packet: &[u8], mut offset: usize) -> Result<usize> {
-    let mut jumps = 0usize;
+    let mut encoded_end = None;
+    let mut steps = 0usize;
     loop {
         if offset >= packet.len() {
             return Err(malformed());
         }
         let length = packet[offset];
         if length & 0xc0 == 0xc0 {
-            if offset + 1 >= packet.len() {
+            let target = compression_target(packet, offset)?;
+            if encoded_end.is_none() {
+                encoded_end = Some(offset.checked_add(2).ok_or_else(malformed)?);
+            }
+            offset = target;
+            steps += 1;
+            if steps > 128 {
                 return Err(malformed());
             }
-            return Ok(offset + 2);
+            continue;
         }
         if length > 63 {
             return Err(malformed());
         }
-        offset += 1;
+        offset = offset.checked_add(1).ok_or_else(malformed)?;
         if length == 0 {
-            return Ok(offset);
+            return Ok(encoded_end.unwrap_or(offset));
         }
         if offset + length as usize > packet.len() {
             return Err(malformed());
         }
         offset += length as usize;
-        jumps += 1;
-        if jumps > 128 {
+        steps += 1;
+        if steps > 128 {
             return Err(malformed());
         }
     }
@@ -387,13 +437,7 @@ fn expand_name(packet: &[u8], start: usize, output: &mut [u8]) -> Result<usize> 
         }
         let length = packet[offset];
         if length & 0xc0 == 0xc0 {
-            if offset + 1 >= packet.len() {
-                return Err(malformed());
-            }
-            let target = ((length as usize & 0x3f) << 8) | packet[offset + 1] as usize;
-            if target >= packet.len() || target == offset {
-                return Err(malformed());
-            }
+            let target = compression_target(packet, offset)?;
             if !jumped {
                 consumed += 2;
             }
@@ -502,7 +546,7 @@ fn monotonic_millis() -> Result<i64> {
         seconds: 0,
         nanoseconds: 0,
     };
-    // SAFETY: `value` is the exact two-word Linux/AArch64 timespec output
+    // SAFETY: `value` is the exact two-word admitted Linux LP64 timespec output
     // record and remains live for the direct syscall.
     unsafe {
         crate::time::clock_gettime_raw(CLOCK_MONOTONIC, (&mut value as *mut Timespec).cast())?
@@ -658,8 +702,84 @@ fn receive_exact(fd: i32, bytes: &mut [u8], deadline: i64) -> Result<()> {
     Ok(())
 }
 
+/// Receives one connected UDP datagram without accepting a partial prefix.
+fn receive_datagram(fd: i32, bytes: &mut [u8]) -> Result<usize> {
+    let iovec = crate::io::Iovec {
+        iov_base: bytes.as_mut_ptr(),
+        iov_len: bytes.len(),
+    };
+    // SAFETY: `iovec` names exactly the live mutable `bytes` range. The
+    // private message header has no source-address or ancillary-data storage.
+    // `MSG_TRUNC` makes Linux return the full datagram length when this fixed
+    // caller buffer is too small, so a partial DNS packet is never parsed.
+    let (length, flags) = unsafe { net::recvmsg_raw(fd, &iovec, 1, MSG_TRUNC) }?;
+    if length > bytes.len() || flags & MSG_TRUNC != 0 {
+        return Err(crate::Errno::OVERFLOW);
+    }
+    Ok(length)
+}
+
+/// Returns the byte after the one DNS question required by this transport.
+fn one_question_end(packet: &[u8]) -> Result<usize> {
+    if packet.len() < 12 || u16::from_be_bytes([packet[4], packet[5]]) != 1 {
+        return Err(malformed());
+    }
+    let name_end = skip_name(packet, 12)?;
+    let question_end = name_end.checked_add(4).ok_or_else(malformed)?;
+    if question_end > packet.len() {
+        return Err(malformed());
+    }
+    Ok(question_end)
+}
+
+/// Checks the response header and the exact echoed DNS question.
+///
+/// DNS servers may add or omit resource records relative to the query, so the
+/// question is the bounded correlation seam. `exchange` prevalidates `query`,
+/// leaving a malformed received packet as an ordinary ignored datagram.
+fn matching_question_end(packet: &[u8], query: &[u8], query_id: u16) -> Option<usize> {
+    if packet.len() < 12
+        || u16::from_be_bytes([packet[0], packet[1]]) != query_id
+        || packet[2] & 0x80 == 0
+        || packet[2] & 0x78 != 0
+    {
+        return None;
+    }
+    let query_end = one_question_end(query).ok()?;
+    let packet_end = one_question_end(packet).ok()?;
+    if packet[12..packet_end] != query[12..query_end] {
+        return None;
+    }
+    Some(packet_end)
+}
+
+/// Requires every declared DNS resource record to fit within the packet.
+fn has_complete_records(packet: &[u8], mut offset: usize) -> bool {
+    for count_offset in [6usize, 8, 10] {
+        let count = u16::from_be_bytes([packet[count_offset], packet[count_offset + 1]]);
+        for _ in 0..count {
+            let name_end = match skip_name(packet, offset) {
+                Ok(value) => value,
+                Err(_) => return false,
+            };
+            let record_end = match name_end.checked_add(10) {
+                Some(value) if value <= packet.len() => value,
+                _ => return false,
+            };
+            let rdata_length =
+                u16::from_be_bytes([packet[name_end + 8], packet[name_end + 9]]) as usize;
+            offset = match record_end.checked_add(rdata_length) {
+                Some(value) if value <= packet.len() => value,
+                _ => return false,
+            };
+        }
+    }
+    offset == packet.len()
+}
+
 fn udp_exchange(
     fd: i32,
+    query: &[u8],
     query_id: u16,
     answer: &mut [u8],
     deadline: i64,
@@ -668,18 +788,9 @@ fn udp_exchange(
         if !poll_until(fd, POLLIN, deadline)? {
             return Err(crate::Errno::TIMEDOUT);
         }
-        let received = unsafe {
-            net::recvfrom_raw(
-                fd,
-                answer.as_mut_ptr(),
-                answer.len(),
-                0,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            )
-        };
-        let length = match received {
+        let length = match receive_datagram(fd, answer) {
             Ok(length) => length,
+            Err(error) if error == crate::Errno::OVERFLOW => continue,
             Err(error)
                 if error == crate::Errno::INTR
                     || error == crate::Errno::AGAIN
@@ -689,18 +800,21 @@ fn udp_exchange(
             }
             Err(error) => return Err(error),
         };
-        // Ignore short, non-response, wrong-transaction, and empty-
-        // question packets without abandoning this nameserver. A valid
+        // Ignore short, wrong-transaction, question-mismatched, malformed,
+        // and oversized packets without abandoning this nameserver. A valid
         // response can legally follow all of them on the same socket.
-        if length < 12
-            || u16::from_be_bytes([answer[0], answer[1]]) != query_id
-            || answer[2] & 0x80 == 0
-            || u16::from_be_bytes([answer[4], answer[5]]) == 0
-        {
-            continue;
-        }
-        if answer[2] & 0x02 != 0 {
+        let packet = &answer[..length];
+        let question_end = match matching_question_end(packet, query, query_id) {
+            Some(value) => value,
+            None => continue,
+        };
+        // A truncated UDP DNS message need only preserve the header and
+        // echoed question; its incomplete record body is retried over TCP.
+        if packet[2] & 0x02 != 0 {
             return Ok(UdpResponse::Truncated);
+        }
+        if !has_complete_records(packet, question_end) {
+            continue;
         }
         return Ok(UdpResponse::Complete(length));
     }
@@ -749,11 +863,8 @@ fn tcp_exchange(
         }
         let response = &mut answer[..response_length];
         receive_exact(fd, response, deadline)?;
-        if u16::from_be_bytes([response[0], response[1]]) != query_id
-            || response[2] & 0x80 == 0
-            || u16::from_be_bytes([response[4], response[5]]) == 0
-            || response[2] & 0x02 != 0
-        {
+        let question_end = matching_question_end(response, query, query_id).ok_or_else(malformed)?;
+        if response[2] & 0x02 != 0 || !has_complete_records(response, question_end) {
             return Err(malformed());
         }
         Ok(response_length)
@@ -764,12 +875,14 @@ fn tcp_exchange(
 
 /// Sends a DNS query through the explicitly configured nameservers.
 ///
-/// Each nameserver gets a bounded UDP deadline. Short, malformed, and
-/// wrong-transaction datagrams are ignored until that deadline. A
-/// response with the DNS truncation bit retries the same query over
-/// length-prefixed TCP, with partial I/O and connect progress charged to
-/// the same deadline. Failed servers advance in configured order and the
-/// configured attempt count repeats that order.
+/// `query` must carry `query_id` and exactly one complete DNS question, as
+/// [`encode_query`] emits. Each nameserver gets a bounded UDP deadline. Short,
+/// wrong-transaction, question-mismatched, record-framing-malformed, and
+/// oversized datagrams are ignored until that deadline. A response with the
+/// DNS truncation bit retries the same query over length-prefixed TCP, with
+/// partial I/O and connect progress charged to the same deadline. Failed
+/// servers advance in configured order and the configured attempt count
+/// repeats that order.
 pub fn exchange(
     config: &ExchangeConfig,
     query: &[u8],
@@ -782,6 +895,8 @@ pub fn exchange(
         || config.attempts == 0
         || query.len() < 12
         || answer.len() < 12
+        || u16::from_be_bytes([query[0], query[1]]) != query_id
+        || one_question_end(query).is_err()
     {
         return Err(invalid());
     }
@@ -828,7 +943,7 @@ pub fn exchange(
                 index += 1;
                 continue;
             }
-            match udp_exchange(fd, query_id, answer, deadline) {
+            match udp_exchange(fd, query, query_id, answer, deadline) {
                 Ok(UdpResponse::Complete(length)) => {
                     let _ = crate::io::close(fd);
                     return Ok(length);

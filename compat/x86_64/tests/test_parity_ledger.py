@@ -36,11 +36,13 @@ class X86ParityLedgerTests(unittest.TestCase):
 
     def test_checked_in_ledger_is_closed_and_not_a_public_support_claim(self) -> None:
         report = ledger.validate_ledger(self.data())
-        self.assertEqual(report["schema"], "crabc.x86_64-runtime-parity/v1")
+        self.assertEqual(report["schema"], "crabc.x86_64-runtime-parity/v3")
         self.assertEqual(report["family_count"], 26)
         self.assertEqual(report["status_counts"], {"foundation-verified": 7, "planned": 19})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
+        self.assertEqual(report["verified_slice_count"], 26)
+        self.assertEqual(report["verified_artifact_count"], 22)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -69,10 +71,744 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh libc-thread-pointer",
             {evidence["command"] for evidence in errno_tls["native_evidence"]},
         )
+        posix_runtime = self.family(data, "libc.posix-runtime")
+        self.assertEqual(posix_runtime["status"], "planned")
+        slices = posix_runtime["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 2
+        slices_by_id = {slice_entry["id"]: slice_entry for slice_entry in slices}
+        stat_compat = slices_by_id["filesystem.stat-compat"]
+        assert isinstance(stat_compat, dict)
+        self.assertEqual(stat_compat["id"], "filesystem.stat-compat")
+        self.assertEqual(stat_compat["capabilities"], ["filesystem.stat-compat"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/stat_compat.rs",
+            stat_compat["source_owners"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            stat_compat["source_owners"],
+        )
+        stat_commands = {
+            evidence["command"] for evidence in stat_compat["native_evidence"]
+        }
+        self.assertEqual(
+            stat_commands, {"./scripts/dev-x86_64.sh libc-stat-compat"}
+        )
+        self.assertIn("freestanding fixture", stat_compat["description"])
+        self.assertIn("does not select libc.so", stat_compat["native_evidence"][0]["scope"])
+        credentials = slices_by_id["process.credentials"]
+        assert isinstance(credentials, dict)
+        self.assertEqual(credentials["capabilities"], ["process.credentials"])
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/credentials.rs",
+            "compat/x86_64/libc_credentials_probe.c",
+            "compat/x86_64/libc_credentials_start.S",
+            "compat/x86_64/run_libc_credentials.sh",
+        ):
+            self.assertIn(owner, credentials["source_owners"])
+        credential_commands = {
+            evidence["command"] for evidence in credentials["native_evidence"]
+        }
+        self.assertEqual(
+            credential_commands, {"./scripts/dev-x86_64.sh libc-credentials"}
+        )
+        self.assertIn("EOPNOTSUPP", credentials["description"])
+        self.assertIn(
+            "does not select libc.so", credentials["native_evidence"][0]["scope"]
+        )
+        posix_artifacts = posix_runtime["verified_artifact"]
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 21
+        artifacts_by_id = {
+            artifact["id"]: artifact
+            for artifact in posix_artifacts
+            if isinstance(artifact, dict)
+        }
+        signal_control = artifacts_by_id["static-c-signal-control"]
+        assert isinstance(signal_control, dict)
+        self.assertNotIn("capabilities", signal_control)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/signal_foundation.rs",
+            "libc/src/c_abi/x86_64/signal_control.rs",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_signal_control_probe.c",
+            "compat/x86_64/libc_signal_control_start.S",
+            "compat/x86_64/run_libc_signal_control.sh",
+        ):
+            self.assertIn(owner, signal_control["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in signal_control["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-signal-control"},
+        )
+        self.assertIn("does not select process.signal", signal_control["description"])
+        self.assertIn("partial output writes", signal_control["description"])
+        self.assertIn(
+            "does not select process.signal", signal_control["native_evidence"][0]["scope"]
+        )
+        self.assertIn(
+            "direct null pending EFAULT",
+            signal_control["native_evidence"][0]["scope"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/signal_control.rs",
+            posix_runtime["source_owners"],
+        )
+        termios_control = artifacts_by_id["static-c-termios-control"]
+        assert isinstance(termios_control, dict)
+        self.assertNotIn("capabilities", termios_control)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/termios_control.rs",
+            "include/termios.h",
+            "compat/x86_64/termios_header_abi_probe.c",
+            "compat/x86_64/termios_header_abi_probe.cpp",
+            "compat/x86_64/run_termios_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_termios_control_probe.c",
+            "compat/x86_64/libc_termios_control_start.S",
+            "compat/x86_64/run_libc_termios_control.sh",
+        ):
+            self.assertIn(owner, termios_control["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in termios_control["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-termios-control"},
+        )
+        self.assertIn("does not select a generic ioctl", termios_control["description"])
+        self.assertIn("60-byte", termios_control["description"])
+        self.assertIn("byte-preserved public tails", termios_control["native_evidence"][0]["scope"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/termios_control.rs",
+            posix_runtime["source_owners"],
+        )
+        process_context = artifacts_by_id["static-c-process-context"]
+        assert isinstance(process_context, dict)
+        self.assertNotIn("capabilities", process_context)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/process_context.rs",
+            "include/unistd.h",
+            "include/sys/stat.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_process_context_probe.c",
+            "compat/x86_64/libc_process_context_start.S",
+            "compat/x86_64/run_libc_process_context.sh",
+        ):
+            self.assertIn(owner, process_context["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in process_context["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-process-context"},
+        )
+        self.assertIn("narrower than `process.control`", process_context["description"])
+        self.assertIn("does not select C fork", process_context["description"])
+        self.assertIn("raw-fork-contained", process_context["native_evidence"][0]["scope"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/process_context.rs",
+            posix_runtime["source_owners"],
+        )
+        descriptor_io = artifacts_by_id["static-c-descriptor-io"]
+        assert isinstance(descriptor_io, dict)
+        self.assertNotIn("capabilities", descriptor_io)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/descriptor_io.rs",
+            "include/fcntl.h",
+            "include/unistd.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_descriptor_io_probe.c",
+            "compat/x86_64/libc_descriptor_io_start.S",
+            "compat/x86_64/run_libc_descriptor_io.sh",
+        ):
+            self.assertIn(owner, descriptor_io["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in descriptor_io["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-descriptor-io"},
+        )
+        self.assertIn("pwrite", descriptor_io["description"])
+        self.assertIn("does not select C open/path/fcntl", descriptor_io["description"])
+        self.assertIn("EBUSY loops", descriptor_io["native_evidence"][0]["scope"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/descriptor_io.rs",
+            posix_runtime["source_owners"],
+        )
+        process_resources = artifacts_by_id["static-c-process-resources"]
+        assert isinstance(process_resources, dict)
+        self.assertNotIn("capabilities", process_resources)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/process_resources.rs",
+            "include/sys/resource.h",
+            "include/sys/time.h",
+            "compat/x86_64/resource_header_abi_probe.c",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_process_resources_probe.c",
+            "compat/x86_64/libc_process_resources_start.S",
+            "compat/x86_64/run_libc_process_resources.sh",
+        ):
+            self.assertIn(owner, process_resources["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in process_resources["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-process-resources"},
+        )
+        self.assertIn("narrower than process-resource capabilities", process_resources["description"])
+        self.assertIn("capability-conditional", process_resources["native_evidence"][0]["scope"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/process_resources.rs",
+            posix_runtime["source_owners"],
+        )
+        readiness_waits = artifacts_by_id["static-c-readiness-signal-waits"]
+        assert isinstance(readiness_waits, dict)
+        self.assertNotIn("capabilities", readiness_waits)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/readiness_waits.rs",
+            "include/poll.h",
+            "include/sys/select.h",
+            "compat/x86_64/poll_header_abi_probe.c",
+            "compat/x86_64/poll_header_abi_probe.cpp",
+            "compat/x86_64/run_poll_header_abi.sh",
+            "compat/x86_64/select_header_abi_probe.c",
+            "compat/x86_64/select_header_abi_probe.cpp",
+            "compat/x86_64/run_select_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_readiness_waits_probe.c",
+            "compat/x86_64/libc_readiness_waits_start.S",
+            "compat/x86_64/run_libc_readiness_waits.sh",
+        ):
+            self.assertIn(owner, readiness_waits["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in readiness_waits["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-readiness-waits"},
+        )
+        self.assertIn("does not select epoll/eventfd", readiness_waits["description"])
+        self.assertIn(
+            "temporary-mask delivery/restoration",
+            readiness_waits["native_evidence"][0]["scope"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/readiness_waits.rs",
+            posix_runtime["source_owners"],
+        )
+        socket_transport = artifacts_by_id["static-c-socket-transport"]
+        assert isinstance(socket_transport, dict)
+        self.assertNotIn("capabilities", socket_transport)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/socket_transport.rs",
+            "include/fcntl.h",
+            "include/bits/fcntl.h",
+            "include/arpa/inet.h",
+            "include/netinet/in.h",
+            "include/sys/socket.h",
+            "compat/x86_64/socket_header_abi_probe.c",
+            "compat/x86_64/socket_header_abi_probe.cpp",
+            "compat/x86_64/run_socket_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_socket_transport_probe.c",
+            "compat/x86_64/libc_socket_transport_start.S",
+            "compat/x86_64/run_libc_socket_transport.sh",
+        ):
+            self.assertIn(owner, socket_transport["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in socket_transport["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-socket-transport"},
+        )
+        self.assertIn("socketpair", socket_transport["description"])
+        self.assertIn("cancellation-point machinery", socket_transport["description"])
+        self.assertIn("does not select resolver/netdb", socket_transport["description"])
+        self.assertIn("cancellation semantics", socket_transport["native_evidence"][0]["scope"])
+        self.assertIn("atomic CLOEXEC/NONBLOCK", socket_transport["native_evidence"][0]["scope"])
+        self.assertIn("null-output socketpair EFAULT", socket_transport["native_evidence"][0]["scope"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/socket_transport.rs",
+            posix_runtime["source_owners"],
+        )
+        byte_strings = artifacts_by_id["static-c-byte-strings"]
+        assert isinstance(byte_strings, dict)
+        self.assertNotIn("capabilities", byte_strings)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/byte_strings.rs",
+            "include/string.h",
+            "include/strings.h",
+            "compat/x86_64/byte_strings_header_abi_probe.c",
+            "compat/x86_64/byte_strings_header_abi_probe.cpp",
+            "compat/x86_64/run_byte_strings_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_byte_strings_probe.c",
+            "compat/x86_64/libc_byte_strings_start.S",
+            "compat/x86_64/run_libc_byte_strings.sh",
+        ):
+            self.assertIn(owner, byte_strings["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in byte_strings["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-byte-strings"},
+        )
+        self.assertIn("public `index` and `rindex` forwarding wrappers", byte_strings["description"])
+        self.assertIn("private `__strchrnul`/`__memrchr`", byte_strings["description"])
+        self.assertIn("scalar fallback", byte_strings["description"])
+        self.assertIn("GNU-gated", byte_strings["x86_header_prerequisites"][0])
+        self.assertIn("src/string/index.c", byte_strings["oracle"][0]["role"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            posix_runtime["source_owners"],
+        )
+        random_entropy = artifacts_by_id["static-c-random-entropy"]
+        assert isinstance(random_entropy, dict)
+        self.assertNotIn("capabilities", random_entropy)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/random_entropy.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sys/random.h",
+            "include/unistd.h",
+            "compat/x86_64/random_entropy_header_abi_probe.c",
+            "compat/x86_64/random_entropy_header_abi_probe.cpp",
+            "compat/x86_64/run_random_entropy_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_random_entropy_probe.c",
+            "compat/x86_64/libc_random_entropy_start.S",
+            "compat/x86_64/run_libc_random_entropy.sh",
+        ):
+            self.assertIn(owner, random_entropy["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in random_entropy["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-random-entropy"},
+        )
+        self.assertIn("pthread cancellation point", random_entropy["description"])
+        self.assertIn("disables cancellation", random_entropy["description"])
+        self.assertIn("omits pthread cancellation", random_entropy["description"])
+        self.assertIn("initial-TLS errno", random_entropy["description"])
+        self.assertIn("syscall_cp", random_entropy["x86_abi_prerequisites"][1])
+        self.assertIn("disables cancellation", random_entropy["x86_abi_prerequisites"][1])
+        memory_search = artifacts_by_id["static-c-memory-search"]
+        assert isinstance(memory_search, dict)
+        self.assertNotIn("capabilities", memory_search)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/memory_search.rs",
+            "include/string.h",
+            "compat/x86_64/memory_search_header_abi_probe.c",
+            "compat/x86_64/memory_search_header_abi_probe.cpp",
+            "compat/x86_64/run_memory_search_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_memory_search_probe.c",
+            "compat/x86_64/libc_memory_search_start.S",
+            "compat/x86_64/run_libc_memory_search.sh",
+        ):
+            self.assertIn(owner, memory_search["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in memory_search["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-memory-search"},
+        )
+        self.assertIn("private `__memrchr` helper", memory_search["description"])
+        self.assertIn("stateless", memory_search["description"])
+        self.assertIn("allocation-free", memory_search["description"])
+        self.assertIn("POSIX/GNU-gated", memory_search["x86_header_prerequisites"][0])
+        self.assertIn("src/string/memchr.c", memory_search["oracle"][0]["role"])
+        string_copy = artifacts_by_id["static-c-string-copy"]
+        assert isinstance(string_copy, dict)
+        self.assertNotIn("capabilities", string_copy)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/string_copy.rs",
+            "include/string.h",
+            "compat/x86_64/string_copy_header_abi_probe.c",
+            "compat/x86_64/string_copy_header_abi_probe.cpp",
+            "compat/x86_64/run_string_copy_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_string_copy_probe.c",
+            "compat/x86_64/libc_string_copy_start.S",
+            "compat/x86_64/run_libc_string_copy.sh",
+        ):
+            self.assertIn(owner, string_copy["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in string_copy["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-string-copy"},
+        )
+        self.assertIn(
+            "private `__stpcpy`/`__stpncpy` helpers", string_copy["description"]
+        )
+        self.assertIn("stateless", string_copy["description"])
+        self.assertIn("allocation-free", string_copy["description"])
+        self.assertIn("POSIX/XOPEN/GNU/BSD-gated", string_copy["x86_header_prerequisites"][0])
+        self.assertIn("src/string/stpcpy.c", string_copy["oracle"][0]["role"])
+        ctype = artifacts_by_id["static-c-ctype"]
+        assert isinstance(ctype, dict)
+        self.assertNotIn("capabilities", ctype)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/ctype.rs",
+            "include/ctype.h",
+            "compat/x86_64/ctype_header_abi_probe.c",
+            "compat/x86_64/ctype_header_abi_probe.cpp",
+            "compat/x86_64/run_ctype_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_ctype_probe.c",
+            "compat/x86_64/libc_ctype_start.S",
+            "compat/x86_64/run_libc_ctype.sh",
+        ):
+            self.assertIn(owner, ctype["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in ctype["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ctype"},
+        )
+        self.assertIn("fixed-C-locale ctype", ctype["description"])
+        self.assertIn("stateless", ctype["description"])
+        self.assertIn("allocation-free", ctype["description"])
+        self.assertIn("POSIX/XOPEN/GNU/BSD-gated", ctype["x86_header_prerequisites"][0])
+        self.assertIn("src/ctype/isalnum.c", ctype["oracle"][0]["role"])
+        integer_arithmetic = artifacts_by_id["static-c-integer-arithmetic"]
+        assert isinstance(integer_arithmetic, dict)
+        self.assertNotIn("capabilities", integer_arithmetic)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/integer_arithmetic.rs",
+            "include/stdlib.h",
+            "compat/x86_64/integer_arithmetic_header_abi_probe.c",
+            "compat/x86_64/integer_arithmetic_header_abi_probe.cpp",
+            "compat/x86_64/run_integer_arithmetic_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_integer_arithmetic_probe.c",
+            "compat/x86_64/libc_integer_arithmetic_start.S",
+            "compat/x86_64/run_libc_integer_arithmetic.sh",
+        ):
+            self.assertIn(owner, integer_arithmetic["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in integer_arithmetic["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-integer-arithmetic"},
+        )
+        self.assertIn("integer-arithmetic block", integer_arithmetic["description"])
+        self.assertIn("stateless", integer_arithmetic["description"])
+        self.assertIn("allocation-free", integer_arithmetic["description"])
+        self.assertIn("unconditional", integer_arithmetic["x86_header_prerequisites"][0])
+        self.assertIn("src/stdlib/abs.c", integer_arithmetic["oracle"][0]["role"])
+        intmax_arithmetic = artifacts_by_id["static-c-intmax-arithmetic"]
+        assert isinstance(intmax_arithmetic, dict)
+        self.assertNotIn("capabilities", intmax_arithmetic)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
+            "include/inttypes.h",
+            "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
+            "compat/x86_64/intmax_arithmetic_header_abi_probe.cpp",
+            "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_intmax_arithmetic_probe.c",
+            "compat/x86_64/libc_intmax_arithmetic_start.S",
+            "compat/x86_64/run_libc_intmax_arithmetic.sh",
+        ):
+            self.assertIn(owner, intmax_arithmetic["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in intmax_arithmetic["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-intmax-arithmetic"},
+        )
+        self.assertIn("intmax-arithmetic block", intmax_arithmetic["description"])
+        self.assertIn("stateless", intmax_arithmetic["description"])
+        self.assertIn("allocation-free", intmax_arithmetic["description"])
+        self.assertIn("unconditional", intmax_arithmetic["x86_header_prerequisites"][0])
+        self.assertIn("src/stdlib/imaxabs.c", intmax_arithmetic["oracle"][0]["role"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/intmax_arithmetic.rs",
+            posix_runtime["source_owners"],
+        )
+        credential_observation = artifacts_by_id["static-c-credential-observation"]
+        assert isinstance(credential_observation, dict)
+        self.assertNotIn("capabilities", credential_observation)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/credential_observation.rs",
+            "include/unistd.h",
+            "compat/x86_64/credential_observation_header_abi_probe.c",
+            "compat/x86_64/credential_observation_header_abi_probe.cpp",
+            "compat/x86_64/run_credential_observation_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_credential_observation_probe.c",
+            "compat/x86_64/libc_credential_observation_start.S",
+            "compat/x86_64/run_libc_credential_observation.sh",
+        ):
+            self.assertIn(owner, credential_observation["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in credential_observation["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-credential-observation"},
+        )
+        self.assertIn(
+            "credential-observation block", credential_observation["description"]
+        )
+        self.assertIn("read-only", credential_observation["description"])
+        self.assertIn(
+            "query-then-fill race", credential_observation["description"]
+        )
+        self.assertIn("GNU", credential_observation["x86_header_prerequisites"][0])
+        self.assertIn(
+            "src/unistd/getgroups.c", credential_observation["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/credential_observation.rs",
+            posix_runtime["source_owners"],
+        )
+        child_reaping = artifacts_by_id["static-c-child-reaping"]
+        assert isinstance(child_reaping, dict)
+        self.assertNotIn("capabilities", child_reaping)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/child_reaping.rs",
+            "include/sys/wait.h",
+            "compat/x86_64/child_reaping_header_abi_probe.c",
+            "compat/x86_64/child_reaping_header_abi_probe.cpp",
+            "compat/x86_64/run_child_reaping_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_child_reaping_probe.c",
+            "compat/x86_64/libc_child_reaping_start.S",
+            "compat/x86_64/run_libc_child_reaping.sh",
+        ):
+            self.assertIn(owner, child_reaping["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in child_reaping["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-child-reaping"},
+        )
+        self.assertIn("child-reaping block", child_reaping["description"])
+        self.assertIn("WNOHANG", child_reaping["description"])
+        self.assertIn("WNOWAIT", child_reaping["description"])
+        self.assertIn("cancellation", child_reaping["description"])
+        self.assertIn("wait4=61", child_reaping["x86_abi_prerequisites"][0])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/child_reaping.rs",
+            posix_runtime["source_owners"],
+        )
+        immediate_termination = artifacts_by_id["static-c-immediate-termination"]
+        assert isinstance(immediate_termination, dict)
+        self.assertNotIn("capabilities", immediate_termination)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/immediate_termination.rs",
+            "include/stdlib.h",
+            "compat/x86_64/immediate_termination_header_abi_probe.c",
+            "compat/x86_64/immediate_termination_header_abi_probe.cpp",
+            "compat/x86_64/run_immediate_termination_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_immediate_termination_probe.c",
+            "compat/x86_64/libc_immediate_termination_start.S",
+            "compat/x86_64/run_libc_immediate_termination.sh",
+        ):
+            self.assertIn(owner, immediate_termination["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in immediate_termination["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-immediate-termination"},
+        )
+        self.assertIn(
+            "immediate-termination block", immediate_termination["description"]
+        )
+        self.assertIn("exit_group=231", immediate_termination["description"])
+        self.assertIn("quick_exit", immediate_termination["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/immediate_termination.rs",
+            posix_runtime["source_owners"],
+        )
+        callback_algorithms = artifacts_by_id["static-c-callback-algorithms"]
+        assert isinstance(callback_algorithms, dict)
+        self.assertNotIn("capabilities", callback_algorithms)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/callback_algorithms.rs",
+            "include/stdlib.h",
+            "compat/x86_64/callback_algorithms_header_abi_probe.c",
+            "compat/x86_64/callback_algorithms_header_abi_probe.cpp",
+            "compat/x86_64/run_callback_algorithms_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_callback_algorithms_probe.c",
+            "compat/x86_64/libc_callback_algorithms_start.S",
+            "compat/x86_64/run_libc_callback_algorithms.sh",
+        ):
+            self.assertIn(owner, callback_algorithms["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in callback_algorithms["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-callback-algorithms"},
+        )
+        self.assertIn(
+            "callback-algorithms block", callback_algorithms["description"]
+        )
+        self.assertIn("smoothsort", callback_algorithms["description"])
+        self.assertIn("same-address", callback_algorithms["description"])
+        self.assertIn("stateless", callback_algorithms["description"])
+        self.assertIn("src/stdlib/qsort.c", callback_algorithms["oracle"][0]["role"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/callback_algorithms.rs",
+            posix_runtime["source_owners"],
+        )
+        ffs = artifacts_by_id["static-c-ffs"]
+        assert isinstance(ffs, dict)
+        self.assertNotIn("capabilities", ffs)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/ffs.rs",
+            "include/strings.h",
+            "compat/x86_64/ffs_header_abi_probe.c",
+            "compat/x86_64/ffs_header_abi_probe.cpp",
+            "compat/x86_64/run_ffs_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_ffs_probe.c",
+            "compat/x86_64/libc_ffs_start.S",
+            "compat/x86_64/run_libc_ffs.sh",
+        ):
+            self.assertIn(owner, ffs["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in ffs["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ffs"},
+        )
+        self.assertIn("find-first-set block", ffs["description"])
+        self.assertIn("stateless", ffs["description"])
+        self.assertIn("allocation-free", ffs["description"])
+        self.assertIn("XOPEN/GNU/BSD-gated", ffs["x86_header_prerequisites"][0])
+        self.assertIn("src/misc/ffs.c", ffs["oracle"][0]["role"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/ffs.rs", posix_runtime["source_owners"]
+        )
+        system_observation = artifacts_by_id["static-c-system-observation"]
+        assert isinstance(system_observation, dict)
+        self.assertNotIn("capabilities", system_observation)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/system_observation.rs",
+            "include/sys/sysinfo.h",
+            "include/sys/utsname.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_system_observation_probe.c",
+            "compat/x86_64/libc_system_observation_start.S",
+            "compat/x86_64/run_libc_system_observation.sh",
+        ):
+            self.assertIn(owner, system_observation["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in system_observation["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-system-observation"},
+        )
+        self.assertIn("112-byte", system_observation["description"])
+        self.assertIn("252 compatibility bytes", system_observation["description"])
+        self.assertIn(
+            "does not select hostname/domain lookup or mutation",
+            system_observation["description"],
+        )
+        self.assertIn(
+            "src/misc/uname.c and src/linux/sysinfo.c",
+            system_observation["oracle"][0]["role"],
+        )
+        self.assertIn(
+            "sysinfo=99", system_observation["x86_abi_prerequisites"][0]
+        )
+        self.assertIn(
+            "remaining 252-byte public compatibility tail is preserved",
+            system_observation["native_evidence"][0]["scope"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/system_observation.rs",
+            posix_runtime["source_owners"],
+        )
+        uts_identity = artifacts_by_id["static-c-uts-identity"]
+        assert isinstance(uts_identity, dict)
+        self.assertNotIn("capabilities", uts_identity)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/system_observation.rs",
+            "libc/src/c_abi/x86_64/uts_identity.rs",
+            "include/errno.h",
+            "include/stddef.h",
+            "include/sys/syscall.h",
+            "include/bits/syscall.h",
+            "include/sys/utsname.h",
+            "include/unistd.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_uts_identity_probe.c",
+            "compat/x86_64/libc_uts_identity_start.S",
+            "compat/x86_64/run_libc_uts_identity.sh",
+        ):
+            self.assertIn(owner, uts_identity["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in uts_identity["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-uts-identity"},
+        )
+        self.assertIn("fresh fixture-local UTS namespace", uts_identity["description"])
+        self.assertIn("CAP_SYS_ADMIN", uts_identity["description"])
+        self.assertIn(
+            "does not select UTS namespace creation, entry, or control",
+            uts_identity["description"],
+        )
+        self.assertIn(
+            "src/unistd/gethostname.c, src/linux/sethostname.c, "
+            "src/misc/getdomainname.c, and src/misc/setdomainname.c",
+            uts_identity["oracle"][0]["role"],
+        )
+        uts_abi = " ".join(uts_identity["x86_abi_prerequisites"])
+        for detail in (
+            "uname=63",
+            "sethostname=170",
+            "setdomainname=171",
+            "390-byte align-1",
+            "65-byte",
+            "rdi/rsi",
+            "CAP_SYS_ADMIN",
+        ):
+            self.assertIn(detail, uts_abi)
+        uts_scope = uts_identity["native_evidence"][0]["scope"]
+        self.assertIn("unshare --uts --fork", uts_scope)
+        self.assertIn("CAP_SYS_ADMIN", uts_scope)
+        self.assertIn("container or host identity", uts_scope)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/uts_identity.rs",
+            posix_runtime["source_owners"],
+        )
         self.assertEqual(self.family(data, "ldso.relative-relocation")["status"], "foundation-verified")
         self.assertEqual(self.family(data, "crt.static-pie")["status"], "foundation-verified")
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 1
+        bootstrap = artifacts[0]
+        assert isinstance(bootstrap, dict)
+        self.assertEqual(bootstrap["id"], "static-c-bootstrap-primitives")
+        self.assertNotIn("capabilities", bootstrap)
+        for owner in (
+            "libc/src/c_abi/x86_64/memory.rs",
+            "libc/src/c_abi/x86_64/fenv.rs",
+            "libc/src/c_abi/x86_64/setjmp.rs",
+            "compat/x86_64/libc_bootstrap_primitives_probe.c",
+            "compat/x86_64/libc_bootstrap_primitives_start.S",
+            "compat/x86_64/run_libc_bootstrap_primitives.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, bootstrap["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in bootstrap["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-bootstrap-primitives"},
+        )
+        self.assertIn("does not select libc.so", bootstrap["native_evidence"][0]["scope"])
         self.assertIn(
             "libc/src/c_abi/x86_64/fenv.rs", headers_layouts["source_owners"]
         )
@@ -93,6 +829,125 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "./scripts/dev-x86_64.sh libc-signal-foundation",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        self.assertIn(
+            "include/termios.h", headers_layouts["source_owners"]
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh termios-header-abi",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        for owner in (
+            "include/sys/resource.h",
+            "compat/x86_64/resource_header_abi_probe.c",
+            "compat/x86_64/resource_header_abi_probe.cpp",
+            "compat/x86_64/run_resource_header_abi.sh",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+        self.assertIn(
+            "./scripts/dev-x86_64.sh resource-header-abi",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        for owner in (
+            "include/poll.h",
+            "compat/x86_64/poll_header_abi_probe.c",
+            "compat/x86_64/poll_header_abi_probe.cpp",
+            "compat/x86_64/run_poll_header_abi.sh",
+            "include/sys/select.h",
+            "compat/x86_64/select_header_abi_probe.c",
+            "compat/x86_64/select_header_abi_probe.cpp",
+            "compat/x86_64/run_select_header_abi.sh",
+            "compat/x86_64/byte_strings_header_abi_probe.c",
+            "compat/x86_64/byte_strings_header_abi_probe.cpp",
+            "compat/x86_64/run_byte_strings_header_abi.sh",
+            "include/inttypes.h",
+            "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
+            "compat/x86_64/intmax_arithmetic_header_abi_probe.cpp",
+            "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
+            "compat/x86_64/credential_observation_header_abi_probe.c",
+            "compat/x86_64/credential_observation_header_abi_probe.cpp",
+            "compat/x86_64/run_credential_observation_header_abi.sh",
+            "compat/x86_64/immediate_termination_header_abi_probe.c",
+            "compat/x86_64/immediate_termination_header_abi_probe.cpp",
+            "compat/x86_64/run_immediate_termination_header_abi.sh",
+            "compat/x86_64/callback_algorithms_header_abi_probe.c",
+            "compat/x86_64/callback_algorithms_header_abi_probe.cpp",
+            "compat/x86_64/run_callback_algorithms_header_abi.sh",
+            "compat/x86_64/ffs_header_abi_probe.c",
+            "compat/x86_64/ffs_header_abi_probe.cpp",
+            "compat/x86_64/run_ffs_header_abi.sh",
+            "compat/x86_64/memory_search_header_abi_probe.c",
+            "compat/x86_64/memory_search_header_abi_probe.cpp",
+            "compat/x86_64/run_memory_search_header_abi.sh",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+        header_commands = {
+            evidence["command"] for evidence in headers_layouts["native_evidence"]
+        }
+        self.assertIn("./scripts/dev-x86_64.sh poll-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh select-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh byte-strings-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", header_commands)
+        self.assertIn(
+            "./scripts/dev-x86_64.sh credential-observation-header-abi",
+            header_commands,
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh immediate-termination-header-abi",
+            header_commands,
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
+            header_commands,
+        )
+        self.assertIn("./scripts/dev-x86_64.sh ffs-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh memory-search-header-abi", header_commands)
+        self.assertIn(
+            "libc/src/c_abi/x86_64/process_context.rs",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/libc_process_context_probe.c",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-process-context",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/descriptor_io.rs",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/libc_descriptor_io_probe.c",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-descriptor-io",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/process_resources.rs",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/libc_process_resources_probe.c",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-process-resources",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/readiness_waits.rs",
+            "compat/x86_64/libc_readiness_waits_probe.c",
+            "compat/x86_64/libc_readiness_waits_start.S",
+            "compat/x86_64/run_libc_readiness_waits.sh",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+        self.assertIn(
+            "./scripts/dev-x86_64.sh libc-readiness-waits",
             {evidence["command"] for evidence in headers_layouts["native_evidence"]},
         )
         self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
@@ -393,12 +1248,1185 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             all(evidence["state"] == "required" for evidence in remaining["native_evidence"])
         )
+        verified_slices = remaining["verified_slice"]
+        assert isinstance(verified_slices, list)
+        self.assertEqual(len(verified_slices), 24)
+        slices_by_id = {}
+        for slice_entry in verified_slices:
+            assert isinstance(slice_entry, dict)
+            slices_by_id[slice_entry["id"]] = slice_entry
+        self.assertEqual(
+            set(slices_by_id),
+            {
+                "network.interface-device",
+                "network.resolver-transport",
+                "network.resolver",
+                "network.netdb",
+                "users.databases",
+                "mount.basic",
+                "filesystem.path-core",
+                "filesystem.xattr",
+                "filesystem.directory",
+                "filesystem.temporary-objects",
+                "filesystem.extended-metadata",
+                "filesystem.cwd-canonicalize",
+                "ipc.posix-mqueue",
+                "ipc.posix-shm",
+                "system.inotify",
+                "time.civil-calendar",
+                "time.advanced-clocks-posix-timers",
+                "process.root-change",
+                "process.child-ownership",
+                "process.thread-kill",
+                "memory.mapping",
+                "memory.vm",
+                "terminal.pty-basic",
+                "terminal.session-control",
+            },
+        )
+        root_change = slices_by_id["process.root-change"]
+        self.assertEqual(root_change["capabilities"], ["process.root-change"])
+        self.assertEqual(
+            root_change["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh root-change-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in root_change["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/process.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/tests/x86_64_chroot.rs",
+            "crabc-rs/examples/process_chroot_direct_probe.rs",
+            "compat/x86_64/run_x86_root_change_reference.sh",
+            "compat/x86_64/x86_root_change_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, root_change["source_owners"])
+        self.assertTrue(
+            any(
+                "chroot=161" in prerequisite
+                for prerequisite in root_change["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "CAP_SYS_CHROOT" in prerequisite and "without changing CWD" in prerequisite
+                for prerequisite in root_change["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "pivot_root" in prerequisite
+                and "mount or namespace control" in prerequisite
+                and "confinement/security framework" in prerequisite
+                for prerequisite in root_change["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("process.root-change", remaining["capabilities"])
+        child_ownership = slices_by_id["process.child-ownership"]
+        self.assertEqual(child_ownership["capabilities"], ["process.child-ownership"])
+        self.assertEqual(
+            child_ownership["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh child-ownership-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in child_ownership["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/process.rs",
+            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/tests/x86_64_child_ownership.rs",
+            "compat/x86_64/run_x86_child_ownership_reference.sh",
+            "compat/x86_64/x86_child_ownership_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, child_ownership["source_owners"])
+        self.assertTrue(
+            any(
+                "clone=56" in prerequisite
+                and "execve=59" in prerequisite
+                and "wait4=61" in prerequisite
+                for prerequisite in child_ownership["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "does not expose generic C fork/vfork/exec" in prerequisite
+                and "pthread/atfork/cancellation" in prerequisite
+                for prerequisite in child_ownership["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("process.child-ownership", remaining["capabilities"])
+        thread_kill = slices_by_id["process.thread-kill"]
+        self.assertEqual(thread_kill["capabilities"], ["process.thread-kill"])
+        self.assertEqual(
+            thread_kill["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh thread-kill-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in thread_kill["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/process.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/signal.rs",
+            "crabc-rs/tests/x86_64_thread_kill.rs",
+            "crabc-rs/examples/thread_kill_direct_probe.rs",
+            "compat/x86_64/run_x86_thread_kill_reference.sh",
+            "compat/x86_64/x86_thread_kill_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, thread_kill["source_owners"])
+        self.assertTrue(
+            any(
+                "tgkill=234" in prerequisite
+                and "ESRCH" in prerequisite
+                and "EINVAL" in prerequisite
+                for prerequisite in thread_kill["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "SYS_tkill=200" in prerequisite
+                and "SYS_gettid=186" in prerequisite
+                and "pthread_kill uses SYS_tkill" in prerequisite
+                for prerequisite in thread_kill["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "generic process/group signaling" in prerequisite
+                and "signal masks" in prerequisite
+                and "signalfd" in prerequisite
+                and "pthread cancellation" in prerequisite
+                for prerequisite in thread_kill["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("process.thread-kill", remaining["capabilities"])
+        memory_mapping = slices_by_id["memory.mapping"]
+        self.assertEqual(memory_mapping["capabilities"], ["memory.mapping"])
+        self.assertEqual(
+            memory_mapping["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh mapping-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in memory_mapping["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/mm_x86_64.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/mm_x86_64.rs",
+            "crabc-rs/tests/x86_64_memory_mapping.rs",
+            "crabc-rs/examples/mapping_direct_probe.rs",
+            "compat/x86_64/run_x86_mapping_reference.sh",
+            "compat/x86_64/x86_mapping_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, memory_mapping["source_owners"])
+        self.assertTrue(
+            any(
+                "mmap=9" in prerequisite
+                and "mprotect=10" in prerequisite
+                and "munmap=11" in prerequisite
+                for prerequisite in memory_mapping["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "MAP_FIXED=0x10" in prerequisite
+                and "MAP_32BIT=0x40" in prerequisite
+                and "MAP_ANONYMOUS=0x20" in prerequisite
+                for prerequisite in memory_mapping["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "pointer-provenance" in prerequisite
+                and "no references survive munmap" in prerequisite
+                for prerequisite in memory_mapping["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "only raw SYS_mprotect" in prerequisite
+                and "musl 1.2.6 rounds" in prerequisite
+                for prerequisite in memory_mapping["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "mremap" in prerequisite
+                and "mapping locks/sync/advice/residency" in prerequisite
+                and "separate memory.vm/brk/process-wide-lock/legacy-remap boundary" in prerequisite
+                and "C mmap/mprotect/munmap API/header/ABI" in prerequisite
+                for prerequisite in memory_mapping["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("memory.mapping", remaining["capabilities"])
+        memory_vm = slices_by_id["memory.vm"]
+        self.assertEqual(memory_vm["capabilities"], ["memory.vm"])
+        self.assertEqual(
+            memory_vm["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh memory-vm-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in memory_vm["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/mm_x86_64.rs",
+            "crabc-core/src/process.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/lib.rs",
+            "crabc-rs/src/mm_x86_64.rs",
+            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/tests/x86_64_memory_vm.rs",
+            "crabc-rs/examples/memory_vm_direct_probe.rs",
+            "crabc-rs/Cargo.toml",
+            "compat/x86_64/run_x86_memory_vm_reference.sh",
+            "compat/x86_64/x86_memory_vm_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, memory_vm["source_owners"])
+        self.assertTrue(
+            any(
+                "brk=12" in prerequisite
+                and "mlockall=151" in prerequisite
+                and "munlockall=152" in prerequisite
+                and "remap_file_pages=216" in prerequisite
+                for prerequisite in memory_vm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "MCL_CURRENT=1" in prerequisite
+                and "MCL_FUTURE=2" in prerequisite
+                and "MCL_ONFAULT=4" in prerequisite
+                and "RLIMIT_MEMLOCK" in prerequisite
+                for prerequisite in memory_vm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "queries with a null pointer" in prerequisite
+                and "replays that exact returned pointer only" in prerequisite
+                and "never asks Linux to move the break" in prerequisite
+                for prerequisite in memory_vm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "musl 1.2.6 sbrk(0)" in prerequisite
+                and "musl brk(current) deliberately returns ENOMEM" in prerequisite
+                and "raw break remains unchanged" in prerequisite
+                and "not selected Rust behavior" in prerequisite
+                for prerequisite in memory_vm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "anonymous one-page mapping" in prerequisite
+                and "direct EINVAL" in prerequisite
+                and "file-backed remapping behavior" in prerequisite
+                for prerequisite in memory_vm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "C brk/sbrk/mlockall/munlockall/remap_file_pages" in prerequisite
+                and "allocator, heap, program-break adjustment" in prerequisite
+                and "mremap or fixed maps" in prerequisite
+                and "range locks, sync, advice, or residency" in prerequisite
+                and "public x86 support" in prerequisite
+                for prerequisite in memory_vm["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("memory.vm", remaining["capabilities"])
+        pty_basic = slices_by_id["terminal.pty-basic"]
+        self.assertEqual(pty_basic["capabilities"], ["terminal.pty-basic"])
+        self.assertEqual(
+            pty_basic["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh pty-basic-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in pty_basic["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/io.rs",
+            "crabc-rs/src/lib.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/pty_x86_64.rs",
+            "crabc-rs/tests/x86_64_pty_basic.rs",
+            "crabc-rs/examples/pty_basic_direct_probe.rs",
+            "crabc-rs/Cargo.toml",
+            "compat/x86_64/run_x86_pty_basic_reference.sh",
+            "compat/x86_64/x86_pty_basic_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, pty_basic["source_owners"])
+        self.assertTrue(
+            any(
+                "openat=257" in prerequisite
+                and "ioctl=16" in prerequisite
+                and "TIOCGPTN=0x80045430" in prerequisite
+                and "TIOCSPTLCK=0x40045431" in prerequisite
+                and "TIOCGPTPEER=0x5441" in prerequisite
+                for prerequisite in pty_basic["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "PtyPair::open requires RDWR" in prerequisite
+                and "explicit O_NOCTTY request" in prerequisite
+                and "controlling-terminal or session transition" in prerequisite
+                for prerequisite in pty_basic["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "ptsname_into" in prerequisite
+                and "short caller storage" in prerequisite
+                and "RANGE" in prerequisite
+                and "C static buffer" in prerequisite
+                for prerequisite in pty_basic["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "openpty" in prerequisite
+                and "ioctl_tiocgptpeer" in prerequisite
+                and "TIOCSCTTY/setsid/process-session" in prerequisite
+                and "termios/tty API" in prerequisite
+                and "public x86 support" in prerequisite
+                for prerequisite in pty_basic["x86_header_prerequisites"]
+            )
+        )
+        terminal_session_control = slices_by_id["terminal.session-control"]
+        self.assertEqual(
+            terminal_session_control["capabilities"],
+            [
+                "terminal.pty-session",
+                "terminal.termios-control",
+                "terminal.termios-queue",
+                "terminal.exclusive-mode",
+                "terminal.special-codes",
+                "terminal.tty-path",
+                "terminal.tty-basic",
+            ],
+        )
+        self.assertEqual(
+            terminal_session_control["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh terminal-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in terminal_session_control["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/io.rs",
+            "crabc-core/src/process.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/pty_x86_64.rs",
+            "crabc-rs/src/termios_x86_64.rs",
+            "crabc-rs/tests/x86_64_terminal.rs",
+            "crabc-rs/examples/x86_64_terminal_direct_probe.rs",
+            "compat/x86_64/run_x86_terminal_reference.sh",
+            "compat/x86_64/x86_terminal_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, terminal_session_control["source_owners"])
+        self.assertTrue(
+            any(
+                "36-byte align-4" in prerequisite
+                and "60-byte align-4" in prerequisite
+                and "NCCS=32" in prerequisite
+                for prerequisite in terminal_session_control["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "TIOCSCTTY=0x540e" in prerequisite
+                and "TIOCGSID=0x5429" in prerequisite
+                and "winsize" in prerequisite
+                for prerequisite in terminal_session_control["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "C terminal header/API/ABI" in prerequisite
+                and "generic ioctl" in prerequisite
+                and "openpty/forkpty/login_tty/vhangup" in prerequisite
+                and "public x86 support" in prerequisite
+                for prerequisite in terminal_session_control["x86_header_prerequisites"]
+            )
+        )
+        verified_terminal_capabilities = {
+            capability
+            for slice_entry in slices_by_id.values()
+            for capability in slice_entry["capabilities"]
+            if capability.startswith("terminal.")
+        }
+        self.assertEqual(
+            verified_terminal_capabilities,
+            {
+                "terminal.pty-basic",
+                "terminal.pty-session",
+                "terminal.termios-control",
+                "terminal.termios-queue",
+                "terminal.exclusive-mode",
+                "terminal.special-codes",
+                "terminal.tty-path",
+                "terminal.tty-basic",
+            },
+        )
+        for capability in (
+            "terminal.pty-session",
+            "terminal.termios-control",
+            "terminal.termios-queue",
+            "terminal.exclusive-mode",
+            "terminal.special-codes",
+            "terminal.tty-path",
+            "terminal.tty-basic",
+        ):
+            self.assertIn(capability, remaining["capabilities"])
+            self.assertIn(capability, verified_terminal_capabilities)
+        interface_device = slices_by_id["network.interface-device"]
+        self.assertEqual(interface_device["id"], "network.interface-device")
+        self.assertEqual(
+            interface_device["capabilities"],
+            [
+                "network.interface-addresses",
+                "network.interface-index",
+                "network.interface-name",
+                "network.interface-enumeration",
+            ],
+        )
+        self.assertEqual(
+            interface_device["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh interface-device-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in interface_device["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-rs/src/netdevice.rs",
+            "crabc-rs/tests/x86_64_interface_device.rs",
+            "compat/x86_64/run_x86_interface_device_reference.sh",
+            "compat/x86_64/x86_interface_device_reference_probe.c",
+        ):
+            self.assertIn(source_owner, interface_device["source_owners"])
+        resolver_transport = slices_by_id["network.resolver-transport"]
+        self.assertEqual(
+            resolver_transport["capabilities"], ["network.resolver-transport"]
+        )
+        self.assertEqual(
+            resolver_transport["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh resolver-transport-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in resolver_transport["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/resolver.rs",
+            "crabc-core/tests/x86_64_resolver_transport.rs",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, resolver_transport["source_owners"])
+        resolver = slices_by_id["network.resolver"]
+        self.assertEqual(resolver["capabilities"], ["network.resolver"])
+        self.assertEqual(
+            resolver["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh resolver-facade-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in resolver["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-rs/src/resolver.rs",
+            "crabc-rs/src/netdb.rs",
+            "crabc-rs/tests/x86_64_resolver.rs",
+            "crabc-rs/examples/resolver_hosts_direct_probe.rs",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, resolver["source_owners"])
+        self.assertNotIn("network.netdb", resolver["capabilities"])
+        netdb = slices_by_id["network.netdb"]
+        self.assertEqual(netdb["capabilities"], ["network.netdb"])
+        self.assertEqual(
+            netdb["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh netdb-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in netdb["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-rs/src/netdb.rs",
+            "crabc-rs/tests/x86_64_netdb.rs",
+            "crabc-rs/examples/resolver_direct_probe.rs",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, netdb["source_owners"])
+        users_databases = slices_by_id["users.databases"]
+        self.assertEqual(users_databases["capabilities"], ["users.databases"])
+        self.assertEqual(
+            users_databases["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh users-databases-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in users_databases["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/io.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/lib.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/users.rs",
+            "crabc-rs/tests/x86_64_users_databases.rs",
+            "crabc-rs/examples/users_databases_direct_probe.rs",
+            "crabc-rs/Cargo.toml",
+            "compat/x86_64/run_x86_users_databases_reference.sh",
+            "compat/x86_64/x86_users_databases_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, users_databases["source_owners"])
+        self.assertTrue(
+            any(
+                "openat=257" in prerequisite
+                and "read=0" in prerequisite
+                and "close=3" in prerequisite
+                and "O_CLOEXEC=0x00080000" in prerequisite
+                for prerequisite in users_databases["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "one mebibyte" in prerequisite
+                and "not an atomic multi-file transaction" in prerequisite
+                for prerequisite in users_databases["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "exactly seven colon fields" in prerequisite
+                and "exactly four colon fields" in prerequisite
+                and "first-match only" in prerequisite
+                for prerequisite in users_databases["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "getpwnam" in prerequisite
+                and "getgrnam" in prerequisite
+                and "shadow" in prerequisite
+                and "utmp/utmpx" in prerequisite
+                and "initgroups" in prerequisite
+                and "process-global enumeration state" in prerequisite
+                and "NSS/provider framework" in prerequisite
+                for prerequisite in users_databases["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("users.databases", remaining["capabilities"])
+        mount_basic = slices_by_id["mount.basic"]
+        self.assertEqual(mount_basic["capabilities"], ["mount.basic"])
+        self.assertEqual(
+            mount_basic["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh mount-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in mount_basic["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/mount.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/lib.rs",
+            "crabc-rs/src/mount_x86_64.rs",
+            "crabc-rs/tests/x86_64_mount.rs",
+            "crabc-rs/examples/mount_direct_probe.rs",
+            "crabc-rs/Cargo.toml",
+            "compat/x86_64/run_x86_mount_reference.sh",
+            "compat/x86_64/x86_mount_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, mount_basic["source_owners"])
+        self.assertTrue(
+            any(
+                "mount=165" in prerequisite
+                and "umount2=166" in prerequisite
+                and "rdi/rsi/rdx" in prerequisite
+                and "r10" in prerequisite
+                and "r8" in prerequisite
+                for prerequisite in mount_basic["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "unique nonexistent targets" in prerequisite
+                and "interior-NUL" in prerequisite
+                and "non-mutating" in prerequisite
+                and "EPERM" in prerequisite
+                and "ENOENT" in prerequisite
+                for prerequisite in mount_basic["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "null source/type" in prerequisite
+                and "pivot_root" in prerequisite
+                and "unshare" in prerequisite
+                and "setns" in prerequisite
+                and "fsopen" in prerequisite
+                and "public x86 support" in prerequisite
+                for prerequisite in mount_basic["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("mount.basic", remaining["capabilities"])
+        path_core = slices_by_id["filesystem.path-core"]
+        self.assertEqual(path_core["capabilities"], ["filesystem.path-core"])
+        self.assertEqual(
+            path_core["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh path-core-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in path_core["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/fs.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/tests/x86_64_path_lifecycle.rs",
+            "crabc-rs/tests/x86_64_namespace.rs",
+            "crabc-rs/tests/x86_64_readlink.rs",
+            "crabc-rs/examples/path_core_owned_direct_probe.rs",
+            "compat/x86_64/run_x86_path_lifecycle_reference.sh",
+            "compat/x86_64/run_x86_readlinkat_reference.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, path_core["source_owners"])
+        xattr = slices_by_id["filesystem.xattr"]
+        self.assertEqual(xattr["capabilities"], ["filesystem.xattr"])
+        self.assertEqual(
+            xattr["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh xattr-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in xattr["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/tests/x86_64_xattr.rs",
+            "crabc-rs/examples/xattr_direct_probe.rs",
+            "compat/x86_64/run_x86_xattr_reference.sh",
+            "compat/x86_64/x86_xattr_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, xattr["source_owners"])
+        directory = slices_by_id["filesystem.directory"]
+        self.assertEqual(
+            directory["capabilities"],
+            [
+                "filesystem.directory-stream",
+                "filesystem.directory-position",
+                "filesystem.raw-directory",
+            ],
+        )
+        self.assertEqual(
+            directory["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh directory-reference",
+        )
+        self.assertTrue(
+            all(evidence["state"] == "verified" for evidence in directory["native_evidence"])
+        )
+        for source_owner in (
+            "crabc-rs/src/raw_dir.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/tests/x86_64_raw_directory.rs",
+            "crabc-rs/tests/x86_64_directory.rs",
+            "crabc-rs/tests/x86_64_directory_position.rs",
+            "crabc-rs/examples/directory_direct_probe.rs",
+            "crabc-rs/examples/directory_position_direct_probe.rs",
+            "compat/x86_64/run_x86_directory_reference.sh",
+            "compat/x86_64/x86_directory_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, directory["source_owners"])
+        temporary_objects = slices_by_id["filesystem.temporary-objects"]
+        self.assertEqual(
+            temporary_objects["capabilities"],
+            [
+                "filesystem.named-temporary-file",
+                "filesystem.anonymous-temporary-file",
+                "filesystem.temporary-directory",
+            ],
+        )
+        self.assertEqual(
+            temporary_objects["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh temporary-object-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in temporary_objects["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/tests/x86_64_temporary_objects.rs",
+            "crabc-rs/examples/fs_named_tempfile_direct_probe.rs",
+            "crabc-rs/examples/fs_tempfile_direct_probe.rs",
+            "crabc-rs/examples/fs_tempdir_direct_probe.rs",
+            "crabc-rs/Cargo.toml",
+            "compat/x86_64/run_x86_temporary_object_reference.sh",
+            "compat/x86_64/x86_temporary_object_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, temporary_objects["source_owners"])
+        self.assertTrue(
+            any(
+                "O_TMPFILE=0x00410000" in prerequisite
+                for prerequisite in temporary_objects["x86_abi_prerequisites"]
+            )
+        )
+        extended_metadata = slices_by_id["filesystem.extended-metadata"]
+        self.assertEqual(
+            extended_metadata["capabilities"], ["filesystem.extended-metadata"]
+        )
+        self.assertEqual(
+            extended_metadata["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh statx-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in extended_metadata["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/tests/x86_64_statx.rs",
+            "crabc-rs/examples/statx_direct_probe.rs",
+            "compat/x86_64/run_x86_statx_reference.sh",
+            "compat/x86_64/x86_statx_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, extended_metadata["source_owners"])
+        self.assertTrue(
+            any(
+                "SYS_statx=332" in prerequisite
+                for prerequisite in extended_metadata["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "256-byte align-8" in prerequisite
+                for prerequisite in extended_metadata["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "AT_EMPTY_PATH" in prerequisite
+                for prerequisite in extended_metadata["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "ENOSYS" in prerequisite and "musl's fstatat fallback" in prerequisite
+                for prerequisite in extended_metadata["x86_abi_prerequisites"]
+            )
+        )
+        cwd_canonicalize = slices_by_id["filesystem.cwd-canonicalize"]
+        self.assertEqual(
+            cwd_canonicalize["capabilities"],
+            ["filesystem.canonicalize", "filesystem.cwd-mutation"],
+        )
+        self.assertEqual(
+            cwd_canonicalize["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh cwd-canonicalize-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in cwd_canonicalize["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/process.rs",
+            "crabc-rs/src/lib.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/process_x86_64.rs",
+            "crabc-rs/tests/x86_64_canonicalize.rs",
+            "crabc-rs/tests/x86_64_cwd_mutation.rs",
+            "crabc-rs/examples/fs_canonicalize_direct_probe.rs",
+            "crabc-rs/examples/process_cwd_direct_probe.rs",
+            "compat/x86_64/run_x86_cwd_canonicalize_reference.sh",
+            "compat/x86_64/x86_cwd_canonicalize_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(source_owner, cwd_canonicalize["source_owners"])
+        self.assertTrue(
+            any(
+                "getcwd=79" in prerequisite
+                and "chdir=80" in prerequisite
+                and "fchdir=81" in prerequisite
+                for prerequisite in cwd_canonicalize["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "PATH_MAX=4096" in prerequisite and "forty" in prerequisite
+                for prerequisite in cwd_canonicalize["x86_abi_prerequisites"]
+            )
+        )
+        self.assertNotIn("process.root-change", cwd_canonicalize["capabilities"])
+        self.assertIn("process.root-change", remaining["capabilities"])
+        ipc_mqueue = slices_by_id["ipc.posix-mqueue"]
+        self.assertEqual(ipc_mqueue["capabilities"], ["ipc"])
+        self.assertEqual(
+            ipc_mqueue["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh ipc-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in ipc_mqueue["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/ipc.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/ipc.rs",
+            "crabc-rs/tests/x86_64_ipc.rs",
+            "crabc-rs/examples/ipc_direct_probe.rs",
+            "compat/x86_64/run_x86_mqueue_reference.sh",
+            "compat/x86_64/x86_mqueue_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, ipc_mqueue["source_owners"])
+        self.assertTrue(
+            any(
+                "mq_open=240" in prerequisite
+                and "mq_unlink=241" in prerequisite
+                and "mq_timedsend=242" in prerequisite
+                and "mq_timedreceive=243" in prerequisite
+                and "mq_getsetattr=245" in prerequisite
+                for prerequisite in ipc_mqueue["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "mqd_t" in prerequisite
+                and "64-byte align-8" in prerequisite
+                and "16-byte align-8" in prerequisite
+                for prerequisite in ipc_mqueue["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "no x86 C mq API/header" in prerequisite
+                for prerequisite in ipc_mqueue["x86_header_prerequisites"]
+            )
+        )
+        self.assertNotIn("ipc.posix-shm", ipc_mqueue["capabilities"])
+        self.assertIn("ipc", remaining["capabilities"])
+        self.assertIn("ipc.posix-shm", remaining["capabilities"])
+        ipc_shm = slices_by_id["ipc.posix-shm"]
+        self.assertEqual(ipc_shm["capabilities"], ["ipc.posix-shm"])
+        self.assertEqual(
+            ipc_shm["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh shm-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in ipc_shm["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/shm.rs",
+            "crabc-rs/tests/x86_64_shm.rs",
+            "crabc-rs/examples/shm_direct_probe.rs",
+            "compat/x86_64/run_x86_shm_reference.sh",
+            "compat/x86_64/x86_shm_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, ipc_shm["source_owners"])
+        self.assertTrue(
+            any(
+                "openat=257" in prerequisite
+                and "unlinkat=263" in prerequisite
+                and "rdi/rsi/rdx/r10" in prerequisite
+                for prerequisite in ipc_shm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "NAME_MAX=255" in prerequisite
+                and "265-byte" in prerequisite
+                and "/dev/shm/<name>" in prerequisite
+                for prerequisite in ipc_shm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "O_CLOEXEC" in prerequisite
+                and "O_NOFOLLOW" in prerequisite
+                and "O_NONBLOCK" in prerequisite
+                and "no raw/musl flag equivalence is claimed" in prerequisite
+                for prerequisite in ipc_shm["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "no x86 C shared-memory API/header/ABI" in prerequisite
+                and "cancellation mechanics" in prerequisite
+                and "mount policy/fallback" in prerequisite
+                for prerequisite in ipc_shm["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("ipc.posix-shm", remaining["capabilities"])
+        self.assertNotIn("ipc.posix-shm", direct["capabilities"])
+        system_inotify = slices_by_id["system.inotify"]
+        self.assertEqual(system_inotify["capabilities"], ["system.inotify"])
+        self.assertEqual(
+            system_inotify["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh inotify-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in system_inotify["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/inotify.rs",
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-rs/src/lib.rs",
+            "crabc-rs/src/system_x86_64.rs",
+            "crabc-rs/tests/x86_64_inotify.rs",
+            "crabc-rs/examples/inotify_direct_probe.rs",
+            "crabc-rs/Cargo.toml",
+            "compat/x86_64/run_x86_inotify_reference.sh",
+            "compat/x86_64/x86_inotify_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, system_inotify["source_owners"])
+        self.assertTrue(
+            any(
+                "inotify_init1=294" in prerequisite
+                and "inotify_add_watch=254" in prerequisite
+                and "inotify_rm_watch=255" in prerequisite
+                for prerequisite in system_inotify["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "16-byte align-4" in prerequisite
+                and "wd i32 at 0" in prerequisite
+                and "mask u32 at 4" in prerequisite
+                and "cookie u32 at 8" in prerequisite
+                and "len u32 at 12" in prerequisite
+                and "name at 16" in prerequisite
+                for prerequisite in system_inotify["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "no x86 C inotify API/header/ABI" in prerequisite
+                and "legacy inotify_init" in prerequisite
+                for prerequisite in system_inotify["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn("system.inotify", remaining["capabilities"])
+        self.assertNotIn("system.inotify", direct["capabilities"])
+        civil_calendar = slices_by_id["time.civil-calendar"]
+        self.assertEqual(
+            civil_calendar["capabilities"],
+            [
+                "time.wall-clock",
+                "time.calendar-utc",
+                "time.timezone-rules",
+                "time.local-calendar",
+            ],
+        )
+        self.assertEqual(
+            civil_calendar["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh calendar-time-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in civil_calendar["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/time_x86_64.rs",
+            "crabc-core/src/tests.rs",
+            "crabc-rs/src/civil_time.rs",
+            "crabc-rs/UPSTREAM.md",
+            "crabc-rs/src/time_x86_64.rs",
+            "crabc-rs/src/timezone.rs",
+            "crabc-rs/tests/x86_64_calendar_time.rs",
+            "crabc-rs/tests/time.rs",
+            "crabc-rs/tests/calendar_utc.rs",
+            "crabc-rs/tests/calendar_local.rs",
+            "crabc-rs/tests/timezone_rules.rs",
+            "crabc-rs/examples/time_direct_probe.rs",
+            "crabc-rs/examples/calendar_utc_direct_probe.rs",
+            "crabc-rs/examples/calendar_local_direct_probe.rs",
+            "compat/x86_64/run_x86_calendar_time_reference.sh",
+            "compat/x86_64/x86_calendar_time_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, civil_calendar["source_owners"])
+        self.assertTrue(
+            any(
+                "gettimeofday=96" in prerequisite
+                and "16-byte align-8 timeval" in prerequisite
+                and "tv_sec" in prerequisite
+                and "tv_usec" in prerequisite
+                for prerequisite in civil_calendar["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "TZif v1/v2/v3" in prerequisite
+                and "neither reads TZ nor loads system zoneinfo" in prerequisite
+                for prerequisite in civil_calendar["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "one-way" in prerequisite
+                and "no inverse local-to-instant conversion" in prerequisite
+                for prerequisite in civil_calendar["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "no x86 C time API/header/ABI" in prerequisite
+                and "libc timezone globals" in prerequisite
+                and "inverse mktime-style local conversion" in prerequisite
+                for prerequisite in civil_calendar["x86_header_prerequisites"]
+            )
+        )
+        self.assertNotIn("time.clock-query", civil_calendar["capabilities"])
+        self.assertNotIn("time.clock-set", civil_calendar["capabilities"])
+        self.assertNotIn("time.clock-process-id", civil_calendar["capabilities"])
+        self.assertNotIn("time.posix-timers", civil_calendar["capabilities"])
+        advanced_time = slices_by_id["time.advanced-clocks-posix-timers"]
+        self.assertEqual(
+            advanced_time["capabilities"],
+            [
+                "time.clock-query",
+                "time.clock-process-id",
+                "time.clock-set",
+                "time.posix-timers",
+            ],
+        )
+        self.assertEqual(
+            advanced_time["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh advanced-time-reference",
+        )
+        self.assertTrue(
+            all(
+                evidence["state"] == "verified"
+                for evidence in advanced_time["native_evidence"]
+            )
+        )
+        for source_owner in (
+            "crabc-core/src/syscall_x86_64.rs",
+            "crabc-core/src/time_x86_64.rs",
+            "crabc-core/src/tests.rs",
+            "crabc-rs/src/time_x86_64.rs",
+            "crabc-rs/tests/x86_64_advanced_time.rs",
+            "crabc-rs/examples/time_dynamic_direct_probe.rs",
+            "crabc-rs/examples/process_clock_id_direct_probe.rs",
+            "crabc-rs/examples/time_settime_direct_probe.rs",
+            "crabc-rs/examples/time_timers_direct_probe.rs",
+            "compat/x86_64/run_x86_advanced_time_reference.sh",
+            "compat/x86_64/x86_advanced_time_reference_probe.c",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(source_owner, advanced_time["source_owners"])
+        self.assertTrue(
+            any(
+                "clock_settime=227" in prerequisite
+                and "clock_gettime=228" in prerequisite
+                and "clock_getres=229" in prerequisite
+                for prerequisite in advanced_time["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "timer_create=222" in prerequisite
+                and "timer_settime=223" in prerequisite
+                and "old-value pointer is passed in r10" in prerequisite
+                for prerequisite in advanced_time["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "SIGEV_THREAD callback pointers" in prerequisite
+                and "TIMER_ABSTIME=1" in prerequisite
+                for prerequisite in advanced_time["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "no x86 C time.h timer_t/sigevent/clock API" in prerequisite
+                and "callback runtime" in prerequisite
+                for prerequisite in advanced_time["x86_header_prerequisites"]
+            )
+        )
         self.assertNotIn("process.fs-credentials", remaining["capabilities"])
         self.assertNotIn("process.supplementary-groups", remaining["capabilities"])
         for capability in (
             "memory.vm",
+            "memory.mapping",
             "time.wall-clock",
+            "time.calendar-utc",
+            "time.timezone-rules",
+            "time.local-calendar",
             "time.clock-query",
+            "time.clock-process-id",
+            "time.clock-set",
+            "time.posix-timers",
         ):
             self.assertNotIn(capability, direct["capabilities"])
             self.assertIn(capability, remaining["capabilities"])
@@ -579,20 +2607,23 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("crabc-rs/tests/x86_64_sched_setaffinity.rs", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/run_x86_sched_setaffinity_reference.sh", remaining["source_owners"])
         self.assertNotIn("compat/x86_64/x86_sched_setaffinity_reference_probe.c", remaining["source_owners"])
+        self.assertEqual(len(remaining["native_evidence"]), 1)
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
-            "./scripts/dev-x86_64.sh statat-reference",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][1]["command"],
-            "./scripts/dev-x86_64.sh readlinkat-reference",
-        )
-        self.assertEqual(
-            remaining["native_evidence"][2]["command"],
             "Define closed native x86 facade family runners",
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
+        self.assertNotIn("filesystem.xattr", direct["capabilities"])
+        self.assertIn("filesystem.xattr", remaining["capabilities"])
+        for capability in (
+            "filesystem.canonicalize",
+            "filesystem.cwd-mutation",
+            "process.root-change",
+            "process.thread-kill",
+        ):
+            self.assertNotIn(capability, direct["capabilities"])
+            self.assertIn(capability, remaining["capabilities"])
         for capability in (
             "filesystem.access-check",
             "filesystem.directory-relative-access-check",
@@ -852,6 +2883,201 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence[0], dict)
         evidence[0]["state"] = "required"
         with self.assertRaisesRegex(ledger.LedgerError, "entirely verified"):
+            ledger.validate_ledger(data)
+
+    def test_rejects_an_incomplete_or_out_of_family_verified_slice(self) -> None:
+        data = self.data()
+        remaining = self.family(data, "facade.record-owning")
+        slices = remaining["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 24
+        interface_device = next(
+            slice_entry
+            for slice_entry in slices
+            if isinstance(slice_entry, dict)
+            and slice_entry["id"] == "network.interface-device"
+        )
+        evidence = interface_device["native_evidence"]
+        assert isinstance(evidence, list) and evidence
+        assert isinstance(evidence[0], dict)
+        evidence[0]["state"] = "required"
+        with self.assertRaisesRegex(ledger.LedgerError, "entirely verified"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        remaining = self.family(data, "facade.record-owning")
+        slices = remaining["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 24
+        interface_device = next(
+            slice_entry
+            for slice_entry in slices
+            if isinstance(slice_entry, dict)
+            and slice_entry["id"] == "network.interface-device"
+        )
+        capabilities = interface_device["capabilities"]
+        assert isinstance(capabilities, list)
+        capabilities.append("random.state")
+        with self.assertRaisesRegex(ledger.LedgerError, "escape the owning family"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        remaining = self.family(data, "facade.record-owning")
+        slices = remaining["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 24
+        resolver_transport = next(
+            slice_entry
+            for slice_entry in slices
+            if isinstance(slice_entry, dict)
+            and slice_entry["id"] == "network.resolver-transport"
+        )
+        capabilities = resolver_transport["capabilities"]
+        assert isinstance(capabilities, list)
+        capabilities.append("network.interface-index")
+        with self.assertRaisesRegex(ledger.LedgerError, "duplicates a capability"):
+            ledger.validate_ledger(data)
+
+    def test_rejects_capability_or_duplicate_identity_on_an_artifact_only_slice(self) -> None:
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        artifacts = headers["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 1
+        artifact = artifacts[0]
+        assert isinstance(artifact, dict)
+        artifact["capabilities"] = ["math.fenv"]
+        with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        artifacts = headers["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 1
+        artifact = artifacts[0]
+        assert isinstance(artifact, dict)
+        artifact["id"] = "filesystem.stat-compat"
+        with self.assertRaisesRegex(ledger.LedgerError, "duplicate verified record id"):
+            ledger.validate_ledger(data)
+
+    def test_byte_string_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-byte-strings"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "scalar fallback behavior", "vector fallback behavior"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "scalar fallback"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-byte-strings"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-byte-strings command"):
+            ledger.validate_ledger(data)
+
+    def test_credential_observation_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-credential-observation"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "query-then-fill race", "stable snapshot"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "query-then-fill race"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-credential-observation"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-credentials"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-credential-observation command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_immediate_termination_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-immediate-termination"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "exit_group=231", "exit_group=999"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "exit_group=231"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-immediate-termination"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-child-reaping"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-immediate-termination command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_callback_algorithms_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-callback-algorithms"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "same-address", "different-address"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "same-address"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-callback-algorithms"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-immediate-termination"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-callback-algorithms command"
+        ):
             ledger.validate_ledger(data)
 
     def test_rejects_an_unknown_aarch64_gate(self) -> None:

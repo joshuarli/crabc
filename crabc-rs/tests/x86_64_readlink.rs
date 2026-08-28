@@ -4,9 +4,13 @@ use core::mem::MaybeUninit;
 use std::fs::{self as std_fs, File};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::symlink;
+#[cfg(feature = "alloc")]
+use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
 use crabc_rs::{fs, BorrowedFd, Errno};
+#[cfg(feature = "alloc")]
+use crabc_rs::fs::PathArg;
 
 const UNTOUCHED: u8 = 0xa5;
 
@@ -29,6 +33,21 @@ fn fixture_root() -> (RemoveDirectoryOnDrop, File) {
     let cleanup = RemoveDirectoryOnDrop(root.clone());
     std_fs::write(root.join("record"), b"readlink").expect("create non-symlink fixture");
     symlink("record", root.join("symbolic")).expect("create symbolic-link fixture");
+    #[cfg(feature = "alloc")]
+    {
+        // This is deliberately exactly the first owned-readlink buffer size.
+        // A successful `readlinkat` return equal to the supplied capacity is
+        // ambiguous, so the facade must grow and retry before it can return a
+        // complete owned target. The non-UTF-8 byte also proves results remain
+        // byte pathnames rather than being coerced through UTF-8.
+        let mut long_target = vec![b'x'; fs::SMALL_PATH_BUFFER_SIZE];
+        long_target[17] = 0xff;
+        symlink(
+            PathBuf::from(std::ffi::OsString::from_vec(long_target)),
+            root.join("long-symbolic"),
+        )
+        .expect("create exact-capacity non-UTF-8 symbolic-link fixture");
+    }
     let directory = File::open(&root).expect("open readlink fixture directory");
     (cleanup, directory)
 }
@@ -98,5 +117,48 @@ fn x86_64_readlinkat_propagates_kernel_errors_and_path_validation() {
     assert_eq!(
         fs::readlinkat_raw(directory, &overlong[..], &mut storage).unwrap_err(),
         Errno::NAMETOOLONG,
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn x86_64_owned_readlink_retries_an_exact_capacity_non_utf8_target() {
+    let (cleanup, directory) = fixture_root();
+    let mut expected = vec![b'x'; fs::SMALL_PATH_BUFFER_SIZE];
+    expected[17] = 0xff;
+
+    let by_directory = fs::readlinkat(
+        borrow(&directory),
+        "long-symbolic",
+        Vec::with_capacity(1),
+    )
+    .expect("owned directory-relative readlink retries exact capacity");
+    assert_eq!(by_directory.as_bytes(), expected);
+    assert_eq!(by_directory.as_bytes()[17], 0xff);
+
+    let absolute = cleanup.0.join("symbolic");
+    #[cfg(feature = "std")]
+    let by_current_directory = fs::readlink(absolute.as_path(), Vec::new())
+        .expect("owned current-directory readlink accepts an absolute std path");
+    #[cfg(not(feature = "std"))]
+    let by_current_directory = fs::readlink(
+        absolute
+            .to_str()
+            .expect("the generated fixture pathname is UTF-8"),
+        Vec::new(),
+    )
+    .expect("owned current-directory readlink accepts an absolute path");
+    assert_eq!(by_current_directory.as_bytes(), b"record");
+
+    let long_input = vec![b'p'; fs::SMALL_PATH_BUFFER_SIZE];
+    let converted_length = long_input
+        .as_slice()
+        .into_with_c_str(|path| Ok(path.to_bytes().len()))
+        .expect("alloc-enabled PathArg conversion owns paths beyond the stack boundary");
+    assert_eq!(converted_length, long_input.len());
+
+    assert_eq!(
+        fs::readlinkat(borrow(&directory), "missing", Vec::new()).unwrap_err(),
+        Errno::NOENT,
     );
 }

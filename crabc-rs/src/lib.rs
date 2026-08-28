@@ -29,6 +29,12 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
+// Pure Unix-time, Gregorian-calendar, and explicit immutable-timezone-rule
+// algorithms are shared by the AArch64 facade and the deliberately admitted
+// private x86-64 civil-time slice. This does not admit a C time ABI, process
+// timezone state, or public x86-64 support.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+mod civil_time;
 #[cfg(all(feature = "runtime-stdio", target_arch = "aarch64"))]
 pub mod cfile;
 pub mod collections;
@@ -37,7 +43,17 @@ pub mod collections;
 // epoll readiness with temporary signal masks), the staged typed `fs`
 // pathname-lifecycle and namespace batch (metadata, open/create,
 // directories/nodes/removal, permission/ownership, links, caller-buffer
-// readlink, and ordinary/no-replace/exchange rename), descriptor `fs::fstat`,
+// readlink, and ordinary/no-replace/exchange rename), direct caller-buffered
+// `fs::{XattrFlags, getxattr, lgetxattr, fgetxattr, setxattr, lsetxattr,
+// fsetxattr, listxattr, llistxattr, flistxattr, removexattr, lremovexattr,
+// fremovexattr}` path/no-follow-path/descriptor extended attributes,
+// allocation-free `fs::{RawDir, RawDirEntry, Dir, DirEntry}` Linux getdents64
+// records and owned directory streams with opaque seek/rewind cookies,
+// private `fs::{NamedTempFile, TempFile, create_temp_dir_into}` temporary
+// ownership (with alloc-gated owned temporary-directory path forms),
+// direct extended metadata `fs::{Statx, StatxTimestamp, StatxFlags,
+// StatxAttributes, StatxAtFlags, statx}` with its statx-only empty-path form,
+// descriptor `fs::fstat`,
 // and typed filesystem-capacity observation through
 // `fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs,
 // fstatvfs}`,
@@ -46,8 +62,17 @@ pub mod collections;
 // timestamp-mutation family: `fs::{Timespec, Timestamps, UTIME_NOW,
 // UTIME_OMIT, futimens}` plus `utimensat`, `futimes`, `futimesat`, `lutimes`,
 // `utimes`, and `utime` for bounded directory-relative, current-directory,
-// final-symlink, and whole-second forms, plus direct caller-buffer and
-// alloc-gated `process::getcwd` observations,
+// final-symlink, and whole-second forms, plus direct fixed-workspace
+// `fs::{CANONICAL_PATH_MAX, canonicalize_into}` physical canonicalization
+// (with alloc-gated `canonicalize`) and direct caller-buffer/alloc-gated
+// `process::getcwd` observations plus explicitly process-global
+// `process::{chdir, fchdir}` mutation and direct `process::chroot` root
+// change (not a sandbox and with no restoration path),
+// direct typed POSIX named-message-queue ownership through `ipc::{open,
+// create, unlink, MessageQueue, QueueAttributes, MessagePriority}` with
+// borrowed messages, absolute real-time deadlines, plus validated direct
+// `shm::{open, unlink}` name-to-descriptor ownership with no notification,
+// SysV, semaphore, or mapping IPC,
 // `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking, direct
 // `fs::sendfile` descriptor transfer, direct `fs::copy_file_range`
 // descriptor-range copying, direct `fs::posix_fallocate` mode-zero
@@ -56,21 +81,34 @@ pub mod collections;
 // system-wide and descriptor-associated filesystem
 // synchronization, and direct
 // `io::{sync_file_range, SyncFileRangeFlags}` range-writeback
-// requests, remaining `io`, `ioctl`, bounded `mm`
-// mapping/remapping,
-// `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
+// requests, remaining `io`, `ioctl`, bounded `mm` mapping/remapping, direct
+// process-wide `mm::{MlockAllFlags, mlockall, munlockall}`, unsafe legacy
+// `mm::remap_file_pages`, query/replay-only `process::kernel_brk`, `memory`,
+// direct checked `mount::{mount, unmount}` requests with no proven
+// successful namespace mutation, `numeric`, `param`, `pipe`, bounded
+// `process` identity/session
 // and supplementary-group query/fill plus pidfd creation and resource-limit
-// query/mutation, `rand`, `signal`,
-// `stdio`, bounded
-// `system::{uname, sysinfo, load_average}`, `text`, bounded
+// query/mutation, strict alloc-gated owned `/etc/passwd` and `/etc/group`
+// snapshots (not C account APIs, NSS lookup, or enumeration state), and the
+// alloc-gated one-shot
+// `process::{PreparedExec, FdAction, SpawnOptions, Child, WaitOptions,
+// WaitStatus}` prepared-child ownership boundary (not generic fork/exec/wait
+// control), `rand`, `signal` one-argument actions plus direct current-thread
+// `raise` and same-process exact-thread `kill_thread` delivery (not generic
+// process signaling),
+// `stdio`, bounded `system::{uname, sysinfo, load_average}` plus direct owned
+// `system::inotify::{Inotify, WatchDescriptor, Event, Events}` caller-buffered
+// watch/event records, `text`, bounded
 // `thread::{gettid, sched_getcpu, sched_yield, set_thread_res_uid,
 // set_thread_res_gid}` plus borrowed `AtomicU32` futex wait/wake and direct
 // read-only `sched_rr_get_interval`, direct bounded typed CPU-affinity
 // observation/mutation, and bounded `time`
 // clock-query, whole-second, and observation APIs plus direct interval-timer
-// query/control with bounded real-timer aliases, direct clock-sleep, and
-// complete timerfd-descriptor slices,
-// and the root descriptor/error types. These
+// query/control with bounded real-timer aliases, direct clock-sleep, complete
+// timerfd-descriptor slices, the separately proved `gettimeofday` /
+// UTC-calendar / explicit immutable-timezone-rule local-calendar layer, and
+// direct advanced clock query/mutation plus owned POSIX timers without
+// `SIGEV_THREAD` callbacks, and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and
 // stays absent until its record family has its own x86 proof; admission must
@@ -96,7 +134,7 @@ pub mod fs;
 pub mod fs;
 pub mod io;
 pub mod ioctl;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod ipc;
 pub mod memory;
 #[cfg(target_arch = "aarch64")]
@@ -106,13 +144,16 @@ pub mod mm;
 pub mod mm;
 #[cfg(target_arch = "aarch64")]
 pub mod mount;
-// Socket transport and allocation-free address/message values have a native
-// Linux LP64 record proof on both admitted architectures. Network-device
-// ioctl records remain AArch64-only inside `net::netdevice` until their x86
-// interface ABI receives a separate evidence slice.
+#[cfg(target_arch = "x86_64")]
+#[path = "mount_x86_64.rs"]
+pub mod mount;
+// Socket transport, allocation-free address/message values, bounded
+// network-device ioctl/rtnetlink snapshots, and the caller-owned resolver plus
+// conventional hosts/service/protocol snapshots have native Linux LP64 evidence
+// on both admitted architectures.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod net;
-#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
+#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod netdb;
 pub mod numeric;
 pub mod param;
@@ -128,14 +169,17 @@ pub mod process;
 pub mod process;
 #[cfg(target_arch = "aarch64")]
 pub mod pty;
+#[cfg(target_arch = "x86_64")]
+#[path = "pty_x86_64.rs"]
+pub mod pty;
 pub mod rand;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 mod raw_dir;
-#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
+#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub mod resolver;
 #[cfg(all(feature = "runtime-thread", target_arch = "aarch64"))]
 pub mod runtime_thread;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod shm;
 pub mod signal;
 pub mod stdio;
@@ -148,6 +192,9 @@ pub mod system;
 pub mod system;
 #[cfg(target_arch = "aarch64")]
 pub mod termios;
+#[cfg(target_arch = "x86_64")]
+#[path = "termios_x86_64.rs"]
+pub mod termios;
 pub mod text;
 #[cfg(target_arch = "aarch64")]
 pub mod thread;
@@ -159,16 +206,22 @@ pub mod time;
 #[cfg(target_arch = "x86_64")]
 #[path = "time_x86_64.rs"]
 pub mod time;
-#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "alloc",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 pub mod timezone;
-#[cfg(all(feature = "alloc", target_arch = "aarch64"))]
+#[cfg(all(
+    feature = "alloc",
+    any(target_arch = "aarch64", target_arch = "x86_64")
+))]
 pub mod users;
 
 pub use crabc_core::{Errno, Result};
 pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 #[cfg(target_arch = "x86_64")]
 pub use signal::Pid;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub use raw_dir::{RawDir, RawDirEntry};
 
 #[cfg(test)]

@@ -2,7 +2,8 @@
 # Source-only native Linux/x86-64 C fenv ABI and behavior evidence.
 #
 # The same focused fixture runs against pinned musl 1.2.6 and the isolated
-# crabc x86 fenv leaf plus project headers. This never selects crabc-libc.
+# crabc x86 fenv leaf plus project headers. This standalone runner does not
+# build the selected archive; that separate artifact use is bootstrap-only.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

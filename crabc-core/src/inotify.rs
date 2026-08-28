@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 inotify operations.
+//! Stateless Linux inotify operations.
 
 use core::ffi::CStr;
 

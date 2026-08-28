@@ -1,8 +1,10 @@
 //! Staged Linux/x86-64 filesystem operations and memory-file support.
 //!
 //! This module admits descriptor-based `fstat(2)`, `statat(2)` path metadata,
-//! caller-buffer-only `readlinkat(2)` target reads, `access(2)` and
-//! `faccessat2(2)` permission
+//! caller-buffered and allocation-backed `readlinkat(2)` target reads,
+//! caller-buffered extended-attribute operations through the direct path,
+//! no-follow-path, and descriptor syscall forms, direct `statx(2)` extended
+//! metadata with operation-specific lookup flags, `access(2)` and `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, filesystem-capacity observation through `statfs(2)` and
 //! `fstatfs(2)` plus derived `statvfs` views, a bounded pathname lifecycle
@@ -10,32 +12,49 @@
 //! `mknodat(2)`, `unlinkat(2)`, `linkat(2)`, `symlinkat(2)`, `renameat2(2)`,
 //! `fchmodat(2)`, `fchownat(2)`, and `truncate(2)`, file-access advice,
 //! file readahead, descriptor-based file-length and timestamp mutation, and
-//! closed pathname timestamp mutation through a fixed-stack path boundary,
+//! closed pathname timestamp mutation through a bounded no-alloc path boundary,
 //! fixed-mode descriptor-range allocation,
 //! descriptor-to-descriptor transfer and descriptor-range copying,
 //! file-position and synchronization operations,
 //! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
-//! memory-file creation with bounded
-//! sealing.
+//! memory-file creation with bounded sealing, plus private named and anonymous
+//! temporary-file ownership and caller-buffered/owned temporary-directory
+//! creation.
 //! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
 //! has a distinct 144-byte layout. The pathname lifecycle slice uses explicit
 //! current-directory or borrowed-directory authority and operation-specific
-//! `AT_*` flag types. `AT_EMPTY_PATH`, `statx`, allocation-backed path
-//! helpers, canonicalization, directory streams, temporary-object lifecycle,
-//! extended attributes, and CWD mutation remain separate x86 work.
+//! `AT_*` flag types. A bounded physical canonicalization operation uses
+//! explicit descriptor traversal; general `AT_EMPTY_PATH` remains separate
+//! x86 work, while [`StatxAtFlags::EMPTY_PATH`] is admitted only for
+//! `statx(2)`. Current-directory mutation is owned by [`crate::process`].
+//! Allocation-free Linux `getdents64` streams are admitted through [`RawDir`]
+//! and [`Dir`]: their caller-owned record buffer and opaque cursor semantics do
+//! not select a C `DIR` ABI.
 
+#[cfg(feature = "alloc")]
+use alloc::{ffi::CString, string::String, vec::Vec};
 use bitflags::bitflags;
 use crate::buffer::Buffer;
 use core::ffi::CStr;
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::num::NonZeroU64;
+use core::ptr;
+
+#[cfg(feature = "std")]
+use std::ffi::{OsStr, OsString};
+#[cfg(feature = "std")]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(feature = "std")]
+use std::path::{Path, PathBuf};
 
 use crate::{
     process::{Gid, Uid},
     AsFd, BorrowedFd, Errno, OwnedFd, Result,
 };
+
+pub use crate::{RawDir, RawDirEntry};
 
 bitflags! {
     /// The bounded Linux `fallocate` modes supported by this facade.
@@ -77,6 +96,23 @@ bitflags! {
         const EXEC_OK = 0x1;
         /// Test only whether the path exists.
         const EXISTS = 0;
+    }
+}
+
+bitflags! {
+    /// `XATTR_*` flags accepted by Linux extended-attribute setters.
+    ///
+    /// Unknown bits are forwarded to Linux for validation rather than being
+    /// silently discarded at the native Rust boundary.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct XattrFlags: u32 {
+        /// `XATTR_CREATE`: fail if the named attribute already exists.
+        const CREATE = 0x1;
+        /// `XATTR_REPLACE`: fail if the named attribute does not exist.
+        const REPLACE = 0x2;
+        /// Preserve future Linux-defined flags for direct kernel validation.
+        const _ = !0;
     }
 }
 
@@ -171,19 +207,24 @@ pub enum FlockOperation {
     NonBlockingUnlock = 8 | 4,
 }
 
-/// The largest byte pathname accepted by the fixed-stack [`PathArg`] boundary.
+/// The largest byte pathname represented in the fixed-stack [`PathArg`]
+/// boundary.
 ///
-/// One byte is reserved for the terminating NUL. This fixed-stack x86-64
-/// facade boundary deliberately does not allocate for longer paths; callers receive
-/// [`Errno::NAMETOOLONG`] before a syscall instead.
+/// One byte is reserved for the terminating NUL. No-allocation builds reject
+/// longer byte paths with [`Errno::NAMETOOLONG`]; allocation-enabled builds
+/// form an owned [`CString`] and leave Linux to enforce its pathname limit.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
 /// A pathname or memory-file name input accepted by the staged path lifecycle,
-/// [`access`], [`accessat`], [`statat`], [`stat`], [`statfs`], [`statvfs`],
-/// [`readlinkat_raw`], the timestamp-mutation family, and [`memfd_create`].
+/// [`access`], [`accessat`], [`statat`], [`stat`], [`statx`], [`statfs`], [`statvfs`],
+/// [`readlinkat_raw`], [`canonicalize_into`], the extended-attribute family,
+/// the timestamp-mutation family, the temporary-object family,
+/// [`crate::process::chroot`], [`crate::mount::{mount, unmount}`], and
+/// [`memfd_create`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
-/// buffer. The callback is invoked while that C string remains live, so the
+/// buffer; allocation-enabled builds use an owned [`CString`] for longer
+/// inputs. The callback is invoked while that C string remains live, so the
 /// safe facade never exposes a temporary raw pathname pointer. Byte-oriented
 /// inputs reject interior NULs with [`Errno::INVAL`] and need not be UTF-8.
 /// [`memfd_create`] uses the same input boundary for its anonymous-file label,
@@ -205,6 +246,13 @@ where
         return Err(Errno::INVAL);
     }
     if bytes.len() >= SMALL_PATH_BUFFER_SIZE {
+        #[cfg(feature = "alloc")]
+        {
+            let path = CString::new(bytes).map_err(|_| Errno::INVAL)?;
+            return callback(path.as_c_str());
+        }
+
+        #[cfg(not(feature = "alloc"))]
         return Err(Errno::NAMETOOLONG);
     }
 
@@ -260,6 +308,126 @@ impl PathArg for &str {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl PathArg for CString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self.as_c_str())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for &CString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self.as_c_str())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for String {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PathArg for &String {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &OsStr {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &OsString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for OsString {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &Path {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for &PathBuf {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
+#[cfg(feature = "std")]
+impl PathArg for PathBuf {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_path_bytes(self.as_os_str().as_bytes(), callback)
+    }
+}
+
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
@@ -281,6 +449,32 @@ bitflags! {
     pub struct AtFlags: u32 {
         /// `AT_SYMLINK_NOFOLLOW`.
         const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+bitflags! {
+    /// Linux `statx(2)` lookup and synchronization flags accepted by [`statx`].
+    ///
+    /// This vocabulary is deliberately separate from the closed [`AtFlags`]
+    /// used by `newfstatat(2)`: `AT_EMPTY_PATH`, `AT_NO_AUTOMOUNT`, and the
+    /// statx synchronization modifiers have operation-specific kernel
+    /// meanings. Unknown bits are retained and passed to Linux so this direct
+    /// syscall boundary preserves its kernel validation behavior.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct StatxAtFlags: u32 {
+        /// `AT_SYMLINK_NOFOLLOW`: observe a final symbolic link itself.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+        /// `AT_NO_AUTOMOUNT`: do not trigger a terminal automount.
+        const NO_AUTOMOUNT = 0x0000_0800;
+        /// `AT_EMPTY_PATH`: resolve an empty path as `dirfd` itself.
+        const EMPTY_PATH = 0x0000_1000;
+        /// `AT_STATX_FORCE_SYNC`: request metadata synchronized to storage.
+        const FORCE_SYNC = 0x0000_2000;
+        /// `AT_STATX_DONT_SYNC`: accept cached metadata when available.
+        const DONT_SYNC = 0x0000_4000;
+        /// Preserve future Linux-defined statx flags for direct validation.
+        const _ = !0;
     }
 }
 
@@ -697,6 +891,170 @@ impl FileType {
             Self::Unknown => 0o170000,
         }
     }
+
+    /// Interprets the Linux `DT_*` byte embedded in a `getdents64` record.
+    ///
+    /// `DT_UNKNOWN` and values not defined by Linux are retained as an
+    /// observation-only [`Self::Unknown`] result. A directory record's type is
+    /// not a metadata query; callers that need an authoritative type use
+    /// [`statat`] or [`fstat`].
+    #[inline]
+    pub(crate) const fn from_dirent_d_type(d_type: u8) -> Self {
+        match d_type {
+            1 => Self::Fifo,
+            2 => Self::CharacterDevice,
+            4 => Self::Directory,
+            6 => Self::BlockDevice,
+            8 => Self::RegularFile,
+            10 => Self::Symlink,
+            12 => Self::Socket,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// A descriptor-owning, allocation-free Linux directory stream.
+///
+/// `Dir` takes ownership of the directory descriptor and borrows caller-owned
+/// storage for `getdents64` records. Each entry borrows the stream, so an
+/// entry cannot remain live while the next call refills or advances it. `None`
+/// means end-of-directory; `Some(Err(_))` reports the first I/O or malformed
+/// record error, after which the stream is exhausted. Use [`RawDir`] when an
+/// undersized-buffer error must be recovered by dropping the iterator and
+/// rebuilding it with a larger buffer on the same descriptor.
+pub struct Dir<'buffer> {
+    entries: RawDir<'buffer, OwnedFd>,
+    done: bool,
+}
+
+/// One byte-preserving entry borrowed from [`Dir`].
+pub type DirEntry<'entry> = RawDirEntry<'entry>;
+
+impl<'buffer> Dir<'buffer> {
+    /// Opens `path` as a close-on-exec directory stream.
+    ///
+    /// The stream uses read-only access, `O_DIRECTORY`, and `O_CLOEXEC`.
+    /// Path arguments remain byte-oriented through [`PathArg`]; no UTF-8 or
+    /// process-global C `DIR` state is involved.
+    #[inline]
+    pub fn open<P: PathArg>(path: P, buffer: &'buffer mut [MaybeUninit<u8>]) -> Result<Self> {
+        Self::openat(CWD, path, buffer)
+    }
+
+    /// Opens `path` relative to a borrowed directory descriptor as a
+    /// close-on-exec directory stream.
+    #[inline]
+    pub fn openat<P: PathArg, Fd: AsFd>(
+        dirfd: Fd,
+        path: P,
+        buffer: &'buffer mut [MaybeUninit<u8>],
+    ) -> Result<Self> {
+        let fd = openat(
+            dirfd,
+            path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        Ok(Self::from_owned_fd(fd, buffer))
+    }
+
+    /// Constructs a stream by transferring ownership of an existing
+    /// directory descriptor.
+    ///
+    /// The descriptor is not re-opened or duplicated. If it does not refer to
+    /// a directory, the first call to [`Self::next`] returns the kernel error.
+    #[inline]
+    pub fn from_owned_fd(fd: OwnedFd, buffer: &'buffer mut [MaybeUninit<u8>]) -> Self {
+        Self {
+            entries: RawDir::new(fd, buffer),
+            done: false,
+        }
+    }
+
+    /// Rewinds the directory stream to its beginning.
+    ///
+    /// Buffered records are discarded immediately. The direct `lseek` to
+    /// offset zero is deferred until the next call to [`Self::next`], matching
+    /// Rustix's Linux-raw `rewinddir` behavior. Interrupted seeks are retried;
+    /// another kernel error is returned through that call and exhausts the
+    /// stream.
+    #[inline]
+    pub fn rewind(&mut self) {
+        self.entries.rewind();
+        self.done = false;
+    }
+
+    /// Seeks to a Linux directory-entry cookie.
+    ///
+    /// `offset` is the opaque cookie returned by
+    /// [`DirEntry::next_entry_cookie`], not a byte offset. Buffered records
+    /// are discarded before the direct `lseek(fd, offset, SEEK_SET)` call,
+    /// which retries interruption. Another failed seek is returned immediately
+    /// and leaves the stream exhausted.
+    #[inline]
+    pub fn seek(&mut self, offset: i64) -> Result<()> {
+        match self.entries.seek(offset) {
+            Ok(()) => {
+                self.done = false;
+                Ok(())
+            }
+            Err(error) => {
+                self.done = true;
+                Err(error)
+            }
+        }
+    }
+
+    /// Returns the next entry, an I/O error, or end-of-directory.
+    #[inline]
+    pub fn next(&mut self) -> Option<Result<DirEntry<'_>>> {
+        if self.done {
+            return None;
+        }
+        match self.entries.next() {
+            Some(Err(error)) => {
+                self.done = true;
+                Some(Err(error))
+            }
+            Some(Ok(entry)) => Some(Ok(entry)),
+            None => {
+                self.done = true;
+                None
+            }
+        }
+    }
+
+    /// Borrows the owned directory descriptor for descriptor-relative
+    /// operations without transferring ownership.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.entries.as_fd()
+    }
+}
+
+impl AsFd for Dir<'_> {
+    #[inline]
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.entries.as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsRawFd for Dir<'_> {
+    #[inline]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        Dir::as_fd(self).as_raw_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsFd for Dir<'_> {
+    #[inline]
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `Dir` owns its descriptor through its internal `OwnedFd`, so
+        // it stays open for the returned standard-library borrow.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(Dir::as_fd(self).as_raw_fd()) }
+    }
 }
 
 bitflags! {
@@ -810,6 +1168,306 @@ pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
 #[doc(alias = "F_ADD_SEALS")]
 pub fn fcntl_add_seals<Fd: AsFd>(fd: Fd, seals: SealFlags) -> Result<()> {
     crabc_core::io::fcntl_add_seals(fd.as_fd().as_raw_fd(), seals.bits())
+}
+
+/// Number of kernel-random bytes used for each named temporary-file candidate.
+/// The bytes are encoded as 24 hexadecimal pathname bytes (96 bits).
+pub const TEMP_FILE_RANDOM_BYTES: usize = 12;
+
+/// Maximum number of candidate names attempted after an `EEXIST` collision.
+pub const TEMP_FILE_MAX_ATTEMPTS: usize = 128;
+
+const TEMP_FILE_NAME_MAX: usize = 255;
+const TEMP_FILE_SUFFIX_LENGTH: usize = TEMP_FILE_RANDOM_BYTES * 2;
+const TEMP_FILE_MODE_BITS: u32 = 0o600;
+
+/// An owned named temporary regular file with descriptor-relative cleanup.
+///
+/// Creation opens a stable directory descriptor, then atomically creates a
+/// private `O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC` entry with a 96-bit
+/// `getrandom` suffix. The value owns both descriptors and unlinks its
+/// basename on drop. [`Self::into_owned_fd`] deliberately persists the
+/// directory entry and transfers only the file descriptor to the caller.
+///
+/// The name is a basename, not a process-relative pathname. Callers that need
+/// a full path retain the directory authority they supplied and join it with
+/// [`Self::name`]; no ambient CWD or global temporary-file registry is used.
+pub struct NamedTempFile {
+    fd: OwnedFd,
+    parent: OwnedFd,
+    name: [u8; TEMP_FILE_NAME_MAX + 1],
+    name_len: u16,
+    cleanup: bool,
+}
+
+impl NamedTempFile {
+    /// Borrows the generated basename without a trailing NUL.
+    #[inline]
+    pub fn name(&self) -> &[u8] {
+        &self.name[..self.name_len as usize]
+    }
+
+    /// Borrows the stable directory descriptor used for creation and cleanup.
+    #[inline]
+    pub fn parent_fd(&self) -> BorrowedFd<'_> {
+        self.parent.as_fd()
+    }
+
+    /// Borrows the created file descriptor.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+
+    /// Unlinks the entry and closes both owned descriptors.
+    ///
+    /// If unlinking fails, the value remains armed for a best-effort retry in
+    /// `Drop`, and the kernel error is returned to the caller.
+    pub fn remove(mut self) -> Result<()> {
+        let result = self.unlink();
+        if result.is_ok() {
+            self.cleanup = false;
+        }
+        result
+    }
+
+    /// Persists the directory entry and transfers ownership of its file FD.
+    ///
+    /// The parent directory descriptor is closed by this operation. The
+    /// caller is responsible for retaining or removing the named entry after
+    /// this transfer.
+    pub fn into_owned_fd(self) -> OwnedFd {
+        let mut this = ManuallyDrop::new(self);
+        this.cleanup = false;
+        // SAFETY: `this` is never dropped after `ManuallyDrop` is created;
+        // explicitly release the retained parent descriptor, then move the
+        // file descriptor out exactly once.
+        unsafe {
+            ptr::drop_in_place(&mut this.parent);
+            ptr::read(&this.fd)
+        }
+    }
+
+    fn unlink(&self) -> Result<()> {
+        let name = unsafe {
+            CStr::from_bytes_with_nul_unchecked(&self.name[..self.name_len as usize + 1])
+        };
+        unlinkat(&self.parent, name, UnlinkAtFlags::empty())
+    }
+}
+
+impl AsFd for NamedTempFile {
+    #[inline]
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsRawFd for NamedTempFile {
+    #[inline]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.as_fd().as_raw_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsFd for NamedTempFile {
+    #[inline]
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `NamedTempFile` owns its descriptor through `OwnedFd`, so it
+        // remains open for the returned standard-library borrow.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(self.as_fd().as_raw_fd()) }
+    }
+}
+
+impl Drop for NamedTempFile {
+    fn drop(&mut self) {
+        if self.cleanup {
+            let _ = self.unlink();
+        }
+    }
+}
+
+/// Creates a named temporary file in `parent` relative to the current
+/// directory, retaining a stable parent descriptor for cleanup.
+#[inline]
+pub fn create_temp_file<P: PathArg, Prefix: PathArg>(
+    parent: P,
+    prefix: Prefix,
+) -> Result<NamedTempFile> {
+    parent.into_with_c_str(|parent| {
+        let directory = openat(
+            CWD,
+            parent,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        create_temp_file_at(&directory, prefix)
+    })
+}
+
+/// Creates a named temporary file relative to an already-open directory.
+///
+/// `parent` must be a real open directory descriptor, not the special
+/// `AT_FDCWD` token: retaining a duplicate is what makes drop cleanup immune
+/// to later current-directory changes. The generated basename is available
+/// through [`NamedTempFile::name`].
+#[inline]
+pub fn create_temp_file_at<Fd: AsFd, Prefix: PathArg>(
+    parent: Fd,
+    prefix: Prefix,
+) -> Result<NamedTempFile> {
+    let parent = parent.as_fd();
+    if parent.as_raw_fd() < 0 {
+        return Err(Errno::BADF);
+    }
+    let parent = crate::io::fcntl_dupfd_cloexec(parent, 0)?;
+    prefix.into_with_c_str(|prefix| {
+        let (name, name_len, fd) = create_temp_file_at_bytes(&parent, prefix.to_bytes())?;
+        Ok(NamedTempFile {
+            fd,
+            parent,
+            name,
+            name_len: name_len as u16,
+            cleanup: true,
+        })
+    })
+}
+
+fn create_temp_file_at_bytes<Fd: AsFd>(
+    parent: Fd,
+    prefix: &[u8],
+) -> Result<([u8; TEMP_FILE_NAME_MAX + 1], usize, OwnedFd)> {
+    let name_len = validate_temp_file_prefix(prefix)?;
+    let mut candidate = [0u8; TEMP_FILE_NAME_MAX + 1];
+    let mut entropy = [0u8; TEMP_FILE_RANDOM_BYTES];
+    let hex = b"0123456789abcdef";
+    let mut attempt = 0;
+    while attempt < TEMP_FILE_MAX_ATTEMPTS {
+        crate::rand::getentropy(&mut entropy)?;
+        candidate[..prefix.len()].copy_from_slice(prefix);
+        for (index, byte) in entropy.iter().enumerate() {
+            candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
+            candidate[prefix.len() + index * 2 + 1] = hex[(byte & 0x0f) as usize];
+        }
+        candidate[name_len] = 0;
+        let candidate_cstr =
+            unsafe { CStr::from_bytes_with_nul_unchecked(&candidate[..name_len + 1]) };
+        match openat(
+            parent.as_fd(),
+            candidate_cstr,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+            Mode::from_bits_retain(TEMP_FILE_MODE_BITS),
+        ) {
+            Ok(fd) => return Ok((candidate, name_len, fd)),
+            Err(Errno::EXIST) => attempt += 1,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(Errno::EXIST)
+}
+
+#[inline]
+fn validate_temp_file_prefix(prefix: &[u8]) -> Result<usize> {
+    if prefix.is_empty() || prefix.iter().any(|&byte| byte == b'/') {
+        return Err(Errno::INVAL);
+    }
+    let name_len = prefix
+        .len()
+        .checked_add(TEMP_FILE_SUFFIX_LENGTH)
+        .ok_or(Errno::NAMETOOLONG)?;
+    if name_len > TEMP_FILE_NAME_MAX {
+        return Err(Errno::NAMETOOLONG);
+    }
+    Ok(name_len)
+}
+
+/// A descriptor-owned anonymous temporary regular file.
+///
+/// `TempFile` uses Linux `O_TMPFILE | O_RDWR | O_CLOEXEC` relative to the
+/// requested directory. It never creates a directory entry, and dropping the
+/// value closes the only Rust ownership token for the inode. The requested
+/// [`Mode`] is used at creation time and remains subject to the process umask.
+///
+/// This API deliberately has no named-file or `mkstemp` fallback. A filesystem
+/// that cannot create anonymous temporary files returns
+/// [`Errno::OPNOTSUPP`] from [`Self::open`] or [`Self::open_at`]. Callers that
+/// need a pathname must choose and audit a separate named-file contract.
+#[repr(transparent)]
+pub struct TempFile {
+    fd: OwnedFd,
+}
+
+impl TempFile {
+    /// Opens an anonymous temporary file in `directory` relative to CWD.
+    ///
+    /// `directory` must name a directory on a filesystem supporting Linux
+    /// `O_TMPFILE`; the successful descriptor is opened read/write and
+    /// close-on-exec. No pathname is returned or created. `EOPNOTSUPP` is
+    /// returned unchanged when the filesystem lacks this operation.
+    #[inline]
+    pub fn open<P: PathArg>(directory: P, mode: Mode) -> Result<Self> {
+        Self::open_at(CWD, directory, mode)
+    }
+
+    /// Opens an anonymous temporary file in `directory` relative to `dirfd`.
+    ///
+    /// The directory descriptor remains the caller's responsibility; only the
+    /// newly created temporary-file descriptor is moved into `TempFile`.
+    /// `directory` must name a directory on a filesystem supporting Linux
+    /// `O_TMPFILE`. No named-file fallback is attempted on `EOPNOTSUPP`.
+    #[inline]
+    pub fn open_at<Fd: AsFd, P: PathArg>(dirfd: Fd, directory: P, mode: Mode) -> Result<Self> {
+        openat(
+            dirfd,
+            directory,
+            OFlags::RDWR | OFlags::TMPFILE | OFlags::CLOEXEC,
+            mode,
+        )
+        .map(|fd| Self { fd })
+    }
+
+    /// Borrows the anonymous file descriptor for direct I/O and metadata
+    /// operations.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+
+    /// Consumes the temporary-file wrapper and returns its owned descriptor.
+    ///
+    /// The descriptor remains anonymous; transferring it does not create a
+    /// directory entry or change its close-on-exec status.
+    #[inline]
+    pub fn into_owned_fd(self) -> OwnedFd {
+        self.fd
+    }
+}
+
+impl AsFd for TempFile {
+    #[inline]
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsRawFd for TempFile {
+    #[inline]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.as_fd().as_raw_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsFd for TempFile {
+    #[inline]
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `TempFile` owns its descriptor through `OwnedFd`, so it
+        // remains open for the returned standard-library borrow.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(self.as_fd().as_raw_fd()) }
+    }
 }
 
 /// Sets the length of an open file descriptor.
@@ -1415,6 +2073,200 @@ impl Stat {
     }
 }
 
+/// Linux `struct statx` metadata returned by [`statx`].
+///
+/// The 256-byte record is shared by the admitted Linux targets. Optional
+/// observations are valid only when their corresponding bit is present in
+/// [`Self::stx_mask`]; callers must not infer support merely from the
+/// requested mask.
+#[doc(alias = "struct statx")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Statx {
+    /// Fields supplied by the kernel.
+    pub stx_mask: u32,
+    /// Preferred I/O block size.
+    pub stx_blksize: u32,
+    /// File attributes.
+    pub stx_attributes: StatxAttributes,
+    /// Hard-link count.
+    pub stx_nlink: u32,
+    /// Owning user ID.
+    pub stx_uid: u32,
+    /// Owning group ID.
+    pub stx_gid: u32,
+    /// File type and permission bits.
+    pub stx_mode: u16,
+    __spare0: [u16; 1],
+    /// Inode number.
+    pub stx_ino: u64,
+    /// File size in bytes.
+    pub stx_size: u64,
+    /// Allocated 512-byte blocks.
+    pub stx_blocks: u64,
+    /// Attributes understood by the filesystem.
+    pub stx_attributes_mask: StatxAttributes,
+    /// Last-access timestamp.
+    pub stx_atime: StatxTimestamp,
+    /// Birth/creation timestamp, when supplied.
+    pub stx_btime: StatxTimestamp,
+    /// Last-status-change timestamp.
+    pub stx_ctime: StatxTimestamp,
+    /// Last-modification timestamp.
+    pub stx_mtime: StatxTimestamp,
+    /// Device major number for special files.
+    pub stx_rdev_major: u32,
+    /// Device minor number for special files.
+    pub stx_rdev_minor: u32,
+    /// Containing filesystem device major number.
+    pub stx_dev_major: u32,
+    /// Containing filesystem device minor number.
+    pub stx_dev_minor: u32,
+    /// Mount ID, when supplied.
+    pub stx_mnt_id: u64,
+    /// Minimum direct-I/O memory alignment, when supplied.
+    pub stx_dio_mem_align: u32,
+    /// Direct-I/O offset alignment, when supplied.
+    pub stx_dio_offset_align: u32,
+    /// Subvolume identifier.
+    pub stx_subvol: u64,
+    /// Minimum atomic-write unit.
+    pub stx_atomic_write_unit_min: u32,
+    /// Maximum atomic-write unit.
+    pub stx_atomic_write_unit_max: u32,
+    /// Maximum number of atomic-write segments.
+    pub stx_atomic_write_segments_max: u32,
+    /// Direct-I/O read-offset alignment.
+    pub stx_dio_read_offset_align: u32,
+    /// Optional maximum atomic-write unit.
+    pub stx_atomic_write_unit_max_opt: u32,
+    __spare2: [u32; 1],
+    __spare3: [u64; 8],
+}
+
+/// One timestamp in Linux's `struct statx` output.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct StatxTimestamp {
+    /// Seconds since the Unix epoch.
+    pub tv_sec: i64,
+    /// Nanoseconds within the second.
+    pub tv_nsec: u32,
+    __reserved: i32,
+}
+
+bitflags! {
+    /// `STATX_*` fields accepted by [`statx`].
+    ///
+    /// This is deliberately closed to the fields understood by this pinned
+    /// facade. [`Statx::stx_mask`] remains authoritative when a kernel omits
+    /// a requested field or supplies only a subset of the request.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct StatxFlags: u32 {
+        /// File type.
+        const TYPE = 0x0001;
+        /// Permission and file-type mode.
+        const MODE = 0x0002;
+        /// Hard-link count.
+        const NLINK = 0x0004;
+        /// Owning user ID.
+        const UID = 0x0008;
+        /// Owning group ID.
+        const GID = 0x0010;
+        /// Last-access timestamp.
+        const ATIME = 0x0020;
+        /// Last-modification timestamp.
+        const MTIME = 0x0040;
+        /// Last-status-change timestamp.
+        const CTIME = 0x0080;
+        /// Inode number.
+        const INO = 0x0100;
+        /// File size.
+        const SIZE = 0x0200;
+        /// Allocated 512-byte blocks.
+        const BLOCKS = 0x0400;
+        /// All basic metadata fields.
+        const BASIC_STATS = 0x07ff;
+        /// Birth/creation timestamp.
+        const BTIME = 0x0800;
+        /// Mount ID.
+        const MNT_ID = 0x1000;
+        /// Direct-I/O alignment fields.
+        const DIOALIGN = 0x2000;
+        /// The historical `STATX_ALL` mask.
+        const ALL = 0x0fff;
+    }
+}
+
+impl StatxFlags {
+    /// Reserved mask bit rejected before entering the kernel.
+    ///
+    /// It is exposed as a raw value only so callers testing direct Linux
+    /// compatibility can construct a retained bitflags value; it is not a
+    /// valid member of this closed flag set.
+    pub const RESERVED_MASK: u32 = 0x8000_0000;
+}
+
+bitflags! {
+    /// `STATX_ATTR_*` bits reported in [`Statx::stx_attributes`].
+    ///
+    /// This is a closed set matching the pinned facade contract. Unknown
+    /// kernel attribute bits remain raw kernel observations; this facade does
+    /// not invent names for them.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct StatxAttributes: u64 {
+        /// File is compressed.
+        const COMPRESSED = 0x0000_0000_0000_0004;
+        /// File is immutable.
+        const IMMUTABLE = 0x0000_0000_0000_0010;
+        /// File is append-only.
+        const APPEND = 0x0000_0000_0000_0020;
+        /// File is excluded from filesystem dumps.
+        const NODUMP = 0x0000_0000_0000_0040;
+        /// File is encrypted.
+        const ENCRYPTED = 0x0000_0000_0000_0800;
+        /// Automount trigger.
+        const AUTOMOUNT = 0x0000_0000_0000_1000;
+        /// Mount root.
+        const MOUNT_ROOT = 0x0000_0000_0000_2000;
+        /// Verity-protected file.
+        const VERITY = 0x0000_0000_0010_0000;
+        /// DAX file.
+        const DAX = 0x0000_0000_0020_0000;
+    }
+}
+
+const _: [(); 256] = [(); core::mem::size_of::<Statx>()];
+const _: [(); 8] = [(); core::mem::align_of::<Statx>()];
+const _: [(); 16] = [(); core::mem::size_of::<StatxTimestamp>()];
+const _: [(); 8] = [(); core::mem::align_of::<StatxTimestamp>()];
+const _: [(); 0] = [(); core::mem::offset_of!(Statx, stx_mask)];
+const _: [(); 4] = [(); core::mem::offset_of!(Statx, stx_blksize)];
+const _: [(); 8] = [(); core::mem::offset_of!(Statx, stx_attributes)];
+const _: [(); 16] = [(); core::mem::offset_of!(Statx, stx_nlink)];
+const _: [(); 20] = [(); core::mem::offset_of!(Statx, stx_uid)];
+const _: [(); 24] = [(); core::mem::offset_of!(Statx, stx_gid)];
+const _: [(); 28] = [(); core::mem::offset_of!(Statx, stx_mode)];
+const _: [(); 32] = [(); core::mem::offset_of!(Statx, stx_ino)];
+const _: [(); 40] = [(); core::mem::offset_of!(Statx, stx_size)];
+const _: [(); 48] = [(); core::mem::offset_of!(Statx, stx_blocks)];
+const _: [(); 56] = [(); core::mem::offset_of!(Statx, stx_attributes_mask)];
+const _: [(); 64] = [(); core::mem::offset_of!(Statx, stx_atime)];
+const _: [(); 80] = [(); core::mem::offset_of!(Statx, stx_btime)];
+const _: [(); 96] = [(); core::mem::offset_of!(Statx, stx_ctime)];
+const _: [(); 112] = [(); core::mem::offset_of!(Statx, stx_mtime)];
+const _: [(); 128] = [(); core::mem::offset_of!(Statx, stx_rdev_major)];
+const _: [(); 132] = [(); core::mem::offset_of!(Statx, stx_rdev_minor)];
+const _: [(); 136] = [(); core::mem::offset_of!(Statx, stx_dev_major)];
+const _: [(); 140] = [(); core::mem::offset_of!(Statx, stx_dev_minor)];
+const _: [(); 144] = [(); core::mem::offset_of!(Statx, stx_mnt_id)];
+const _: [(); 152] = [(); core::mem::offset_of!(Statx, stx_dio_mem_align)];
+const _: [(); 156] = [(); core::mem::offset_of!(Statx, stx_dio_offset_align)];
+
 bitflags! {
     /// Linux mount flags reported by [`StatFs`] and [`StatVfs`].
     ///
@@ -1587,6 +2439,42 @@ pub fn statvfs<P: PathArg>(path: P) -> Result<StatVfs> {
     statfs(path).map(StatVfs::from)
 }
 
+/// Queries extended Linux metadata for `path` relative to `dirfd`.
+///
+/// This direct x86-64 `statx` shape enters Linux through syscall 332, returns
+/// kernel errors directly, and does not emulate musl's `ENOSYS` compatibility
+/// fallback or cache process-wide availability. The returned
+/// [`Statx::stx_mask`] determines which requested observations are valid; a
+/// successful call does not promise every requested field. Unlike [`statat`],
+/// this operation accepts the separate [`StatxAtFlags`] vocabulary, including
+/// its narrowly scoped `AT_EMPTY_PATH` and synchronization forms.
+#[inline]
+pub fn statx<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    flags: StatxAtFlags,
+    mask: StatxFlags,
+) -> Result<Statx> {
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        let mut statx = MaybeUninit::<Statx>::uninit();
+        // SAFETY: `Statx` is the complete Linux 256-byte output layout,
+        // while `PathArg` keeps its C string and the writable record storage
+        // live for the direct syscall. The core seam owns mask prevalidation.
+        unsafe {
+            crabc_core::fs::statx_raw(
+                dirfd.as_raw_fd(),
+                path.as_ptr().cast(),
+                flags.bits(),
+                mask.bits(),
+                statx.as_mut_ptr().cast(),
+            )?
+        };
+        // SAFETY: A successful statx initialized the complete output record.
+        Ok(unsafe { statx.assume_init() })
+    })
+}
+
 /// Queries metadata for an open file or directory descriptor.
 ///
 /// The descriptor is borrowed for the duration of the direct Linux syscall;
@@ -1609,8 +2497,8 @@ pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
 /// The returned [`Stat`] is exactly the 144-byte Linux/x86-64 kernel layout.
 /// `dirfd` is borrowed for the direct syscall, while [`PathArg`] keeps any
 /// temporary pathname storage alive until Linux has consumed it. Only
-/// [`AtFlags::SYMLINK_NOFOLLOW`] is admitted; `AT_EMPTY_PATH`,
-/// `AT_NO_AUTOMOUNT`, and `statx` remain separate staged x86 work.
+/// [`AtFlags::SYMLINK_NOFOLLOW`] is admitted; `AT_EMPTY_PATH` and
+/// `AT_NO_AUTOMOUNT` remain outside this `newfstatat(2)` boundary.
 #[inline]
 #[doc(alias = "fstatat")]
 pub fn statat<P: PathArg, Fd: AsFd>(dirfd: Fd, path: P, flags: AtFlags) -> Result<Stat> {
@@ -1782,6 +2670,214 @@ pub fn unlink<P: PathArg>(path: P) -> Result<()> {
 #[inline]
 pub fn rmdir<P: PathArg>(path: P) -> Result<()> {
     unlinkat(CWD, path, UnlinkAtFlags::REMOVEDIR)
+}
+
+/// Number of kernel-random bytes used for each temporary-directory candidate.
+///
+/// The bytes are encoded as 24 hexadecimal pathname bytes, giving every
+/// candidate 96 bits of entropy before the atomic `mkdirat` attempt.
+pub const TEMP_DIR_RANDOM_BYTES: usize = 12;
+
+/// Maximum number of candidate names attempted after an `EEXIST` collision.
+pub const TEMP_DIR_MAX_ATTEMPTS: usize = 128;
+
+const TEMP_DIR_NAME_MAX: usize = 255;
+const TEMP_DIR_SUFFIX_LENGTH: usize = TEMP_DIR_RANDOM_BYTES * 2;
+const TEMP_DIR_MODE: Mode = Mode::RWXU;
+
+// Linux's x86-64 pathname ceiling includes its terminating NUL. This local
+// limit belongs to temporary pathname construction only; canonicalization is
+// a separately staged x86 capability and must not leak its API or policy here.
+const TEMP_DIR_PATH_MAX: usize = 4096;
+
+/// Creates a private temporary directory below `parent` and writes the
+/// resulting pathname with the caller's `parent` spelling into caller-owned
+/// storage.
+///
+/// `parent` is opened as a directory before creation, so the actual creation
+/// is descriptor-relative and does not depend on a process-global CWD race.
+/// The returned bytes are still a pathname, not a retained directory handle;
+/// callers coordinating CWD changes should prefer [`create_temp_dir_at_into`].
+/// `prefix` is a non-empty, NUL-free single directory-entry prefix; it may
+/// contain arbitrary non-UTF-8 bytes but may not contain `/`. The generated
+/// suffix contains 96 bits from Linux `getrandom`, and each candidate is
+/// created atomically with `mkdirat` using mode `0700` (the process umask may
+/// only remove permissions). Up to [`TEMP_DIR_MAX_ATTEMPTS`] `EEXIST`
+/// collisions are retried; another kernel error is returned unchanged.
+///
+/// The initialized output is the pathname bytes without a trailing NUL. This
+/// operation never allocates and returns [`Errno::RANGE`] when the caller's
+/// output is too small, [`Errno::INVAL`] for an invalid prefix, or
+/// [`Errno::NAMETOOLONG`] when the directory-entry/pathname bounds are
+/// exceeded. No libc ABI, C `errno`, or process-global temporary-directory
+/// state is used.
+#[inline]
+pub fn create_temp_dir_into<P: PathArg, Prefix: PathArg, Buf: Buffer<u8>>(
+    parent: P,
+    prefix: Prefix,
+    mut output: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, capacity) = output.parts_mut();
+    let initialized = parent.into_with_c_str(|parent| {
+        prefix.into_with_c_str(|prefix| {
+            let prefix_bytes = prefix.to_bytes();
+            let name_length = validate_temp_prefix(prefix_bytes)?;
+            let separator = !parent.to_bytes().ends_with(b"/");
+            let total = parent
+                .to_bytes()
+                .len()
+                .checked_add(usize::from(separator))
+                .and_then(|length| length.checked_add(name_length))
+                .ok_or(Errno::NAMETOOLONG)?;
+            if total >= TEMP_DIR_PATH_MAX {
+                return Err(Errno::NAMETOOLONG);
+            }
+            if total > capacity {
+                return Err(Errno::RANGE);
+            }
+
+            let directory = openat(
+                CWD,
+                parent,
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )?;
+            let mut basename = [0u8; TEMP_DIR_NAME_MAX + 1];
+            let basename_length =
+                create_temp_dir_at_bytes(&directory, prefix_bytes, &mut basename)?;
+
+            // SAFETY: `pointer` has `capacity` writable bytes from the sealed
+            // `Buffer` contract, and the exact output length was checked above.
+            unsafe {
+                ptr::copy_nonoverlapping(parent.as_ptr().cast(), pointer, parent.to_bytes().len());
+                let mut offset = parent.to_bytes().len();
+                if separator {
+                    pointer.add(offset).write(b'/');
+                    offset += 1;
+                }
+                ptr::copy_nonoverlapping(basename.as_ptr(), pointer.add(offset), basename_length);
+            }
+            Ok(total)
+        })
+    })?;
+    // SAFETY: the closure copied exactly `initialized` initialized pathname
+    // bytes into the `Buffer` storage.
+    unsafe { Ok(output.assume_init(initialized)) }
+}
+
+/// Creates an owned private temporary directory below `parent`.
+///
+/// This is the allocation-enabled spelling of [`create_temp_dir_into`]. The
+/// returned `CString` is the created full pathname and preserves arbitrary
+/// non-UTF-8 bytes. The allocation is made only after the fixed direct-kernel
+/// creation contract succeeds.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn create_temp_dir<P: PathArg, Prefix: PathArg>(parent: P, prefix: Prefix) -> Result<CString> {
+    let mut output = [0u8; TEMP_DIR_PATH_MAX];
+    let length = create_temp_dir_into(parent, prefix, &mut output)?;
+    let mut bytes = Vec::with_capacity(length + 1);
+    bytes.extend_from_slice(&output[..length]);
+    bytes.push(0);
+    // SAFETY: the source is composed from NUL-free `PathArg` bytes and a
+    // generated hexadecimal suffix; the only NUL is the final terminator.
+    Ok(unsafe { CString::from_vec_with_nul_unchecked(bytes) })
+}
+
+/// Creates a private temporary directory below an already-open directory and
+/// returns its generated basename in caller-owned storage.
+///
+/// This descriptor-relative form is the narrow no-allocation primitive behind
+/// [`create_temp_dir_into`]. It is useful when the caller already has a stable
+/// directory descriptor and does not need a process-relative full pathname.
+#[inline]
+pub fn create_temp_dir_at_into<Fd: AsFd, Prefix: PathArg, Buf: Buffer<u8>>(
+    parent: Fd,
+    prefix: Prefix,
+    mut output: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, capacity) = output.parts_mut();
+    let initialized = prefix.into_with_c_str(|prefix| {
+        let prefix = prefix.to_bytes();
+        let name_length = validate_temp_prefix(prefix)?;
+        if name_length > capacity {
+            return Err(Errno::RANGE);
+        }
+        // SAFETY: `pointer` is writable for `capacity` bytes and the helper
+        // writes exactly `name_length` initialized bytes after successful
+        // atomic directory creation.
+        let output = unsafe { core::slice::from_raw_parts_mut(pointer, capacity) };
+        create_temp_dir_at_bytes(parent, prefix, output)
+    })?;
+    // SAFETY: the helper initialized exactly `initialized` bytes in the
+    // caller's buffer.
+    unsafe { Ok(output.assume_init(initialized)) }
+}
+
+/// Creates an owned private temporary directory below an open directory and
+/// returns its generated basename.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn create_temp_dir_at<Fd: AsFd, Prefix: PathArg>(parent: Fd, prefix: Prefix) -> Result<CString> {
+    let mut output = [0u8; TEMP_DIR_NAME_MAX + 1];
+    let length = create_temp_dir_at_into(parent, prefix, &mut output)?;
+    let mut bytes = Vec::with_capacity(length + 1);
+    bytes.extend_from_slice(&output[..length]);
+    bytes.push(0);
+    // SAFETY: the output consists of NUL-free prefix and hexadecimal suffix
+    // bytes followed by one explicit terminator.
+    Ok(unsafe { CString::from_vec_with_nul_unchecked(bytes) })
+}
+
+#[inline]
+fn validate_temp_prefix(prefix: &[u8]) -> Result<usize> {
+    if prefix.is_empty() || prefix.iter().any(|&byte| byte == b'/') {
+        return Err(Errno::INVAL);
+    }
+    let name_length = prefix
+        .len()
+        .checked_add(TEMP_DIR_SUFFIX_LENGTH)
+        .ok_or(Errno::NAMETOOLONG)?;
+    if name_length > TEMP_DIR_NAME_MAX {
+        return Err(Errno::NAMETOOLONG);
+    }
+    Ok(name_length)
+}
+
+fn create_temp_dir_at_bytes<Fd: AsFd>(
+    parent: Fd,
+    prefix: &[u8],
+    output: &mut [u8],
+) -> Result<usize> {
+    let name_length = validate_temp_prefix(prefix)?;
+    if output.len() < name_length {
+        return Err(Errno::RANGE);
+    }
+    let parent = parent.as_fd();
+    let mut candidate = [0u8; TEMP_DIR_NAME_MAX + 1];
+    let mut entropy = [0u8; TEMP_DIR_RANDOM_BYTES];
+    let hex = b"0123456789abcdef";
+
+    let mut attempt = 0;
+    while attempt < TEMP_DIR_MAX_ATTEMPTS {
+        crate::rand::getentropy(&mut entropy)?;
+        candidate[..prefix.len()].copy_from_slice(prefix);
+        for (index, byte) in entropy.iter().enumerate() {
+            candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
+            candidate[prefix.len() + index * 2 + 1] = hex[(byte & 0x0f) as usize];
+        }
+        let candidate_cstr =
+            unsafe { CStr::from_bytes_with_nul_unchecked(&candidate[..name_length + 1]) };
+        match crabc_core::fs::mkdirat(parent.as_raw_fd(), candidate_cstr, TEMP_DIR_MODE.bits()) {
+            Ok(()) => {
+                output[..name_length].copy_from_slice(&candidate[..name_length]);
+                return Ok(name_length);
+            }
+            Err(Errno::EXIST) => attempt += 1,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(Errno::EXIST)
 }
 
 /// Creates a hard link between paths relative to their directory descriptors.
@@ -2030,6 +3126,742 @@ pub fn readlinkat_raw<P: PathArg, Fd: AsFd, Buf: Buffer<u8>>(
     // SAFETY: A successful readlinkat initialized exactly the reported
     // prefix and never returns more bytes than the supplied buffer length.
     unsafe { Ok(buffer.assume_init(initialized)) }
+}
+
+/// Reads a complete symbolic-link target relative to `dirfd` into owned
+/// byte-path storage.
+///
+/// `readlinkat(2)` does not append a NUL byte and reports a successful length
+/// equal to the supplied capacity for both an exactly fitting target and a
+/// truncated one. This wrapper therefore retries with a larger buffer until
+/// the returned length is strictly shorter than the capacity. The supplied
+/// vector is reused where its capacity permits; the resulting [`CString`]
+/// preserves arbitrary non-NUL target bytes without UTF-8 conversion.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn readlinkat<P: PathArg, Fd: AsFd, B: Into<Vec<u8>>>(
+    dirfd: Fd,
+    path: P,
+    reuse: B,
+) -> Result<CString> {
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        let mut buffer = reuse.into();
+        buffer.clear();
+        buffer.reserve(SMALL_PATH_BUFFER_SIZE);
+
+        loop {
+            let capacity = buffer.capacity();
+            let spare = buffer.spare_capacity_mut();
+            // SAFETY: the vector spare capacity is writable for its exact
+            // length and remains live for the duration of this direct syscall.
+            let length = unsafe {
+                crabc_core::fs::readlinkat_raw(
+                    dirfd.as_raw_fd(),
+                    path,
+                    spare.as_mut_ptr().cast(),
+                    spare.len(),
+                )?
+            };
+            if length < capacity {
+                // SAFETY: Linux readlinkat returns a pathname byte sequence,
+                // which cannot contain NUL. The successful return proves this
+                // exact prefix was initialized before it is committed.
+                unsafe {
+                    buffer.set_len(length);
+                    return Ok(CString::from_vec_unchecked(buffer));
+                }
+            }
+            buffer.reserve(capacity.saturating_add(1));
+        }
+    })
+}
+
+/// Reads a complete symbolic-link target relative to the process current
+/// directory into owned byte-path storage.
+///
+/// The current working directory is process-global on Linux. Relative paths
+/// therefore require callers to coordinate with concurrent CWD mutation; an
+/// absolute path ignores the [`CWD`] directory token as usual.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn readlink<P: PathArg, B: Into<Vec<u8>>>(path: P, reuse: B) -> Result<CString> {
+    readlinkat(CWD, path, reuse)
+}
+
+/// The Linux pathname bound used by the native canonicalization operation.
+///
+/// Linux pathname arguments and the musl `realpath` implementation are both
+/// bounded by `PATH_MAX` bytes including the terminating NUL. The native
+/// operation therefore accepts and returns at most `PATH_MAX - 1` pathname
+/// bytes, while preserving arbitrary non-NUL bytes in those bytes.
+pub const CANONICAL_PATH_MAX: usize = 4096;
+
+const CANONICAL_PENDING_CAPACITY: usize = CANONICAL_PATH_MAX * 2;
+const CANONICAL_MAX_SYMLINKS: usize = 40;
+
+/// Resolves a pathname to an absolute, byte-preserving physical pathname.
+///
+/// This is the allocation-free caller-buffered equivalent of [`canonicalize`].
+/// The input is accepted through [`PathArg`], so it may contain non-UTF-8
+/// bytes but may not contain an interior NUL. `.` and `..` are interpreted
+/// lexically, while every existing component is checked against the kernel and
+/// symbolic links are read relative to their containing directory. Linux's
+/// direct `openat`, `readlinkat`, and `getcwd` seams are used; no libc
+/// function, C ABI, or TLS `errno` is involved.
+///
+/// The initialized result is the canonical pathname without a trailing NUL.
+/// A buffer too small for the result returns [`crate::Errno::RANGE`]. A
+/// pathname or symlink expansion exceeding the Linux/musl `PATH_MAX` bound
+/// returns [`crate::Errno::NAMETOOLONG`]. Symlink traversal is bounded at the
+/// Linux/musl limit of forty links and returns [`crate::Errno::LOOP`] when the
+/// limit is reached.
+#[inline]
+pub fn canonicalize_into<P: PathArg, Buf: Buffer<u8>>(
+    path: P,
+    mut output: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, capacity) = output.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        canonicalize_bytes(path.to_bytes(), |resolved| {
+            if resolved.len() > capacity {
+                return Err(crate::Errno::RANGE);
+            }
+            // SAFETY: `pointer` and `capacity` come from the sealed `Buffer`
+            // contract; `resolved` is an initialized pathname prefix owned by
+            // this call and is copied before the callback returns.
+            unsafe { ptr::copy_nonoverlapping(resolved.as_ptr(), pointer, resolved.len()) };
+            Ok(resolved.len())
+        })
+    })?;
+    // SAFETY: `canonicalize_bytes` copied exactly `initialized` initialized
+    // bytes into the buffer supplied by `Buffer::parts_mut`.
+    unsafe { Ok(output.assume_init(initialized)) }
+}
+
+/// Resolves a pathname to an owned, NUL-terminated physical pathname.
+///
+/// This alloc-enabled spelling is useful when the result must outlive the
+/// call. It retains the bounded `PATH_MAX` contract and the direct-kernel
+/// semantics of [`canonicalize_into`]. The returned [`CString`] contains no
+/// interior NUL and preserves non-UTF-8 pathname bytes exactly.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn canonicalize<P: PathArg>(path: P) -> Result<CString> {
+    let path = canonical_path_bytes(path)?;
+    canonicalize_bytes(&path, |resolved| {
+        let mut bytes = Vec::with_capacity(resolved.len() + 1);
+        bytes.extend_from_slice(resolved);
+        bytes.push(0);
+        // SAFETY: The source path was NUL-free and the only NUL appended here
+        // is the final terminator required by `CString`.
+        Ok(unsafe { CString::from_vec_with_nul_unchecked(bytes) })
+    })
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn canonical_path_bytes<P: PathArg>(path: P) -> Result<Vec<u8>> {
+    path.into_with_c_str(|path| Ok(path.to_bytes().to_vec()))
+}
+
+/// Runs `f` with a canonical pathname assembled in a fixed, no-alloc
+/// workspace. Keeping this workspace bounded makes the same resolution
+/// algorithm available to `--no-default-features` static probes and to the
+/// owned alloc facade without introducing a hidden allocator dependency.
+fn canonicalize_bytes<T, F>(path: &[u8], f: F) -> Result<T>
+where
+    F: FnOnce(&[u8]) -> Result<T>,
+{
+    if path.is_empty() {
+        return Err(crate::Errno::NOENT);
+    }
+    if path.len() >= CANONICAL_PATH_MAX {
+        return Err(crate::Errno::NAMETOOLONG);
+    }
+
+    let mut workspace = CanonicalWorkspace::new(path)?;
+    workspace.resolve()?;
+    f(workspace.resolved())
+}
+
+struct CanonicalWorkspace {
+    pending: [u8; CANONICAL_PENDING_CAPACITY],
+    pending_len: usize,
+    pending_pos: usize,
+    target: [u8; CANONICAL_PATH_MAX],
+    resolved: [u8; CANONICAL_PATH_MAX],
+    cwd: [MaybeUninit<u8>; CANONICAL_PATH_MAX],
+    resolved_len: usize,
+    absolute: bool,
+    unresolved_up: usize,
+    symlink_count: usize,
+}
+
+impl CanonicalWorkspace {
+    fn new(path: &[u8]) -> Result<Self> {
+        let mut pending = [0; CANONICAL_PENDING_CAPACITY];
+        pending[..path.len()].copy_from_slice(path);
+        Ok(Self {
+            pending,
+            pending_len: path.len(),
+            pending_pos: 0,
+            target: [0; CANONICAL_PATH_MAX],
+            resolved: [0; CANONICAL_PATH_MAX],
+            cwd: [MaybeUninit::uninit(); CANONICAL_PATH_MAX],
+            resolved_len: 0,
+            absolute: path[0] == b'/',
+            unresolved_up: 0,
+            symlink_count: 0,
+        })
+    }
+
+    fn resolved(&self) -> &[u8] {
+        &self.resolved[..self.resolved_len]
+    }
+
+    fn resolve(&mut self) -> Result<()> {
+        let cwd_len = if self.absolute {
+            0
+        } else {
+            // Capture the process CWD before opening the stable directory fd.
+            // As with `process::getcwd`, callers must coordinate concurrent
+            // CWD changes while performing pathname work.
+            let (cwd, _) = crate::process::getcwd(&mut self.cwd)?;
+            if cwd.is_empty() || cwd[cwd.len() - 1] != 0 {
+                return Err(crate::Errno::IO);
+            }
+            cwd.len() - 1
+        };
+
+        let mut current = if self.absolute {
+            self.open_root()?
+        } else {
+            self.open_current_directory()?
+        };
+        if self.absolute {
+            self.resolved[0] = b'/';
+            self.resolved_len = 1;
+        }
+
+        while let Some((start, end, has_remaining, trailing_slash)) = self.next_component() {
+            let component = &self.pending[start..end];
+
+            if component == b"." {
+                if has_remaining || trailing_slash {
+                    self.ensure_directory(&current)?;
+                }
+                continue;
+            }
+
+            if component == b".." {
+                let parent = self.open_component(&current, b"..", true)?;
+                current = parent;
+                self.pop_component();
+                continue;
+            }
+
+            let candidate = self.open_component(&current, component, false)?;
+            let mut link_target = [MaybeUninit::<u8>::uninit(); CANONICAL_PATH_MAX];
+            let link_length = self.readlink_component(&current, component, &mut link_target)?;
+
+            if let Some(link_length) = link_length {
+                if self.symlink_count == CANONICAL_MAX_SYMLINKS {
+                    return Err(crate::Errno::LOOP);
+                }
+                self.symlink_count += 1;
+                if link_length == 0 {
+                    return Err(crate::Errno::NOENT);
+                }
+                // SAFETY: `readlinkat` initialized exactly this prefix and
+                // Linux symlink targets cannot contain NUL bytes.
+                let target = unsafe {
+                    core::slice::from_raw_parts(link_target.as_ptr().cast::<u8>(), link_length)
+                };
+                self.target[..link_length].copy_from_slice(target);
+                self.splice_target(link_length, end)?;
+                if self.target[0] == b'/' {
+                    current = self.open_root()?;
+                    self.absolute = true;
+                    self.unresolved_up = 0;
+                    self.resolved_len = 1;
+                    self.resolved[0] = b'/';
+                }
+                continue;
+            }
+
+            if !has_remaining && trailing_slash {
+                self.ensure_directory(&candidate)?;
+            }
+            self.append_component_range(start, end)?;
+            if has_remaining {
+                self.ensure_directory(&candidate)?;
+                current = candidate;
+            }
+        }
+
+        if self.absolute {
+            return Ok(());
+        }
+
+        // A relative result is anchored to the physical initial CWD after all
+        // descriptor-relative `..` operations have been applied. The bytes
+        // came from Linux's getcwd and are initialized through the Buffer
+        // contract above.
+        // SAFETY: `cwd_len` was returned by Linux and excludes its final NUL.
+        let cwd = unsafe { core::slice::from_raw_parts(self.cwd.as_ptr().cast::<u8>(), cwd_len) };
+        let mut base_len = cwd.len();
+        for _ in 0..self.unresolved_up {
+            while base_len > 1 && cwd[base_len - 1] != b'/' {
+                base_len -= 1;
+            }
+            if base_len > 1 {
+                base_len -= 1;
+            }
+        }
+        let separator = self.resolved_len != 0 && base_len != 0 && cwd[base_len - 1] != b'/';
+        let total = base_len
+            .checked_add(usize::from(separator))
+            .and_then(|length| length.checked_add(self.resolved_len))
+            .ok_or(crate::Errno::NAMETOOLONG)?;
+        if total >= CANONICAL_PATH_MAX {
+            return Err(crate::Errno::NAMETOOLONG);
+        }
+        if self.resolved_len != 0 {
+            // Move the relative suffix into its final position before copying
+            // the absolute CWD prefix. The source and destination overlap.
+            unsafe {
+                ptr::copy(
+                    self.resolved.as_ptr(),
+                    self.resolved
+                        .as_mut_ptr()
+                        .add(base_len + usize::from(separator)),
+                    self.resolved_len,
+                );
+                ptr::copy_nonoverlapping(cwd.as_ptr(), self.resolved.as_mut_ptr(), base_len);
+            }
+        } else {
+            unsafe {
+                ptr::copy_nonoverlapping(cwd.as_ptr(), self.resolved.as_mut_ptr(), base_len);
+            }
+        }
+        if separator {
+            self.resolved[base_len] = b'/';
+        }
+        self.resolved_len = total;
+        Ok(())
+    }
+
+    fn next_component(&mut self) -> Option<(usize, usize, bool, bool)> {
+        let mut start = self.pending_pos;
+        while start < self.pending_len && self.pending[start] == b'/' {
+            start += 1;
+        }
+        if start == self.pending_len {
+            self.pending_pos = start;
+            return None;
+        }
+        let mut end = start;
+        while end < self.pending_len && self.pending[end] != b'/' {
+            end += 1;
+        }
+        let mut after = end;
+        while after < self.pending_len && self.pending[after] == b'/' {
+            after += 1;
+        }
+        self.pending_pos = end;
+        Some((
+            start,
+            end,
+            after < self.pending_len,
+            after == self.pending_len && end < after,
+        ))
+    }
+
+    fn splice_target(&mut self, target_len: usize, component_end: usize) -> Result<()> {
+        let suffix_len = self.pending_len - component_end;
+        let total = target_len
+            .checked_add(suffix_len)
+            .ok_or(crate::Errno::NAMETOOLONG)?;
+        if total >= CANONICAL_PENDING_CAPACITY {
+            return Err(crate::Errno::NAMETOOLONG);
+        }
+        unsafe {
+            ptr::copy(
+                self.pending.as_ptr().add(component_end),
+                self.pending.as_mut_ptr().add(target_len),
+                suffix_len,
+            );
+            ptr::copy_nonoverlapping(self.target.as_ptr(), self.pending.as_mut_ptr(), target_len);
+        }
+        self.pending_len = total;
+        self.pending_pos = 0;
+        Ok(())
+    }
+
+    fn append_component_range(&mut self, start: usize, end: usize) -> Result<()> {
+        let length = end - start;
+        let separator = self.resolved_len != 0 && self.resolved[self.resolved_len - 1] != b'/';
+        let total = self
+            .resolved_len
+            .checked_add(usize::from(separator))
+            .and_then(|current| current.checked_add(length))
+            .ok_or(crate::Errno::NAMETOOLONG)?;
+        if total >= CANONICAL_PATH_MAX {
+            return Err(crate::Errno::NAMETOOLONG);
+        }
+        if separator {
+            self.resolved[self.resolved_len] = b'/';
+            self.resolved_len += 1;
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.pending.as_ptr().add(start),
+                self.resolved.as_mut_ptr().add(self.resolved_len),
+                length,
+            );
+        }
+        self.resolved_len = total;
+        Ok(())
+    }
+
+    fn pop_component(&mut self) {
+        if self.resolved_len == 0 {
+            self.unresolved_up = self.unresolved_up.saturating_add(1);
+        } else if self.absolute {
+            while self.resolved_len > 1 && self.resolved[self.resolved_len - 1] != b'/' {
+                self.resolved_len -= 1;
+            }
+            if self.resolved_len > 1 {
+                self.resolved_len -= 1;
+            }
+        } else {
+            while self.resolved_len > 0 && self.resolved[self.resolved_len - 1] != b'/' {
+                self.resolved_len -= 1;
+            }
+            if self.resolved_len > 0 {
+                self.resolved_len -= 1;
+            }
+        }
+    }
+
+    fn open_root(&self) -> Result<OwnedFd> {
+        self.open_path(b"/")
+    }
+
+    fn open_current_directory(&self) -> Result<OwnedFd> {
+        self.open_path(b".")
+    }
+
+    fn open_path(&self, path: &[u8]) -> Result<OwnedFd> {
+        canonical_path_cstr(path, |path| {
+            openat(
+                CWD,
+                path,
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+        })
+    }
+
+    fn open_component<Fd: AsFd>(
+        &self,
+        directory: Fd,
+        component: &[u8],
+        directory_only: bool,
+    ) -> Result<OwnedFd> {
+        canonical_path_cstr(component, |component| {
+            let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            let flags = if directory_only {
+                flags | OFlags::DIRECTORY
+            } else {
+                flags
+            };
+            openat(directory, component, flags, Mode::empty())
+        })
+    }
+
+    fn ensure_directory<Fd: AsFd>(&self, descriptor: Fd) -> Result<()> {
+        canonical_path_cstr(b".", |path| {
+            let _ = openat(
+                descriptor,
+                path,
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )?;
+            Ok(())
+        })
+    }
+
+    fn readlink_component(
+        &self,
+        directory: &OwnedFd,
+        component: &[u8],
+        target: &mut [MaybeUninit<u8>; CANONICAL_PATH_MAX],
+    ) -> Result<Option<usize>> {
+        canonical_path_cstr(component, |component| {
+            // SAFETY: `target` is writable for its full fixed length and the
+            // component C string remains alive for the direct syscall.
+            match unsafe {
+                crabc_core::fs::readlinkat_raw(
+                    directory.as_raw_fd(),
+                    component,
+                    target.as_mut_ptr().cast(),
+                    target.len(),
+                )
+            } {
+                Ok(length) => {
+                    if length >= target.len() {
+                        Err(crate::Errno::NAMETOOLONG)
+                    } else {
+                        Ok(Some(length))
+                    }
+                }
+                Err(crate::Errno::INVAL) => Ok(None),
+                Err(error) => Err(error),
+            }
+        })
+    }
+}
+
+fn canonical_path_cstr<T, F>(path: &[u8], f: F) -> Result<T>
+where
+    F: FnOnce(&CStr) -> Result<T>,
+{
+    if path.len() >= CANONICAL_PATH_MAX {
+        return Err(crate::Errno::NAMETOOLONG);
+    }
+    let mut bytes = [0u8; CANONICAL_PATH_MAX];
+    bytes[..path.len()].copy_from_slice(path);
+    bytes[path.len()] = 0;
+    // SAFETY: `path` is NUL-free by construction: all callers pass either a
+    // component from a validated `PathArg` or the fixed `.`/`/` spellings.
+    let path = unsafe { CStr::from_bytes_with_nul_unchecked(&bytes[..path.len() + 1]) };
+    f(path)
+}
+
+/// Reads an extended attribute into caller-provided storage.
+///
+/// A zero-length output buffer is the Linux size-query form. A successful
+/// nonzero-buffer read returns only the initialized prefix; `ERANGE` means the
+/// supplied buffer was too short and no owned allocation or retry is hidden.
+#[inline]
+pub fn getxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
+    path: P,
+    name: Name,
+    mut value: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, length) = value.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: `Buffer` supplies writable output storage and both
+            // arguments are NUL-terminated for the direct syscall.
+            unsafe {
+                crabc_core::fs::getxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    pointer,
+                    length,
+                )
+            }
+        })
+    })?;
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(value.assume_init(initialized)) }
+}
+
+/// Reads an extended attribute without following a final symbolic link.
+#[inline]
+pub fn lgetxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
+    path: P,
+    name: Name,
+    mut value: Buf,
+) -> Result<Buf::Output> {
+    let (pointer, length) = value.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: `Buffer` supplies writable output storage and both
+            // arguments are NUL-terminated for the direct syscall.
+            unsafe {
+                crabc_core::fs::lgetxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    pointer,
+                    length,
+                )
+            }
+        })
+    })?;
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(value.assume_init(initialized)) }
+}
+
+/// Reads a descriptor extended attribute into caller-provided storage.
+#[inline]
+pub fn fgetxattr<Fd: AsFd, Name: PathArg, Buf: Buffer<u8>>(
+    fd: Fd,
+    name: Name,
+    mut value: Buf,
+) -> Result<Buf::Output> {
+    let fd = fd.as_fd();
+    let (pointer, length) = value.parts_mut();
+    let initialized = name.into_with_c_str(|name| {
+        // SAFETY: `Buffer` supplies writable output storage, `name` is
+        // NUL-terminated, and the descriptor borrow remains live.
+        unsafe {
+            crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), pointer, length)
+        }
+    })?;
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(value.assume_init(initialized)) }
+}
+
+/// Sets an extended attribute on a path.
+#[inline]
+pub fn setxattr<P: PathArg, Name: PathArg>(
+    path: P,
+    name: Name,
+    value: &[u8],
+    flags: XattrFlags,
+) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated and `value` remains
+            // readable for its exact slice length through this syscall.
+            unsafe {
+                crabc_core::fs::setxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    value.as_ptr(),
+                    value.len(),
+                    flags.bits(),
+                )
+            }
+        })
+    })
+}
+
+/// Sets an extended attribute without following a final symbolic link.
+#[inline]
+pub fn lsetxattr<P: PathArg, Name: PathArg>(
+    path: P,
+    name: Name,
+    value: &[u8],
+    flags: XattrFlags,
+) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated and `value` remains
+            // readable for its exact slice length through this syscall.
+            unsafe {
+                crabc_core::fs::lsetxattr_raw(
+                    path.as_ptr().cast(),
+                    name.as_ptr().cast(),
+                    value.as_ptr(),
+                    value.len(),
+                    flags.bits(),
+                )
+            }
+        })
+    })
+}
+
+/// Sets an extended attribute on an open descriptor.
+#[inline]
+pub fn fsetxattr<Fd: AsFd, Name: PathArg>(
+    fd: Fd,
+    name: Name,
+    value: &[u8],
+    flags: XattrFlags,
+) -> Result<()> {
+    let fd = fd.as_fd();
+    name.into_with_c_str(|name| {
+        // SAFETY: `name` is NUL-terminated, `value` remains readable for its
+        // exact slice length, and the descriptor borrow remains live.
+        unsafe {
+            crabc_core::fs::fsetxattr_raw(
+                fd.as_raw_fd(),
+                name.as_ptr().cast(),
+                value.as_ptr(),
+                value.len(),
+                flags.bits(),
+            )
+        }
+    })
+}
+
+/// Lists extended-attribute names into caller-provided storage.
+///
+/// Returned names are Linux's NUL-separated byte sequence, without a lossy
+/// UTF-8 conversion or a hidden allocation.
+#[inline]
+pub fn listxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
+    let (pointer, length) = list.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        // SAFETY: `Buffer` supplies writable output storage and `path` is
+        // NUL-terminated for this direct syscall.
+        unsafe { crabc_core::fs::listxattr_raw(path.as_ptr().cast(), pointer, length) }
+    })?;
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(list.assume_init(initialized)) }
+}
+
+/// Lists extended-attribute names without following a final symbolic link.
+#[inline]
+pub fn llistxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
+    let (pointer, length) = list.parts_mut();
+    let initialized = path.into_with_c_str(|path| {
+        // SAFETY: `Buffer` supplies writable output storage and `path` is
+        // NUL-terminated for this direct syscall.
+        unsafe { crabc_core::fs::llistxattr_raw(path.as_ptr().cast(), pointer, length) }
+    })?;
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(list.assume_init(initialized)) }
+}
+
+/// Lists descriptor extended-attribute names into caller-provided storage.
+#[inline]
+pub fn flistxattr<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut list: Buf) -> Result<Buf::Output> {
+    let fd = fd.as_fd();
+    let (pointer, length) = list.parts_mut();
+    // SAFETY: `Buffer` supplies writable output storage and the descriptor
+    // borrow remains live for the direct syscall.
+    let initialized = unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), pointer, length) }?;
+    // SAFETY: Linux initialized exactly the reported output prefix.
+    unsafe { Ok(list.assume_init(initialized)) }
+}
+
+/// Removes an extended attribute from a path.
+#[inline]
+pub fn removexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated for the direct syscall.
+            unsafe { crabc_core::fs::removexattr_raw(path.as_ptr().cast(), name.as_ptr().cast()) }
+        })
+    })
+}
+
+/// Removes an extended attribute without following a final symbolic link.
+#[inline]
+pub fn lremovexattr<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<()> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: Both names are NUL-terminated for the direct syscall.
+            unsafe { crabc_core::fs::lremovexattr_raw(path.as_ptr().cast(), name.as_ptr().cast()) }
+        })
+    })
+}
+
+/// Removes an extended attribute from an open descriptor.
+#[inline]
+pub fn fremovexattr<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<()> {
+    let fd = fd.as_fd();
+    name.into_with_c_str(|name| {
+        // SAFETY: `name` is NUL-terminated and the descriptor borrow remains
+        // live for this direct syscall.
+        unsafe { crabc_core::fs::fremovexattr_raw(fd.as_raw_fd(), name.as_ptr().cast()) }
+    })
 }
 
 /// Gives Linux a POSIX filesystem access-pattern advisory through the native

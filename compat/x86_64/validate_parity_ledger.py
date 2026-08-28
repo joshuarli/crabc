@@ -16,7 +16,7 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
-EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v1"
+EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
@@ -91,6 +91,77 @@ KNOWN_AARCH64_GATES = {
     "lua",
 }
 
+BYTE_STRING_SYMBOLS = (
+    "index",
+    "rindex",
+    "strchr",
+    "strchrnul",
+    "strcmp",
+    "strcspn",
+    "strlen",
+    "strncmp",
+    "strnlen",
+    "strpbrk",
+    "strrchr",
+    "strspn",
+    "strstr",
+)
+
+RANDOM_ENTROPY_SYMBOLS = ("getrandom", "getentropy")
+
+MEMORY_SEARCH_SYMBOLS = ("memchr", "memrchr", "memmem")
+
+STRING_COPY_SYMBOLS = (
+    "stpcpy",
+    "stpncpy",
+    "strcpy",
+    "strncpy",
+    "strcat",
+    "strncat",
+    "strlcpy",
+    "strlcat",
+)
+
+CTYPE_SYMBOLS = (
+    "isalnum",
+    "isalpha",
+    "isblank",
+    "iscntrl",
+    "isdigit",
+    "isgraph",
+    "islower",
+    "isprint",
+    "ispunct",
+    "isspace",
+    "isupper",
+    "isxdigit",
+    "tolower",
+    "toupper",
+    "isascii",
+    "toascii",
+)
+
+INTEGER_ARITHMETIC_SYMBOLS = (
+    "abs",
+    "labs",
+    "llabs",
+    "div",
+    "ldiv",
+    "lldiv",
+)
+
+INTMAX_ARITHMETIC_SYMBOLS = ("imaxabs", "imaxdiv")
+
+CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
+
+CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
+
+IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
+
+CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
+
+FFS_SYMBOLS = ("ffs", "ffsl", "ffsll")
+
 
 class LedgerError(ValueError):
     """The parity ledger does not describe a reviewable closed contract."""
@@ -144,9 +215,11 @@ def repository_path(path_text: str, location: str) -> Path:
     return resolved
 
 
-def require_evidence(
-    value: Any, location: str, status: str
+def require_evidence_state(
+    value: Any, location: str, expected_state: str
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
+    """Require one evidence state without promoting its owning family."""
+    require(expected_state in ALLOWED_EVIDENCE_STATES, f"{location} has invalid expected state")
     require(isinstance(value, list) and value, f"{location} must be a non-empty array")
     records: list[Mapping[str, Any]] = []
     states: set[str] = set()
@@ -161,9 +234,15 @@ def require_evidence(
         require(isinstance(scope, str) and scope, f"{item_location}.scope is empty")
         states.add(state)
         records.append(entry)
-    expected_state = "verified" if status == "foundation-verified" else "required"
-    require(states == {expected_state}, f"{location} must be entirely {expected_state} for status {status}")
+    require(states == {expected_state}, f"{location} must be entirely {expected_state}")
     return records, states
+
+
+def require_evidence(
+    value: Any, location: str, status: str
+) -> tuple[list[Mapping[str, Any]], set[str]]:
+    expected_state = "verified" if status == "foundation-verified" else "required"
+    return require_evidence_state(value, location, expected_state)
 
 
 def require_oracles(value: Any, location: str) -> None:
@@ -174,6 +253,586 @@ def require_oracles(value: Any, location: str) -> None:
         for key in ("kind", "source", "role"):
             item = entry.get(key)
             require(isinstance(item, str) and item, f"{item_location}.{key} is empty")
+
+
+def require_verified_slices(
+    value: Any,
+    location: str,
+    status: str,
+    family_capabilities: list[str],
+) -> list[Mapping[str, Any]]:
+    """Validate completed vertical slices while their aggregate family stays planned."""
+    if value is None:
+        return []
+    require(status == "planned", f"{location} is allowed only on a planned family")
+    require(isinstance(value, list) and value, f"{location} must be a non-empty array")
+    records: list[Mapping[str, Any]] = []
+    family_capability_set = set(family_capabilities)
+    for index, entry in enumerate(value):
+        item_location = f"{location}[{index}]"
+        require(isinstance(entry, Mapping), f"{item_location} must be a table")
+        for key in (
+            "id",
+            "description",
+            "source_owners",
+            "x86_abi_prerequisites",
+            "x86_header_prerequisites",
+            "native_evidence",
+            "oracle",
+            "capabilities",
+        ):
+            require(key in entry, f"{item_location} is missing {key}")
+        require(isinstance(entry["id"], str) and entry["id"], f"{item_location}.id is empty")
+        require(
+            isinstance(entry["description"], str) and entry["description"],
+            f"{item_location}.description is empty",
+        )
+        capabilities = nonempty_strings(entry["capabilities"], f"{item_location}.capabilities")
+        require(
+            len(capabilities) == len(set(capabilities)),
+            f"{item_location}.capabilities contains a duplicate",
+        )
+        outside_family = sorted(set(capabilities) - family_capability_set)
+        require(
+            not outside_family,
+            f"{item_location}.capabilities escape the owning family: {', '.join(outside_family)}",
+        )
+        for owner_index, path_text in enumerate(
+            nonempty_strings(entry["source_owners"], f"{item_location}.source_owners")
+        ):
+            repository_path(path_text, f"{item_location}.source_owners[{owner_index}]")
+        nonempty_strings(entry["x86_abi_prerequisites"], f"{item_location}.x86_abi_prerequisites")
+        nonempty_strings(entry["x86_header_prerequisites"], f"{item_location}.x86_header_prerequisites")
+        require_evidence_state(entry["native_evidence"], f"{item_location}.native_evidence", "verified")
+        require_oracles(entry["oracle"], f"{item_location}.oracle")
+        records.append(entry)
+    return records
+
+
+def require_verified_artifacts(
+    value: Any,
+    location: str,
+    status: str,
+) -> list[Mapping[str, Any]]:
+    """Validate completed artifact evidence that has no semantic capability ID.
+
+    Header/layout and startup foundations can be real selected binaries before
+    they implement one of the baseline facade capabilities. Keep those records
+    distinct from ``verified_slice``: they prove a named artifact boundary but
+    cannot consume, duplicate, or imply ownership of a capability.
+    """
+    if value is None:
+        return []
+    require(status == "planned", f"{location} is allowed only on a planned family")
+    require(isinstance(value, list) and value, f"{location} must be a non-empty array")
+    records: list[Mapping[str, Any]] = []
+    for index, entry in enumerate(value):
+        item_location = f"{location}[{index}]"
+        require(isinstance(entry, Mapping), f"{item_location} must be a table")
+        for key in (
+            "id",
+            "description",
+            "source_owners",
+            "x86_abi_prerequisites",
+            "x86_header_prerequisites",
+            "native_evidence",
+            "oracle",
+        ):
+            require(key in entry, f"{item_location} is missing {key}")
+        require(
+            "capabilities" not in entry,
+            f"{item_location} must not carry capabilities; use verified_slice instead",
+        )
+        require(isinstance(entry["id"], str) and entry["id"], f"{item_location}.id is empty")
+        require(
+            isinstance(entry["description"], str) and entry["description"],
+            f"{item_location}.description is empty",
+        )
+        for owner_index, path_text in enumerate(
+            nonempty_strings(entry["source_owners"], f"{item_location}.source_owners")
+        ):
+            repository_path(path_text, f"{item_location}.source_owners[{owner_index}]")
+        nonempty_strings(entry["x86_abi_prerequisites"], f"{item_location}.x86_abi_prerequisites")
+        nonempty_strings(entry["x86_header_prerequisites"], f"{item_location}.x86_header_prerequisites")
+        require_evidence_state(entry["native_evidence"], f"{item_location}.native_evidence", "verified")
+        require_oracles(entry["oracle"], f"{item_location}.oracle")
+        records.append(entry)
+    return records
+
+
+def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the closed byte-string artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-byte-strings"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-byte-strings artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in BYTE_STRING_SYMBOLS:
+        require(symbol in description, f"static-c-byte-strings description omits {symbol}")
+    for phrase in (
+        "public `index` and `rindex` forwarding wrappers",
+        "private `__strchrnul`/`__memrchr` helpers",
+        "scalar fallback",
+    ):
+        require(phrase in description, f"static-c-byte-strings description omits {phrase}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-byte-strings"},
+        "static-c-byte-strings must use the closed libc-byte-strings command",
+    )
+
+
+def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-random-entropy"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-random-entropy artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in RANDOM_ENTROPY_SYMBOLS:
+        require(symbol in description, f"static-c-random-entropy description omits {symbol}")
+    for phrase in (
+        "pthread cancellation point",
+        "disables cancellation",
+        "omits pthread cancellation",
+        "initial-TLS errno",
+    ):
+        require(phrase in description, f"static-c-random-entropy description omits {phrase}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("syscall_cp" in item and "cancellation point" in item for item in prerequisites),
+        "static-c-random-entropy must record musl getrandom cancellation semantics",
+    )
+    require(
+        any("disables cancellation" in item for item in prerequisites),
+        "static-c-random-entropy must record musl getentropy cancellation semantics",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-random-entropy"},
+        "static-c-random-entropy must use the closed libc-random-entropy command",
+    )
+
+
+def require_memory_search_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the stateless memory-search artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-memory-search"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-memory-search artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MEMORY_SEARCH_SYMBOLS:
+        require(symbol in description, f"static-c-memory-search description omits {symbol}")
+    for phrase in (
+        "private `__memrchr` helper",
+        "stateless",
+        "allocation-free",
+    ):
+        require(phrase in description, f"static-c-memory-search description omits {phrase}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-memory-search"},
+        "static-c-memory-search must use the closed libc-memory-search command",
+    )
+
+
+def require_string_copy_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the stateless C-string-copy artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-string-copy"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-string-copy artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in STRING_COPY_SYMBOLS:
+        require(symbol in description, f"static-c-string-copy description omits {symbol}")
+    for phrase in (
+        "private `__stpcpy`/`__stpncpy` helpers",
+        "stateless",
+        "allocation-free",
+        "scalar fallback",
+    ):
+        require(phrase in description, f"static-c-string-copy description omits {phrase}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-string-copy"},
+        "static-c-string-copy must use the closed libc-string-copy command",
+    )
+
+
+def require_ctype_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the fixed-C-locale ctype artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ctype"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ctype artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in CTYPE_SYMBOLS:
+        require(symbol in description, f"static-c-ctype description omits {symbol}")
+    for phrase in (
+        "fixed-C-locale ctype block",
+        "stateless",
+        "allocation-free",
+        "`EOF` and every `unsigned char` value",
+        "locale selection and `_l` entries",
+    ):
+        require(phrase in description, f"static-c-ctype description omits {phrase}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-ctype"},
+        "static-c-ctype must use the closed libc-ctype command",
+    )
+
+
+def require_integer_arithmetic_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the stateless integer-arithmetic artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-integer-arithmetic"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-integer-arithmetic artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in INTEGER_ARITHMETIC_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-integer-arithmetic description omits {symbol}",
+        )
+    for phrase in (
+        "integer-arithmetic block",
+        "stateless",
+        "allocation-free",
+        "unrepresentable absolute value",
+        "zero divisor",
+        "native signed `idiv`",
+    ):
+        require(
+            phrase in description,
+            f"static-c-integer-arithmetic description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-integer-arithmetic"},
+        "static-c-integer-arithmetic must use the closed libc-integer-arithmetic command",
+    )
+
+
+def require_intmax_arithmetic_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the stateless intmax-arithmetic artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-intmax-arithmetic"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-intmax-arithmetic artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in INTMAX_ARITHMETIC_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-intmax-arithmetic description omits {symbol}",
+        )
+    for phrase in (
+        "intmax-arithmetic block",
+        "stateless",
+        "allocation-free",
+        "unrepresentable absolute value",
+        "zero divisor",
+        "native signed `idiv`",
+    ):
+        require(
+            phrase in description,
+            f"static-c-intmax-arithmetic description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-intmax-arithmetic"},
+        "static-c-intmax-arithmetic must use the closed libc-intmax-arithmetic command",
+    )
+
+
+def require_credential_observation_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the read-only credential-observation artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-credential-observation"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-credential-observation artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in CREDENTIAL_OBSERVATION_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-credential-observation description omits {symbol}",
+        )
+    for phrase in (
+        "credential-observation block",
+        "read-only",
+        "query-then-fill race",
+        "GNU",
+        "initial-TLS",
+    ):
+        require(
+            phrase in description,
+            f"static-c-credential-observation description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-credential-observation"},
+        "static-c-credential-observation must use the closed libc-credential-observation command",
+    )
+
+
+def require_child_reaping_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the complete direct child-reaping artifact boundary durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-child-reaping"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-child-reaping artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in CHILD_REAPING_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-child-reaping description omits {symbol}",
+        )
+    for phrase in (
+        "child-reaping block",
+        "WNOHANG",
+        "WNOWAIT",
+        "cancellation",
+        "initial-TLS",
+    ):
+        require(
+            phrase in description,
+            f"static-c-child-reaping description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-child-reaping"},
+        "static-c-child-reaping must use the closed libc-child-reaping command",
+    )
+
+
+def require_immediate_termination_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the no-state C11 immediate-termination boundary durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-immediate-termination"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-immediate-termination artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in IMMEDIATE_TERMINATION_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-immediate-termination description omits {symbol}",
+        )
+    for phrase in (
+        "immediate-termination block",
+        "exit_group=231",
+        "exit=60",
+        "no errno",
+        "quick_exit",
+        "initial-TLS",
+    ):
+        require(
+            phrase in description,
+            f"static-c-immediate-termination description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-immediate-termination"},
+        "static-c-immediate-termination must use the closed libc-immediate-termination command",
+    )
+
+
+def require_callback_algorithms_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the stateless musl callback-algorithms boundary durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-callback-algorithms"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-callback-algorithms artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in CALLBACK_ALGORITHM_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-callback-algorithms description omits {symbol}",
+        )
+    for phrase in (
+        "callback-algorithms block",
+        "smoothsort",
+        "same-address",
+        "weak",
+        "stateless",
+        "allocation-free",
+        "no syscall",
+        "no errno",
+        "no initial-TLS",
+        "longjmp",
+        "C++ exception",
+    ):
+        require(
+            phrase in description,
+            f"static-c-callback-algorithms description omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-callback-algorithms"},
+        "static-c-callback-algorithms must use the closed libc-callback-algorithms command",
+    )
+
+
+def require_ffs_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the stateless find-first-set artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ffs"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-ffs artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in FFS_SYMBOLS:
+        require(symbol in description, f"static-c-ffs description omits {symbol}")
+    for phrase in (
+        "find-first-set block",
+        "stateless",
+        "allocation-free",
+        "least-significant set bit",
+        "two's-complement",
+        "no errno/TLS or syscall boundary",
+    ):
+        require(phrase in description, f"static-c-ffs description omits {phrase}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-ffs"},
+        "static-c-ffs must use the closed libc-ffs command",
+    )
 
 
 def baseline_capability_ids(path: Path) -> set[str]:
@@ -229,7 +888,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require(
         all(
             isinstance(meanings.get(name), str) and meanings[name]
-            for name in ("foundation_verified", "planned")
+            for name in ("foundation_verified", "planned", "verified_artifact")
         ),
         "status meanings are incomplete",
     )
@@ -255,6 +914,9 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     orders: list[int] = []
     by_id: dict[str, Mapping[str, Any]] = {}
     status_counts = {status: 0 for status in sorted(ALLOWED_STATUSES)}
+    verified_slice_ids: set[str] = set()
+    verified_artifact_ids: set[str] = set()
+    verified_record_ids: set[str] = set()
     for index, entry in enumerate(families):
         location = f"family[{index}]"
         require(isinstance(entry, Mapping), f"{location} must be a table")
@@ -294,6 +956,42 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
         nonempty_strings(entry["x86_header_prerequisites"], f"{location}.x86_header_prerequisites")
         require_evidence(entry["native_evidence"], f"{location}.native_evidence", status)
         require_oracles(entry["oracle"], f"{location}.oracle")
+        family_capabilities = string_list(
+            entry["capabilities"], f"{location}.capabilities", allow_empty=True
+        )
+        verified_slice_capabilities: set[str] = set()
+        for slice_entry in require_verified_slices(
+            entry.get("verified_slice"),
+            f"{location}.verified_slice",
+            status,
+            family_capabilities,
+        ):
+            slice_id = slice_entry["id"]
+            assert isinstance(slice_id, str)
+            require(slice_id not in verified_record_ids, f"duplicate verified record id: {slice_id}")
+            verified_record_ids.add(slice_id)
+            verified_slice_ids.add(slice_id)
+            for capability in nonempty_strings(
+                slice_entry["capabilities"], f"{location}.verified_slice[{slice_id}].capabilities"
+            ):
+                require(
+                    capability not in verified_slice_capabilities,
+                    f"{location}.verified_slice duplicates a capability: {capability}",
+                )
+                verified_slice_capabilities.add(capability)
+        for artifact_entry in require_verified_artifacts(
+            entry.get("verified_artifact"),
+            f"{location}.verified_artifact",
+            status,
+        ):
+            artifact_id = artifact_entry["id"]
+            assert isinstance(artifact_id, str)
+            require(
+                artifact_id not in verified_record_ids,
+                f"duplicate verified record id: {artifact_id}",
+            )
+            verified_record_ids.add(artifact_id)
+            verified_artifact_ids.add(artifact_id)
         ids.add(identifier)
         orders.append(order)
         by_id[identifier] = entry
@@ -302,6 +1000,19 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require(tuple(entry["id"] for entry in families) == EXPECTED_FAMILIES, "family table order must equal promotion dependency order")
     require(orders == sorted(orders) and len(orders) == len(set(orders)), "family order values must be unique and ascending")
     require(ids == set(EXPECTED_FAMILIES), "family coverage does not match promotion roster")
+
+    require_byte_string_artifact(by_id["libc.posix-runtime"])
+    require_random_entropy_artifact(by_id["libc.posix-runtime"])
+    require_memory_search_artifact(by_id["libc.posix-runtime"])
+    require_string_copy_artifact(by_id["libc.posix-runtime"])
+    require_ctype_artifact(by_id["libc.posix-runtime"])
+    require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
+    require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
+    require_credential_observation_artifact(by_id["libc.posix-runtime"])
+    require_child_reaping_artifact(by_id["libc.posix-runtime"])
+    require_immediate_termination_artifact(by_id["libc.posix-runtime"])
+    require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
+    require_ffs_artifact(by_id["libc.posix-runtime"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")
@@ -364,6 +1075,8 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
         "capability_count": len(baseline_ids),
         "capability_owners": capability_owners,
         "status_counts": status_counts,
+        "verified_slice_count": len(verified_slice_ids),
+        "verified_artifact_count": len(verified_artifact_ids),
         "promotion_ready": all(family["status"] == "foundation-verified" for family in families),
         "public_support": policy["public_support"],
     }

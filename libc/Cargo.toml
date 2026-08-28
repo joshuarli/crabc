@@ -13,7 +13,7 @@ crate-type = ["cdylib", "staticlib"]
 test = false
 bench = false
 
-[dependencies]
+[target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
 crabc-mimalloc = { path = "../crabc-mimalloc" }
 libm = "0.2"

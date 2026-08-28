@@ -13,10 +13,6 @@
 extern "C" {
 #endif
 
-#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
- || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
- || defined(_BSD_SOURCE)
-
 int isalnum(int);
 int isalpha(int);
 int isblank(int);
@@ -31,6 +27,10 @@ int isupper(int);
 int isxdigit(int);
 int tolower(int);
 int toupper(int);
+
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) \
+ || defined(_BSD_SOURCE)
 
 int isalnum_l(int, locale_t);
 int isalpha_l(int, locale_t);
@@ -49,25 +49,6 @@ int toupper_l(int, locale_t);
 
 int isascii(int);
 int toascii(int);
-
-#else
-
-int isalnum(int);
-int isalpha(int);
-int isascii(int);
-int isblank(int);
-int iscntrl(int);
-int isdigit(int);
-int isgraph(int);
-int islower(int);
-int isprint(int);
-int ispunct(int);
-int isspace(int);
-int isupper(int);
-int isxdigit(int);
-int toascii(int);
-int tolower(int);
-int toupper(int);
 
 #endif
 

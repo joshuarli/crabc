@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 mount operations.
+//! Stateless Linux mount operations.
 
 use core::ffi::CStr;
 

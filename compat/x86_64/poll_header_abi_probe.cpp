@@ -32,6 +32,11 @@ static_assert(__is_same(decltype(&poll), poll_function),
 static_assert(__is_same(decltype(&ppoll), ppoll_function),
     "x86 ppoll C++ declaration");
 
+/* A matching C-linkage redeclaration must not conflict with <poll.h>. */
+extern "C" int poll(struct pollfd *, nfds_t, int);
+extern "C" int ppoll(struct pollfd *, nfds_t, const struct timespec *,
+    const sigset_t *);
+
 int crabc_x86_64_poll_header_abi_probe_cpp()
 {
     pollfd value{};

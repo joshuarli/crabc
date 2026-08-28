@@ -1,10 +1,10 @@
 //! Linux/x86-64 source-only C-ABI atomic helpers.
 //!
-//! This leaf is deliberately not selected by `crabc-libc`: the target root
-//! and surrounding C ABI state remain Linux/AArch64-only until the complete
-//! x86 runtime is proven. The standalone native probe includes this exact
-//! module to establish the i32 helper contract without claiming an x86 libc
-//! artifact.
+//! This leaf is deliberately not selected by the separately evidenced x86
+//! static `crabc-libc` composition. The complete public C runtime remains
+//! Linux/AArch64-only until the x86 runtime is proven. The standalone native
+//! probe includes this exact module to establish the i32 helper contract
+//! without claiming a general x86 libc artifact.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 atomic leaf requires little-endian Linux/x86-64");

@@ -1,11 +1,11 @@
 //! Link-free no-std proof for the native wall-clock seam.
 //!
-//! This source is intentionally left unregistered until the evidence
-//! harness owns its archive and direct-syscall verification rules.
+//! The private native evidence runner builds this static archive after its
+//! direct `gettimeofday` ABI and calendar-boundary checks pass.
 
 #![no_std]
 
-use crabc_rs::time::{wall_clock, UnixTime, NANOS_PER_SECOND};
+use crabc_rs::time::{wall_clock, NANOS_PER_SECOND};
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
@@ -18,11 +18,8 @@ pub extern "C" fn crabc_rs_time_direct_probe() -> i32 {
         Ok(now) => now,
         Err(error) => return -error.raw(),
     };
-    if now < UnixTime::UNIX_EPOCH {
-        return 1;
-    }
     if now.nanoseconds() >= NANOS_PER_SECOND {
-        return 2;
+        return 1;
     }
     0
 }

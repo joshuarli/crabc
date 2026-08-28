@@ -18,8 +18,12 @@ use crate::buffer::Buffer;
 use crate::io::IoSlice;
 use crate::{AsFd, OwnedFd, Result};
 
-/// Linux network-device ioctl operations (AArch64-only pending x86 ABI proof).
-#[cfg(target_arch = "aarch64")]
+/// Linux network-device ioctl and owned rtnetlink snapshot operations.
+///
+/// The admitted Linux LP64 record proof covers AArch64 and x86-64. These
+/// operations intentionally keep their fixed `ifreq` and netlink records
+/// private rather than exposing a generic ioctl surface.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[path = "netdevice.rs"]
 pub mod netdevice;
 

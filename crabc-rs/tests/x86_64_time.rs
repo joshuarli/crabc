@@ -12,10 +12,18 @@ fn x86_64_timespec_record_matches_linux_wire_shape() {
     assert_eq!(ClockId::Realtime as i32, 0);
     assert_eq!(ClockId::Monotonic as i32, 1);
     assert_eq!(ClockId::ProcessCPUTime as i32, 2);
+    assert_eq!(ClockId::ThreadCPUTime as i32, 3);
     assert_eq!(ClockId::MonotonicRaw as i32, 4);
+    assert_eq!(ClockId::RealtimeCoarse as i32, 5);
+    assert_eq!(ClockId::MonotonicCoarse as i32, 6);
+    assert_eq!(ClockId::Boottime as i32, 7);
+    assert_eq!(ClockId::RealtimeAlarm as i32, 8);
+    assert_eq!(ClockId::BoottimeAlarm as i32, 9);
+    assert_eq!(ClockId::Tai as i32, 11);
     assert_eq!(NANOS_PER_SECOND, 1_000_000_000);
     assert_eq!(ClockId::try_from(2), Ok(ClockId::ProcessCPUTime));
-    assert_eq!(ClockId::try_from(3), Err(crabc_rs::Errno::INVAL));
+    assert_eq!(ClockId::try_from(3), Ok(ClockId::ThreadCPUTime));
+    assert_eq!(ClockId::try_from(10), Err(crabc_rs::Errno::INVAL));
 }
 
 #[test]

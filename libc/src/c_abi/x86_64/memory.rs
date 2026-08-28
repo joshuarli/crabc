@@ -1,4 +1,4 @@
-//! Linux/x86-64 source-only C bulk-memory leaf.
+//! Linux/x86-64 selected static C bulk-memory leaf.
 //!
 //! Provenance is fixed to musl 1.2.6 (`9fa28ece75d8a2191de7c5bb53bed224c5947417`),
 //! under musl's MIT license recorded in its `COPYRIGHT` file. The exact source
@@ -8,11 +8,15 @@
 //!   `__memcpy_fwd` below.
 //! - `src/string/x86_64/memmove.s` maps to `memmove` below.
 //! - `src/string/x86_64/memset.s` maps to `memset` below.
+//! - `src/string/memcmp.c` maps to the fixed unsigned-byte `memcmp` loop
+//!   below, and `src/string/bcmp.c` maps to its direct `bcmp` forwarding
+//!   alias.
 //!
 //! The intentional difference is lexical only: the pinned AT&T assembly is
-//! expressed through Rust `global_asm!`'s native Intel syntax. It remains a
-//! source-only evidence leaf until x86 `crabc-libc` composition selects these
-//! symbols. It is not a general x86 C runtime or public-support claim.
+//! expressed through Rust `global_asm!`'s native Intel syntax. The selected
+//! x86 static archive exposes this exact small bulk-memory surface only after
+//! its freestanding artifact fixture proves it. It is not a general x86 C
+//! runtime or public-support claim.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");
@@ -54,6 +58,33 @@ __memcpy_fwd:
 .Lcrabc_x86_memcpy_done:
     ret
     .size memcpy, .-memcpy
+
+    /* Preserve musl's simple first-different-unsigned-byte result. This is
+       intentionally scalar: it carries no feature dispatch or vector ABI. */
+    .global memcmp
+    .type memcmp,@function
+memcmp:
+    xor eax, eax
+    test rdx, rdx
+    jz .Lcrabc_x86_memcmp_done
+.Lcrabc_x86_memcmp_loop:
+    movzx eax, byte ptr [rdi]
+    movzx ecx, byte ptr [rsi]
+    sub eax, ecx
+    jne .Lcrabc_x86_memcmp_done
+    inc rdi
+    inc rsi
+    dec rdx
+    jne .Lcrabc_x86_memcmp_loop
+.Lcrabc_x86_memcmp_done:
+    ret
+    .size memcmp, .-memcmp
+
+    .global bcmp
+    .type bcmp,@function
+bcmp:
+    jmp memcmp
+    .size bcmp, .-bcmp
 
     .global memset
     .type memset,@function

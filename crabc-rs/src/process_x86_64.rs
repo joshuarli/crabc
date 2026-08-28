@@ -2,19 +2,21 @@
 //!
 //! This module intentionally admits only scalar identity queries, a
 //! caller-buffer and alloc-gated physical/logical current-working-directory
-//! observations, the
-//! kernel's
+//! observations, a query/replay-only raw program-break operation, explicitly
+//! process-global `chdir`/`fchdir` mutation, and a separate process-global
+//! `chroot` transition, the kernel's
 //! three-word real/effective/saved credential observations, supplementary-group
-//! query/fill protocol, pidfd creation, typed calling-task filesystem
+//! query/fill protocol, a narrow alloc-gated prepared-exec child owner with
+//! consuming wait, pidfd creation, typed calling-task filesystem
 //! credential query/current-effective-ID requests, typed calling-process
 //! resource-limit query/mutation, typed read-only resource usage copied from Linux's
 //! initialized kernel prefix, typed read-only process accounting,
 //! scheduling-priority observations, bounds, and bounded target mutation, and
 //! the read-only typed
 //! fcntl(F_GETLK) record-lock query, plus the process-global umask exchange.
-//! The larger process facade remains AArch64-only until each of its
-//! target-sized records and state transitions has an independent x86-64
-//! contract.
+//! Generic raw fork/exec/wait control and the larger process facade remain
+//! AArch64-only until each of their target-sized records and state transitions
+//! has an independent x86-64 contract.
 
 use bitflags::bitflags;
 
@@ -22,10 +24,16 @@ use bitflags::bitflags;
 use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
+#[cfg(feature = "alloc")]
+use core::convert::Infallible;
 use crate::buffer::Buffer;
-use core::ffi::CStr;
+use core::ffi::{c_void, CStr};
+use core::fmt;
 use core::ptr;
+use crate::fs::PathArg;
 pub use crate::fs::Mode;
+#[cfg(feature = "alloc")]
+use crate::{BorrowedFd, RawFd};
 use crate::{AsFd, OwnedFd, Result};
 
 /// A raw Linux/x86-64 `pid_t` representation.
@@ -39,6 +47,556 @@ pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
 pub use crate::signal::Pid;
+
+/// Queries or requests Linux's raw program break.
+///
+/// This is the Rustix-style kernel primitive, not a replacement for libc's
+/// `brk`/`sbrk` bookkeeping. Linux returns the resulting current break even
+/// when a requested change cannot be made, so callers which request a new
+/// address must compare the returned pointer with that request themselves.
+/// The operation changes process-global heap state and must be coordinated
+/// with whichever allocator owns the process heap.
+///
+/// # Safety
+///
+/// `address` may be null to query the current break. Otherwise it is passed
+/// directly to Linux and must satisfy the program-break address contract; no
+/// allocator or concurrent heap operation may invalidate that coordination.
+#[inline]
+pub unsafe fn kernel_brk(address: *mut c_void) -> Result<*mut c_void> {
+    // SAFETY: The caller owns Linux's process-global program-break contract;
+    // this raw syscall has the nonstandard pointer-return failure behavior
+    // documented above.
+    Ok(unsafe { crabc_core::process::brk_raw(address.cast()) }.cast())
+}
+
+bitflags! {
+    /// Options for waiting on one owned child process.
+    ///
+    /// These retain Linux's `wait4` encodings. [`Child::wait`] consumes its
+    /// owner for every result, including a `NOHANG` observation which returns
+    /// `None`; it is not a retry or supervision API.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct WaitOptions: u32 {
+        /// Return immediately when this child has no reportable state change.
+        const NOHANG = 0x0000_0001;
+        /// Report a stopped child which is not being traced.
+        const UNTRACED = 0x0000_0002;
+        /// Report a child resumed with `SIGCONT`.
+        const CONTINUED = 0x0000_0008;
+        /// Preserve future Linux option bits for kernel validation.
+        const _ = !0;
+    }
+}
+
+/// A Linux wait-status word returned while consuming an owned child.
+///
+/// This typed value retains the kernel's status encoding without admitting a
+/// general x86 `wait`, `waitpid`, or `waitid` selection API.
+#[repr(transparent)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct WaitStatus(i32);
+
+impl WaitStatus {
+    /// Returns the raw Linux wait-status word.
+    #[inline]
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
+        self.0
+    }
+
+    /// Returns whether the child exited normally.
+    #[inline]
+    #[must_use]
+    pub const fn exited(self) -> bool {
+        self.0 & 0x7f == 0
+    }
+
+    /// Returns the child's ordinary exit code when it exited normally.
+    #[inline]
+    #[must_use]
+    pub const fn exit_status(self) -> Option<i32> {
+        if self.exited() {
+            Some((self.0 >> 8) & 0xff)
+        } else {
+            None
+        }
+    }
+
+    /// Returns whether the child was terminated by a signal.
+    #[inline]
+    #[must_use]
+    pub const fn signaled(self) -> bool {
+        let signal = self.0 & 0x7f;
+        signal != 0 && signal != 0x7f
+    }
+
+    /// Returns the terminating raw signal number when applicable.
+    #[inline]
+    #[must_use]
+    pub const fn terminating_signal(self) -> Option<i32> {
+        if self.signaled() {
+            Some(self.0 & 0x7f)
+        } else {
+            None
+        }
+    }
+
+    /// Returns whether the terminating signal produced a core dump.
+    #[inline]
+    #[must_use]
+    pub const fn core_dumped(self) -> bool {
+        self.signaled() && self.0 & 0x80 != 0
+    }
+
+    /// Returns whether the child is currently stopped.
+    #[inline]
+    #[must_use]
+    pub const fn stopped(self) -> bool {
+        self.0 & 0xff == 0x7f
+    }
+
+    /// Returns the raw stopping signal number when applicable.
+    #[inline]
+    #[must_use]
+    pub const fn stopping_signal(self) -> Option<i32> {
+        if self.stopped() {
+            Some((self.0 >> 8) & 0xff)
+        } else {
+            None
+        }
+    }
+
+    /// Returns whether the child has continued from a job-control stop.
+    #[inline]
+    #[must_use]
+    pub const fn continued(self) -> bool {
+        self.0 == 0xffff
+    }
+}
+
+impl fmt::Debug for WaitStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut status = formatter.debug_struct("WaitStatus");
+        status
+            .field("exited", &self.exited())
+            .field("signaled", &self.signaled())
+            .field("stopped", &self.stopped())
+            .field("continued", &self.continued());
+        if let Some(code) = self.exit_status() {
+            status.field("exit_status", &code);
+        }
+        if let Some(signal) = self.terminating_signal() {
+            status.field("terminating_signal", &signal);
+        }
+        if let Some(signal) = self.stopping_signal() {
+            status.field("stopping_signal", &signal);
+        }
+        status.finish()
+    }
+}
+
+/// A descriptor action prepared in the parent for a child exec path.
+///
+/// The source borrow keeps the descriptor open while a [`PreparedExec`] is
+/// used. Destination descriptor numbers intentionally remain raw because they
+/// identify child namespace slots rather than a parent-owned resource.
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy, Debug)]
+pub enum FdAction<'fd> {
+    /// Close this descriptor in the child before exec.
+    Close(BorrowedFd<'fd>),
+    /// Duplicate `from` onto `to` in the child before exec.
+    Dup2 { from: BorrowedFd<'fd>, to: RawFd },
+}
+
+#[cfg(feature = "alloc")]
+impl<'fd> FdAction<'fd> {
+    /// Prepares a child close action while retaining a borrow of `fd`.
+    #[inline]
+    pub fn close<Fd: AsFd + ?Sized>(fd: &'fd Fd) -> Self {
+        Self::Close(fd.as_fd())
+    }
+
+    /// Prepares a child `dup2` action while retaining a borrow of `from`.
+    #[inline]
+    pub fn dup2<Fd: AsFd + ?Sized>(from: &'fd Fd, to: RawFd) -> Self {
+        Self::Dup2 {
+            from: from.as_fd(),
+            to,
+        }
+    }
+}
+
+/// Process-state changes applied in the child before an exec.
+///
+/// The builder is intentionally narrow: every child operation is a direct
+/// async-signal-safe syscall and preparation performs no hidden work after
+/// the internal fork-equivalent clone. More complex POSIX spawn attributes
+/// remain separate capability groups rather than silently introducing
+/// child-side allocation or libc use.
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SpawnOptions<'mask> {
+    process_group: Option<Option<Pid>>,
+    new_session: bool,
+    signal_mask: Option<&'mask crate::signal::SignalSet>,
+}
+
+#[cfg(feature = "alloc")]
+impl<'mask> SpawnOptions<'mask> {
+    /// Creates options which inherit process group, session, and signal mask.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            process_group: None,
+            new_session: false,
+            signal_mask: None,
+        }
+    }
+
+    /// Assigns the child to `pgid`; `None` creates a group led by the child.
+    #[inline]
+    #[must_use]
+    pub const fn process_group(mut self, pgid: Option<Pid>) -> Self {
+        self.process_group = Some(pgid);
+        self
+    }
+
+    /// Makes the child a new session leader before exec.
+    #[inline]
+    #[must_use]
+    pub const fn new_session(mut self, enabled: bool) -> Self {
+        self.new_session = enabled;
+        self
+    }
+
+    /// Replaces the child's signal mask before exec.
+    #[inline]
+    #[must_use]
+    pub const fn signal_mask(mut self, mask: &'mask crate::signal::SignalSet) -> Self {
+        self.signal_mask = Some(mask);
+        self
+    }
+}
+
+/// A validated, allocation-complete program image ready for safe prepared
+/// fork/exec spawn.
+///
+/// Paths and argument/environment storage are copied and their
+/// null-terminated pointer arrays are built in the parent. [`spawn`](Self::spawn)'s
+/// child path therefore performs only direct descriptor/process syscalls,
+/// `execve`, an error-pipe write, and `exit_group`. Direct current-process
+/// exec remains a separate unsafe capability and is intentionally absent from
+/// this staged x86 surface.
+#[cfg(feature = "alloc")]
+pub struct PreparedExec<'fd> {
+    path: CString,
+    // These owned strings keep the precomputed pointer arrays valid until an
+    // exec replaces the child image or this prepared value is dropped.
+    _argv: Vec<CString>,
+    _envp: Vec<CString>,
+    argv_pointers: Vec<*const u8>,
+    envp_pointers: Vec<*const u8>,
+    actions: Vec<FdAction<'fd>>,
+    options: SpawnOptions<'fd>,
+}
+
+#[cfg(feature = "alloc")]
+impl<'fd> PreparedExec<'fd> {
+    /// Resolves and validates a program path plus its argument and environment
+    /// strings in the parent process.
+    ///
+    /// `argv` must contain at least one entry. An empty `envp` deliberately
+    /// means an empty environment; this facade never reads or mutates C's
+    /// process-global environment behind the caller's back.
+    #[inline]
+    pub fn new<P: PathArg>(path: P, argv: &[&CStr], envp: &[&CStr]) -> Result<Self> {
+        if argv.is_empty() {
+            return Err(crate::Errno::INVAL);
+        }
+        path.into_with_c_str(|path| {
+            let path = CString::new(path.to_bytes()).map_err(|_| crate::Errno::INVAL)?;
+            let argv = copy_c_strings(argv)?;
+            let envp = copy_c_strings(envp)?;
+            Ok(Self {
+                path,
+                argv_pointers: c_string_pointers(&argv),
+                envp_pointers: c_string_pointers(&envp),
+                _argv: argv,
+                _envp: envp,
+                actions: Vec::new(),
+                options: SpawnOptions::new(),
+            })
+        })
+    }
+
+    /// Replaces the prepared child descriptor actions. The vector copy occurs
+    /// now, before any child path exists, rather than after the internal
+    /// fork-equivalent clone.
+    #[inline]
+    #[must_use]
+    pub fn with_actions(mut self, actions: &[FdAction<'fd>]) -> Self {
+        self.actions.extend_from_slice(actions);
+        self
+    }
+
+    /// Replaces the prepared child process-state options.
+    #[inline]
+    #[must_use]
+    pub const fn with_options(mut self, options: SpawnOptions<'fd>) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Returns the fully encoded executable path.
+    #[inline]
+    #[must_use]
+    pub fn path(&self) -> &CStr {
+        self.path.as_c_str()
+    }
+
+    /// Spawns this image with a `CLOEXEC` error pipe.
+    ///
+    /// The parent receives an `Errno` if child setup or `execve` fails and
+    /// reaps that failed child before returning. A successful exec closes the
+    /// pipe atomically via `CLOEXEC`, after which this returns a unique typed
+    /// child owner. The internal clone never becomes a general public fork
+    /// boundary.
+    #[inline]
+    pub fn spawn(&self) -> Result<Child> {
+        let (reader, initial_writer) = crabc_core::pipe::pipe2(crabc_core::io::O_CLOEXEC)?;
+        let writer = match reserve_child_error_fd(initial_writer, &self.actions) {
+            Ok(writer) => writer,
+            Err(error) => {
+                let _ = crabc_core::io::close(reader);
+                let _ = crabc_core::io::close(initial_writer);
+                return Err(error);
+            }
+        };
+        match crabc_core::process::fork_raw() {
+            Err(error) => {
+                let _ = crabc_core::io::close(reader);
+                let _ = crabc_core::io::close(writer);
+                Err(error)
+            }
+            Ok(0) => {
+                let _ = crabc_core::io::close(reader);
+                let error = match self.apply_child_setup().and_then(|()| self.exec_no_setup()) {
+                    Err(error) => error,
+                    Ok(never) => match never {},
+                };
+                write_child_exec_error_and_exit(writer, error)
+            }
+            Ok(raw_child) => {
+                // A successful fork-equivalent clone returns only zero in the
+                // child or a positive child PID in the parent.
+                let child = unsafe { Pid::from_raw_unchecked(raw_child) };
+                let _ = crabc_core::io::close(writer);
+                let result = read_child_exec_result(reader);
+                if let Err(error) = result {
+                    let _ = wait_child(child, WaitOptions::empty());
+                    Err(error)
+                } else {
+                    Ok(Child { pid: child })
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn apply_child_setup(&self) -> Result<()> {
+        if self.options.new_session {
+            crabc_core::process::setsid()?;
+        }
+        if let Some(process_group) = self.options.process_group {
+            crabc_core::process::setpgid(0, process_group.map_or(0, Pid::as_raw_pid))?;
+        }
+        if let Some(mask) = self.options.signal_mask {
+            // SAFETY: `mask` is a one-word kernel signal-set value retained by
+            // this prepared object's borrow through the direct syscall.
+            unsafe {
+                crabc_core::signal::rt_sigprocmask_raw(
+                    2,
+                    mask.kernel_bits(),
+                    core::ptr::null_mut(),
+                )?;
+            }
+        }
+        for action in &self.actions {
+            match *action {
+                FdAction::Close(fd) => crabc_core::io::close(fd.as_raw_fd())?,
+                FdAction::Dup2 { from, to } => crabc_core::io::dup2(from.as_raw_fd(), to)?,
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn exec_no_setup(&self) -> Result<Infallible> {
+        // SAFETY: `PreparedExec` owns every NUL-terminated string and both
+        // terminal-null pointer arrays for the entire syscall. Linux execve
+        // does not return after success.
+        match unsafe {
+            crabc_core::process::execve_raw(
+                self.path.as_ptr().cast(),
+                self.argv_pointers.as_ptr(),
+                self.envp_pointers.as_ptr(),
+            )
+        } {
+            Err(error) => Err(error),
+            Ok(()) => panic!("Linux execve unexpectedly returned success"),
+        }
+    }
+}
+
+/// A successfully spawned native child process.
+///
+/// A `Child` is the unique owner of the wait state for its spawned process.
+/// It is deliberately not `Clone` or `Copy`: duplicating the PID would create
+/// multiple apparent owners that could each try to reap the same child.
+///
+/// ```compile_fail
+/// # use crabc_rs::process::{Child, WaitOptions};
+/// # fn duplicate_wait(child: Child) {
+/// let _first = child.wait(WaitOptions::empty());
+/// let _second = child.wait(WaitOptions::empty());
+/// # }
+/// ```
+#[cfg(feature = "alloc")]
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct Child {
+    pid: Pid,
+}
+
+#[cfg(feature = "alloc")]
+impl Child {
+    /// Returns the child's process ID and consumes its unique wait owner.
+    #[inline]
+    #[must_use]
+    pub const fn pid(self) -> Pid {
+        self.pid
+    }
+
+    /// Waits for this child, consuming its unique owner. `NOHANG` may return
+    /// `None`, while a state report returns its decoded wait status; either
+    /// result consumes the `Child` and cannot be waited a second time.
+    #[inline]
+    pub fn wait(self, options: WaitOptions) -> Result<Option<WaitStatus>> {
+        wait_child(self.pid, options)
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn wait_child(pid: Pid, options: WaitOptions) -> Result<Option<WaitStatus>> {
+    let mut status = 0_i32;
+    // SAFETY: `status` is writable Linux `int` storage, `pid` is an exact
+    // positive child selector, and the private caller owns this one-child
+    // wait transition.
+    let waited = unsafe {
+        crabc_core::process::wait4_raw(pid.as_raw_pid(), &mut status, options.bits())?
+    };
+    if waited == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(WaitStatus(status)))
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn copy_c_strings(values: &[&CStr]) -> Result<Vec<CString>> {
+    let mut copied = Vec::with_capacity(values.len());
+    for value in values {
+        copied.push(CString::new(value.to_bytes()).map_err(|_| crate::Errno::INVAL)?);
+    }
+    Ok(copied)
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn c_string_pointers(values: &[CString]) -> Vec<*const u8> {
+    let mut pointers = Vec::with_capacity(values.len() + 1);
+    for value in values {
+        pointers.push(value.as_ptr().cast());
+    }
+    pointers.push(core::ptr::null());
+    pointers
+}
+
+/// Reserves a close-on-exec child error descriptor outside every `dup2` target.
+///
+/// A prepared action may legally replace any raw child descriptor. Relocating
+/// the private error writer first preserves `spawn`'s promise to report child
+/// setup and exec errors rather than mistaking a clobbered error pipe for a
+/// successful exec.
+#[cfg(feature = "alloc")]
+fn reserve_child_error_fd(writer: RawFd, actions: &[FdAction<'_>]) -> Result<RawFd> {
+    let mut minimum = 3;
+    loop {
+        let candidate = crabc_core::io::fcntl_dupfd_cloexec(writer, minimum)?;
+        let collides = actions.iter().any(|action| match action {
+            FdAction::Dup2 { to, .. } => *to == candidate,
+            FdAction::Close(_) => false,
+        });
+        if !collides {
+            let _ = crabc_core::io::close(writer);
+            return Ok(candidate);
+        }
+        let _ = crabc_core::io::close(candidate);
+        if candidate == i32::MAX {
+            return Err(crate::Errno::MFILE);
+        }
+        minimum = candidate + 1;
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn read_child_exec_result(reader: RawFd) -> Result<()> {
+    let mut bytes = [0_u8; core::mem::size_of::<i32>()];
+    let mut filled = 0;
+    while filled != bytes.len() {
+        match crabc_core::io::read(reader, &mut bytes[filled..]) {
+            Ok(0) => break,
+            Ok(count) => filled += count,
+            Err(crate::Errno::INTR) => continue,
+            Err(error) => {
+                let _ = crabc_core::io::close(reader);
+                return Err(error);
+            }
+        }
+    }
+    let _ = crabc_core::io::close(reader);
+    if filled == 0 {
+        return Ok(());
+    }
+    if filled != bytes.len() {
+        return Err(crate::Errno::IO);
+    }
+    let raw = i32::from_ne_bytes(bytes);
+    Err(crate::Errno::from_raw(raw).unwrap_or(crate::Errno::IO))
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn write_child_exec_error_and_exit(writer: RawFd, error: crate::Errno) -> ! {
+    let bytes = error.raw().to_ne_bytes();
+    let mut written = 0;
+    while written != bytes.len() {
+        match crabc_core::io::write(writer, &bytes[written..]) {
+            Ok(0) => break,
+            Ok(count) => written += count,
+            Err(crate::Errno::INTR) => continue,
+            Err(_) => break,
+        }
+    }
+    let _ = crabc_core::io::close(writer);
+    crabc_core::process::exit_immediately(127)
+}
 
 /// A Linux resource whose current and maximum limits can be queried.
 ///
@@ -568,6 +1126,48 @@ pub fn get_current_dir_name_alloc<B: Into<Vec<u8>>>(
         }
     }
     getcwd_alloc(reuse)
+}
+
+/// Changes the calling process's current working directory.
+///
+/// The current working directory is process-global Linux state (and is
+/// normally shared by all threads in a process). Callers must coordinate
+/// concurrent pathname work while using this operation; it does not provide
+/// per-thread isolation. The safe contract follows Rustix/std: `P` must
+/// provide a valid path argument, and the kernel reports errors as [`Result`].
+#[inline]
+pub fn chdir<P: PathArg>(path: P) -> Result<()> {
+    path.into_with_c_str(crabc_core::process::chdir)
+}
+
+/// Changes the calling process's current working directory to the directory
+/// referenced by `fd`.
+///
+/// The current working directory is process-global Linux state (and is
+/// normally shared by all threads in a process). Callers must coordinate
+/// concurrent pathname work while using this operation; it does not provide
+/// per-thread isolation. The safe descriptor contract follows Rustix/std:
+/// `Fd` must keep an open descriptor alive for the duration of the call, and
+/// the kernel reports errors as [`Result`].
+#[inline]
+pub fn fchdir<Fd: AsFd>(fd: Fd) -> Result<()> {
+    let fd = fd.as_fd();
+    crabc_core::process::fchdir(fd.as_raw_fd())
+}
+
+/// Changes the calling process's root directory.
+///
+/// This operation is process-wide and changes how future absolute pathnames
+/// are resolved for every thread. It does not change the current working
+/// directory, preserve a route back to the old root, or provide a containment
+/// boundary: callers must coordinate affected threads and retain any directory
+/// descriptors they need after the change. Privilege and pathname failures are
+/// returned directly as [`crate::Errno`] values. The safe contract follows
+/// Rustix/std: `P` must provide a valid path argument, and the kernel reports
+/// whether the operation succeeded.
+#[inline]
+pub fn chroot<P: PathArg>(path: P) -> Result<()> {
+    path.into_with_c_str(crabc_core::process::chroot)
 }
 
 /// A Linux nice value observed or supplied through the native priority facade.
@@ -1309,8 +1909,37 @@ impl From<crabc_core::process::KernelRusage> for ResourceUsage {
 mod tests {
     use super::{
         ClockTicks, Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority,
-        ProcessTimes, Resource, ResourceUsage, ResourceUsageTarget, Rlimit,
+        ProcessTimes, Resource, ResourceUsage, ResourceUsageTarget, Rlimit, WaitStatus,
     };
+
+    #[test]
+    fn x86_64_wait_status_decodes_each_linux_state_encoding() {
+        let exited = WaitStatus(42 << 8);
+        assert!(exited.exited());
+        assert_eq!(exited.exit_status(), Some(42));
+        assert!(!exited.signaled());
+        assert!(!exited.stopped());
+        assert!(!exited.continued());
+
+        let dumped = WaitStatus(9 | 0x80);
+        assert!(!dumped.exited());
+        assert!(dumped.signaled());
+        assert_eq!(dumped.terminating_signal(), Some(9));
+        assert!(dumped.core_dumped());
+        assert!(!dumped.stopped());
+
+        let stopped = WaitStatus((19 << 8) | 0x7f);
+        assert!(!stopped.signaled());
+        assert!(stopped.stopped());
+        assert_eq!(stopped.stopping_signal(), Some(19));
+        assert!(!stopped.continued());
+
+        let continued = WaitStatus(0xffff);
+        assert!(!continued.exited());
+        assert!(!continued.signaled());
+        assert!(!continued.stopped());
+        assert!(continued.continued());
+    }
 
     #[test]
     fn x86_64_flock_conversion_preserves_a_conflicting_lock_record() {

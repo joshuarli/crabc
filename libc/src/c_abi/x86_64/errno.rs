@@ -1,10 +1,15 @@
 //! Linux/x86-64 C `errno` storage boundary.
 //!
-//! This source is intentionally not selected by `crabc-libc`: the crate root
-//! remains Linux/AArch64-only until the complete x86 C ABI is proven. The
-//! source-only native probe compiles this one leaf with static relocation so
-//! `ERRNO` uses the executable's initial TLS block (`R_X86_64_TPOFF*`), not a
-//! dynamic TLS resolver.
+//! The selected static x86 metadata, credential, bootstrap-primitives, simple
+//! signal-control, termios-control, selected process-context, selected
+//! descriptor-I/O, selected process-resources, and selected readiness/signal-
+//! waits, selected system-observation, selected UTS-namespace identity, and
+//! basic socket-transport artifact boundaries share this one initial-TLS slot.
+//! Its source-only probe
+//! remains the direct relocation proof: `ERRNO` uses the executable's initial TLS block
+//! (`R_X86_64_TPOFF*`), not a dynamic TLS resolver. Pthread lifecycle,
+//! loader-installed dynamic TLS, and a general x86 C runtime remain separate
+//! work.
 
 use core::ffi::c_int;
 
@@ -31,10 +36,21 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
 /// the slot only through [`__errno_location`]. Keeping the writer beside the
 /// storage prevents a future target composition from reaching across a
 /// module boundary to mutate target-specific TLS directly.
-#[allow(dead_code)] // The isolated errno/TLS probe intentionally selects no syscall writer.
 #[inline]
 pub(crate) unsafe fn set_errno(value: c_int) {
     // SAFETY: The caller is the C ABI error-translation boundary for the
     // calling thread. `ERRNO` is one initial-TLS `c_int` slot on x86-64.
     unsafe { ERRNO = value };
+}
+
+/// Read the calling thread's C `errno` slot within the selected x86 ABI.
+///
+/// This remains private to local adapters that must inspect a translated
+/// error, notably `nice`'s `EACCES` to `EPERM` compatibility mapping. Public
+/// C callers use [`__errno_location`] instead.
+#[inline]
+pub(crate) unsafe fn get_errno() -> c_int {
+    // SAFETY: The selected C ABI owns the calling thread's one initial-TLS
+    // errno slot. This is a plain read and does not change its value.
+    unsafe { ERRNO }
 }

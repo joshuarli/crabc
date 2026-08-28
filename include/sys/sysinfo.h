@@ -7,8 +7,9 @@ extern "C" {
 
 #define SI_LOAD_SHIFT 16
 
-/* Keep the layout used by musl's public ABI.  Linux fills the prefix and
- * leaves the compatibility tail untouched. */
+/* Keep the layout used by musl's public ABI. Linux writes its 112-byte
+ * kernel prefix, including the first four bytes of __reserved; the remaining
+ * 252 compatibility bytes are caller-resident. */
 struct sysinfo {
     unsigned long uptime;
     unsigned long loads[3];

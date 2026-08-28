@@ -1,7 +1,7 @@
 //! Link-free no-std proof for the owned directory-stream seam.
 //!
-//! This source is intentionally unregistered until the architecture harness
-//! adds the corresponding static-archive and syscall checks.
+//! The native x86 directory-reference gate builds this static archive alongside
+//! its raw/pinned-musl syscall proof.
 
 #![no_std]
 

@@ -45,9 +45,9 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # direct select/pselect descriptor-bit-vector seam, and packed `epoll_event`
 # readiness with temporary signal masks. `fs_x86_64.rs` owns descriptor
 # `fstat`, direct access/accessat permission observation, the separately
-# proved pathname-lifecycle/namespace batch, caller-buffer-only readlinkat,
-# file-access advice/readahead, and direct bounded anonymous memory-file/seal
-# operations.
+# proved pathname-lifecycle/namespace batch, caller-buffered and owned
+# readlinkat path-core closure, file-access advice/readahead, and direct
+# bounded anonymous memory-file/seal operations.
 # `process_x86_64.rs` owns caller-buffer and alloc-gated `getcwd`
 # observations; CWD mutation remains deferred. It also owns read-only identity/session and
 # supplementary-group query/fill plus proved calling-task filesystem-credential
@@ -58,31 +58,45 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # explicitly proved process-global umask exchange
 # without admitting pathname creation,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
-# `net.rs` owns the direct Linux LP64 socket/address transport boundary while
-# keeping network-device ioctls AArch64-only pending their own x86 ABI proof,
+# `ipc.rs` owns the separately proved POSIX named-message-queue descriptor,
+# attribute, priority, deadline, and unlink-lifetime boundary, while `shm.rs`
+# separately owns validated POSIX shared-memory names and close-on-exec
+# descriptor lifetime without mapping, SysV, semaphore, or other IPC families,
+# `net.rs` owns the direct Linux LP64 socket/address transport boundary and
+# separately evidenced bounded network-device ioctl/rtnetlink snapshots,
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,
 # `system_x86_64.rs` owns uname/sysinfo records, `thread_x86_64.rs` owns
 # three record-independent task observations, borrowed-atomic futex wait/wake,
 # the direct read-only round-robin interval and bounded CPU-affinity
 # observation/mutation operations,
-# and `time_x86_64.rs` owns the separately proved clock-query, relative and
-# direct clock-nanosleep seams, direct interval-timer query/control plus the
-# bounded real-timer aliases, and timerfd seams. No other facade
-# source inherits this exception.
+# and `time_x86_64.rs` owns the separately proved clock-query/mutation,
+# validated dynamic/process clock identifiers, owned non-callback POSIX timers,
+# relative and direct clock-nanosleep seams, direct interval-timer
+# query/control plus the bounded real-timer aliases, timerfd seams, and the
+# direct gettimeofday bridge/reexports for the separately proved civil-time
+# layer.
+# `civil_time.rs` owns target-independent strict UTC conversion and one-way
+# local projection, while alloc-gated `timezone.rs` owns only caller-supplied
+# immutable POSIX-TZ/TZif rules. No other facade source inherits this
+# exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
+    Path("crabc-rs/src/civil_time.rs"),
     Path("crabc-rs/src/event_x86_64.rs"),
     Path("crabc-rs/src/eventfd.rs"),
     Path("crabc-rs/src/fs_x86_64.rs"),
+    Path("crabc-rs/src/ipc.rs"),
     Path("crabc-rs/src/lib.rs"),
     Path("crabc-rs/src/mm_x86_64.rs"),
     Path("crabc-rs/src/net.rs"),
     Path("crabc-rs/src/pipe.rs"),
     Path("crabc-rs/src/process_x86_64.rs"),
     Path("crabc-rs/src/signal.rs"),
-    Path("crabc-rs/src/system_x86_64.rs"),
-    Path("crabc-rs/src/time_x86_64.rs"),
-    Path("crabc-rs/src/thread_x86_64.rs"),
+    Path("crabc-rs/src/shm.rs"),
+   Path("crabc-rs/src/system_x86_64.rs"),
+   Path("crabc-rs/src/time_x86_64.rs"),
+   Path("crabc-rs/src/thread_x86_64.rs"),
+    Path("crabc-rs/src/timezone.rs"),
 }
 # This source-only loader foundation has no `crabc-ldso` integration or public
 # interpreter boundary. The image parser validates file-facing metadata before
@@ -92,19 +106,48 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
     Path("ldso/src/x86_64_image.rs"),
     Path("ldso/src/x86_64_relocation.rs"),
 }
-# These source-only leaves are compiled only by their dedicated native probes.
-# They do not select crabc-libc or make the AArch64 C-ABI composition root an
-# x86 target; keeping exact file boundaries makes any later libc admission a
-# deliberate review decision.
+# The selected x86 `crabc-libc` artifact admits independently evidenced static
+# C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
+# primitives, narrow simple signal control, named termios control, selected
+# process context, child reaping, C11 immediate termination, callback algorithms,
+# selected descriptor I/O, selected process resources,
+# selected readiness/signal waits, selected system observation, selected
+# UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
+# locale ctype, scalar integer arithmetic, intmax arithmetic, and
+# find-first-set.
+# The older leaves remain source-only. Keeping exact file boundaries makes
+# every later C-runtime admission deliberate rather than a directory-wide x86
+# exception.
 X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
+    Path("libc/src/lib.rs"),
     Path("libc/src/c_abi/x86_64/atomic.rs"),
     Path("libc/src/c_abi/x86_64/clone.rs"),
+    Path("libc/src/c_abi/x86_64/credentials.rs"),
+    Path("libc/src/c_abi/x86_64/credential_observation.rs"),
+    Path("libc/src/c_abi/x86_64/child_reaping.rs"),
+    Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
+    Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
+    Path("libc/src/c_abi/x86_64/ctype.rs"),
+    Path("libc/src/c_abi/x86_64/descriptor_io.rs"),
+    Path("libc/src/c_abi/x86_64/ffs.rs"),
+    Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),
+    Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
+    Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/fenv.rs"),
     Path("libc/src/c_abi/x86_64/foundation.rs"),
     Path("libc/src/c_abi/x86_64/memory.rs"),
+    Path("libc/src/c_abi/x86_64/process_context.rs"),
+    Path("libc/src/c_abi/x86_64/process_resources.rs"),
+    Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
+    Path("libc/src/c_abi/x86_64/signal_control.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
+    Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
+    Path("libc/src/c_abi/x86_64/stat_compat.rs"),
+    Path("libc/src/c_abi/x86_64/string_copy.rs"),
+    Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
+    Path("libc/src/c_abi/x86_64/uts_identity.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the
@@ -264,7 +307,7 @@ def is_authorized_x86_branch(relative: Path, line: str) -> bool:
 
 
 def check_x86_getcwd_boundary(errors: list[str]) -> None:
-    """Keep the direct x86 getcwd slice alloc-gated and read-only."""
+    """Keep direct x86 getcwd observations caller-buffered and alloc-gated."""
 
     process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
     text = process_source.read_text(errors="replace")
@@ -274,12 +317,763 @@ def check_x86_getcwd_boundary(errors: list[str]) -> None:
         errors.append(
             "crabc-rs/src/process_x86_64.rs: direct x86 getcwd_alloc must remain alloc-gated"
         )
-    for forbidden in ("pub fn chdir", "pub fn fchdir"):
-        if forbidden in text:
+
+
+def check_x86_cwd_canonicalize_boundary(errors: list[str]) -> None:
+    """Keep the private x86 filesystem-context slice direct and bounded."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub const CANONICAL_PATH_MAX: usize = 4096;",
+        "const CANONICAL_PENDING_CAPACITY: usize = CANONICAL_PATH_MAX * 2;",
+        "const CANONICAL_MAX_SYMLINKS: usize = 40;",
+        "pub fn canonicalize_into<",
+        "pub fn canonicalize<",
+        "fn canonicalize_bytes<",
+        "struct CanonicalWorkspace",
+        "crate::process::getcwd(&mut self.cwd)?",
+        "OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC",
+        "crabc_core::fs::readlinkat_raw(",
+        "Err(crate::Errno::LOOP)",
+    ):
+        if required not in fs_text:
             errors.append(
-                "crabc-rs/src/process_x86_64.rs: direct x86 getcwd slice must defer "
-                f"{forbidden}"
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 canonicalization boundary is "
+                f"missing {required}"
             )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', fs_text):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 canonicalization must not select a C pathname ABI"
+        )
+    if re.search(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+openat2(?:<|\s*\()", fs_text):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 canonicalization must not select openat2"
+        )
+
+    process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
+    process_text = process_source.read_text(errors="replace")
+    for required in (
+        "use crate::fs::PathArg;",
+        "pub fn chdir<P: PathArg>",
+        "path.into_with_c_str(crabc_core::process::chdir)",
+        "pub fn fchdir<Fd: AsFd>",
+        "crabc_core::process::fchdir(fd.as_raw_fd())",
+    ):
+        if required not in process_text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: admitted x86 CWD-mutation boundary is "
+                f"missing {required}"
+            )
+    core_process_source = ROOT / "crabc-core" / "src" / "process.rs"
+    core_process_text = core_process_source.read_text(errors="replace")
+    for required in ("pub fn chdir(path: &CStr)", "pub fn fchdir(fd: RawFd)"):
+        if required not in core_process_text:
+            errors.append(
+                "crabc-core/src/process.rs: admitted x86 CWD seam is missing " f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("GETCWD", 79),
+        ("CHDIR", 80),
+        ("FCHDIR", 81),
+        ("OPENAT", 257),
+        ("READLINKAT", 267),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 CWD/canonical ABI proof is "
+                f"missing SYS_{name}={value}"
+        )
+
+
+def check_x86_root_change_boundary(errors: list[str]) -> None:
+    """Keep x86 process root-change direct, explicit, and non-sandboxing."""
+
+    process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
+    process_text = process_source.read_text(errors="replace")
+    for required in (
+        "pub fn chroot<P: PathArg>(path: P) -> Result<()>",
+        "path.into_with_c_str(crabc_core::process::chroot)",
+        "does not change the current working",
+        "preserve a route back to the old root",
+        "provide a containment",
+    ):
+        if required not in process_text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: admitted x86 root-change boundary is "
+                f"missing {required}"
+            )
+
+    for forbidden in (
+        "pub fn pivot_root",
+        "pub fn unshare",
+        "pub fn setns",
+        "pub fn mount",
+        "pub fn umount",
+    ):
+        if forbidden in process_text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: x86 root-change must defer "
+                f"{forbidden[4:]}"
+            )
+
+    core_process_source = ROOT / "crabc-core" / "src" / "process.rs"
+    core_process_text = core_process_source.read_text(errors="replace")
+    for required in (
+        "pub fn chroot(path: &CStr) -> Result<()>",
+        "syscall1(SYS_CHROOT, path.as_ptr() as usize)",
+    ):
+        if required not in core_process_text:
+            errors.append(
+                "crabc-core/src/process.rs: admitted x86 root-change seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    required = "pub(crate) const SYS_CHROOT: usize = 161"
+    if required not in syscall_text:
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: admitted x86 root-change ABI proof is "
+            "missing SYS_CHROOT=161"
+        )
+
+
+def check_x86_mount_boundary(errors: list[str]) -> None:
+    """Keep x86 mount requests direct, unprivileged in evidence, and narrow.
+
+    The selected `mount.basic` slice deliberately retains the existing Linux
+    MS/MNT vocabulary, including its future-bit catch-all, but only proves
+    checked missing-target failures. Flag availability must not be mistaken
+    for successful bind/remount/propagation or namespace-policy evidence.
+    """
+
+    facade_root = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
+    required_module = (
+        '#[cfg(target_arch = "x86_64")]\n'
+        '#[path = "mount_x86_64.rs"]\npub mod mount;'
+    )
+    if required_module not in facade_root:
+        errors.append(
+            "crabc-rs/src/lib.rs: selected x86 mount requests are missing their "
+            "explicit mount_x86_64 module boundary"
+        )
+
+    facade_source = ROOT / "crabc-rs" / "src" / "mount_x86_64.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    for required in (
+        "use crate::fs::PathArg;",
+        "pub fn mount<'a, Source: PathArg, Target: PathArg, Fs: PathArg>(",
+        "pub fn unmount<Target: PathArg>(target: Target, flags: UnmountFlags) -> Result<()>",
+    ):
+        if required not in facade_text:
+            errors.append(
+                "crabc-rs/src/mount_x86_64.rs: selected x86 mount request boundary is "
+                f"missing {required}"
+            )
+
+    def bitflags_constants(name: str, representation: str, expected: tuple[tuple[str, str], ...]) -> None:
+        match = re.search(
+            rf"(?ms)pub struct {name}: {representation}\s*\{{(?P<body>.*?)^\}}",
+            facade_text,
+        )
+        if match is None:
+            errors.append(
+                "crabc-rs/src/mount_x86_64.rs: selected x86 mount request boundary is "
+                f"missing {name}"
+            )
+            return
+        actual = tuple(
+            (constant, re.sub(r"\s+", "", value))
+            for constant, value in re.findall(
+                r"(?m)^\s*const\s+([A-Z_][A-Z0-9_]*)\s*=\s*([^;]+);",
+                match.group("body"),
+            )
+        )
+        if actual != expected:
+            errors.append(
+                "crabc-rs/src/mount_x86_64.rs: selected x86 mount request boundary "
+                f"must keep {name} to its copied Linux vocabulary plus the future-bit catch-all"
+            )
+
+    bitflags_constants(
+        "MountFlags",
+        "u64",
+        (
+            ("RDONLY", "1"),
+            ("NOSUID", "2"),
+            ("NODEV", "4"),
+            ("NOEXEC", "8"),
+            ("SYNCHRONOUS", "16"),
+            ("REMOUNT", "32"),
+            ("MANDLOCK", "64"),
+            ("DIRSYNC", "128"),
+            ("NOATIME", "1024"),
+            ("NODIRATIME", "2048"),
+            ("BIND", "4096"),
+            ("MOVE", "8192"),
+            ("REC", "16384"),
+            ("SILENT", "32768"),
+            ("POSIXACL", "1<<16"),
+            ("UNBINDABLE", "1<<17"),
+            ("PRIVATE", "1<<18"),
+            ("SLAVE", "1<<19"),
+            ("SHARED", "1<<20"),
+            ("RELATIME", "1<<21"),
+            ("KERNMOUNT", "1<<22"),
+            ("I_VERSION", "1<<23"),
+            ("STRICTATIME", "1<<24"),
+            ("LAZYTIME", "1<<25"),
+            ("_", "!0"),
+        ),
+    )
+    bitflags_constants(
+        "UnmountFlags",
+        "i32",
+        (
+            ("FORCE", "1"),
+            ("DETACH", "2"),
+            ("EXPIRE", "4"),
+            ("NOFOLLOW", "8"),
+            ("_", "!0"),
+        ),
+    )
+
+    def function_body(marker: str) -> str | None:
+        start = facade_text.find(marker)
+        if start < 0:
+            errors.append(
+                "crabc-rs/src/mount_x86_64.rs: selected x86 mount request boundary is "
+                f"missing {marker}"
+            )
+            return None
+        end = facade_text.find("\n}\n", start)
+        if end < 0:
+            errors.append(
+                "crabc-rs/src/mount_x86_64.rs: selected x86 mount request boundary has "
+                f"an unclosed {marker} body"
+            )
+            return None
+        return facade_text[start:end]
+
+    for marker, required in (
+        (
+            "pub fn mount<'a, Source: PathArg, Target: PathArg, Fs: PathArg>",
+            (
+                "source.into_with_c_str",
+                "target.into_with_c_str",
+                "file_system_type.into_with_c_str",
+                "crabc_core::mount::mount(",
+                "flags.bits(),",
+            ),
+        ),
+        (
+            "pub fn unmount<Target: PathArg>",
+            ("target.into_with_c_str", "crabc_core::mount::umount2(target, flags.bits())"),
+        ),
+    ):
+        body = function_body(marker)
+        if body is None:
+            continue
+        for entry in required:
+            if entry not in body:
+                errors.append(
+                    "crabc-rs/src/mount_x86_64.rs: selected x86 mount request boundary "
+                    f"must directly retain {entry} in {marker}"
+                )
+
+    public_functions = tuple(
+        re.findall(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+([a-zA-Z0-9_]+)", facade_text)
+    )
+    if public_functions != ("mount", "unmount"):
+        errors.append(
+            "crabc-rs/src/mount_x86_64.rs: x86 mount.basic must expose only mount and unmount"
+        )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', facade_text):
+        errors.append(
+            "crabc-rs/src/mount_x86_64.rs: x86 mount.basic must not select a C ABI"
+        )
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:"
+        r"mount_raw|umount2(?:_raw)?|pivot_root|unshare|setns|"
+        r"fsopen|fsconfig|fsmount|fspick|open_tree|move_mount|mount_setattr"
+        r")(?:<|\s*\()",
+        facade_text,
+    ):
+        errors.append(
+            "crabc-rs/src/mount_x86_64.rs: x86 mount.basic must defer raw, namespace, "
+            "and filesystem-descriptor mount APIs"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "mount.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub fn mount(",
+        "syscall5(\n            SYS_MOUNT,",
+        "pub fn umount2(target: &CStr, flags: i32) -> Result<()>",
+        "syscall2(SYS_UMOUNT2, target.as_ptr() as usize, flags as usize)",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/mount.rs: selected x86 mount request seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (("MOUNT", 165), ("UMOUNT2", 166)):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: selected x86 mount request ABI proof is "
+                f"missing SYS_{name}={value}"
+            )
+
+
+def check_x86_thread_kill_boundary(errors: list[str]) -> None:
+    """Keep x86 thread-targeted signaling direct and same-process only."""
+
+    signal_source = ROOT / "crabc-rs" / "src" / "signal.rs"
+    signal_text = signal_source.read_text(errors="replace")
+    signature = (
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\n'
+        "#[inline]\n"
+        "pub fn kill_thread(tid: Pid, signal: Signal) -> Result<()> {"
+    )
+    start = signal_text.find(signature)
+    if start < 0:
+        errors.append(
+            "crabc-rs/src/signal.rs: admitted x86 thread-kill boundary must remain "
+            "explicitly shared with AArch64"
+        )
+    else:
+        end = signal_text.find("\n}\n", start)
+        if end < 0:
+            errors.append(
+                "crabc-rs/src/signal.rs: admitted x86 thread-kill boundary has no "
+                "closed function body"
+            )
+        else:
+            body = signal_text[start:end]
+            for required in (
+                "crabc_core::process::tgkill(",
+                "calling_pid_raw(),",
+                "tid.as_raw_pid(),",
+                "signal.as_raw(),",
+            ):
+                if required not in body:
+                    errors.append(
+                        "crabc-rs/src/signal.rs: admitted x86 thread-kill boundary must "
+                        f"directly delegate through tgkill with {required}"
+                    )
+
+    generic_process_signal = re.compile(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:kill|killpg|kill_process|"
+        r"kill_process_group|kill_current_process_group|test_kill_process|"
+        r"test_kill_process_group|test_kill_current_process_group)(?:<|\s*\()"
+    )
+    for source in (signal_source, ROOT / "crabc-rs" / "src" / "process_x86_64.rs"):
+        if generic_process_signal.search(source.read_text(errors="replace")):
+            errors.append(
+                f"{source.relative_to(ROOT)}: staged x86 thread-kill must defer generic "
+                "process/group signaling"
+            )
+
+    core_process_source = ROOT / "crabc-core" / "src" / "process.rs"
+    core_process_text = core_process_source.read_text(errors="replace")
+    for required in (
+        "pub fn tgkill(tgid: i32, tid: i32, signal: i32) -> Result<()>",
+        "syscall3(SYS_TGKILL, tgid as usize, tid as usize, signal as usize)",
+    ):
+        if required not in core_process_text:
+            errors.append(
+                "crabc-core/src/process.rs: admitted x86 thread-kill seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    if "pub(crate) const SYS_TGKILL: usize = 234" not in syscall_source.read_text(
+        errors="replace"
+    ):
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: admitted x86 thread-kill ABI proof is "
+            "missing SYS_TGKILL=234"
+        )
+
+
+def check_x86_ipc_boundary(errors: list[str]) -> None:
+    """Keep the private x86 POSIX named-message-queue slice direct and typed."""
+
+    facade_source = ROOT / "crabc-rs" / "src" / "lib.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    required_module = (
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\n'
+        "pub mod ipc;"
+    )
+    if required_module not in facade_text:
+        errors.append(
+            "crabc-rs/src/lib.rs: admitted x86 POSIX message queues are missing "
+            "their explicit shared module boundary"
+        )
+
+    ipc_source = ROOT / "crabc-rs" / "src" / "ipc.rs"
+    ipc_text = ipc_source.read_text(errors="replace")
+    for required in (
+        "use crate::fs::PathArg as QueueNameArg;",
+        "pub const MAX_MESSAGE_PRIORITY: u32 = 32_767;",
+        "pub struct MessagePriority(u32);",
+        "pub struct QueueAttributes",
+        "pub struct MessageQueue",
+        "pub fn open<P: QueueNameArg>",
+        "pub fn create<P: QueueNameArg>",
+        "pub fn unlink<P: QueueNameArg>",
+        "pub fn set_nonblocking(&self, enabled: bool)",
+        "pub fn send_until(",
+        "pub fn receive_until(",
+        "crabc_core::ipc::open(",
+        "crabc_core::ipc::unlink",
+        "crabc_core::ipc::timed_send",
+        "crabc_core::ipc::timed_receive",
+        "crabc_core::ipc::getsetattr",
+    ):
+        if required not in ipc_text:
+            errors.append(
+                "crabc-rs/src/ipc.rs: admitted x86 POSIX message-queue boundary is "
+                f"missing {required}"
+            )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', ipc_text):
+        errors.append(
+            "crabc-rs/src/ipc.rs: x86 POSIX message queues must not select a C ABI"
+        )
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:mq_notify|shm_open|shm_unlink|"
+        r"msgget|msgsnd|msgrcv|msgctl|semget|semop|semtimedop|semctl)(?:<|\s*\()",
+        ipc_text,
+    ):
+        errors.append(
+            "crabc-rs/src/ipc.rs: x86 named-message-queue slice must defer notification, "
+            "shared-memory, and SysV/semaphore IPC"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "ipc.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub struct KernelMqAttr",
+        "pub struct KernelMqTimespec",
+        "size_of::<KernelMqAttr>() == 64",
+        "offset_of!(KernelMqAttr, reserved) == 32",
+        "size_of::<KernelMqTimespec>() == 16",
+        "pub fn open(name: &CStr, flags: i32, mode: u32, attr: Option<&KernelMqAttr>)",
+        "pub fn unlink(name: &CStr)",
+        "pub fn getsetattr(fd: RawFd, new_attr: Option<&KernelMqAttr>)",
+        "pub fn timed_send(",
+        "pub fn timed_receive(",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/ipc.rs: admitted x86 POSIX message-queue ABI seam is "
+                f"missing {required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("MQ_OPEN", 240),
+        ("MQ_UNLINK", 241),
+        ("MQ_TIMEDSEND", 242),
+        ("MQ_TIMEDRECEIVE", 243),
+        ("MQ_GETSETATTR", 245),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 POSIX message-queue ABI "
+                f"proof is missing SYS_{name}={value}"
+        )
+
+
+def check_x86_shm_boundary(errors: list[str]) -> None:
+    """Keep the private x86 POSIX shared-memory slice direct and bounded."""
+
+    facade_source = ROOT / "crabc-rs" / "src" / "lib.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    required_module = (
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\n'
+        "pub mod shm;"
+    )
+    if required_module not in facade_text:
+        errors.append(
+            "crabc-rs/src/lib.rs: admitted x86 POSIX shared memory is missing "
+            "its explicit shared module boundary"
+        )
+
+    shm_source = ROOT / "crabc-rs" / "src" / "shm.rs"
+    shm_text = shm_source.read_text(errors="replace")
+    for required in (
+        "pub trait NameArg",
+        "impl NameArg for &[u8]",
+        "impl NameArg for &str",
+        "pub fn open<P: NameArg>",
+        "pub fn unlink<P: NameArg>",
+        "fn with_shm_bytes<T, F>",
+        "if name.contains(&0)",
+        "let name = &name[first..];",
+        "if name.len() > 255",
+        "let mut path = [0_u8; 265];",
+        'path[..9].copy_from_slice(b"/dev/shm/");',
+        "fs::open(path, flags | OFlags::CLOEXEC, mode)",
+        "fs::unlink(path)",
+    ):
+        if required not in shm_text:
+            errors.append(
+                "crabc-rs/src/shm.rs: admitted x86 POSIX shared-memory boundary is "
+                f"missing {required}"
+            )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', shm_text):
+        errors.append("crabc-rs/src/shm.rs: x86 POSIX shared memory must not select a C ABI")
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:shm_open|shm_unlink|shmat|shmdt|shmget|shmctl|"
+        r"sem_open|sem_unlink)(?:<|\s*\()",
+        shm_text,
+    ):
+        errors.append(
+            "crabc-rs/src/shm.rs: x86 POSIX shared-memory slice must defer C, SysV, and "
+            "semaphore APIs"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub fn openat(dirfd: RawFd, path: &CStr, flags: i32, mode: u32)",
+        "pub fn unlinkat(dirfd: RawFd, path: &CStr, flags: u32)",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/fs.rs: admitted x86 POSIX shared-memory direct seam is "
+                f"missing {required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (("OPENAT", 257), ("UNLINKAT", 263)):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 POSIX shared-memory ABI "
+                f"proof is missing SYS_{name}={value}"
+            )
+
+
+def check_x86_inotify_boundary(errors: list[str]) -> None:
+    """Keep the private x86 inotify slice owned, caller-buffered, and bounded."""
+
+    system_source = ROOT / "crabc-rs" / "src" / "system_x86_64.rs"
+    system_text = system_source.read_text(errors="replace")
+    for required in (
+        "pub mod inotify {",
+        "use crate::fs::PathArg;",
+        "const EVENT_HEADER_SIZE: usize = 16;",
+        "pub struct CreateFlags: u32",
+        "pub struct EventMask: u32",
+        "pub struct WatchDescriptor(i32);",
+        "pub struct Inotify",
+        "pub fn new(flags: CreateFlags) -> Result<Self>",
+        "CreateFlags::from_bits(flags.bits()).is_none()",
+        "pub fn add_watch<P: PathArg>(",
+        "crabc_core::inotify::add_watch",
+        "pub fn remove_watch(&self, watch: WatchDescriptor)",
+        "crabc_core::inotify::rm_watch",
+        "pub fn read_events<'buffer>",
+        "crabc_core::io::read(self.fd.as_raw_fd(), buffer)?",
+        "pub struct Event<'buffer>",
+        "pub struct Events<'buffer>",
+        "EventMask::from_bits_retain(mask)",
+        "event_batch_retains_unknown_bits_and_descriptor_wide_records",
+    ):
+        if required not in system_text:
+            errors.append(
+                "crabc-rs/src/system_x86_64.rs: admitted x86 inotify boundary is missing "
+                f"{required}"
+            )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', system_text):
+        errors.append(
+            "crabc-rs/src/system_x86_64.rs: x86 inotify must not select a C ABI"
+        )
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:inotify_init|fanotify_init|fanotify_mark|"
+        r"inotify_add_watch|inotify_rm_watch)(?:<|\s*\()",
+        system_text,
+    ):
+        errors.append(
+            "crabc-rs/src/system_x86_64.rs: x86 inotify must defer legacy/C and fanotify APIs"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "inotify.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub fn init1(flags: u32) -> Result<RawFd>",
+        "pub fn add_watch(fd: RawFd, path: &CStr, mask: u32) -> Result<i32>",
+        "pub fn rm_watch(fd: RawFd, watch: i32) -> Result<()>",
+        "SYS_INOTIFY_INIT1",
+        "SYS_INOTIFY_ADD_WATCH",
+        "SYS_INOTIFY_RM_WATCH",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/inotify.rs: admitted x86 inotify syscall seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("INOTIFY_INIT1", 294),
+        ("INOTIFY_ADD_WATCH", 254),
+        ("INOTIFY_RM_WATCH", 255),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 inotify ABI proof is "
+                f"missing SYS_{name}={value}"
+            )
+
+
+def check_x86_calendar_time_boundary(errors: list[str]) -> None:
+    """Keep the private x86 civil-time slice direct, pure, and one-way."""
+
+    facade_text = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
+    for required in (
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\nmod civil_time;',
+        '#[cfg(all(\n    feature = "alloc",\n    any(target_arch = "aarch64", target_arch = "x86_64")\n))]\npub mod timezone;',
+    ):
+        if required not in facade_text:
+            errors.append(
+                "crabc-rs/src/lib.rs: admitted x86 civil-time layer is missing "
+                f"its explicit module boundary {required!r}"
+            )
+
+    time_source = ROOT / "crabc-rs" / "src" / "time_x86_64.rs"
+    time_text = time_source.read_text(errors="replace")
+    for required in (
+        "pub use crate::civil_time::{",
+        "difftime, gmtime, timegm, CalendarTime, UnixTime, NANOS_PER_SECOND,",
+        '#[cfg(feature = "alloc")]\npub use crate::civil_time::LocalCalendar;',
+        "pub fn wall_clock() -> Result<UnixTime>",
+        "crabc_core::time::gettimeofday()?",
+        "UnixTime::from_wall_clock_parts(parts.seconds, parts.microseconds).ok_or(Errno::RANGE)",
+    ):
+        if required not in time_text:
+            errors.append(
+                "crabc-rs/src/time_x86_64.rs: admitted x86 civil-time boundary is "
+                f"missing {required}"
+            )
+
+    civil_source = ROOT / "crabc-rs" / "src" / "civil_time.rs"
+    civil_text = civil_source.read_text(errors="replace")
+    for required in (
+        "pub struct UnixTime",
+        "pub struct CalendarTime",
+        "pub fn gmtime(seconds: i64) -> Result<CalendarTime>",
+        "pub fn timegm(calendar: &CalendarTime) -> Result<i64>",
+        "pub fn difftime(t1: i64, t0: i64) -> f64",
+        "pub struct LocalCalendar",
+        "pub fn from_unix_time(instant: UnixTime, zone: &'zone TimeZone) -> Result<Self>",
+    ):
+        if required not in civil_text:
+            errors.append(
+                "crabc-rs/src/civil_time.rs: admitted x86 civil-time values are "
+                f"missing {required}"
+            )
+
+    timezone_source = ROOT / "crabc-rs" / "src" / "timezone.rs"
+    timezone_text = timezone_source.read_text(errors="replace")
+    for required in (
+        "pub struct TimeZone",
+        "pub fn from_posix_tz(bytes: &[u8])",
+        "pub fn from_tzif(bytes: &[u8])",
+        "pub fn offset_at(&self, instant: UnixTime)",
+    ):
+        if required not in timezone_text:
+            errors.append(
+                "crabc-rs/src/timezone.rs: admitted x86 immutable-rule boundary is "
+                f"missing {required}"
+            )
+
+    for relative, text in (
+        ("crabc-rs/src/time_x86_64.rs", time_text),
+        ("crabc-rs/src/civil_time.rs", civil_text),
+        ("crabc-rs/src/timezone.rs", timezone_text),
+    ):
+        if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', text):
+            errors.append(f"{relative}: x86 civil-time layer must not select a C ABI")
+        if re.search(
+            r"(?m)^\s*pub\s+(?:type|struct)\s+(?:Tm|TimeT|Timeval|Timezone)\b",
+            text,
+        ):
+            errors.append(f"{relative}: x86 civil-time layer must not expose C time/tm records")
+        if re.search(
+            r"(?m)^\s*pub\s+(?:unsafe\s+)?fn\s+(?:ctime|asctime|gmtime_r|localtime(?:_r)?|mktime|strftime|strptime|tzset)\b",
+            text,
+        ):
+            errors.append(f"{relative}: x86 civil-time layer must not expose C time APIs")
+
+    timezone_code = "\n".join(
+        line for line in timezone_text.splitlines() if not line.lstrip().startswith("//")
+    )
+    for forbidden in (
+        r"\b(?:std|core)::env::",
+        r"\b(?:getenv|setenv|unsetenv|putenv|tzset)\s*\(",
+        r"(?m)^\s*(?:pub\s+)?static(?:\s+mut)?\s+(?:TZ|timezone|daylight|tzname)\b",
+        r'"(?:/etc/localtime|/usr/share/zoneinfo|/usr/share/lib/zoneinfo)',
+        r"\b(?:std::fs|crate::fs|File::open|read_to_end|read_to_string)\b",
+    ):
+        if re.search(forbidden, timezone_code):
+            errors.append(
+                "crabc-rs/src/timezone.rs: x86 civil-time rules must not read TZ globals "
+                "or system zoneinfo"
+            )
+            break
+
+    if re.search(
+        r"(?m)^\s*pub\s+(?:unsafe\s+)?fn\s+(?:from_local(?:_time)?|to_unix(?:_time)?|to_instant|resolve_local|local_to_unix|mktime|localtime(?:_r)?)\b",
+        civil_text,
+    ):
+        errors.append(
+            "crabc-rs/src/civil_time.rs: x86 local-calendar projection must not "
+            "admit inverse ambiguous-local conversion"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "time_x86_64.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub struct KernelWallClockParts",
+        "size_of::<KernelWallClockParts>() == 16",
+        "align_of::<KernelWallClockParts>() == 8",
+        "offset_of!(KernelWallClockParts, seconds) == 0",
+        "offset_of!(KernelWallClockParts, microseconds) == 8",
+        "pub fn gettimeofday() -> Result<KernelWallClockParts>",
+        "pub unsafe fn gettimeofday_raw(parts: *mut KernelWallClockParts) -> Result<()>",
+        "syscall2(SYS_GETTIMEOFDAY, parts as usize, 0)",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/time_x86_64.rs: admitted x86 gettimeofday seam is "
+                f"missing {required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    required_syscall = "pub(crate) const SYS_GETTIMEOFDAY: usize = 96"
+    if required_syscall not in syscall_text:
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: admitted x86 civil-time ABI proof is "
+            "missing SYS_GETTIMEOFDAY=96"
+        )
 
 
 def check_x86_rr_interval_boundary(errors: list[str]) -> None:
@@ -370,7 +1164,7 @@ def check_x86_clock_nanosleep_boundary(errors: list[str]) -> None:
                 "crabc-rs/src/time_x86_64.rs: direct clock-sleep slice is missing "
                 f"{required}"
             )
-    for forbidden in ("pub fn clock_settime", "pub fn clock_adjtime"):
+    for forbidden in ("pub fn clock_adjtime",):
         if forbidden in text:
             errors.append(
                 "crabc-rs/src/time_x86_64.rs: direct clock-sleep slice must defer "
@@ -389,11 +1183,287 @@ def check_x86_setitimer_boundary(errors: list[str]) -> None:
                 "crabc-rs/src/time_x86_64.rs: admitted x86 interval-timer-control slice is missing "
                 f"{required}"
             )
-    for forbidden in ("pub struct PosixTimer",):
-        if forbidden in text:
+    # POSIX timers have their own separately-proved ownership boundary below;
+    # do not let this older process-global interval-timer check govern it.
+
+
+def check_x86_advanced_time_boundary(errors: list[str]) -> None:
+    """Keep x86 advanced clocks and POSIX timers typed, owned, and bounded."""
+
+    time_source = ROOT / "crabc-rs" / "src" / "time_x86_64.rs"
+    time_text = time_source.read_text(errors="replace")
+    for required in (
+        "ThreadCPUTime = 3",
+        "MonotonicRaw = 4",
+        "Tai = 11",
+        "pub struct ProcessClockId(i32);",
+        "pub fn clock_getcpuclockid(pid: Option<Pid>) -> Result<ProcessClockId>",
+        "pub enum DynamicClockId<'fd>",
+        "Dynamic(BorrowedFd<'fd>)",
+        "pub fn clock_gettime_dynamic(id: DynamicClockId<'_>) -> Result<Timespec>",
+        "pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()>",
+        "pub struct TimerSpec",
+        "pub struct TimerSetFlags: u32",
+        "pub enum TimerNotification",
+        "ThreadId {",
+        "pub struct PosixTimer",
+        "pub fn settime(",
+        "pub fn gettime(&self)",
+        "pub fn getoverrun(&self) -> Result<i32>",
+        "pub fn delete(&mut self) -> Result<()>",
+        "struct KernelSigevent",
+        "size_of::<KernelSigevent>() == 64",
+        "offset_of!(KernelSigevent, signal) == 8",
+        "offset_of!(KernelSigevent, notify) == 12",
+        "offset_of!(KernelSigevent, padding) == 16",
+    ):
+        if required not in time_text:
             errors.append(
-                "crabc-rs/src/time_x86_64.rs: admitted x86 interval-timer-control slice must defer "
+                "crabc-rs/src/time_x86_64.rs: admitted x86 advanced-time boundary is "
+                f"missing {required}"
+            )
+
+    notification = re.search(
+        r"pub enum TimerNotification\s*\{(?P<body>.*?)^\}",
+        time_text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if notification is None:
+        errors.append(
+            "crabc-rs/src/time_x86_64.rs: advanced POSIX timers are missing "
+            "their closed notification vocabulary"
+        )
+    elif re.search(r"(?m)^\s*Thread\s*(?:\{|,)", notification.group("body")):
+        errors.append(
+            "crabc-rs/src/time_x86_64.rs: advanced POSIX timers must defer "
+            "SIGEV_THREAD callbacks"
+        )
+
+    for forbidden in (
+        "pub fn clock_adjtime",
+        "pub struct TimerT",
+        "pub type TimerT",
+        "pub struct Sigevent",
+        "pub type Sigevent",
+        'pub extern "C"',
+        'pub unsafe extern "C"',
+    ):
+        if forbidden in time_text:
+            errors.append(
+                "crabc-rs/src/time_x86_64.rs: advanced-time boundary must defer "
                 f"{forbidden}"
+            )
+
+    core_source = ROOT / "crabc-core" / "src" / "time_x86_64.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub unsafe fn clock_settime_raw",
+        "pub unsafe fn clock_getres_raw",
+        "pub unsafe fn timer_create_raw",
+        "pub unsafe fn timer_settime_raw",
+        "pub unsafe fn timer_gettime_raw",
+        "pub fn timer_getoverrun_raw",
+        "pub fn timer_delete_raw",
+        "syscall4(\n            SYS_TIMER_SETTIME,",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/time_x86_64.rs: admitted x86 advanced-time seam is "
+                f"missing {required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("SYS_TIMER_CREATE", 222),
+        ("SYS_TIMER_SETTIME", 223),
+        ("SYS_TIMER_GETTIME", 224),
+        ("SYS_TIMER_GETOVERRUN", 225),
+        ("SYS_TIMER_DELETE", 226),
+        ("SYS_CLOCK_SETTIME", 227),
+        ("SYS_CLOCK_GETRES", 229),
+    ):
+        required = f"pub(crate) const {name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 advanced-time ABI proof "
+                f"is missing {name}={value}"
+        )
+
+
+def check_x86_users_databases_boundary(errors: list[str]) -> None:
+    """Keep x86 local-account snapshots owned, alloc-gated, and direct."""
+
+    facade_source = ROOT / "crabc-rs" / "src" / "lib.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    required_module = (
+        '#[cfg(all(\n'
+        '    feature = "alloc",\n'
+        '    any(target_arch = "aarch64", target_arch = "x86_64")\n'
+        '))]\n'
+        'pub mod users;'
+    )
+    if required_module not in facade_text or facade_text.count("pub mod users;") != 1:
+        errors.append(
+            "crabc-rs/src/lib.rs: admitted x86 local-account snapshots must expose exactly "
+            "one alloc-gated shared users module"
+        )
+
+    users_source = ROOT / "crabc-rs" / "src" / "users.rs"
+    users_text = users_source.read_text(errors="replace")
+    for required in (
+        "pub enum DatabaseError",
+        "pub struct User",
+        "name: String",
+        "pub struct UserDatabase",
+        "entries: Vec<User>",
+        "pub struct Group",
+        "members: Vec<String>",
+        "pub struct GroupDatabase",
+        "entries: Vec<Group>",
+        "pub struct Database",
+        "users: UserDatabase",
+        "groups: GroupDatabase",
+        "fn split_exact",
+        "String::from_utf8(value.to_vec())",
+        "if value.contains(&0)",
+        'Self::from_bytes(&read_system_file(b"/etc/passwd")?)',
+        'Self::from_bytes(&read_system_file(b"/etc/group")?)',
+        "const MAX_SYSTEM_FILE_BYTES: usize = 1024 * 1024;",
+        "crate::fs::open(path, crate::fs::OFlags::CLOEXEC, crate::fs::Mode::empty())",
+        "crabc_core::io::read(descriptor.as_raw_fd(), &mut chunk)",
+        "Err(crate::Errno::INTR) => continue",
+        "if new_length > MAX_SYSTEM_FILE_BYTES",
+    ):
+        if required not in users_text:
+            errors.append(
+                "crabc-rs/src/users.rs: admitted x86 local-account snapshot boundary is "
+                f"missing {required}"
+            )
+
+    x86_fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    x86_fs_text = x86_fs_source.read_text(errors="replace")
+    for required in (
+        "pub fn open<P: PathArg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<OwnedFd>",
+        "openat(CWD, path, oflags, create_mode)",
+        "crabc_core::fs::openat(",
+    ):
+        if required not in x86_fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 local-account snapshots are "
+                f"missing the direct file seam {required}"
+            )
+
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', users_text):
+        errors.append(
+            "crabc-rs/src/users.rs: x86 local-account snapshots must not select a C ABI"
+        )
+
+    c_or_provider_api = re.compile(
+        r"(?im)^\s*pub\s+(?:unsafe\s+)?fn\s+(?:"
+        r"getpwnam(?:_r)?|getpwuid(?:_r)?|getpwent|setpwent|endpwent|fgetpwent|putpwent|"
+        r"getgrnam(?:_r)?|getgrgid(?:_r)?|getgrent|setgrent|endgrent|fgetgrent|putgrent|"
+        r"getspnam(?:_r)?|getspent|setspent|endspent|fgetspent|putspent|"
+        r"getutent|setutent|endutent|getutid|getutline|pututline|utmpname|"
+        r"getutxent|setutxent|endutxent|getutxid|getutxline|pututxline|utmpxname|"
+        r"setmntent|getmntent(?:_r)?|addmntent|endmntent|hasmntopt|"
+        r"(?:set|add|remove|register|unregister|reload)_(?:nss_)?provider"
+        r")(?:<|\s*\()"
+    )
+    if c_or_provider_api.search(users_text) or re.search(
+        r"(?im)^\s*pub\s+(?:struct|enum|trait|type)\s+\w*(?:nss|shadow|utmp|mntent|provider)\w*",
+        users_text,
+    ):
+        errors.append(
+            "crabc-rs/src/users.rs: x86 local-account snapshots must defer C/NSS, "
+            "shadow, utmp, mntent, and provider-mutation APIs"
+        )
+
+
+def check_x86_child_ownership_boundary(errors: list[str]) -> None:
+    """Keep x86 prepared child ownership safe, one-shot, and non-generic."""
+
+    process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
+    process_text = process_source.read_text(errors="replace")
+    for required in (
+        "pub struct WaitOptions: u32",
+        "pub struct WaitStatus(i32);",
+        "pub enum FdAction<'fd>",
+        "pub struct SpawnOptions<'mask>",
+        "pub struct PreparedExec<'fd>",
+        "pub fn spawn(&self) -> Result<Child>",
+        "pub struct Child",
+        "pub fn wait(self, options: WaitOptions) -> Result<Option<WaitStatus>>",
+        "crabc_core::pipe::pipe2(crabc_core::io::O_CLOEXEC)",
+        "reserve_child_error_fd(initial_writer, &self.actions)",
+        "crabc_core::process::fork_raw()",
+        "crabc_core::process::execve_raw(",
+        "fn wait_child(pid: Pid, options: WaitOptions)",
+        "write_child_exec_error_and_exit(writer, error)",
+    ):
+        if required not in process_text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: admitted x86 child-ownership "
+                f"boundary is missing {required}"
+            )
+
+    child_declaration = re.search(
+        r"#\[cfg\(feature = \"alloc\"\)\]\n#\[derive\((?P<derives>[^)]*)\)\]\n"
+        r"pub struct Child\s*\{",
+        process_text,
+    )
+    if child_declaration is None:
+        errors.append(
+            "crabc-rs/src/process_x86_64.rs: x86 child ownership is missing "
+            "the explicit Child declaration"
+        )
+    elif any(
+        trait.strip() in {"Clone", "Copy"}
+        for trait in child_declaration.group("derives").split(",")
+    ):
+        errors.append(
+            "crabc-rs/src/process_x86_64.rs: x86 Child must remain a unique "
+            "non-Clone, non-Copy wait owner"
+        )
+
+    # The selected safe boundary must not accidentally become the wider raw
+    # process-control facade. Indented methods are deliberately not matched by
+    # the first expression so `Child::wait(self, ...)` remains admitted.
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:fork(?:_raw)?|wait|waitpid|waitpgid|waitid)"
+        r"(?:<|\s*\()",
+        process_text,
+    ):
+        errors.append(
+            "crabc-rs/src/process_x86_64.rs: x86 child ownership must not expose "
+            "a generic fork or wait selector"
+        )
+    if re.search(r"(?m)^\s+pub\s+unsafe\s+fn\s+exec(?:<|\s*\()", process_text):
+        errors.append(
+            "crabc-rs/src/process_x86_64.rs: x86 child ownership must defer "
+            "direct current-process exec"
+        )
+    for forbidden in ("pub enum ForkResult", "pub struct BorrowedExec", "pub struct WaitId"):
+        if forbidden in process_text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: x86 child ownership must defer "
+                f"{forbidden}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("CLONE", 56),
+        ("EXECVE", 59),
+        ("WAIT4", 61),
+        ("WAITID", 247),
+        ("EXIT_GROUP", 231),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 child-ownership ABI "
+                f"proof is missing SYS_{name}={value}"
             )
 
 
@@ -957,7 +2027,7 @@ def check_x86_sync_boundary(errors: list[str]) -> None:
 
 
 def check_x86_path_lifecycle_boundary(errors: list[str]) -> None:
-    """Keep the staged x86 pathname batch typed, direct, and explicitly bounded."""
+    """Keep the selected x86 path-core slice typed, direct, and bounded."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     text = fs_source.read_text(errors="replace")
@@ -1013,51 +2083,111 @@ def check_x86_path_lifecycle_boundary(errors: list[str]) -> None:
         "crabc_core::fs::fchmodat(",
         "crabc_core::fs::fchown(",
         "crabc_core::fs::fchownat(",
+        "pub fn readlinkat_raw<",
+        "pub fn readlinkat<",
+        "pub fn readlink<",
     ):
         if required not in text:
             errors.append(
-                "crabc-rs/src/fs_x86_64.rs: staged x86 pathname lifecycle is missing "
+                "crabc-rs/src/fs_x86_64.rs: selected x86 path-core slice is missing "
                 f"{required}"
             )
 
     for forbidden in (
         r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
-        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:openat2|statx|chdir|fchdir|canonicalize)(?:<|\s*\()",
-        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:readlinkat|readlink)(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+openat2(?:<|\s*\()",
         r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:opendir|fdopendir|readdir|closedir)(?:<|\s*\()",
     ):
         if re.search(forbidden, text):
             errors.append(
-                "crabc-rs/src/fs_x86_64.rs: staged x86 pathname lifecycle must "
-                "defer the broader path-core API"
+                "crabc-rs/src/fs_x86_64.rs: selected x86 path-core slice must "
+                "defer unselected path/runtime APIs"
             )
 
 
 def check_x86_socket_transport_boundary(errors: list[str]) -> None:
-    """Keep the staged x86 socket boundary typed, direct, and interface-free."""
+    """Keep the staged x86 socket and interface-device boundaries typed/direct."""
 
     facade_text = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
     net_text = (ROOT / "crabc-rs" / "src" / "net.rs").read_text(errors="replace")
+    netdevice_text = (ROOT / "crabc-rs" / "src" / "netdevice.rs").read_text(
+        errors="replace"
+    )
     core_text = (ROOT / "crabc-core" / "src" / "net.rs").read_text(errors="replace")
+    resolver_text = (ROOT / "crabc-core" / "src" / "resolver.rs").read_text(
+        errors="replace"
+    )
 
     for required in (
         '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\npub mod net;',
-        '#[cfg(all(feature = "alloc", target_arch = "aarch64"))]\npub mod netdb;',
+        '#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]\npub mod netdb;',
+        '#[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]\npub mod resolver;',
     ):
         if required not in facade_text:
             errors.append(
-                "crabc-rs/src/lib.rs: staged x86 socket transport is missing "
+                "crabc-rs/src/lib.rs: staged x86 network transport is missing "
                 f"its explicit module boundary {required!r}"
             )
 
+    netdb_text = (ROOT / "crabc-rs" / "src" / "netdb.rs").read_text(errors="replace")
+    for required in (
+        "pub enum ServiceProtocol",
+        "pub struct ServiceDatabase",
+        "pub struct ProtocolDatabase",
+        "fn parse_service_spec(",
+        "fn parse_u16(",
+    ):
+        if required not in netdb_text:
+            errors.append(
+                "crabc-rs/src/netdb.rs: staged x86 netdb support is missing "
+                f"its admitted service/protocol parser boundary {required}"
+            )
+    if 'target_arch = "aarch64"' in netdb_text:
+        errors.append(
+            "crabc-rs/src/netdb.rs: x86 netdb evidence must not leave an "
+            "AArch64-only service/protocol gate"
+        )
+
     netdevice_boundary = (
-        '#[cfg(target_arch = "aarch64")]\n#[path = "netdevice.rs"]\npub mod netdevice;'
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\n'
+        '#[path = "netdevice.rs"]\npub mod netdevice;'
     )
     if netdevice_boundary not in net_text:
         errors.append(
-            "crabc-rs/src/net.rs: network-device ioctls must remain AArch64-only "
-            "until their x86 ABI evidence exists"
+            "crabc-rs/src/net.rs: staged x86 network-device operations are missing "
+            "their explicit admitted module boundary"
         )
+
+    for required in (
+        "fn receive_netlink_packet(",
+        "crabc_core::net::recvmsg_raw(",
+        "MSG_TRUNC",
+    ):
+        if required not in netdevice_text:
+            errors.append(
+                "crabc-rs/src/netdevice.rs: bounded netlink snapshots must reject "
+                f"truncated datagrams through {required}"
+            )
+    if "crabc_core::net::recvfrom_raw(" in netdevice_text:
+        errors.append(
+            "crabc-rs/src/netdevice.rs: bounded netlink snapshots must not parse "
+            "an undetectably truncated recvfrom datagram"
+        )
+
+    for required in (
+        "const MSG_TRUNC: u32 = 0x20;",
+        "fn receive_datagram(",
+        "fn compression_target(",
+        "net::recvmsg_raw(fd, &iovec, 1, MSG_TRUNC)",
+        "fn matching_question_end(",
+        "fn has_complete_records(",
+        "Err(crate::Errno::OVERFLOW)",
+    ):
+        if required not in resolver_text:
+            errors.append(
+                "crabc-core/src/resolver.rs: bounded x86 DNS UDP transport must "
+                f"reject partial datagrams and validate {required}"
+            )
 
     for required in (
         "pub fn socketpair(",
@@ -1126,24 +2256,356 @@ def check_x86_socket_transport_boundary(errors: list[str]) -> None:
         )
 
 
-def check_x86_readlinkat_boundary(errors: list[str]) -> None:
-    """Keep the x86 readlinkat API caller-buffer-only without blocking its namespace use."""
+def check_x86_path_core_readlink_boundary(errors: list[str]) -> None:
+    """Keep owned x86 readlink exact, byte-preserving, and direct."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     text = fs_source.read_text(errors="replace")
-    if "pub fn readlinkat_raw<" not in text:
-        errors.append("crabc-rs/src/fs_x86_64.rs: staged readlinkat slice is missing")
-    for forbidden in (
+    for required in (
+        "pub fn readlinkat_raw<",
         "pub fn readlinkat<",
         "pub fn readlink<",
-        "CString",
-        "Vec<",
+        "buffer.reserve(SMALL_PATH_BUFFER_SIZE)",
+        "if length < capacity",
+        "CString::from_vec_unchecked(buffer)",
+        "impl PathArg for String",
     ):
-        if forbidden in text:
+        if required not in text:
             errors.append(
-                "crabc-rs/src/fs_x86_64.rs: staged readlinkat slice must defer "
-                f"{forbidden}"
+                "crabc-rs/src/fs_x86_64.rs: x86 owned readlink path-core boundary is missing "
+                f"{required}"
             )
+    for forbidden in (
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+openat2(?:<|\s*\()",
+    ):
+        if re.search(forbidden, text):
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: x86 owned readlink must not widen "
+                "the selected path-core boundary"
+            )
+
+
+def check_x86_xattr_boundary(errors: list[str]) -> None:
+    """Keep direct x86 xattrs caller-buffered, syscall-specific, and private."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub struct XattrFlags: u32",
+        "const CREATE = 0x1",
+        "const REPLACE = 0x2",
+        "const _ = !0",
+        "pub fn getxattr<",
+        "pub fn lgetxattr<",
+        "pub fn fgetxattr<",
+        "pub fn setxattr<",
+        "pub fn lsetxattr<",
+        "pub fn fsetxattr<",
+        "pub fn listxattr<",
+        "pub fn llistxattr<",
+        "pub fn flistxattr<",
+        "pub fn removexattr<",
+        "pub fn lremovexattr<",
+        "pub fn fremovexattr<",
+        "crabc_core::fs::getxattr_raw(",
+        "crabc_core::fs::lgetxattr_raw(",
+        "crabc_core::fs::fgetxattr_raw(",
+        "crabc_core::fs::setxattr_raw(",
+        "crabc_core::fs::lsetxattr_raw(",
+        "crabc_core::fs::fsetxattr_raw(",
+        "crabc_core::fs::listxattr_raw(",
+        "crabc_core::fs::llistxattr_raw(",
+        "crabc_core::fs::flistxattr_raw(",
+        "crabc_core::fs::removexattr_raw(",
+        "crabc_core::fs::lremovexattr_raw(",
+        "crabc_core::fs::fremovexattr_raw(",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 xattr slice is missing "
+                f"{required}"
+            )
+
+    for forbidden in (
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:name_to_handle_at|open_by_handle_at)(?:<|\s*\()",
+        r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
+    ):
+        if re.search(forbidden, fs_text):
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 xattr slice must defer "
+                "file-handle and C ABI expansion"
+            )
+
+    core_fs_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_fs_text = core_fs_source.read_text(errors="replace")
+    for required in (
+        "pub unsafe fn setxattr_raw(",
+        "pub unsafe fn lsetxattr_raw(",
+        "pub unsafe fn fsetxattr_raw(",
+        "pub unsafe fn getxattr_raw(",
+        "pub unsafe fn lgetxattr_raw(",
+        "pub unsafe fn fgetxattr_raw(",
+        "pub unsafe fn listxattr_raw(",
+        "pub unsafe fn llistxattr_raw(",
+        "pub unsafe fn flistxattr_raw(",
+        "pub unsafe fn removexattr_raw(",
+        "pub unsafe fn lremovexattr_raw(",
+        "pub unsafe fn fremovexattr_raw(",
+    ):
+        if required not in core_fs_text:
+            errors.append(
+                "crabc-core/src/fs.rs: admitted x86 xattr syscall boundary is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("SETXATTR", 188),
+        ("LSETXATTR", 189),
+        ("FSETXATTR", 190),
+        ("GETXATTR", 191),
+        ("LGETXATTR", 192),
+        ("FGETXATTR", 193),
+        ("LISTXATTR", 194),
+        ("LLISTXATTR", 195),
+        ("FLISTXATTR", 196),
+        ("REMOVEXATTR", 197),
+        ("LREMOVEXATTR", 198),
+        ("FREMOVEXATTR", 199),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 xattr ABI proof is missing "
+                f"SYS_{name}={value}"
+            )
+
+
+def check_x86_directory_boundary(errors: list[str]) -> None:
+    """Keep x86 directory records caller-buffered, typed, and outside C DIR."""
+
+    facade_source = ROOT / "crabc-rs" / "src" / "lib.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    for required in (
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\nmod raw_dir;',
+        '#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]\npub use raw_dir::{RawDir, RawDirEntry};',
+    ):
+        if required not in facade_text:
+            errors.append(
+                "crabc-rs/src/lib.rs: admitted x86 directory records are missing "
+                f"their explicit shared module boundary {required!r}"
+            )
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub use crate::{RawDir, RawDirEntry};",
+        "pub(crate) const fn from_dirent_d_type",
+        "pub struct Dir<'buffer>",
+        "pub type DirEntry<'entry> = RawDirEntry<'entry>;",
+        "pub fn open<P: PathArg>",
+        "pub fn openat<P: PathArg, Fd: AsFd>",
+        "OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC",
+        "pub fn from_owned_fd",
+        "RawDir::new(fd, buffer)",
+        "pub fn rewind(&mut self)",
+        "pub fn seek(&mut self, offset: i64)",
+        "pub fn next(&mut self) -> Option<Result<DirEntry<'_>>>",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 directory slice is missing "
+                f"{required}"
+            )
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:opendir|fdopendir|readdir|readdir_r|"
+        r"closedir|telldir|seekdir|rewinddir|scandir)(?:<|\s*\()",
+        fs_text,
+    ):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: admitted x86 directory slice must not expose "
+            "a C DIR-style or bulk directory API"
+        )
+
+    raw_source = ROOT / "crabc-rs" / "src" / "raw_dir.rs"
+    raw_text = raw_source.read_text(errors="replace")
+    for required in (
+        "const LINUX_DIRENT64_HEADER_SIZE: usize = 19;",
+        "const LINUX_DIRENT64_ALIGNMENT: usize = align_of::<u64>();",
+        "crabc_core::fs::getdents64_raw(",
+        "crabc_core::fs::lseek(",
+        "Err(Errno::INTR) => continue",
+        "FileType::from_dirent_d_type(d_type)",
+        "pub struct RawDir<'buffer, Fd: AsFd>",
+        "pub struct RawDirEntry<'entry>",
+    ):
+        if required not in raw_text:
+            errors.append(
+                "crabc-rs/src/raw_dir.rs: admitted x86 getdents64 record boundary is missing "
+                f"{required}"
+            )
+
+    core_fs_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_fs_text = core_fs_source.read_text(errors="replace")
+    if "pub unsafe fn getdents64_raw(" not in core_fs_text:
+        errors.append(
+            "crabc-core/src/fs.rs: admitted x86 directory slice is missing getdents64_raw"
+        )
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (("GETDENTS64", 217), ("LSEEK", 8), ("OPENAT", 257)):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 directory ABI proof is "
+                f"missing SYS_{name}={value}"
+            )
+
+
+def check_x86_temporary_object_boundary(errors: list[str]) -> None:
+    """Keep x86 temporary ownership descriptor-relative and free of C fallbacks."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub const TEMP_FILE_RANDOM_BYTES: usize = 12;",
+        "pub const TEMP_FILE_MAX_ATTEMPTS: usize = 128;",
+        "pub struct NamedTempFile",
+        "pub fn create_temp_file<P: PathArg, Prefix: PathArg>",
+        "pub fn create_temp_file_at<Fd: AsFd, Prefix: PathArg>",
+        "crate::io::fcntl_dupfd_cloexec(parent, 0)",
+        "OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC",
+        "pub struct TempFile",
+        "OFlags::RDWR | OFlags::TMPFILE | OFlags::CLOEXEC",
+        "pub const TEMP_DIR_RANDOM_BYTES: usize = 12;",
+        "pub const TEMP_DIR_MAX_ATTEMPTS: usize = 128;",
+        "const TEMP_DIR_PATH_MAX: usize = 4096;",
+        "pub fn create_temp_dir_into<P: PathArg, Prefix: PathArg, Buf: Buffer<u8>>",
+        "pub fn create_temp_dir_at_into<Fd: AsFd, Prefix: PathArg, Buf: Buffer<u8>>",
+        "create_temp_dir_at_bytes(&directory, prefix_bytes, &mut basename)",
+        "crate::rand::getentropy(&mut entropy)?",
+        "UnlinkAtFlags::empty()",
+        "UnlinkAtFlags::REMOVEDIR",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 temporary-object slice is missing "
+                f"{required}"
+            )
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:mkstemp|mkdtemp|tmpfile|tempnam|tmpnam|"
+        r"chdir|fchdir|name_to_handle_at|open_by_handle_at)(?:<|\s*\()",
+        fs_text,
+    ):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: admitted x86 temporary-object slice must not expose "
+            "C temporary, CWD-mutation, or file-handle APIs"
+        )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("OPENAT", 257),
+        ("MKDIRAT", 258),
+        ("UNLINKAT", 263),
+        ("GETRANDOM", 318),
+        ("FCNTL", 72),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 temporary-object ABI proof is "
+                f"missing SYS_{name}={value}"
+            )
+
+    io_source = ROOT / "crabc-core" / "src" / "io.rs"
+    if "pub fn fcntl_dupfd_cloexec(" not in io_source.read_text(errors="replace"):
+        errors.append(
+            "crabc-core/src/io.rs: admitted x86 temporary named-file cleanup is missing "
+            "F_DUPFD_CLOEXEC ownership support"
+        )
+
+
+def check_x86_statx_boundary(errors: list[str]) -> None:
+    """Keep direct x86 statx typed, stateless, and operation-specific."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub struct StatxAtFlags: u32",
+        "const SYMLINK_NOFOLLOW = 0x0000_0100",
+        "const NO_AUTOMOUNT = 0x0000_0800",
+        "const EMPTY_PATH = 0x0000_1000",
+        "const FORCE_SYNC = 0x0000_2000",
+        "const DONT_SYNC = 0x0000_4000",
+        "pub struct StatxFlags: u32",
+        "pub const RESERVED_MASK: u32 = 0x8000_0000",
+        "pub struct StatxAttributes: u64",
+        "pub struct Statx",
+        "pub struct StatxTimestamp",
+        "pub fn statx<P: PathArg, Fd: AsFd>",
+        "crabc_core::fs::statx_raw(",
+        "flags.bits(),",
+        "mask.bits(),",
+        "const _: [(); 256] = [(); core::mem::size_of::<Statx>()];",
+        "const _: [(); 156] = [(); core::mem::offset_of!(Statx, stx_dio_offset_align)];",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 statx slice is missing "
+                f"{required}"
+            )
+
+    at_flags = re.search(
+        r"pub struct AtFlags: u32 \{(?P<body>.*?)^    \}",
+        fs_text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if at_flags is None:
+        errors.append("crabc-rs/src/fs_x86_64.rs: x86 fstatat flags are missing")
+    elif re.search(
+        r"const\s+(?:EMPTY_PATH|NO_AUTOMOUNT|FORCE_SYNC|DONT_SYNC)\b",
+        at_flags.group("body"),
+    ):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: statx flags must not widen the closed x86 AtFlags type"
+        )
+
+    if re.search(
+        r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', fs_text
+    ) or re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:__xstat|fstatat64)(?:<|\s*\()",
+        fs_text,
+    ):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 statx slice must not select a C metadata ABI"
+        )
+
+    core_fs_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_fs_text = core_fs_source.read_text(errors="replace")
+    for required in (
+        "pub unsafe fn statx_raw(",
+        "const STATX_RESERVED: u32 = 0x8000_0000;",
+        "const STATX_KNOWN_MASK: u32 = 0x0000_3fff;",
+        "if mask & STATX_RESERVED != 0",
+        "let mask = mask & STATX_KNOWN_MASK;",
+        "syscall5(",
+        "SYS_STATX,",
+    ):
+        if required not in core_fs_text:
+            errors.append(
+                "crabc-core/src/fs.rs: admitted x86 statx seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    if "pub(crate) const SYS_STATX: usize = 332" not in syscall_source.read_text(
+        errors="replace"
+    ):
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: admitted x86 statx ABI proof is missing SYS_STATX=332"
+        )
 
 
 def check_x86_memfd_boundary(errors: list[str]) -> None:
@@ -1179,6 +2641,2112 @@ def check_x86_memfd_boundary(errors: list[str]) -> None:
             "crabc-rs/src/fs_x86_64.rs: direct memory-file slice must not expose "
             "a generic fcntl API"
         )
+
+
+def check_x86_memory_mapping_boundary(errors: list[str]) -> None:
+    """Ratchet the selected x86 mapping lifecycle without widening its siblings.
+
+    This check deliberately covers only `mmap`, `mmap_anonymous`, `mprotect`,
+    and `munmap`. The existing remap, locking, synchronization, advisory, and
+    residency APIs are separately admitted x86 boundaries; their presence must
+    not be mistaken for evidence that this `memory.mapping` slice owns them.
+    """
+
+    facade_source = ROOT / "crabc-rs" / "src" / "mm_x86_64.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    facade_root = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
+    required_facade_module = (
+        '#[cfg(target_arch = "x86_64")]\n'
+        '#[path = "mm_x86_64.rs"]\npub mod mm;'
+    )
+    if required_facade_module not in facade_root:
+        errors.append(
+            "crabc-rs/src/lib.rs: selected x86 mapping lifecycle is missing its "
+            "explicit mm_x86_64 module boundary"
+        )
+
+    def flag_body(name: str) -> str | None:
+        match = re.search(
+            rf"(?ms)pub struct {name}: u32\s*\{{(?P<body>.*?)^\}}",
+            facade_text,
+        )
+        if match is None:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle is "
+                f"missing closed {name}"
+            )
+            return None
+        return match.group("body")
+
+    for name, expected in (
+        ("ProtFlags", ("READ", "WRITE", "EXEC")),
+        ("MprotectFlags", ("READ", "WRITE", "EXEC")),
+        ("MapFlags", ("SHARED", "PRIVATE")),
+    ):
+        body = flag_body(name)
+        if body is None:
+            continue
+        actual = tuple(re.findall(r"(?m)^\s*const\s+([A-Z][A-Z0-9_]*)\s*=", body))
+        if actual != expected or re.search(r"(?m)^\s*const\s+_\s*=", body):
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle must "
+                f"keep {name} closed to {', '.join(expected)}"
+            )
+
+    for required in (
+        "const MAP_ANONYMOUS: u32 = 0x20;",
+        "const SUPPORTED_PROTECTION_BITS: u32 =",
+        "ProtFlags::READ.bits() | ProtFlags::WRITE.bits() | ProtFlags::EXEC.bits();",
+        "const SUPPORTED_MAP_BITS: u32 = MapFlags::SHARED.bits() | MapFlags::PRIVATE.bits();",
+        "fn checked_protection_bits(bits: u32) -> Result<u32>",
+        "if bits & !SUPPORTED_PROTECTION_BITS == 0",
+        "fn checked_map_bits(flags: MapFlags) -> Result<u32>",
+        "if bits & !SUPPORTED_MAP_BITS != 0 || kind == 0 || kind == SUPPORTED_MAP_BITS",
+    ):
+        if required not in facade_text:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle is "
+                f"missing closed-flag proof {required}"
+            )
+
+    def function_body(marker: str) -> str | None:
+        start = facade_text.find(marker)
+        if start < 0:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle is "
+                f"missing {marker}"
+            )
+            return None
+        end = facade_text.find("\n}\n", start)
+        if end < 0:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle has "
+                f"an unclosed {marker} body"
+            )
+            return None
+        return facade_text[start:end]
+
+    selected_functions = (
+        (
+            "pub unsafe fn mmap<",
+            (
+                "let prot = checked_protection_bits(prot.bits())?;",
+                "let flags = checked_map_bits(flags)?;",
+                "crabc_core::mm::mmap_raw(",
+                "fd.as_raw_fd(),",
+                "offset,",
+            ),
+        ),
+        (
+            "pub unsafe fn mmap_anonymous(",
+            (
+                "let prot = checked_protection_bits(prot.bits())?;",
+                "let flags = checked_map_bits(flags)?;",
+                "crabc_core::mm::mmap_raw(",
+                "flags | MAP_ANONYMOUS,",
+                "-1,",
+                "0,",
+            ),
+        ),
+        (
+            "pub unsafe fn mprotect(",
+            (
+                "let flags = checked_protection_bits(flags.bits())?;",
+                "crabc_core::mm::mprotect_raw(ptr.cast(), len, flags)",
+            ),
+        ),
+        (
+            "pub unsafe fn munmap(",
+            ("crabc_core::mm::munmap_raw(ptr.cast(), len)",),
+        ),
+    )
+    for marker, required in selected_functions:
+        body = function_body(marker)
+        if body is None:
+            continue
+        for entry in required:
+            if entry not in body:
+                errors.append(
+                    "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle "
+                    f"must directly retain {entry} in {marker}"
+                )
+        for forbidden in (
+            "mremap",
+            "mlock",
+            "munlock",
+            "msync",
+            "madvise",
+            "mincore",
+            "brk",
+            "MAP_FIXED",
+        ):
+            if forbidden in body:
+                errors.append(
+                    "crabc-rs/src/mm_x86_64.rs: selected x86 mapping lifecycle "
+                    f"must not widen {marker} through {forbidden}"
+                )
+
+    core_source = ROOT / "crabc-core" / "src" / "mm_x86_64.rs"
+    core_text = core_source.read_text(errors="replace")
+    core_root = (ROOT / "crabc-core" / "src" / "lib.rs").read_text(errors="replace")
+    required_core_module = (
+        '#[cfg(target_arch = "x86_64")]\n'
+        '#[path = "mm_x86_64.rs"]\npub mod mm;'
+    )
+    if required_core_module not in core_root:
+        errors.append(
+            "crabc-core/src/lib.rs: selected x86 mapping lifecycle is missing its "
+            "explicit mm_x86_64 module boundary"
+        )
+    for required in (
+        "pub unsafe fn mmap_raw(",
+        "syscall6(\n            SYS_MMAP,",
+        "pub unsafe fn mprotect_raw(address: *mut u8, length: usize, flags: u32) -> Result<()>",
+        "syscall3(SYS_MPROTECT, address as usize, length, flags as usize)",
+        "pub unsafe fn munmap_raw(address: *mut u8, length: usize) -> Result<()>",
+        "syscall2(SYS_MUNMAP, address as usize, length)",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/mm_x86_64.rs: selected x86 mapping lifecycle "
+                f"is missing direct kernel seam {required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (("MMAP", 9), ("MPROTECT", 10), ("MUNMAP", 11)):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: selected x86 mapping lifecycle "
+                f"is missing SYS_{name}={value}"
+            )
+
+
+def check_x86_memory_vm_boundary(errors: list[str]) -> None:
+    """Keep the x86 raw-break and VM-policy slice distinct from mapping life.
+
+    `memory.mapping` owns ordinary mapping/protection/unmap behavior. This
+    check instead ratchets only raw-break query/replay, process-global
+    lock-all policy, and legacy file-page remapping. It does not turn the
+    separately admitted per-range locking, advice, residency, synchronization,
+    or ordinary remapping APIs into evidence for this slice.
+    """
+
+    facade_root = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
+    for required in (
+        '#[cfg(target_arch = "x86_64")]\n#[path = "mm_x86_64.rs"]\npub mod mm;',
+        '#[cfg(target_arch = "x86_64")]\n#[path = "process_x86_64.rs"]\npub mod process;',
+    ):
+        if required not in facade_root:
+            errors.append(
+                "crabc-rs/src/lib.rs: selected x86 memory.vm is missing its explicit "
+                f"module boundary {required!r}"
+            )
+
+    process_source = ROOT / "crabc-rs" / "src" / "process_x86_64.rs"
+    process_text = process_source.read_text(errors="replace")
+    for required in (
+        "pub unsafe fn kernel_brk(address: *mut c_void) -> Result<*mut c_void>",
+        "crabc_core::process::brk_raw(address.cast())",
+        "This is the Rustix-style kernel primitive",
+        "changes process-global heap state",
+    ):
+        if required not in process_text:
+            errors.append(
+                "crabc-rs/src/process_x86_64.rs: selected x86 memory.vm raw-break "
+                f"boundary is missing {required}"
+            )
+    if re.search(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:brk|sbrk)(?:<|\s*\()", process_text):
+        errors.append(
+            "crabc-rs/src/process_x86_64.rs: x86 memory.vm must expose only kernel_brk, "
+            "not libc-style brk/sbrk adapters"
+        )
+
+    facade_source = ROOT / "crabc-rs" / "src" / "mm_x86_64.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    match = re.search(
+        r"(?ms)pub struct MlockAllFlags: u32\s*\{(?P<body>.*?)^\}", facade_text
+    )
+    if match is None:
+        errors.append(
+            "crabc-rs/src/mm_x86_64.rs: selected x86 memory.vm is missing MlockAllFlags"
+        )
+    else:
+        actual = tuple(
+            (constant, re.sub(r"\s+", "", value))
+            for constant, value in re.findall(
+                r"(?m)^\s*const\s+([A-Z_][A-Z0-9_]*)\s*=\s*([^;]+);",
+                match.group("body"),
+            )
+        )
+        expected = (("CURRENT", "0x1"), ("FUTURE", "0x2"), ("ONFAULT", "0x4"))
+        if actual != expected:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 memory.vm must keep "
+                "MlockAllFlags closed to CURRENT, FUTURE, and ONFAULT"
+            )
+
+    def function_body(marker: str) -> str | None:
+        start = facade_text.find(marker)
+        if start < 0:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 memory.vm is missing " + marker
+            )
+            return None
+        end = facade_text.find("\n}\n", start)
+        if end < 0:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 memory.vm has an unclosed " + marker
+            )
+            return None
+        return facade_text[start:end]
+
+    for marker, direct_call in (
+        (
+            "pub fn mlockall(flags: MlockAllFlags) -> Result<()>",
+            "crabc_core::mm::mlockall_raw(flags.bits())",
+        ),
+        ("pub fn munlockall() -> Result<()>", "crabc_core::mm::munlockall_raw()"),
+        (
+            "pub unsafe fn remap_file_pages(",
+            "crabc_core::mm::remap_file_pages_raw(ptr.cast(), len, page_offset)",
+        ),
+    ):
+        body = function_body(marker)
+        if body is not None and direct_call not in body:
+            errors.append(
+                "crabc-rs/src/mm_x86_64.rs: selected x86 memory.vm must directly retain "
+                f"{direct_call} in {marker}"
+            )
+
+    if re.search(
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:"
+        r"mlockall_raw|munlockall_raw|remap_file_pages_raw|"
+        r"brk|sbrk|process_madvise|userfaultfd|membarrier"
+        r")(?:<|\s*\()",
+        facade_text,
+    ):
+        errors.append(
+            "crabc-rs/src/mm_x86_64.rs: x86 memory.vm must defer raw libc-shaped "
+            "adapters and broader VM-control APIs"
+        )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', facade_text):
+        errors.append("crabc-rs/src/mm_x86_64.rs: x86 memory.vm must not select a C ABI")
+
+    probe_source = ROOT / "crabc-rs" / "examples" / "memory_vm_direct_probe.rs"
+    probe_text = probe_source.read_text(errors="replace")
+    for required in (
+        "use crabc_rs::process::kernel_brk;",
+        "mm::remap_file_pages(mapping, PAGE_SIZE, 0)",
+        "mm::mlockall(MlockAllFlags::CURRENT).map(|_| mm::munlockall())",
+    ):
+        if required not in probe_text:
+            errors.append(
+                "crabc-rs/examples/memory_vm_direct_probe.rs: selected x86 memory.vm "
+                f"probe is missing its narrow boundary {required}"
+            )
+    for marker in (
+        r'let advisory = unsafe \{ mm::posix_madvise\(',
+        r'if let Err\(error\) = advisory',
+    ):
+        if not re.search(
+            r'(?m)^\s*#\[cfg\(target_arch = "aarch64"\)\]\n\s*' + marker,
+            probe_text,
+        ):
+            errors.append(
+                "crabc-rs/examples/memory_vm_direct_probe.rs: selected x86 memory.vm "
+                "must cfg-gate its inherited POSIX-advice probe step to AArch64"
+            )
+
+    core_process_source = ROOT / "crabc-core" / "src" / "process.rs"
+    core_process_text = core_process_source.read_text(errors="replace")
+    for required in (
+        "pub unsafe fn brk_raw(address: *mut u8) -> *mut u8",
+        "syscall1(SYS_BRK, address as usize)",
+    ):
+        if required not in core_process_text:
+            errors.append(
+                "crabc-core/src/process.rs: selected x86 memory.vm raw-break seam is "
+                f"missing {required}"
+            )
+
+    core_source = ROOT / "crabc-core" / "src" / "mm_x86_64.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub fn mlockall_raw(flags: u32) -> Result<()>",
+        "syscall1(SYS_MLOCKALL, flags as usize)",
+        "pub fn munlockall_raw() -> Result<()>",
+        "syscall0(SYS_MUNLOCKALL)",
+        "pub unsafe fn remap_file_pages_raw(",
+        "syscall5(\n            SYS_REMAP_FILE_PAGES,",
+        "address as usize,\n            size,\n            0,\n            page_offset,\n            0,",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/mm_x86_64.rs: selected x86 memory.vm direct seam is "
+                f"missing {required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (
+        ("BRK", 12),
+        ("MLOCKALL", 151),
+        ("MUNLOCKALL", 152),
+        ("REMAP_FILE_PAGES", 216),
+    ):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: selected x86 memory.vm ABI proof is "
+                f"missing SYS_{name}={value}"
+            )
+
+
+def check_x86_terminal_boundary(errors: list[str]) -> None:
+    """Guard the private x86 PTY/session and typed terminal-control seam.
+
+    PTY construction remains safe and forces O_NOCTTY. The only terminal
+    transition is the explicit unsafe pair handoff; the x86 TCGETS record
+    remains private to the named Rust termios operations.
+    """
+
+    facade_root = (ROOT / "crabc-rs" / "src" / "lib.rs").read_text(errors="replace")
+    required_module = (
+        '#[cfg(target_arch = "x86_64")]\n'
+        '#[path = "pty_x86_64.rs"]\npub mod pty;'
+    )
+    if required_module not in facade_root:
+        errors.append(
+            "crabc-rs/src/lib.rs: selected x86 terminal.pty-basic is missing its "
+            "explicit pty_x86_64 module boundary"
+        )
+    required_termios_module = (
+        '#[cfg(target_arch = "x86_64")]\n'
+        '#[path = "termios_x86_64.rs"]\npub mod termios;'
+    )
+    if required_termios_module not in facade_root:
+        errors.append(
+            "crabc-rs/src/lib.rs: selected x86 terminal boundary is missing its "
+            "explicit termios_x86_64 module boundary"
+        )
+
+    facade_source = ROOT / "crabc-rs" / "src" / "pty_x86_64.rs"
+    facade_text = facade_source.read_text(errors="replace")
+    for required in (
+        "pub struct OpenptFlags: u32",
+        "pub struct PtyPair {",
+        "pub fn open(flags: OpenptFlags) -> Result<Self>",
+        "pub fn master(&self) -> BorrowedFd<'_>",
+        "pub fn slave(&self) -> BorrowedFd<'_>",
+        "pub fn into_parts(self) -> (OwnedFd, OwnedFd)",
+        "pub unsafe fn set_controlling_terminal(&self, steal: bool) -> Result<()>",
+        "pub unsafe fn establish_session_and_controlling_terminal(&self, steal: bool) -> Result<()>",
+        "pub fn openpt(flags: OpenptFlags) -> Result<OwnedFd>",
+        "pub fn grantpt<Fd: AsFd>(fd: Fd) -> Result<()>",
+        "pub fn unlockpt<Fd: AsFd>(fd: Fd) -> Result<()>",
+        "pub fn ptsname_into<'buffer, Fd: AsFd>(",
+        "pub fn ptsname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString>",
+        'fs::open("/dev/ptmx", flags.into(), Mode::empty())',
+        "let slave = open_peer_noctty(&master, flags | OpenptFlags::NOCTTY)?;",
+        "crabc_core::io::ioctl_raw(",
+        "const TIOCGPTN: u32 = 0x8004_5430;",
+        "const TIOCSPTLCK: u32 = 0x4004_5431;",
+        "const TIOCGPTPEER: u32 = 0x5441;",
+        "const TIOCSCTTY: u32 = 0x540e;",
+        "crabc_core::process::setsid()?",
+        "# Safety",
+    ):
+        if required not in facade_text:
+            errors.append(
+                "crabc-rs/src/pty_x86_64.rs: selected x86 terminal.pty-basic boundary is "
+                f"missing {required}"
+            )
+
+    public_functions = tuple(
+        re.findall(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+([a-zA-Z0-9_]+)", facade_text)
+    )
+    if public_functions != ("openpt", "grantpt", "unlockpt", "ptsname_into", "ptsname"):
+        errors.append(
+            "crabc-rs/src/pty_x86_64.rs: x86 terminal boundary must keep its "
+            "free functions to the bounded master/pair/name seam"
+        )
+    if re.search(r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"', facade_text):
+        errors.append(
+            "crabc-rs/src/pty_x86_64.rs: x86 terminal.pty-basic must not select a C ABI"
+        )
+    if re.search(
+        r"(?m)^\s*pub\s+(?:unsafe\s+)?fn\s+(?:"
+        r"ioctl_tiocgptpeer|posix_openpt|ptsname_r|openpty|forkpty|login_tty|vhangup"
+        r")(?:<|\s*\()",
+        facade_text,
+    ):
+        errors.append(
+            "crabc-rs/src/pty_x86_64.rs: x86 terminal boundary must not expose "
+            "generic peer-open or C-shaped PTY/session APIs"
+        )
+    for forbidden in ("crate::termios",):
+        if forbidden in facade_text:
+            errors.append(
+                "crabc-rs/src/pty_x86_64.rs: x86 terminal boundary must defer "
+                f"{forbidden}"
+            )
+
+    termios_source = ROOT / "crabc-rs" / "src" / "termios_x86_64.rs"
+    termios_text = termios_source.read_text(errors="replace")
+    for required in (
+        "struct KernelTermios {",
+        "const _: [(); 36] = [(); core::mem::size_of::<KernelTermios>()];",
+        "const _: [(); 4] = [(); core::mem::align_of::<KernelTermios>()];",
+        "offset_of!(KernelTermios, input_modes)",
+        "offset_of!(KernelTermios, output_modes)",
+        "offset_of!(KernelTermios, control_modes)",
+        "offset_of!(KernelTermios, local_modes)",
+        "offset_of!(KernelTermios, line_discipline)",
+        "offset_of!(KernelTermios, special_codes)",
+        "pub struct Termios {",
+        "pub struct SpecialCodes(pub(crate) [u8; 19]);",
+        "pub struct Winsize {",
+        "pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios>",
+        "pub fn tcsetattr<Fd: AsFd>(fd: Fd, action: OptionalActions, termios: &Termios)",
+        "pub fn tcgetwinsize<Fd: AsFd>(fd: Fd) -> Result<Winsize>",
+        "pub fn tcsetwinsize<Fd: AsFd>(fd: Fd, size: Winsize) -> Result<()>",
+        "pub fn ioctl_tiocexcl<Fd: AsFd>(fd: Fd) -> Result<()>",
+        "pub fn ioctl_tiocnxcl<Fd: AsFd>(fd: Fd) -> Result<()>",
+        "pub fn tcgetpgrp<Fd: AsFd>(fd: Fd) -> Result<Pid>",
+        "pub fn tcsetpgrp<Fd: AsFd>(fd: Fd, pgrp: Pid) -> Result<()>",
+        "pub fn tcgetsid<Fd: AsFd>(fd: Fd) -> Result<Pid>",
+        "pub fn isatty<Fd: AsFd>(fd: Fd) -> bool",
+        "pub fn ttyname_into<'buffer, Fd: AsFd>(",
+        "pub fn ttyname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString>",
+        "pub fn tcdrain<Fd: AsFd>(fd: Fd) -> Result<()>",
+        "pub fn tcflush<Fd: AsFd>(fd: Fd, queue: QueueSelector) -> Result<()>",
+        "pub fn tcflow<Fd: AsFd>(fd: Fd, action: Action) -> Result<()>",
+        "pub fn tcsendbreak<Fd: AsFd>(fd: Fd) -> Result<()>",
+        "const TCGETS: u32 = 0x5401;",
+        "const TCSETS: u32 = 0x5402;",
+        "const TIOCEXCL: u32 = 0x540c;",
+        "const TIOCGSID: u32 = 0x5429;",
+        "const CBAUD: u32 = 0x100f;",
+        "const CIBAUD: u32 = 0x100f_0000;",
+        "CIBAUD's zero selector is the distinct B0 input setting on Linux",
+        "buffer.reserve(fs::SMALL_PATH_BUFFER_SIZE);",
+    ):
+        if required not in termios_text:
+            errors.append(
+                "crabc-rs/src/termios_x86_64.rs: selected x86 terminal boundary is "
+                f"missing {required}"
+            )
+    for forbidden in (
+        "pub struct KernelTermios",
+        'extern "C"',
+        "crate::ioctl::ioctl",
+        "pub unsafe fn",
+    ):
+        if forbidden in termios_text:
+            errors.append(
+                "crabc-rs/src/termios_x86_64.rs: x86 terminal boundary must not "
+                f"expose or reuse {forbidden}"
+            )
+
+    probe_source = ROOT / "crabc-rs" / "examples" / "pty_basic_direct_probe.rs"
+    probe_text = probe_source.read_text(errors="replace")
+    for required in (
+        "#![no_std]",
+        "pub extern \"C\" fn crabc_rs_pty_basic_direct_probe() -> i32",
+        "PtyPair::open(",
+        "pty::ptsname_into(pair.master(), &mut storage)",
+        "io::write(pair.slave(), b\"x\")",
+        "io::read(pair.master(), &mut received)",
+    ):
+        if required not in probe_text:
+            errors.append(
+                "crabc-rs/examples/pty_basic_direct_probe.rs: selected x86 terminal.pty-basic "
+                f"probe is missing {required}"
+            )
+    for forbidden in ("setsid", "TIOCSCTTY", "use crabc_rs::termios", "termios::"):
+        if forbidden in probe_text:
+            errors.append(
+                "crabc-rs/examples/pty_basic_direct_probe.rs: x86 terminal.pty-basic probe "
+                f"must defer {forbidden}"
+            )
+
+    test_source = ROOT / "crabc-rs" / "tests" / "x86_64_terminal.rs"
+    test_text = test_source.read_text(errors="replace")
+    for required in (
+        '#![cfg(target_arch = "x86_64")]',
+        "x86_64_terminal_attributes_queue_special_codes_and_window_size_round_trip",
+        "x86_64_terminal_name_and_exclusive_mode_are_typed_and_bounded",
+        "x86_64_explicit_session_handoff_is_confined_to_a_child",
+        "raw_process::fork_raw()",
+        "raw_process::wait4_raw",
+        "pair.establish_session_and_controlling_terminal(false)",
+        "termios::tcgetattr",
+        "raw.make_raw()",
+        "changed.set_input_speed(0)",
+        "termios::ttyname_into",
+    ):
+        if required not in test_text:
+            errors.append(
+                "crabc-rs/tests/x86_64_terminal.rs: selected x86 terminal regression "
+                f"is missing {required}"
+            )
+
+    terminal_probe = ROOT / "crabc-rs" / "examples" / "x86_64_terminal_direct_probe.rs"
+    terminal_probe_text = terminal_probe.read_text(errors="replace")
+    for required in (
+        "#![no_std]",
+        'pub extern "C" fn crabc_rs_x86_64_terminal_direct_probe() -> i32',
+        "PtyPair::open(",
+        "termios::tcgetattr",
+        "termios::ttyname_into",
+        "termios::ioctl_tiocexcl",
+        "changed.make_raw()",
+        "changed.set_input_speed(0)",
+        "raw_process::fork_raw()",
+        "pair.establish_session_and_controlling_terminal(false)",
+    ):
+        if required not in terminal_probe_text:
+            errors.append(
+                "crabc-rs/examples/x86_64_terminal_direct_probe.rs: selected x86 "
+                f"terminal probe is missing {required}"
+            )
+
+    oracle_runner = ROOT / "compat" / "x86_64" / "run_x86_terminal_reference.sh"
+    oracle_runner_text = oracle_runner.read_text(errors="replace")
+    for required in (
+        "crabc-x86_64-musl-gcc",
+        "x86_terminal_reference_probe.c",
+        "refuses emulation",
+        "raw+musl=pty-rawmode-termios-queue-exclusive-ttyname-session",
+    ):
+        if required not in oracle_runner_text:
+            errors.append(
+                "compat/x86_64/run_x86_terminal_reference.sh: selected x86 terminal "
+                f"oracle is missing {required}"
+            )
+
+    oracle_source = ROOT / "compat" / "x86_64" / "x86_terminal_reference_probe.c"
+    oracle_text = oracle_source.read_text(errors="replace")
+    for required in (
+        "sizeof(struct kernel_termios_x86) == 36",
+        "sizeof(struct termios) == 60",
+        "NCCS == 32",
+        "SYS_ioctl == 16",
+        "SYS_setsid == 112",
+        "TIOCSCTTY == 0x540eUL",
+        "TIOCGSID == 0x5429UL",
+        "terminal_session_child",
+        "compare_kernel_and_public",
+        "make_kernel_raw",
+        "CIBAUD) == B0",
+    ):
+        if required not in oracle_text:
+            errors.append(
+                "compat/x86_64/x86_terminal_reference_probe.c: selected x86 terminal "
+                f"oracle is missing {required}"
+            )
+
+    runner_text = (ROOT / "scripts" / "dev-x86_64.sh").read_text(errors="replace")
+    for required in (
+        "run_terminal_reference()",
+        "--test x86_64_terminal",
+        "--example x86_64_terminal_direct_probe",
+        "run_x86_terminal_reference.sh",
+    ):
+        if required not in runner_text:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected x86 terminal command is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for name, value in (("IOCTL", 16), ("SETSID", 112), ("CLONE", 56), ("WAIT4", 61)):
+        required = f"pub(crate) const SYS_{name}: usize = {value}"
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: selected x86 terminal ABI proof "
+                f"is missing SYS_{name}={value}"
+            )
+
+
+def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
+    """Keep the selected x86 static C archive to its named vertical slices."""
+
+    libc_root = ROOT / "libc" / "src" / "lib.rs"
+    root_text = libc_root.read_text(errors="replace")
+    required_module = (
+        '#[cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))]\n'
+        '#[path = "c_abi/x86_64/static_c_abi.rs"]\n'
+        "mod x86_64_static_c_abi;"
+    )
+    if required_module not in root_text:
+        errors.append(
+            "libc/src/lib.rs: selected x86 static C ABI needs its explicit separate "
+            "target root"
+        )
+
+    static_root_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    static_root_text = static_root_source.read_text(errors="replace")
+    for required in (
+        '#[path = "errno.rs"]',
+        '#[path = "syscall.rs"]',
+        '#[path = "stat_compat.rs"]',
+        '#[path = "credentials.rs"]',
+        '#[path = "credential_observation.rs"]',
+        '#[path = "memory.rs"]',
+        '#[path = "fenv.rs"]',
+        '#[path = "setjmp.rs"]',
+        '#[path = "signal_foundation.rs"]',
+        '#[path = "signal_control.rs"]',
+        '#[path = "termios_control.rs"]',
+        '#[path = "process_context.rs"]',
+        '#[path = "child_reaping.rs"]',
+        '#[path = "immediate_termination.rs"]',
+        '#[path = "callback_algorithms.rs"]',
+        '#[path = "descriptor_io.rs"]',
+        '#[path = "process_resources.rs"]',
+        '#[path = "readiness_waits.rs"]',
+        '#[path = "socket_transport.rs"]',
+        '#[path = "byte_strings.rs"]',
+        '#[path = "random_entropy.rs"]',
+        '#[path = "memory_search.rs"]',
+        '#[path = "string_copy.rs"]',
+        '#[path = "ctype.rs"]',
+        '#[path = "integer_arithmetic.rs"]',
+        '#[path = "intmax_arithmetic.rs"]',
+        '#[path = "ffs.rs"]',
+        '#[path = "system_observation.rs"]',
+        '#[path = "uts_identity.rs"]',
+        "fn c_status",
+        "fn c_ssize_status",
+        "fn c_off_status",
+        "fn rust_eh_personality",
+    ):
+        if required not in static_root_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/static_c_abi.rs: selected static C ABI root "
+                f"is missing {required!r}"
+            )
+
+    stat_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stat_compat.rs"
+    stat_text = stat_source.read_text(errors="replace")
+    for required in (
+        "struct Stat",
+        "size_of::<Stat>() == 144",
+        "align_of::<Stat>() == 8",
+        "raw_syscall::SYS_FSTAT",
+        "raw_syscall::SYS_NEWFSTATAT",
+        "raw_syscall::syscall2(",
+        "raw_syscall::syscall4(",
+        "AT_FDCWD",
+        "AT_SYMLINK_NOFOLLOW",
+        "c_status(result)",
+    ):
+        if required not in stat_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/stat_compat.rs: selected static stat boundary "
+                f"is missing {required!r}"
+            )
+
+    credentials_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "credentials.rs"
+    credentials_text = credentials_source.read_text(errors="replace")
+    for required in (
+        "fn setgroups(",
+        "fn setuid(",
+        "fn setgid(",
+        "fn setresuid(",
+        "fn setresgid(",
+        "fn seteuid(",
+        "fn setegid(",
+        "fn setreuid(",
+        "fn setregid(",
+        "raw_syscall::SYS_SETGROUPS",
+        "raw_syscall::SYS_SETUID",
+        "raw_syscall::SYS_SETGID",
+        "raw_syscall::SYS_SETRESUID",
+        "raw_syscall::SYS_SETRESGID",
+        "EOPNOTSUPP",
+        "c_status(result)",
+    ):
+        if required not in credentials_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/credentials.rs: selected static credential "
+                f"boundary is missing {required!r}"
+            )
+
+    errno_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "errno.rs"
+    errno_text = errno_source.read_text(errors="replace")
+    if "#[thread_local]" not in errno_text or "fn __errno_location" not in errno_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/errno.rs: selected static C ABI must retain its "
+            "initial-TLS errno slot"
+        )
+
+    memory_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory.rs"
+    memory_text = memory_source.read_text(errors="replace")
+    for required in (
+        "src/string/x86_64/memcpy.s",
+        "src/string/x86_64/memmove.s",
+        "src/string/x86_64/memset.s",
+        "src/string/memcmp.c",
+        "src/string/bcmp.c",
+        ".global memcpy",
+        ".global memcmp",
+        ".global bcmp",
+        ".global memset",
+        ".global memmove",
+        "xor eax, eax",
+        "std",
+        "cld",
+    ):
+        if required not in memory_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memory.rs: selected static memory "
+                f"boundary is missing {required!r}"
+            )
+
+    fenv_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "fenv.rs"
+    fenv_text = fenv_source.read_text(errors="replace")
+    for required in (
+        "struct Fenv",
+        "size_of::<Fenv>()",
+        ".global feclearexcept",
+        ".global fegetenv",
+        ".global fesetenv",
+        ".global fetestexcept",
+        "fn fegetexceptflag",
+        "fn feholdexcept",
+        "fn fesetexceptflag",
+        "fn fesetround",
+        "fn feupdateenv",
+        "fn __flt_rounds",
+    ):
+        if required not in fenv_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/fenv.rs: selected static fenv boundary "
+                f"is missing {required!r}"
+            )
+
+    setjmp_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "setjmp.rs"
+    setjmp_text = setjmp_source.read_text(errors="replace")
+    for required in (
+        ".global setjmp",
+        ".global longjmp",
+        ".global sigsetjmp",
+        ".global siglongjmp",
+        "mov eax, 14",
+        "mov r10d, 8",
+    ):
+        if required not in setjmp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/setjmp.rs: selected static continuation "
+                f"boundary is missing {required!r}"
+            )
+
+    signal_foundation_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_foundation.rs"
+    )
+    signal_foundation_text = signal_foundation_source.read_text(errors="replace")
+    for required in (
+        "struct PublicSigAction",
+        "struct KernelSigAction",
+        "PUBLIC_SIGSET_WORDS: usize = 16",
+        "SA_RESTORER: u64 = 0x0400_0000",
+        ".hidden crabc_x86_64_signal_restorer",
+        "mov rax, 15",
+        "fn pack_public_action",
+        "fn unpack_kernel_action",
+    ):
+        if required not in signal_foundation_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_foundation.rs: selected static signal "
+                f"boundary is missing {required!r}"
+            )
+    if "#[no_mangle]" in signal_foundation_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_foundation.rs: frame packing must not "
+            "export a public C bridge from the selected archive"
+        )
+    if "crabc_x86_64_signal_action_pack" in signal_foundation_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_foundation.rs: source-only bridge must "
+            "stay outside the selected archive"
+        )
+
+    signal_control_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
+    )
+    signal_control_text = signal_control_source.read_text(errors="replace")
+    for required in (
+        "raw_syscall::SYS_RT_SIGACTION",
+        "raw_syscall::SYS_RT_SIGPROCMASK",
+        "raw_syscall::SYS_RT_SIGPENDING",
+        "raw_syscall::syscall4(",
+        "raw_syscall::syscall2(",
+        "size_of::<u64>()",
+        "RESERVED_SIGNAL_MASK",
+        "pack_public_action",
+        "unpack_kernel_action",
+        "SIGRTMAX: c_int = 64",
+    ):
+        if required not in signal_control_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_control.rs: selected static signal "
+                f"boundary is missing {required!r}"
+            )
+    signal_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_control_text,
+        )
+    )
+    expected_signal_exports = {
+        "sigaction",
+        "signal",
+        "sigemptyset",
+        "sigfillset",
+        "sigaddset",
+        "sigdelset",
+        "sigismember",
+        "sigprocmask",
+        "sigpending",
+        "__libc_current_sigrtmax",
+    }
+    if signal_exports != expected_signal_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_control.rs: selected static signal "
+            "artifact must export only simple action/set/mask/pending symbols"
+        )
+
+    termios_control_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
+    )
+    termios_control_text = termios_control_source.read_text(errors="replace")
+    for required in (
+        "struct PublicTermios",
+        "struct KernelTermios",
+        "struct Winsize",
+        "size_of::<PublicTermios>()",
+        "size_of::<KernelTermios>()",
+        "size_of::<Winsize>()",
+        "raw_syscall::SYS_IOCTL",
+        "raw_syscall::syscall3(",
+        "CBAUD",
+        "CIBAUD",
+        "TCSANOW",
+        "TCSAFLUSH",
+        "TCGETS",
+        "TCSETS",
+        "TCFLSH",
+        "TCXONC",
+        "TCSBRK",
+        "TIOCGWINSZ",
+        "TIOCSWINSZ",
+        "TCSETS + i64::from(action)",
+        "TCSBRK, 0",
+    ):
+        if required not in termios_control_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/termios_control.rs: selected static termios "
+                f"boundary is missing {required!r}"
+            )
+    termios_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            termios_control_text,
+        )
+    )
+    expected_termios_exports = {
+        "cfgetispeed",
+        "cfgetospeed",
+        "cfsetispeed",
+        "cfsetospeed",
+        "cfsetspeed",
+        "cfmakeraw",
+        "tcgetattr",
+        "tcsetattr",
+        "tcflush",
+        "tcflow",
+        "tcsendbreak",
+        "tcgetwinsize",
+        "tcsetwinsize",
+    }
+    if termios_exports != expected_termios_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/termios_control.rs: selected static termios "
+            "artifact must export only its named baud/raw/control symbols"
+        )
+
+    process_context_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"
+    )
+    process_context_text = process_context_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/getpid.c",
+        "src/unistd/setpgid.c",
+        "src/stat/umask.c",
+        "raw_syscall::SYS_GETPID",
+        "raw_syscall::SYS_GETPPID",
+        "raw_syscall::SYS_GETUID",
+        "raw_syscall::SYS_GETGID",
+        "raw_syscall::SYS_GETEUID",
+        "raw_syscall::SYS_GETEGID",
+        "raw_syscall::SYS_UMASK",
+        "raw_syscall::SYS_SETSID",
+        "raw_syscall::SYS_SETPGID",
+        "raw_syscall::SYS_GETPGID",
+        "raw_syscall::SYS_GETSID",
+        "raw_syscall::syscall0(",
+        "raw_syscall::syscall1(",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+    ):
+        if required not in process_context_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/process_context.rs: selected static "
+                f"process-context boundary is missing {required!r}"
+            )
+    process_context_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            process_context_text,
+        )
+    )
+    expected_process_context_exports = {
+        "getpid",
+        "getppid",
+        "getuid",
+        "getgid",
+        "geteuid",
+        "getegid",
+        "umask",
+        "setsid",
+        "setpgid",
+        "getpgid",
+        "getsid",
+        "getpgrp",
+        "setpgrp",
+    }
+    if process_context_exports != expected_process_context_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/process_context.rs: selected static "
+            "artifact must export only its named identity/group/session/mask symbols"
+        )
+
+    child_reaping_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "child_reaping.rs"
+    )
+    child_reaping_text = child_reaping_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/process/wait.c",
+        "src/process/waitpid.c",
+        "src/process/waitid.c",
+        "SYS_WAIT4",
+        "SYS_WAITID",
+        "syscall4(",
+        "syscall5(",
+        "WNOWAIT",
+        "cancellation",
+        "c_status",
+    ):
+        if required not in child_reaping_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/child_reaping.rs: selected static "
+                f"child-reaping boundary is missing {required!r}"
+            )
+    child_reaping_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            child_reaping_text,
+        )
+    )
+    expected_child_reaping_exports = {"wait", "waitpid", "waitid"}
+    if child_reaping_exports != expected_child_reaping_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/child_reaping.rs: selected static "
+            "artifact must export only wait, waitpid, and waitid"
+        )
+
+    immediate_termination_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "immediate_termination.rs"
+    )
+    immediate_termination_text = immediate_termination_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/exit/_Exit.c",
+        "SYS_EXIT_GROUP",
+        "SYS_EXIT",
+        "exit_group",
+        "quick-exit hook state",
+        "raw_syscall::syscall1(",
+    ):
+        if required not in immediate_termination_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/immediate_termination.rs: selected static "
+                f"immediate-termination boundary is missing {required!r}"
+            )
+    immediate_termination_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            immediate_termination_text,
+        )
+    )
+    if immediate_termination_exports != {"_Exit"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/immediate_termination.rs: selected static "
+            "artifact must export only _Exit"
+        )
+
+    callback_algorithms_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "callback_algorithms.rs"
+    )
+    callback_algorithms_text = callback_algorithms_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/stdlib/bsearch.c",
+        "src/stdlib/qsort.c",
+        "src/stdlib/qsort_nr.c",
+        "smoothsort",
+        "14 * core::mem::size_of::<usize>() + 1",
+        "12 * core::mem::size_of::<usize>()",
+        "qsort_copy_nonoverlapping",
+        "global_asm!",
+        ".weak qsort_r",
+        ".set qsort_r, __qsort_r",
+    ):
+        if required not in callback_algorithms_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/callback_algorithms.rs: selected static "
+                f"callback-algorithms boundary is missing {required!r}"
+            )
+    callback_algorithms_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            callback_algorithms_text,
+        )
+    )
+    if callback_algorithms_exports != {"bsearch", "__qsort_r", "qsort"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/callback_algorithms.rs: selected static "
+            "artifact must export bsearch, __qsort_r, and qsort only as Rust entries"
+        )
+    callback_algorithms_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__qsort_r",\s*$',
+            callback_algorithms_text,
+        )
+    )
+    if callback_algorithms_aliases != {"qsort_r"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/callback_algorithms.rs: selected static "
+            "artifact must retain qsort_r as the musl same-address assembler alias"
+        )
+
+    descriptor_io_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_io.rs"
+    )
+    descriptor_io_text = descriptor_io_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/pwrite.c",
+        "struct IoVec",
+        "size_of::<IoVec>()",
+        "raw_syscall::SYS_READ",
+        "raw_syscall::SYS_WRITE",
+        "raw_syscall::SYS_CLOSE",
+        "raw_syscall::SYS_LSEEK",
+        "raw_syscall::SYS_PREAD64",
+        "raw_syscall::SYS_PWRITE64",
+        "raw_syscall::SYS_PWRITEV2",
+        "raw_syscall::SYS_FTRUNCATE",
+        "raw_syscall::SYS_FSYNC",
+        "raw_syscall::SYS_FDATASYNC",
+        "raw_syscall::SYS_DUP",
+        "raw_syscall::SYS_DUP2",
+        "raw_syscall::SYS_DUP3",
+        "raw_syscall::SYS_PIPE",
+        "raw_syscall::SYS_PIPE2",
+        "raw_syscall::SYS_FCNTL",
+        "raw_syscall::syscall6(",
+        "RWF_NOAPPEND",
+        "if offset == -1 { -2 } else { offset }",
+        "if result == -EINTR",
+        "if result != -EBUSY",
+        "if old_descriptor == new_descriptor",
+        "if flags == 0",
+        "c_ssize_status(result)",
+        "c_off_status(result)",
+    ):
+        if required not in descriptor_io_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/descriptor_io.rs: selected static "
+                f"descriptor-I/O boundary is missing {required!r}"
+            )
+    descriptor_io_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            descriptor_io_text,
+        )
+    )
+    expected_descriptor_io_exports = {
+        "close",
+        "read",
+        "write",
+        "pread",
+        "pwrite",
+        "lseek",
+        "ftruncate",
+        "fsync",
+        "fdatasync",
+        "dup",
+        "dup2",
+        "dup3",
+        "pipe",
+        "pipe2",
+    }
+    if descriptor_io_exports != expected_descriptor_io_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/descriptor_io.rs: selected static descriptor-I/O "
+            "artifact must export only its named transfer/lifecycle symbols"
+        )
+
+    process_resources_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_resources.rs"
+    )
+    process_resources_text = process_resources_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/misc/getrlimit.c",
+        "src/misc/setrlimit.c",
+        "src/linux/prlimit.c",
+        "src/misc/getrusage.c",
+        "src/misc/getpriority.c",
+        "src/misc/setpriority.c",
+        "src/unistd/nice.c",
+        "struct Rlimit",
+        "struct Rusage",
+        "size_of::<Rlimit>() == 16",
+        "size_of::<Rusage>() == 272",
+        "offset_of!(Rusage, reserved) == 144",
+        "raw_syscall::SYS_PRLIMIT64",
+        "raw_syscall::SYS_GETRUSAGE",
+        "raw_syscall::SYS_GETPRIORITY",
+        "raw_syscall::SYS_SETPRIORITY",
+        "raw_syscall::syscall4(",
+        "errno::get_errno()",
+        "EACCES",
+        "EPERM",
+        "c_status(result)",
+    ):
+        if required not in process_resources_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/process_resources.rs: selected static "
+                f"process-resources boundary is missing {required!r}"
+            )
+    process_resources_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            process_resources_text,
+        )
+    )
+    expected_process_resources_exports = {
+        "getrlimit",
+        "setrlimit",
+        "prlimit",
+        "getrusage",
+        "getpriority",
+        "setpriority",
+        "nice",
+    }
+    if process_resources_exports != expected_process_resources_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/process_resources.rs: selected static "
+            "artifact must export only its named resource/priority symbols"
+        )
+
+    readiness_waits_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "readiness_waits.rs"
+    )
+    readiness_waits_text = readiness_waits_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/select/poll.c",
+        "src/select/ppoll.c",
+        "src/select/select.c",
+        "src/select/pselect.c",
+        "src/unistd/pause.c",
+        "src/signal/sigsuspend.c",
+        "struct PollFd",
+        "struct FdSet",
+        "struct Timeval",
+        "struct Timespec",
+        "struct PublicSigSet",
+        "struct PselectMaskArgument",
+        "size_of::<PollFd>() == 8",
+        "size_of::<FdSet>() == 128",
+        "size_of::<PublicSigSet>() == 128",
+        "raw_syscall::SYS_POLL",
+        "raw_syscall::SYS_PPOLL",
+        "raw_syscall::SYS_SELECT",
+        "raw_syscall::SYS_PSELECT6",
+        "raw_syscall::SYS_PAUSE",
+        "raw_syscall::SYS_RT_SIGSUSPEND",
+        "raw_syscall::syscall6(",
+        "KERNEL_SIGSET_SIZE",
+        "requested.microseconds / MICROSECONDS_PER_SECOND",
+        "c_status(result)",
+    ):
+        if required not in readiness_waits_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/readiness_waits.rs: selected static "
+                f"readiness/signal-waits boundary is missing {required!r}"
+            )
+    readiness_waits_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            readiness_waits_text,
+        )
+    )
+    expected_readiness_waits_exports = {
+        "poll",
+        "ppoll",
+        "select",
+        "pselect",
+        "pause",
+        "sigsuspend",
+    }
+    if readiness_waits_exports != expected_readiness_waits_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/readiness_waits.rs: selected static "
+            "artifact must export only its named readiness/signal-wait symbols"
+        )
+
+    socket_transport_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "socket_transport.rs"
+    )
+    socket_transport_text = socket_transport_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/network/socket.c",
+        "src/network/socketpair.c",
+        "src/network/bind.c",
+        "src/network/listen.c",
+        "src/network/accept.c",
+        "src/network/accept4.c",
+        "src/network/connect.c",
+        "src/network/send.c",
+        "src/network/recv.c",
+        "src/network/sendto.c",
+        "src/network/recvfrom.c",
+        "src/network/shutdown.c",
+        "src/network/getsockname.c",
+        "src/network/getpeername.c",
+        "SOCK_CLOEXEC",
+        "SOCK_NONBLOCK",
+        "raw_syscall::SYS_SOCKET",
+        "raw_syscall::SYS_SOCKETPAIR",
+        "raw_syscall::SYS_BIND",
+        "raw_syscall::SYS_LISTEN",
+        "raw_syscall::SYS_ACCEPT",
+        "raw_syscall::SYS_ACCEPT4",
+        "raw_syscall::SYS_CONNECT",
+        "raw_syscall::SYS_SENDTO",
+        "raw_syscall::SYS_RECVFROM",
+        "raw_syscall::SYS_SHUTDOWN",
+        "raw_syscall::SYS_GETSOCKNAME",
+        "raw_syscall::SYS_GETPEERNAME",
+        "raw_syscall::syscall6(",
+        "c_status(result)",
+        "c_ssize_status(result)",
+    ):
+        if required not in socket_transport_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/socket_transport.rs: selected static "
+                f"socket-transport boundary is missing {required!r}"
+            )
+    socket_transport_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            socket_transport_text,
+        )
+    )
+    expected_socket_transport_exports = {
+        "socket",
+        "socketpair",
+        "bind",
+        "listen",
+        "accept",
+        "accept4",
+        "connect",
+        "send",
+        "recv",
+        "sendto",
+        "recvfrom",
+        "shutdown",
+        "getsockname",
+        "getpeername",
+    }
+    if socket_transport_exports != expected_socket_transport_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/socket_transport.rs: selected static "
+            "artifact must export only its named socket-transport symbols"
+        )
+
+    byte_strings_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
+    )
+    byte_strings_text = byte_strings_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/string/index.c",
+        "src/string/rindex.c",
+        "src/string/strchr.c",
+        "src/string/strchrnul.c",
+        "src/string/strcmp.c",
+        "src/string/strcspn.c",
+        "src/string/strlen.c",
+        "src/string/strncmp.c",
+        "src/string/strnlen.c",
+        "src/string/strpbrk.c",
+        "src/string/strrchr.c",
+        "src/string/strspn.c",
+        "src/string/strstr.c",
+        "scalar fallback",
+        "strchrnul",
+    ):
+        if required not in byte_strings_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/byte_strings.rs: selected static byte-string "
+                f"boundary is missing {required!r}"
+            )
+    byte_strings_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            byte_strings_text,
+        )
+    )
+    expected_byte_strings_exports = {
+        "index",
+        "rindex",
+        "strchr",
+        "strchrnul",
+        "strcmp",
+        "strcspn",
+        "strlen",
+        "strncmp",
+        "strnlen",
+        "strpbrk",
+        "strrchr",
+        "strspn",
+        "strstr",
+    }
+    if byte_strings_exports != expected_byte_strings_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/byte_strings.rs: selected static byte-string "
+            "artifact must export only its named byte-string symbols"
+        )
+
+    memory_search_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_search.rs"
+    )
+    memory_search_text = memory_search_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/string/memchr.c",
+        "src/string/memmem.c",
+        "src/string/memrchr.c",
+        "__memrchr",
+        "stateless",
+        "allocation-free",
+        "memchr",
+        "memmem",
+        "memrchr",
+    ):
+        if required not in memory_search_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memory_search.rs: selected static memory-search "
+                f"boundary is missing {required!r}"
+            )
+    memory_search_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            memory_search_text,
+        )
+    )
+    expected_memory_search_exports = {"memchr", "memmem", "memrchr"}
+    if memory_search_exports != expected_memory_search_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/memory_search.rs: selected static memory-search "
+            "artifact must export only memchr, memmem, and memrchr"
+        )
+
+    string_copy_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "string_copy.rs"
+    string_copy_text = string_copy_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/string/stpcpy.c",
+        "src/string/stpncpy.c",
+        "src/string/strcpy.c",
+        "src/string/strncpy.c",
+        "src/string/strcat.c",
+        "src/string/strncat.c",
+        "src/string/strlcpy.c",
+        "src/string/strlcat.c",
+        "__stpcpy",
+        "__stpncpy",
+        "stateless",
+        "allocation-free",
+    ):
+        if required not in string_copy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/string_copy.rs: selected static C-string-copy "
+                f"boundary is missing {required!r}"
+            )
+    string_copy_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            string_copy_text,
+        )
+    )
+    expected_string_copy_exports = {
+        "stpcpy",
+        "stpncpy",
+        "strcpy",
+        "strncpy",
+        "strcat",
+        "strncat",
+        "strlcpy",
+        "strlcat",
+    }
+    if string_copy_exports != expected_string_copy_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/string_copy.rs: selected static C-string-copy "
+            "artifact must export only its named copy and concatenation symbols"
+        )
+
+    ctype_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
+    ctype_text = ctype_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/ctype/isalnum.c",
+        "src/ctype/isalpha.c",
+        "src/ctype/isblank.c",
+        "src/ctype/iscntrl.c",
+        "src/ctype/isdigit.c",
+        "src/ctype/isgraph.c",
+        "src/ctype/islower.c",
+        "src/ctype/isprint.c",
+        "src/ctype/ispunct.c",
+        "src/ctype/isspace.c",
+        "src/ctype/isupper.c",
+        "src/ctype/isxdigit.c",
+        "src/ctype/tolower.c",
+        "src/ctype/toupper.c",
+        "src/ctype/isascii.c",
+        "src/ctype/toascii.c",
+        "fixed C locale",
+        "stateless",
+        "allocation-free",
+        "EOF",
+    ):
+        if required not in ctype_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ctype.rs: selected static C ctype "
+                f"boundary is missing {required!r}"
+            )
+    ctype_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ctype_text,
+        )
+    )
+    expected_ctype_exports = {
+        "isalnum",
+        "isalpha",
+        "isblank",
+        "iscntrl",
+        "isdigit",
+        "isgraph",
+        "islower",
+        "isprint",
+        "ispunct",
+        "isspace",
+        "isupper",
+        "isxdigit",
+        "tolower",
+        "toupper",
+        "isascii",
+        "toascii",
+    }
+    if ctype_exports != expected_ctype_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/ctype.rs: selected static C ctype artifact "
+            "must export only its named fixed-C-locale symbols"
+        )
+
+    integer_arithmetic_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "integer_arithmetic.rs"
+    )
+    integer_arithmetic_text = integer_arithmetic_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/stdlib/abs.c",
+        "src/stdlib/labs.c",
+        "src/stdlib/llabs.c",
+        "src/stdlib/div.c",
+        "src/stdlib/ldiv.c",
+        "src/stdlib/lldiv.c",
+        "scalar",
+        "stateless",
+        "allocation-free",
+        "idiv",
+        "undefined",
+        "wrapping_neg",
+    ):
+        if required not in integer_arithmetic_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/integer_arithmetic.rs: selected static "
+                f"integer-arithmetic boundary is missing {required!r}"
+            )
+    integer_arithmetic_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            integer_arithmetic_text,
+        )
+    )
+    expected_integer_arithmetic_exports = {
+        "abs",
+        "labs",
+        "llabs",
+        "div",
+        "ldiv",
+        "lldiv",
+    }
+    if integer_arithmetic_exports != expected_integer_arithmetic_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/integer_arithmetic.rs: selected static "
+            "artifact must export only its named integer-arithmetic symbols"
+        )
+
+    intmax_arithmetic_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intmax_arithmetic.rs"
+    )
+    intmax_arithmetic_text = intmax_arithmetic_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/stdlib/imaxabs.c",
+        "src/stdlib/imaxdiv.c",
+        "intmax_t",
+        "imaxdiv_t",
+        "stateless",
+        "allocation-free",
+        "idiv",
+        "undefined",
+        "wrapping_neg",
+    ):
+        if required not in intmax_arithmetic_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/intmax_arithmetic.rs: selected static "
+                f"intmax-arithmetic boundary is missing {required!r}"
+            )
+    intmax_arithmetic_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            intmax_arithmetic_text,
+        )
+    )
+    expected_intmax_arithmetic_exports = {"imaxabs", "imaxdiv"}
+    if intmax_arithmetic_exports != expected_intmax_arithmetic_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/intmax_arithmetic.rs: selected static "
+            "artifact must export only imaxabs and imaxdiv"
+        )
+
+    credential_observation_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "credential_observation.rs"
+    )
+    credential_observation_text = credential_observation_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/getgroups.c",
+        "src/misc/getresuid.c",
+        "src/misc/getresgid.c",
+        "SYS_GETGROUPS",
+        "SYS_GETRESUID",
+        "SYS_GETRESGID",
+        "c_status",
+        "EINVAL",
+        "EFAULT",
+    ):
+        if required not in credential_observation_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/credential_observation.rs: selected static "
+                f"credential-observation boundary is missing {required!r}"
+            )
+    credential_observation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            credential_observation_text,
+        )
+    )
+    expected_credential_observation_exports = {
+        "getgroups",
+        "getresuid",
+        "getresgid",
+    }
+    if credential_observation_exports != expected_credential_observation_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/credential_observation.rs: selected static "
+            "artifact must export only getgroups, getresuid, and getresgid"
+        )
+
+    ffs_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ffs.rs"
+    ffs_text = ffs_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/misc/ffs.c",
+        "src/misc/ffsl.c",
+        "src/misc/ffsll.c",
+        "src/internal/atomic.h",
+        "scalar",
+        "stateless",
+        "allocation-free",
+        "trailing_zeros",
+        "two's-complement",
+    ):
+        if required not in ffs_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ffs.rs: selected static find-first-set "
+                f"boundary is missing {required!r}"
+            )
+    ffs_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            ffs_text,
+        )
+    )
+    expected_ffs_exports = {"ffs", "ffsl", "ffsll"}
+    if ffs_exports != expected_ffs_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/ffs.rs: selected static find-first-set "
+            "artifact must export only ffs, ffsl, and ffsll"
+        )
+
+    random_entropy_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "random_entropy.rs"
+    )
+    random_entropy_text = random_entropy_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/getrandom.c",
+        "src/misc/getentropy.c",
+        "SYS_GETRANDOM",
+        "syscall3(",
+        "syscall_cp",
+        "c_ssize_status(result)",
+        "errno::set_errno(EIO)",
+        "256",
+        "EIO",
+        "EINTR",
+        "cancellation",
+    ):
+        if required not in random_entropy_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/random_entropy.rs: selected static "
+                f"random-entropy boundary is missing {required!r}"
+            )
+    random_entropy_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            random_entropy_text,
+        )
+    )
+    expected_random_entropy_exports = {"getrandom", "getentropy"}
+    if random_entropy_exports != expected_random_entropy_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/random_entropy.rs: selected static "
+            "random-entropy artifact must export only getrandom and getentropy"
+        )
+
+    system_observation_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_observation.rs"
+    )
+    system_observation_text = system_observation_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/misc/uname.c",
+        "src/linux/sysinfo.c",
+        "struct UtsName",
+        "pub(super) const UTS_FIELD_BYTES: usize = 65",
+        "pub(super) unsafe fn uname_raw",
+        "struct SysInfo",
+        "KERNEL_SYSINFO_BYTES",
+        "size_of::<UtsName>() == 390",
+        "size_of::<SysInfo>() == 368",
+        "offset_of!(SysInfo, compatibility_tail) == 108",
+        "raw_syscall::SYS_UNAME",
+        "raw_syscall::SYS_SYSINFO",
+        "raw_syscall::syscall1(",
+        "c_status(result)",
+    ):
+        if required not in system_observation_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/system_observation.rs: selected static "
+                f"system-observation boundary is missing {required!r}"
+            )
+    system_observation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            system_observation_text,
+        )
+    )
+    expected_system_observation_exports = {"uname", "sysinfo"}
+    if system_observation_exports != expected_system_observation_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/system_observation.rs: selected static "
+            "artifact must export only uname and sysinfo"
+        )
+
+    uts_identity_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "uts_identity.rs"
+    uts_identity_text = uts_identity_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/gethostname.c",
+        "src/linux/sethostname.c",
+        "src/misc/getdomainname.c",
+        "src/misc/setdomainname.c",
+        "system_observation::UtsName",
+        "system_observation::UTS_FIELD_BYTES",
+        "system_observation::uname_raw",
+        "MaybeUninit",
+        "fn read_utsname",
+        "fn field_nul_length",
+        "raw_syscall::SYS_SETHOSTNAME",
+        "raw_syscall::SYS_SETDOMAINNAME",
+        "raw_syscall::syscall2(",
+        "errno::set_errno(EINVAL)",
+        "c_status(result)",
+    ):
+        if required not in uts_identity_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/uts_identity.rs: selected static "
+                f"UTS-identity boundary is missing {required!r}"
+            )
+    uts_identity_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            uts_identity_text,
+        )
+    )
+    expected_uts_identity_exports = {
+        "gethostname",
+        "sethostname",
+        "getdomainname",
+        "setdomainname",
+    }
+    if uts_identity_exports != expected_uts_identity_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/uts_identity.rs: selected static "
+            "artifact must export only get/set hostname/domain-name symbols"
+        )
+
+    export_sources = (
+        static_root_text,
+        stat_text,
+        credentials_text,
+        errno_text,
+        fenv_text,
+        signal_control_text,
+        termios_control_text,
+        process_context_text,
+        child_reaping_text,
+        immediate_termination_text,
+        callback_algorithms_text,
+        descriptor_io_text,
+        process_resources_text,
+        readiness_waits_text,
+        socket_transport_text,
+        byte_strings_text,
+        random_entropy_text,
+        memory_search_text,
+        string_copy_text,
+        ctype_text,
+        integer_arithmetic_text,
+        intmax_arithmetic_text,
+        credential_observation_text,
+        ffs_text,
+        system_observation_text,
+        uts_identity_text,
+    )
+    rust_exports = set().union(
+        *(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            )
+            for source in export_sources
+        )
+    )
+    assembly_exports = set().union(
+        *(
+            set(re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", source))
+            for source in (memory_text, fenv_text, setjmp_text)
+        )
+    )
+    exports = rust_exports | assembly_exports | callback_algorithms_aliases
+    expected_exports = {
+        "__errno_location",
+        "stat",
+        "lstat",
+        "fstat",
+        "fstatat",
+        "__xstat",
+        "__lxstat",
+        "__fxstat",
+        "__fxstatat",
+        "setgroups",
+        "setuid",
+        "setgid",
+        "setresuid",
+        "setresgid",
+        "seteuid",
+        "setegid",
+        "setreuid",
+        "setregid",
+        "memcpy",
+        "__memcpy_fwd",
+        "memcmp",
+        "bcmp",
+        "memset",
+        "memmove",
+        "feclearexcept",
+        "feraiseexcept",
+        "__fesetround",
+        "fegetround",
+        "fegetenv",
+        "fesetenv",
+        "fetestexcept",
+        "fegetexceptflag",
+        "feholdexcept",
+        "fesetexceptflag",
+        "fesetround",
+        "feupdateenv",
+        "ffs",
+        "ffsl",
+        "ffsll",
+        "__flt_rounds",
+        "setjmp",
+        "__setjmp",
+        "_setjmp",
+        "longjmp",
+        "_longjmp",
+        "sigsetjmp",
+        "__sigsetjmp",
+        "siglongjmp",
+        "sigaction",
+        "signal",
+        "sigemptyset",
+        "sigfillset",
+        "sigaddset",
+        "sigdelset",
+        "sigismember",
+        "sigprocmask",
+        "sigpending",
+        "__libc_current_sigrtmax",
+        "cfgetispeed",
+        "cfgetospeed",
+        "cfsetispeed",
+        "cfsetospeed",
+        "cfsetspeed",
+        "cfmakeraw",
+        "tcgetattr",
+        "tcsetattr",
+        "tcflush",
+        "tcflow",
+        "tcsendbreak",
+        "tcgetwinsize",
+        "tcsetwinsize",
+        "getpid",
+        "getppid",
+        "getuid",
+        "getgid",
+        "geteuid",
+        "getegid",
+        "umask",
+        "setsid",
+        "setpgid",
+        "getpgid",
+        "getsid",
+        "getpgrp",
+        "setpgrp",
+        "wait",
+        "waitpid",
+        "waitid",
+        "close",
+        "read",
+        "write",
+        "pread",
+        "pwrite",
+        "lseek",
+        "ftruncate",
+        "fsync",
+        "fdatasync",
+        "dup",
+        "dup2",
+        "dup3",
+        "pipe",
+        "pipe2",
+        "getrlimit",
+        "setrlimit",
+        "prlimit",
+        "getrusage",
+        "getpriority",
+        "setpriority",
+        "nice",
+        "poll",
+        "ppoll",
+        "select",
+        "pselect",
+        "pause",
+        "sigsuspend",
+        "socket",
+        "socketpair",
+        "bind",
+        "listen",
+        "accept",
+        "accept4",
+        "connect",
+        "send",
+        "recv",
+        "sendto",
+        "recvfrom",
+        "shutdown",
+        "getsockname",
+        "getpeername",
+        "uname",
+        "sysinfo",
+        "gethostname",
+        "sethostname",
+        "getdomainname",
+        "setdomainname",
+        "index",
+        "rindex",
+        "strchr",
+        "strchrnul",
+        "strcmp",
+        "strcspn",
+        "strlen",
+        "strncmp",
+        "strnlen",
+        "strpbrk",
+        "strrchr",
+        "strspn",
+        "strstr",
+        "getrandom",
+        "getentropy",
+        "memchr",
+        "memmem",
+        "memrchr",
+        "stpcpy",
+        "stpncpy",
+        "strcpy",
+        "strncpy",
+        "strcat",
+        "strncat",
+        "strlcpy",
+        "strlcat",
+        "isalnum",
+        "isalpha",
+        "isblank",
+        "iscntrl",
+        "isdigit",
+        "isgraph",
+        "islower",
+        "isprint",
+        "ispunct",
+        "isspace",
+        "isupper",
+        "isxdigit",
+        "tolower",
+        "toupper",
+        "isascii",
+        "toascii",
+        "abs",
+        "labs",
+        "llabs",
+        "div",
+        "ldiv",
+        "lldiv",
+        "imaxabs",
+        "imaxdiv",
+        "getgroups",
+        "getresuid",
+        "getresgid",
+        "_Exit",
+        "bsearch",
+        "__qsort_r",
+        "qsort",
+        "qsort_r",
+        "rust_eh_personality",
+    }
+    if exports != expected_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64: selected static archive must export only its "
+            "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
+            "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, selected "
+            "descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "selected socket transport, selected system-observation, selected UTS-identity, "
+            "selected byte-string, random-entropy, memory-search, C-string-copy, "
+            "fixed-C-locale ctype, integer-arithmetic, intmax-arithmetic, credential-observation, and "
+            "find-first-set, "
+            "and abort-personality surfaces"
+        )
+    for source_name, source_text in (
+        ("static_c_abi.rs", static_root_text),
+        ("stat_compat.rs", stat_text),
+        ("credentials.rs", credentials_text),
+        ("credential_observation.rs", credential_observation_text),
+        ("errno.rs", errno_text),
+        ("memory.rs", memory_text),
+        ("fenv.rs", fenv_text),
+        ("setjmp.rs", setjmp_text),
+        ("signal_foundation.rs", signal_foundation_text),
+        ("signal_control.rs", signal_control_text),
+        ("termios_control.rs", termios_control_text),
+        ("process_context.rs", process_context_text),
+        ("child_reaping.rs", child_reaping_text),
+        ("immediate_termination.rs", immediate_termination_text),
+        ("callback_algorithms.rs", callback_algorithms_text),
+        ("descriptor_io.rs", descriptor_io_text),
+        ("process_resources.rs", process_resources_text),
+        ("readiness_waits.rs", readiness_waits_text),
+        ("socket_transport.rs", socket_transport_text),
+        ("random_entropy.rs", random_entropy_text),
+        ("memory_search.rs", memory_search_text),
+        ("string_copy.rs", string_copy_text),
+        ("ctype.rs", ctype_text),
+        ("integer_arithmetic.rs", integer_arithmetic_text),
+        ("intmax_arithmetic.rs", intmax_arithmetic_text),
+        ("ffs.rs", ffs_text),
+        ("system_observation.rs", system_observation_text),
+        ("uts_identity.rs", uts_identity_text),
+    ):
+        if re.search(
+            r"\b(?:crabc_core|crabc_mimalloc|libmimalloc|sha_crypt|base64ct)\b",
+            source_text,
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/"
+                f"{source_name}: selected static C ABI must not import an allocator, "
+                "shared core, or third-party runtime"
+            )
 
 
 def main() -> int:
@@ -1319,10 +4887,29 @@ def main() -> int:
     )
     check_root_c_link_boundaries(errors)
     check_x86_getcwd_boundary(errors)
+    check_x86_cwd_canonicalize_boundary(errors)
+    check_x86_root_change_boundary(errors)
+    check_x86_mount_boundary(errors)
+    check_x86_thread_kill_boundary(errors)
+    check_x86_ipc_boundary(errors)
+    check_x86_shm_boundary(errors)
+    check_x86_inotify_boundary(errors)
+    check_x86_calendar_time_boundary(errors)
+    check_x86_advanced_time_boundary(errors)
+    check_x86_users_databases_boundary(errors)
+    check_x86_child_ownership_boundary(errors)
     check_x86_path_lifecycle_boundary(errors)
     check_x86_socket_transport_boundary(errors)
-    check_x86_readlinkat_boundary(errors)
+    check_x86_path_core_readlink_boundary(errors)
+    check_x86_xattr_boundary(errors)
+    check_x86_directory_boundary(errors)
+    check_x86_temporary_object_boundary(errors)
+    check_x86_statx_boundary(errors)
     check_x86_memfd_boundary(errors)
+    check_x86_memory_mapping_boundary(errors)
+    check_x86_memory_vm_boundary(errors)
+    check_x86_terminal_boundary(errors)
+    check_x86_libc_static_c_abi_boundary(errors)
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)
     check_x86_futex_boundary(errors)

@@ -1836,12 +1836,12 @@ symbols = ["difftime", "gmtime", "gmtime_r", "time", "timegm"]
 classification = "native-safe"
 status = "verified"
 rust_api = ["time::{CalendarTime, time, difftime, gmtime, timegm}"]
-shared_impl = ["crabc_rs::time musl-derived Gregorian conversion and crabc_core::time::clock_gettime_raw"]
+shared_impl = ["crabc_rs::civil_time semantic Rust translation of pinned musl 1.2.6 Gregorian UTC kernels and crabc_core::time::clock_gettime_raw"]
 native_boundary = "strict normalized UTC calendar value plus direct CLOCK_REALTIME seconds query; no C tm storage, static buffer, timezone, or TLS errno"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/time.rs", "crabc-rs/tests/calendar_utc.rs", "crabc-rs/examples/calendar_utc_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
-rationale = "CalendarTime replaces C tm output ownership and gmtime static/reentrant variants with an immutable validated value. Its strict constructor deliberately rejects C timegm's out-of-range-field normalization; local timezone and formatting semantics remain separate."
+evidence = ["crabc-rs/src/time.rs", "crabc-rs/src/civil_time.rs", "crabc-rs/UPSTREAM.md", "crabc-rs/tests/calendar_utc.rs", "crabc-rs/examples/calendar_utc_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+rationale = "CalendarTime replaces C tm output ownership and gmtime static/reentrant variants with an immutable validated value. crabc-rs/UPSTREAM.md records the pinned musl 1.2.6 source/function/license provenance and intentional checked, strict Rust translation differences. Its strict constructor deliberately rejects C timegm's out-of-range-field normalization; local timezone and formatting semantics remain separate."
 
 [[capability]]
 id = "time.process-cpu-observation"
@@ -2888,11 +2888,11 @@ symbols = ["forkpty", "isastream", "login_tty", "openpty", "ptsname_r", "vhangup
 classification = "native-unsafe"
 status = "verified"
 rust_api = ["pty::PtyPair", "pty::{ptsname_into, ptsname}", "PtyPair::{set_controlling_terminal, establish_session_and_controlling_terminal}"]
-shared_impl = ["crabc_rs::pty direct /dev/ptmx/openat, TIOCGPTN, TIOCSPTLCK, TIOCGPTPEER, and TIOCSCTTY operations", "OwnedFd master/slave pair ownership"]
-native_boundary = "owned Linux PTY master/slave descriptors, caller-borrowed or alloc-owned slave names, and explicitly unsafe session/controlling-terminal transitions; no process supervisor or global terminal state"
+shared_impl = ["crabc_rs::pty and target-specific crabc_rs::pty_x86_64 direct /dev/ptmx/openat, TIOCGPTN, TIOCSPTLCK, TIOCGPTPEER, and TIOCSCTTY operations", "OwnedFd master/slave pair ownership"]
+native_boundary = "owned Linux/AArch64 and Linux/x86-64 PTY master/slave descriptors, caller-borrowed or alloc-owned slave names, and explicitly unsafe session/controlling-terminal transitions; the x86 pair keeps TIOCGPTPEER private and exposes no process supervisor or global terminal state"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/pty.rs", "crabc-rs/tests/pty_session.rs", "crabc-rs/examples/pty_session_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_system.rs"]
+evidence = ["crabc-rs/src/pty.rs", "crabc-rs/src/pty_x86_64.rs", "crabc-rs/tests/pty_session.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/pty_session_direct_probe.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_system.rs"]
 rationale = "The native slice completes openpty-equivalent owned pair creation, ptsname_r-equivalent borrowed/owned naming, and explicit Linux session/controlling-terminal handoff. `forkpty`, `login_tty`, and `vhangup` remain deliberately C-only historical helpers: they imply process-supervisor, prepared-exec, or hangup authority contracts outside this bounded facade; `isastream` has no Linux PTY meaning."
 
 [[capability]]
@@ -2902,11 +2902,11 @@ symbols = ["tcgetattr", "tcgetpgrp", "tcgetsid", "tcsetattr", "tcsetpgrp"]
 classification = "native-safe"
 status = "verified"
 rust_api = ["termios::{tcgetattr, tcsetattr, tcgetpgrp, tcsetpgrp, tcgetsid, OptionalActions, Termios}"]
-shared_impl = ["crabc_rs::termios private Linux/AArch64 KernelTermios conversion and direct typed tty ioctls"]
-native_boundary = "borrowed terminal descriptor with private 44-byte Linux termios wire record and direct TCGETS/TCSETS/TIOCGPGRP/TIOCSPGRP/TIOCGSID ioctls"
+shared_impl = ["crabc_rs::termios private Linux/AArch64 KernelTermios conversion and crabc_rs::termios_x86_64 private 36-byte x86 KernelTermios conversion with direct typed tty ioctls"]
+native_boundary = "borrowed terminal descriptor with a private 44-byte Linux/AArch64 or 36-byte Linux/x86-64 termios wire record and direct TCGETS/TCSETS/TIOCGPGRP/TIOCSPGRP/TIOCGSID ioctls"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/terminal_control.rs", "crabc-rs/examples/terminal_control_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-rs/src/termios.rs", "crabc-rs/src/termios_x86_64.rs", "crabc-rs/tests/terminal_control.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/terminal_control_direct_probe.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native API keeps the C termios record private, validates unsupported baud encodings, and returns typed PIDs rather than C pointer/errno conventions. Its isolated-child tests exercise all update timings and controlling-session/foreground-group behavior without mutating the test runner's terminal state."
 
 [[capability]]
@@ -2916,12 +2916,12 @@ symbols = ["tcdrain", "tcflow", "tcflush", "tcsendbreak"]
 classification = "native-safe"
 status = "verified"
 rust_api = ["termios::{tcdrain, tcflush, tcflow, tcsendbreak}"]
-shared_impl = ["crabc_rs::termios typed Linux terminal queue-control ioctls"]
-native_boundary = "borrowed terminal descriptor and direct Linux/AArch64 TCSBRK, TCFLSH, and TCXONC ioctl requests with closed queue/action selectors"
+shared_impl = ["crabc_rs::termios and crabc_rs::termios_x86_64 typed Linux terminal queue-control ioctls"]
+native_boundary = "borrowed terminal descriptor and direct Linux/AArch64 and Linux/x86-64 TCSBRK, TCFLSH, and TCXONC ioctl requests with closed queue/action selectors"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/termios_queue.rs", "crabc-rs/examples/termios_queue_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/termios/tc.rs", "compat/rustix/source/termios_queue.rs"]
-rationale = "The Rustix-shaped queue/control quartet is safe over a borrowed terminal descriptor and direct ioctl boundary. Termios records and foreground process/session controls remain separate capabilities; PTY creation/lifecycle is covered by the verified terminal.pty-session capability."
+evidence = ["crabc-rs/src/termios.rs", "crabc-rs/src/termios_x86_64.rs", "crabc-rs/tests/termios_queue.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/termios_queue_direct_probe.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/termios/tc.rs", "compat/rustix/source/termios_queue.rs"]
+rationale = "The Rustix-shaped queue/control quartet is safe over a borrowed terminal descriptor and direct ioctl boundary. Attribute records and foreground process/session controls remain separately named capabilities, including their target-specific x86 evidence; PTY creation/lifecycle is covered by terminal.pty-session."
 
 [[capability]]
 id = "terminal.exclusive-mode"
@@ -2929,11 +2929,11 @@ kind = "implementation"
 classification = "native-safe"
 status = "verified"
 rust_api = ["termios::{ioctl_tiocexcl, ioctl_tiocnxcl}"]
-shared_impl = ["crabc_rs::termios typed no-argument Linux terminal ioctls"]
-native_boundary = "borrowed terminal descriptor and direct Linux/AArch64 TIOCEXCL/TIOCNXCL ioctl requests"
+shared_impl = ["crabc_rs::termios and crabc_rs::termios_x86_64 typed no-argument Linux terminal ioctls"]
+native_boundary = "borrowed terminal descriptor and direct Linux/AArch64 and Linux/x86-64 TIOCEXCL/TIOCNXCL ioctl requests"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/termios_exclusive.rs", "crabc-rs/examples/termios_exclusive_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/termios_exclusive.rs"]
+evidence = ["crabc-rs/src/termios.rs", "crabc-rs/src/termios_x86_64.rs", "crabc-rs/tests/termios_exclusive.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/termios_exclusive_direct_probe.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/termios_exclusive.rs"]
 rationale = "The safe Rustix pair has no C terminal-state pointer or errno contract. Exclusive mode belongs to the terminal and is released explicitly with TIOCNXCL or when the terminal is torn down; privileged opens may bypass its EBUSY restriction."
 
 [[capability]]
@@ -2942,12 +2942,12 @@ kind = "implementation"
 classification = "native-safe"
 status = "verified"
 rust_api = ["termios::{SpecialCodes, SpecialCodeIndex}", "termios::Termios::special_codes"]
-shared_impl = ["crabc_rs::termios private Linux/AArch64 44-byte termios ioctl record"]
-native_boundary = "typed 19-byte Linux NCCS special-code region inside a private 44-byte TCGETS/TCSETS record over a borrowed terminal descriptor"
+shared_impl = ["crabc_rs::termios private Linux/AArch64 44-byte record and crabc_rs::termios_x86_64 private 36-byte record"]
+native_boundary = "typed 19-byte Linux NCCS special-code region inside a private 44-byte Linux/AArch64 or 36-byte Linux/x86-64 TCGETS/TCSETS record over a borrowed terminal descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/termios_special_codes.rs", "crabc-rs/examples/termios_special_codes_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/termios/types.rs", "compat/rustix/source/termios_special_codes.rs"]
-rationale = "Named indexing exposes Linux's fixed 19-byte kernel control-code region without casting or claiming the incompatible musl public C struct termios layout. Full terminal/session policy remains in the deferred terminal capability."
+evidence = ["crabc-rs/src/termios.rs", "crabc-rs/src/termios_x86_64.rs", "crabc-rs/tests/termios_special_codes.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/termios_special_codes_direct_probe.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/termios/types.rs", "compat/rustix/source/termios_special_codes.rs"]
+rationale = "Named indexing exposes Linux's fixed 19-byte kernel control-code region without casting or claiming the incompatible musl public C struct termios layout. The target-specific terminal/session policy stays explicit and typed rather than becoming a C ABI."
 
 [[capability]]
 id = "terminal.tty-path"
@@ -2956,11 +2956,11 @@ symbols = ["ttyname", "ttyname_r"]
 classification = "native-higher-level"
 status = "verified"
 rust_api = ["termios::{ttyname_into, ttyname}"]
-shared_impl = ["crabc_rs::termios typed Linux tty ioctl, procfs readlink, and inode/device validation"]
+shared_impl = ["crabc_rs::termios and crabc_rs::termios_x86_64 typed Linux tty ioctl, procfs readlink, and inode/device validation"]
 native_boundary = "borrowed tty descriptor, caller-owned MaybeUninit buffer or alloc-gated CString, direct fstat/ioctl/readlinkat/stat validation"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/ttyname.rs", "crabc-rs/examples/ttyname_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/ttyname.rs"]
+evidence = ["crabc-rs/src/termios.rs", "crabc-rs/src/termios_x86_64.rs", "crabc-rs/tests/ttyname.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/ttyname_direct_probe.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/ttyname.rs"]
 rationale = "The native API replaces C ttyname's static storage and ttyname_r's integer/buffer convention with a borrowed CStr or owned CString. Procfs is required and its link target is checked against the original descriptor before return."
 
 [[capability]]
@@ -2970,12 +2970,12 @@ symbols = ["cfgetispeed", "cfgetospeed", "cfmakeraw", "cfsetispeed", "cfsetospee
 classification = "native-safe"
 status = "verified"
 rust_api = ["termios::{Termios, Winsize, isatty, tcgetwinsize, tcsetwinsize}", "Termios::{make_raw, input_speed, output_speed, set_speed, set_input_speed, set_output_speed}"]
-shared_impl = ["crabc_core::io::ioctl_raw with typed Linux tty layouts"]
-native_boundary = "direct Linux/AArch64 TCGETS, TIOCGWINSZ, and TIOCSWINSZ ioctls with a legacy kernel-layout standard-baud/raw-mode subset"
+shared_impl = ["crabc_core::io::ioctl_raw with target-specific typed Linux tty layouts"]
+native_boundary = "direct Linux/AArch64 and Linux/x86-64 TCGETS, TIOCGWINSZ, and TIOCSWINSZ ioctls with private target-sized legacy kernel layouts and a standard-baud/raw-mode subset"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs"]
-rationale = "Raw mode, standard numeric baud accessors, tty detection, and window-size operations are covered over Termios's 19-byte Linux kernel layout, not the full musl public struct termios. Arbitrary BOTHER rates, tcsetattr, and the wider control-code/session API remain deferred."
+evidence = ["crabc-rs/src/termios.rs", "crabc-rs/src/termios_x86_64.rs", "crabc-rs/tests/process_system.rs", "crabc-rs/tests/x86_64_terminal.rs", "crabc-rs/examples/x86_64_terminal_direct_probe.rs", "compat/x86_64/run_x86_terminal_reference.sh", "compat/rustix/source/process_system.rs"]
+rationale = "Raw mode, standard numeric baud accessors (including a distinct B0 input selector), tty detection, and window-size operations are covered over Termios's 19-byte Linux kernel layout, not the full musl public struct termios. The named tcsetattr, control-code, and session APIs have target-specific evidence; arbitrary BOTHER rates remain outside the bounded standard-baud contract."
 
 [[capability]]
 id = "terminal.pty-basic"
@@ -2983,9 +2983,9 @@ kind = "semantic"
 symbols = ["grantpt", "posix_openpt", "ptsname", "unlockpt"]
 classification = "native-safe"
 status = "verified"
-rust_api = ["pty::{openpt, grantpt, unlockpt, ptsname, ioctl_tiocgptpeer}", "pty::OpenptFlags"]
-shared_impl = ["crabc_core::io::ioctl_raw for TIOCGPTN/TIOCSPTLCK/TIOCGPTPEER and direct /dev/ptmx opening"]
-native_boundary = "direct Linux/AArch64 PTY ioctls with OwnedFd, typed open flags, and owned slave-name results"
+rust_api = ["pty::{openpt, grantpt, unlockpt, ptsname}", "pty::OpenptFlags", "AArch64 additionally exposes ioctl_tiocgptpeer; the x86-64 pair keeps peer opening private"]
+shared_impl = ["crabc_core::io::ioctl_raw for TIOCGPTN/TIOCSPTLCK/TIOCGPTPEER and target-specific direct /dev/ptmx opening"]
+native_boundary = "direct Linux/AArch64 and Linux/x86-64 PTY ioctls with OwnedFd, typed open flags, and owned slave-name results; x86-64 has no public peer-open ioctl"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/pty.rs", "crabc-rs/tests/process_system.rs", "crabc-rs/examples/process_system_probe.rs", "compat/rustix/source/process_system.rs"]

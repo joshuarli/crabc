@@ -2,9 +2,15 @@
 //!
 //! C ABI adaptation, errno publication, and process-global policy remain in
 //! the surrounding libc modules. This file owns only the raw Linux/x86-64
-//! register ABI and the matching syscall-number table. It is deliberately
-//! unintegrated until the C ABI's other x86-64 layout and assembly boundaries
-//! have their own evidence.
+//! register ABI and the matching syscall-number table. The selected static
+//! metadata leaf uses `fstat` and `newfstatat`; the credential leaf uses its
+//! selected identity syscalls; the selected process-context leaf uses its
+//! scalar identity, group/session, mask, and selected descriptor-I/O syscalls;
+//! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
+//! the selected socket-transport leaf uses its direct Linux socket lifecycle
+//! and byte-transfer syscalls.
+//! All other public C wrappers remain unintegrated until their own ABI
+//! boundaries have evidence.
 //!
 //! Linux/x86-64 enters the kernel with `syscall`: `rax` holds the syscall
 //! number and result, then arguments one through six are `rdi`, `rsi`, `rdx`,
@@ -243,16 +249,21 @@ pub(crate) const SYS_READ: i64 = 0;
 pub(crate) const SYS_WRITE: i64 = 1;
 pub(crate) const SYS_CLOSE: i64 = 3;
 pub(crate) const SYS_FSTAT: i64 = 5;
+pub(crate) const SYS_POLL: i64 = 7;
 pub(crate) const SYS_LSEEK: i64 = 8;
 pub(crate) const SYS_MMAP: i64 = 9;
 pub(crate) const SYS_MUNMAP: i64 = 11;
 pub(crate) const SYS_RT_SIGACTION: i64 = 13;
 pub(crate) const SYS_RT_SIGPROCMASK: i64 = 14;
 pub(crate) const SYS_IOCTL: i64 = 16;
+pub(crate) const SYS_PIPE: i64 = 22;
+pub(crate) const SYS_SELECT: i64 = 23;
 pub(crate) const SYS_SHMGET: i64 = 29;
 pub(crate) const SYS_SHMAT: i64 = 30;
 pub(crate) const SYS_SHMCTL: i64 = 31;
 pub(crate) const SYS_DUP: i64 = 32;
+pub(crate) const SYS_DUP2: i64 = 33;
+pub(crate) const SYS_PAUSE: i64 = 34;
 pub(crate) const SYS_NANOSLEEP: i64 = 35;
 pub(crate) const SYS_SETITIMER: i64 = 38;
 pub(crate) const SYS_SOCKET: i64 = 41;
@@ -264,6 +275,7 @@ pub(crate) const SYS_SHUTDOWN: i64 = 48;
 pub(crate) const SYS_BIND: i64 = 49;
 pub(crate) const SYS_LISTEN: i64 = 50;
 pub(crate) const SYS_GETSOCKNAME: i64 = 51;
+pub(crate) const SYS_GETPEERNAME: i64 = 52;
 pub(crate) const SYS_SOCKETPAIR: i64 = 53;
 pub(crate) const SYS_SETSOCKOPT: i64 = 54;
 pub(crate) const SYS_EXECVE: i64 = 59;
@@ -288,25 +300,35 @@ pub(crate) const SYS_CHDIR: i64 = 80;
 pub(crate) const SYS_FCHMOD: i64 = 91;
 pub(crate) const SYS_UMASK: i64 = 95;
 pub(crate) const SYS_GETRLIMIT: i64 = 97;
+pub(crate) const SYS_GETRUSAGE: i64 = 98;
+pub(crate) const SYS_SYSINFO: i64 = 99;
 pub(crate) const SYS_SETUID: i64 = 105;
 pub(crate) const SYS_SETGID: i64 = 106;
 pub(crate) const SYS_SETPGID: i64 = 109;
 pub(crate) const SYS_GETGROUPS: i64 = 115;
 pub(crate) const SYS_SETGROUPS: i64 = 116;
+pub(crate) const SYS_SETRESUID: i64 = 117;
+pub(crate) const SYS_GETRESUID: i64 = 118;
+pub(crate) const SYS_SETRESGID: i64 = 119;
+pub(crate) const SYS_GETRESGID: i64 = 120;
 pub(crate) const SYS_GETPGID: i64 = 121;
 pub(crate) const SYS_GETSID: i64 = 124;
 pub(crate) const SYS_RT_SIGPENDING: i64 = 127;
 pub(crate) const SYS_RT_SIGTIMEDWAIT: i64 = 128;
 pub(crate) const SYS_RT_SIGSUSPEND: i64 = 130;
 pub(crate) const SYS_SIGALTSTACK: i64 = 131;
+pub(crate) const SYS_GETPRIORITY: i64 = 140;
+pub(crate) const SYS_SETPRIORITY: i64 = 141;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
 pub(crate) const SYS_SETHOSTNAME: i64 = 170;
+pub(crate) const SYS_SETDOMAINNAME: i64 = 171;
 pub(crate) const SYS_FUTEX: i64 = 202;
 pub(crate) const SYS_CLOCK_GETTIME: i64 = 228;
 pub(crate) const SYS_CLOCK_GETRES: i64 = 229;
 pub(crate) const SYS_CLOCK_NANOSLEEP: i64 = 230;
 pub(crate) const SYS_EXIT_GROUP: i64 = 231;
 pub(crate) const SYS_TGKILL: i64 = 234;
+pub(crate) const SYS_WAITID: i64 = 247;
 pub(crate) const SYS_MKDIRAT: i64 = 258;
 pub(crate) const SYS_NEWFSTATAT: i64 = 262;
 pub(crate) const SYS_UNLINKAT: i64 = 263;
@@ -314,14 +336,19 @@ pub(crate) const SYS_LINKAT: i64 = 265;
 pub(crate) const SYS_SYMLINKAT: i64 = 266;
 pub(crate) const SYS_READLINKAT: i64 = 267;
 pub(crate) const SYS_FCHMODAT: i64 = 268;
+pub(crate) const SYS_PSELECT6: i64 = 270;
+pub(crate) const SYS_PPOLL: i64 = 271;
 pub(crate) const SYS_SET_ROBUST_LIST: i64 = 273;
 pub(crate) const SYS_UTIMENSAT: i64 = 280;
+pub(crate) const SYS_ACCEPT4: i64 = 288;
 pub(crate) const SYS_OPENAT: i64 = 257;
 pub(crate) const SYS_FACCESSAT: i64 = 269;
 pub(crate) const SYS_DUP3: i64 = 292;
 pub(crate) const SYS_PIPE2: i64 = 293;
+pub(crate) const SYS_PRLIMIT64: i64 = 302;
 pub(crate) const SYS_SYNCFS: i64 = 306;
 pub(crate) const SYS_RENAMEAT2: i64 = 316;
+pub(crate) const SYS_GETRANDOM: i64 = 318;
 pub(crate) const SYS_STATFS: i64 = 137;
 pub(crate) const SYS_FSTATFS: i64 = 138;
 pub(crate) const SYS_FDATASYNC: i64 = 75;
@@ -337,6 +364,6 @@ pub(crate) const SYS_GETEGID: i64 = 108;
 pub(crate) const SYS_GETTID: i64 = 186;
 pub(crate) const SYS_CLOCK_SETTIME: i64 = 227;
 pub(crate) const SYS_CLONE: i64 = 56;
-pub(crate) const SYS_PPOLL: i64 = 271;
 pub(crate) const SYS_PREAD64: i64 = 17;
 pub(crate) const SYS_PWRITE64: i64 = 18;
+pub(crate) const SYS_PWRITEV2: i64 = 328;

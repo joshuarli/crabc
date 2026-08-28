@@ -1,8 +1,7 @@
 //! Link-free no-std proof for the process CWD mutation seam.
 //!
-//! This source is intentionally unregistered. The architecture harness can
-//! compile it as a static library and inspect direct `chdir`/`fchdir` calls
-//! without adding another public package target.
+//! The registered static-library target lets the architecture harness inspect
+//! direct `chdir`/`fchdir` calls without adding another public package API.
 
 #![no_std]
 

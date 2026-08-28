@@ -71,6 +71,12 @@ _Static_assert(CRABC_TYPE_IS(&getgroups, int (*)(int, gid_t *)),
     "getgroups declaration");
 _Static_assert(CRABC_TYPE_IS(&gethostname, int (*)(char *, size_t)),
     "gethostname declaration");
+_Static_assert(CRABC_TYPE_IS(&sethostname, int (*)(const char *, size_t)),
+    "GNU sethostname declaration");
+_Static_assert(CRABC_TYPE_IS(&getdomainname, int (*)(char *, size_t)),
+    "GNU getdomainname declaration");
+_Static_assert(CRABC_TYPE_IS(&setdomainname, int (*)(const char *, size_t)),
+    "GNU setdomainname declaration");
 _Static_assert(CRABC_TYPE_IS(&getcwd, char *(*)(char *, size_t)),
     "getcwd declaration");
 _Static_assert(CRABC_TYPE_IS(&sysconf, long (*)(int)), "sysconf declaration");

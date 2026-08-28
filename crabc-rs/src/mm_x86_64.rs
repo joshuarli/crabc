@@ -1,9 +1,10 @@
 //! The deliberately bounded Linux/x86-64 mapping facade.
 //!
 //! This admission owns ordinary anonymous/file mappings, bounded remapping,
-//! protection changes, unmapping, and per-range memory-locking. It deliberately
-//! exposes bounded mapping synchronization, advice, and residency operations;
-//! process-wide VM policy remains outside this staged x86-64 admission.
+//! protection changes, unmapping, per-range/process-wide memory locking, and
+//! legacy file-page remapping. It deliberately exposes bounded mapping
+//! synchronization, advice, and residency operations without admitting the
+//! broader AArch64 VM policy surface.
 
 use bitflags::bitflags;
 
@@ -86,6 +87,24 @@ bitflags! {
         const ONFAULT = 0x1;
         /// Preserve future Linux-defined bits; the kernel validates them.
         const _ = !0;
+    }
+}
+
+bitflags! {
+    /// Linux `MCL_*` flags accepted by [`mlockall`].
+    ///
+    /// This operation changes process-global VM policy. The flags remain a
+    /// closed Rust value so an unrelated integer cannot silently request a
+    /// different policy at the syscall boundary.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct MlockAllFlags: u32 {
+        /// Lock pages currently mapped into the process.
+        const CURRENT = 0x1;
+        /// Lock pages mapped by the process in the future.
+        const FUTURE = 0x2;
+        /// Defer locking until pages are faulted in.
+        const ONFAULT = 0x4;
     }
 }
 
@@ -412,6 +431,24 @@ pub unsafe fn munlock(ptr: *mut c_void, len: usize) -> Result<()> {
     unsafe { crabc_core::mm::munlock_raw(ptr.cast(), len) }
 }
 
+/// Locks all current and/or future mappings in the calling process.
+///
+/// This operation is process-global rather than tied to one mapping. The
+/// caller must account for its effect on every thread and mapping in the
+/// process, and must expect Linux to reject the request when the memlock
+/// budget or flag combination is unavailable. It never calls the public C ABI
+/// or writes C thread-local `errno`.
+#[inline]
+pub fn mlockall(flags: MlockAllFlags) -> Result<()> {
+    crabc_core::mm::mlockall_raw(flags.bits())
+}
+
+/// Removes all process-wide memory-lock policy.
+#[inline]
+pub fn munlockall() -> Result<()> {
+    crabc_core::mm::munlockall_raw()
+}
+
 /// Synchronizes a mapped range with its backing storage.
 ///
 /// This native Rust operation returns the direct kernel [`Result`] and never
@@ -477,6 +514,25 @@ pub unsafe fn posix_madvise(
     // SAFETY: The caller owns the mapped-range and pointer-provenance
     // contract. The typed advice is one of POSIX's five policies.
     unsafe { crabc_core::mm::posix_madvise_raw(ptr.cast(), len, advice as u32) }
+}
+
+/// Remaps pages in a legacy file-backed mapping.
+///
+/// The legacy C ABI carries protection and flags words, but the native
+/// contract deliberately fixes both compatibility fields to zero. The
+/// operation can change which file pages a mapped address observes and is
+/// therefore unsafe around outstanding Rust references.
+///
+/// # Safety
+///
+/// `ptr` must identify a page-aligned mapping whose range and file-page offset
+/// satisfy Linux's `remap_file_pages(2)` contract. No Rust references may be
+/// retained across a call which changes the mapping's page association.
+#[inline]
+pub unsafe fn remap_file_pages(ptr: *mut c_void, len: usize, page_offset: usize) -> Result<()> {
+    // SAFETY: The caller owns the mapping-lifetime and pointer-provenance
+    // obligations; Linux validates the range and file-page offset.
+    unsafe { crabc_core::mm::remap_file_pages_raw(ptr.cast(), len, page_offset) }
 }
 
 /// Queries Linux residency for each page intersecting a mapped range.

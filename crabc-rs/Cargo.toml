@@ -53,6 +53,23 @@ crate-type = ["staticlib"]
 required-features = ["alloc"]
 
 [[example]]
+name = "resolver_hosts_direct_probe"
+path = "examples/resolver_hosts_direct_probe.rs"
+crate-type = ["staticlib"]
+required-features = ["alloc"]
+
+[[example]]
+name = "path_core_owned_direct_probe"
+path = "examples/path_core_owned_direct_probe.rs"
+crate-type = ["staticlib"]
+required-features = ["alloc"]
+
+[[example]]
+name = "xattr_direct_probe"
+path = "examples/xattr_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "loader_runtime_probe"
 path = "examples/loader_runtime_probe.rs"
 crate-type = ["staticlib"]
@@ -362,6 +379,11 @@ path = "examples/memory_vm_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "mapping_direct_probe"
+path = "examples/mapping_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "pipe_size_direct_probe"
 path = "examples/pipe_size_direct_probe.rs"
 crate-type = ["staticlib"]
@@ -627,6 +649,11 @@ path = "examples/thread_identity_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "thread_kill_direct_probe"
+path = "examples/thread_kill_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "access_direct_probe"
 path = "examples/access_direct_probe.rs"
 crate-type = ["staticlib"]
@@ -722,6 +749,16 @@ path = "examples/pty_session_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "pty_basic_direct_probe"
+path = "examples/pty_basic_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "x86_64_terminal_direct_probe"
+path = "examples/x86_64_terminal_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "system_names_direct_probe"
 path = "examples/system_names_direct_probe.rs"
 crate-type = ["staticlib"]
@@ -772,10 +809,20 @@ path = "examples/ipc_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "shm_direct_probe"
+path = "examples/shm_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "users_databases_direct_probe"
 path = "examples/users_databases_direct_probe.rs"
 crate-type = ["staticlib"]
 required-features = ["alloc"]
+
+[[example]]
+name = "mount_direct_probe"
+path = "examples/mount_direct_probe.rs"
+crate-type = ["staticlib"]
 
 [features]
 default = ["std"]

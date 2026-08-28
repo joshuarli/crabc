@@ -30,10 +30,39 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
+        self.assertIn("    madvise-reference) ;;", source)
+        self.assertIn("    ctype-header-abi) ;;", source)
+        self.assertIn("    ffs-header-abi) ;;", source)
+        self.assertIn("    byte-strings-header-abi) ;;", source)
+        self.assertIn("    memory-search-header-abi) ;;", source)
+        self.assertIn("    string-copy-header-abi) ;;", source)
+        source = source.replace(
+            "msync-reference|mincore-reference",
+            "msync-reference|madvise-reference|mincore-reference",
+            1,
+        )
+        source = source.replace("resource-header-abi|socket-header-abi|", "resource-header-abi|", 1)
+        source = source.replace("libc-readiness-waits|", "", 1)
+        source = source.replace("libc-socket-transport|", "", 1)
+        source = source.replace("libc-system-observation|", "", 1)
+        source = source.replace("libc-uts-identity|", "", 1)
+        source = source.replace("resource-header-abi|random-entropy-header-abi|mm-abi-reference|", "resource-header-abi|mm-abi-reference|", 1)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|socket-transport-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
+        self.assertIn("libc-stat-compat", source)
+        self.assertIn("libc-credentials", source)
+        self.assertIn("libc-bootstrap-primitives", source)
+        self.assertIn("libc-signal-control", source)
+        self.assertIn("libc-termios-control", source)
+        self.assertIn("libc-process-context", source)
+        self.assertIn("libc-descriptor-io", source)
+        self.assertIn("libc-process-resources", source)
+        self.assertIn("libc-readiness-waits", source)
+        self.assertIn("libc-socket-transport", source)
+        self.assertIn("libc-system-observation", source)
+        self.assertIn("libc-uts-identity", source)
         self.assertIn('run_musl_oracle()', source)
         self.assertIn('compat/x86_64/run_musl_oracle.sh', source)
         self.assertIn('run_header_abi_reference()', source)
@@ -46,10 +75,30 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
         self.assertIn('run_stat_header_abi()', source)
         self.assertIn('compat/x86_64/run_stat_header_abi.sh', source)
+        self.assertIn('run_ctype_header_abi()', source)
+        self.assertIn('compat/x86_64/run_ctype_header_abi.sh', source)
+        self.assertIn('run_integer_arithmetic_header_abi()', source)
+        self.assertIn('compat/x86_64/run_integer_arithmetic_header_abi.sh', source)
+        self.assertIn('run_credential_observation_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_credential_observation_header_abi.sh', source
+        )
+        self.assertIn('run_ffs_header_abi()', source)
+        self.assertIn('compat/x86_64/run_ffs_header_abi.sh', source)
+        self.assertIn('run_byte_strings_header_abi()', source)
+        self.assertIn('compat/x86_64/run_byte_strings_header_abi.sh', source)
+        self.assertIn('run_memory_search_header_abi()', source)
+        self.assertIn('compat/x86_64/run_memory_search_header_abi.sh', source)
+        self.assertIn('run_string_copy_header_abi()', source)
+        self.assertIn('compat/x86_64/run_string_copy_header_abi.sh', source)
+        self.assertIn('run_random_entropy_header_abi()', source)
+        self.assertIn('compat/x86_64/run_random_entropy_header_abi.sh', source)
         self.assertIn('run_time_header_abi()', source)
         self.assertIn('compat/x86_64/run_time_header_abi.sh', source)
         self.assertIn('run_poll_header_abi()', source)
         self.assertIn('compat/x86_64/run_poll_header_abi.sh', source)
+        self.assertIn('run_select_header_abi()', source)
+        self.assertIn('compat/x86_64/run_select_header_abi.sh', source)
         self.assertIn('run_fcntl_header_abi()', source)
         self.assertIn('compat/x86_64/run_fcntl_header_abi.sh', source)
         self.assertIn('run_unistd_header_abi()', source)
@@ -60,10 +109,95 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
         self.assertIn('run_signal_header_abi()', source)
         self.assertIn('compat/x86_64/run_signal_header_abi.sh', source)
+        self.assertIn('run_termios_header_abi()', source)
+        self.assertIn('compat/x86_64/run_termios_header_abi.sh', source)
         self.assertIn('run_mman_header_abi()', source)
         self.assertIn('compat/x86_64/run_mman_header_abi.sh', source)
+        self.assertIn('run_resource_header_abi()', source)
+        self.assertIn('compat/x86_64/run_resource_header_abi.sh', source)
         self.assertIn('run_mm_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
+        self.assertIn('run_mapping_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_mapping_reference.sh', source)
+        self.assertIn('--test x86_64_memory_mapping', source)
+        self.assertIn('--example mapping_direct_probe', source)
+        mapping_reference = source.split('run_mapping_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertIn('run_in_container cargo test', mapping_reference)
+        self.assertIn('--test x86_64_memory_mapping', mapping_reference)
+        self.assertIn('-- --test-threads=1', mapping_reference)
+        self.assertIn('run_in_container cargo build', mapping_reference)
+        self.assertIn('--example mapping_direct_probe', mapping_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_mapping_reference.sh',
+            mapping_reference,
+        )
+        self.assertIn('run_memory_vm_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_memory_vm_reference.sh', source)
+        self.assertIn('--test x86_64_memory_vm', source)
+        self.assertIn('--example memory_vm_direct_probe', source)
+        memory_vm_reference = source.split('run_memory_vm_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertIn('run_in_container cargo test', memory_vm_reference)
+        self.assertIn('--test x86_64_memory_vm', memory_vm_reference)
+        self.assertIn('-- --test-threads=1', memory_vm_reference)
+        self.assertIn('run_in_container cargo build', memory_vm_reference)
+        self.assertIn('--example memory_vm_direct_probe', memory_vm_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_memory_vm_reference.sh',
+            memory_vm_reference,
+        )
+        self.assertNotIn('run_in_chroot_cap_container', memory_vm_reference)
+        self.assertNotIn('--cap-add=SYS_ADMIN', memory_vm_reference)
+        self.assertIn('run_pty_basic_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_pty_basic_reference.sh', source)
+        self.assertIn('--test x86_64_pty_basic', source)
+        self.assertIn('--example pty_basic_direct_probe', source)
+        pty_basic_reference = source.split('run_pty_basic_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertEqual(pty_basic_reference.count('run_in_container cargo test'), 2)
+        self.assertIn(
+            '-p crabc-rs --no-default-features --test x86_64_pty_basic',
+            pty_basic_reference,
+        )
+        self.assertIn(
+            '-p crabc-rs --no-default-features --features alloc --test x86_64_pty_basic',
+            pty_basic_reference,
+        )
+        self.assertIn('-- --test-threads=1', pty_basic_reference)
+        self.assertIn('run_in_container cargo build', pty_basic_reference)
+        self.assertIn('--example pty_basic_direct_probe', pty_basic_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_pty_basic_reference.sh',
+            pty_basic_reference,
+        )
+        self.assertNotIn('run_in_chroot_cap_container', pty_basic_reference)
+        self.assertNotIn('--cap-add=SYS_ADMIN', pty_basic_reference)
+        self.assertIn('run_terminal_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_terminal_reference.sh', source)
+        terminal_reference = source.split('run_terminal_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertEqual(terminal_reference.count('run_in_container cargo test'), 2)
+        self.assertIn('-p crabc-rs --no-default-features --test x86_64_terminal', terminal_reference)
+        self.assertIn(
+            '-p crabc-rs --no-default-features --features alloc --test x86_64_terminal',
+            terminal_reference,
+        )
+        self.assertIn('--example x86_64_terminal_direct_probe', terminal_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_terminal_reference.sh',
+            terminal_reference,
+        )
+        self.assertNotIn('run_in_chroot_cap_container', terminal_reference)
+        self.assertNotIn('--cap-add=SYS_ADMIN', terminal_reference)
         self.assertIn('run_mlock_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mlock_reference.sh', source)
         self.assertIn('run_msync_reference()', source)
@@ -107,6 +241,27 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_time_reference.sh', source)
         self.assertIn('run_time_observation_reference()', source)
         self.assertIn('compat/x86_64/run_x86_time_observation_reference.sh', source)
+        self.assertIn('run_calendar_time_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_calendar_time_reference.sh', source)
+        self.assertIn(
+            'x86_64_gettimeofday_writes_one_normalized_private_record',
+            source,
+        )
+        self.assertIn('--test time --test calendar_utc --test x86_64_calendar_time', source)
+        self.assertIn('--test timezone_rules --test calendar_local', source)
+        self.assertIn('--example time_direct_probe --example calendar_utc_direct_probe', source)
+        self.assertIn('--example calendar_local_direct_probe', source)
+        self.assertIn('run_advanced_time_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_advanced_time_reference.sh', source)
+        self.assertIn(
+            'x86_64_posix_timer_writes_exact_id_and_old_setting_records',
+            source,
+        )
+        self.assertIn('--test x86_64_advanced_time', source)
+        self.assertIn('--example time_dynamic_direct_probe', source)
+        self.assertIn('--example process_clock_id_direct_probe', source)
+        self.assertIn('--example time_settime_direct_probe', source)
+        self.assertIn('--example time_timers_direct_probe', source)
         self.assertIn('run_relative_sleep_reference()', source)
         self.assertIn('compat/x86_64/run_x86_relative_sleep_reference.sh', source)
         self.assertIn('run_clock_nanosleep_reference()', source)
@@ -127,6 +282,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_epoll_reference.sh', source)
         self.assertIn('run_process_identity_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_identity_reference.sh', source)
+        self.assertIn('run_child_ownership_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_child_ownership_reference.sh', source)
+        self.assertIn('--test x86_64_child_ownership -- --test-threads=1', source)
         self.assertIn('run_getgroups_reference()', source)
         self.assertIn('compat/x86_64/run_x86_getgroups_reference.sh', source)
         self.assertIn('run_process_session_reference()', source)
@@ -180,9 +338,166 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_namespace_reference()', source)
         self.assertIn('compat/x86_64/run_x86_namespace_reference.sh', source)
         self.assertIn('--test x86_64_namespace -- --test-threads=1', source)
+        self.assertIn('run_path_core_reference()', source)
+        self.assertIn('run_fstat_reference', source)
+        self.assertIn('run_statat_reference', source)
+        self.assertIn('run_path_lifecycle_reference', source)
+        self.assertIn('run_namespace_reference', source)
+        self.assertIn('run_timestamp_reference', source)
+        self.assertIn('run_readlinkat_reference', source)
+        self.assertIn('--features std', source)
+        self.assertIn('--test x86_64_readlink', source)
+        self.assertIn('--example path_core_owned_direct_probe', source)
+        self.assertIn('run_xattr_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_xattr_reference.sh', source)
+        self.assertIn('--test x86_64_xattr -- --test-threads=1', source)
+        self.assertIn('--example xattr_direct_probe', source)
+        self.assertIn('run_directory_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_directory_reference.sh', source)
+        self.assertIn('--test x86_64_raw_directory', source)
+        self.assertIn('--test x86_64_directory', source)
+        self.assertIn('--test x86_64_directory_position', source)
+        self.assertIn('--example directory_direct_probe', source)
+        self.assertIn('--example directory_position_direct_probe', source)
+        self.assertIn('run_temporary_object_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_temporary_object_reference.sh', source)
+        self.assertIn('--test x86_64_temporary_objects', source)
+        self.assertIn('--features alloc --test x86_64_temporary_objects', source)
+        self.assertIn('--example fs_named_tempfile_direct_probe', source)
+        self.assertIn('--example fs_tempfile_direct_probe', source)
+        self.assertIn('--example fs_tempdir_direct_probe', source)
+        self.assertIn('run_statx_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_statx_reference.sh', source)
+        self.assertIn('--test x86_64_statx -- --test-threads=1', source)
+        self.assertIn('--example statx_direct_probe', source)
+        self.assertIn('run_cwd_canonicalize_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_cwd_canonicalize_reference.sh', source)
+        self.assertIn('--test x86_64_canonicalize', source)
+        self.assertIn('--test x86_64_cwd_mutation', source)
+        self.assertIn('--example fs_canonicalize_direct_probe', source)
+        self.assertIn('--example process_cwd_direct_probe', source)
+        self.assertIn('run_root_change_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_root_change_reference.sh', source)
+        self.assertIn('--test x86_64_chroot -- --test-threads=1', source)
+        self.assertIn('--example process_chroot_direct_probe', source)
+        chroot_cap_container = source.split('run_in_chroot_cap_container() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertIn('--cap-add=SYS_CHROOT', chroot_cap_container)
+        root_change_reference = source.split('run_root_change_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertIn('run_in_chroot_cap_container cargo test', root_change_reference)
+        self.assertIn(
+            '--test x86_64_chroot -- --test-threads=1',
+            root_change_reference,
+        )
+        self.assertIn(
+            'run_in_chroot_cap_container bash /workspace/compat/x86_64/run_x86_root_change_reference.sh',
+            root_change_reference,
+        )
+        self.assertIn('run_in_container cargo build', root_change_reference)
+        self.assertIn('--example process_chroot_direct_probe', root_change_reference)
+        self.assertIn('run_mount_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_mount_reference.sh', source)
+        self.assertIn('--test x86_64_mount', source)
+        self.assertIn('--example mount_direct_probe', source)
+        mount_reference = source.split('run_mount_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertIn('run_in_container cargo test', mount_reference)
+        self.assertIn('--test x86_64_mount', mount_reference)
+        self.assertIn('-- --test-threads=1', mount_reference)
+        self.assertIn('run_in_container cargo build', mount_reference)
+        self.assertIn('--example mount_direct_probe', mount_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_mount_reference.sh',
+            mount_reference,
+        )
+        self.assertNotIn('run_in_chroot_cap_container', mount_reference)
+        self.assertNotIn('--cap-add=SYS_ADMIN', mount_reference)
+        self.assertIn('run_thread_kill_reference()', source)
+        self.assertIn(
+            'compat/x86_64/run_x86_thread_kill_reference.sh',
+            source,
+        )
+        self.assertIn('--test x86_64_thread_kill', source)
+        self.assertIn('--example thread_kill_direct_probe', source)
+        thread_kill_reference = source.split('run_thread_kill_reference() {', 1)[1].split(
+            '\n}\n',
+            1,
+        )[0]
+        self.assertIn('run_in_container cargo test', thread_kill_reference)
+        self.assertIn('--test x86_64_thread_kill', thread_kill_reference)
+        self.assertIn('-- --test-threads=1', thread_kill_reference)
+        self.assertIn('run_in_container cargo build', thread_kill_reference)
+        self.assertIn('--example thread_kill_direct_probe', thread_kill_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_thread_kill_reference.sh',
+            thread_kill_reference,
+        )
+        self.assertIn('run_ipc_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_mqueue_reference.sh', source)
+        self.assertIn('--test x86_64_ipc -- --test-threads=1', source)
+        self.assertIn('--example ipc_direct_probe', source)
+        self.assertIn('run_shm_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_shm_reference.sh', source)
+        self.assertIn('--test x86_64_shm -- --test-threads=1', source)
+        self.assertIn('--example shm_direct_probe', source)
+        self.assertIn('run_inotify_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_inotify_reference.sh', source)
+        self.assertIn('--lib --no-default-features system::inotify::', source)
+        self.assertIn('--test x86_64_inotify -- --test-threads=1', source)
+        self.assertIn('--example inotify_direct_probe', source)
         self.assertIn('run_socket_transport_reference()', source)
         self.assertIn('compat/x86_64/run_x86_socket_transport_reference.sh', source)
         self.assertIn('--test x86_64_socket_transport -- --test-threads=1', source)
+        self.assertIn('run_interface_device_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_interface_device_reference.sh', source)
+        self.assertIn('--test x86_64_interface_device -- --test-threads=1', source)
+        self.assertIn('--lib --no-default-features --features alloc net::netdevice::', source)
+        self.assertIn('--example interface_names_direct_probe', source)
+        self.assertIn('--example interface_addresses_direct_probe', source)
+        self.assertIn('run_resolver_transport_reference()', source)
+        self.assertIn(
+            '-p crabc-core --no-default-features --test x86_64_resolver_transport', source
+        )
+        self.assertIn('run_resolver_facade_reference()', source)
+        self.assertIn(
+            '-p crabc-rs --no-default-features --features alloc --test x86_64_resolver',
+            source,
+        )
+        self.assertIn('--example resolver_hosts_direct_probe', source)
+        self.assertIn('run_netdb_reference()', source)
+        self.assertIn(
+            '-p crabc-rs --no-default-features --features alloc --test x86_64_netdb',
+            source,
+        )
+        self.assertIn('--example resolver_direct_probe', source)
+        self.assertIn('run_users_databases_reference()', source)
+        self.assertIn(
+            'compat/x86_64/run_x86_users_databases_reference.sh',
+            source,
+        )
+        self.assertIn('--test x86_64_users_databases', source)
+        self.assertIn('--example users_databases_direct_probe', source)
+        users_databases_reference = source.split(
+            'run_users_databases_reference() {',
+            1,
+        )[1].split('\n}\n', 1)[0]
+        self.assertIn('run_in_container cargo test', users_databases_reference)
+        self.assertIn('--no-default-features --features alloc', users_databases_reference)
+        self.assertIn('--test x86_64_users_databases', users_databases_reference)
+        self.assertIn('-- --test-threads=1', users_databases_reference)
+        self.assertIn('run_in_container cargo build', users_databases_reference)
+        self.assertIn('--example users_databases_direct_probe', users_databases_reference)
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_x86_users_databases_reference.sh',
+            users_databases_reference,
+        )
         path_lifecycle_runner = (
             ROOT / 'compat/x86_64/run_x86_path_lifecycle_reference.sh'
         ).read_text(encoding='utf-8')
@@ -195,6 +510,228 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         namespace_test = (
             ROOT / 'crabc-rs/tests/x86_64_namespace.rs'
         ).read_text(encoding='utf-8')
+        xattr_runner = (
+            ROOT / 'compat/x86_64/run_x86_xattr_reference.sh'
+        ).read_text(encoding='utf-8')
+        xattr_probe = (
+            ROOT / 'compat/x86_64/x86_xattr_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        xattr_test = (ROOT / 'crabc-rs/tests/x86_64_xattr.rs').read_text(encoding='utf-8')
+        xattr_direct_probe = (
+            ROOT / 'crabc-rs/examples/xattr_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        directory_runner = (
+            ROOT / 'compat/x86_64/run_x86_directory_reference.sh'
+        ).read_text(encoding='utf-8')
+        directory_probe = (
+            ROOT / 'compat/x86_64/x86_directory_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        raw_directory_test = (
+            ROOT / 'crabc-rs/tests/x86_64_raw_directory.rs'
+        ).read_text(encoding='utf-8')
+        directory_test = (
+            ROOT / 'crabc-rs/tests/x86_64_directory.rs'
+        ).read_text(encoding='utf-8')
+        directory_position_test = (
+            ROOT / 'crabc-rs/tests/x86_64_directory_position.rs'
+        ).read_text(encoding='utf-8')
+        directory_direct_probe = (
+            ROOT / 'crabc-rs/examples/directory_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        directory_position_direct_probe = (
+            ROOT / 'crabc-rs/examples/directory_position_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        temporary_object_runner = (
+            ROOT / 'compat/x86_64/run_x86_temporary_object_reference.sh'
+        ).read_text(encoding='utf-8')
+        temporary_object_probe = (
+            ROOT / 'compat/x86_64/x86_temporary_object_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        temporary_object_test = (
+            ROOT / 'crabc-rs/tests/x86_64_temporary_objects.rs'
+        ).read_text(encoding='utf-8')
+        named_tempfile_direct_probe = (
+            ROOT / 'crabc-rs/examples/fs_named_tempfile_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        tempfile_direct_probe = (
+            ROOT / 'crabc-rs/examples/fs_tempfile_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        tempdir_direct_probe = (
+            ROOT / 'crabc-rs/examples/fs_tempdir_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        statx_runner = (
+            ROOT / 'compat/x86_64/run_x86_statx_reference.sh'
+        ).read_text(encoding='utf-8')
+        statx_probe = (
+            ROOT / 'compat/x86_64/x86_statx_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        statx_test = (ROOT / 'crabc-rs/tests/x86_64_statx.rs').read_text(encoding='utf-8')
+        statx_direct_probe = (
+            ROOT / 'crabc-rs/examples/statx_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        cwd_canonicalize_runner = (
+            ROOT / 'compat/x86_64/run_x86_cwd_canonicalize_reference.sh'
+        ).read_text(encoding='utf-8')
+        cwd_canonicalize_probe = (
+            ROOT / 'compat/x86_64/x86_cwd_canonicalize_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        canonicalize_test = (
+            ROOT / 'crabc-rs/tests/x86_64_canonicalize.rs'
+        ).read_text(encoding='utf-8')
+        cwd_mutation_test = (
+            ROOT / 'crabc-rs/tests/x86_64_cwd_mutation.rs'
+        ).read_text(encoding='utf-8')
+        canonicalize_direct_probe = (
+            ROOT / 'crabc-rs/examples/fs_canonicalize_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        cwd_direct_probe = (
+            ROOT / 'crabc-rs/examples/process_cwd_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        root_change_runner = (
+            ROOT / 'compat/x86_64/run_x86_root_change_reference.sh'
+        ).read_text(encoding='utf-8')
+        root_change_probe = (
+            ROOT / 'compat/x86_64/x86_root_change_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        chroot_test = (ROOT / 'crabc-rs/tests/x86_64_chroot.rs').read_text(encoding='utf-8')
+        chroot_direct_probe = (
+            ROOT / 'crabc-rs/examples/process_chroot_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        mount_runner = (
+            ROOT / 'compat/x86_64/run_x86_mount_reference.sh'
+        ).read_text(encoding='utf-8')
+        mount_probe = (
+            ROOT / 'compat/x86_64/x86_mount_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        mount_test = (ROOT / 'crabc-rs/tests/x86_64_mount.rs').read_text(encoding='utf-8')
+        mount_direct_probe = (
+            ROOT / 'crabc-rs/examples/mount_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        thread_kill_runner = (
+            ROOT / 'compat/x86_64/run_x86_thread_kill_reference.sh'
+        ).read_text(encoding='utf-8')
+        thread_kill_probe = (
+            ROOT / 'compat/x86_64/x86_thread_kill_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        thread_kill_test = (
+            ROOT / 'crabc-rs/tests/x86_64_thread_kill.rs'
+        ).read_text(encoding='utf-8')
+        thread_kill_direct_probe = (
+            ROOT / 'crabc-rs/examples/thread_kill_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        mapping_reference_runner = (
+            ROOT / 'compat/x86_64/run_x86_mapping_reference.sh'
+        ).read_text(encoding='utf-8')
+        mapping_reference_probe = (
+            ROOT / 'compat/x86_64/x86_mapping_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        memory_mapping_test = (
+            ROOT / 'crabc-rs/tests/x86_64_memory_mapping.rs'
+        ).read_text(encoding='utf-8')
+        mapping_direct_probe = (
+            ROOT / 'crabc-rs/examples/mapping_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        memory_vm_reference_runner = (
+            ROOT / 'compat/x86_64/run_x86_memory_vm_reference.sh'
+        ).read_text(encoding='utf-8')
+        memory_vm_reference_probe = (
+            ROOT / 'compat/x86_64/x86_memory_vm_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        memory_vm_test = (
+            ROOT / 'crabc-rs/tests/x86_64_memory_vm.rs'
+        ).read_text(encoding='utf-8')
+        memory_vm_direct_probe = (
+            ROOT / 'crabc-rs/examples/memory_vm_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        pty_basic_reference_runner = (
+            ROOT / 'compat/x86_64/run_x86_pty_basic_reference.sh'
+        ).read_text(encoding='utf-8')
+        pty_basic_reference_probe = (
+            ROOT / 'compat/x86_64/x86_pty_basic_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        pty_basic_test = (
+            ROOT / 'crabc-rs/tests/x86_64_pty_basic.rs'
+        ).read_text(encoding='utf-8')
+        pty_basic_direct_probe = (
+            ROOT / 'crabc-rs/examples/pty_basic_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        terminal_reference_runner = (
+            ROOT / 'compat/x86_64/run_x86_terminal_reference.sh'
+        ).read_text(encoding='utf-8')
+        terminal_reference_probe = (
+            ROOT / 'compat/x86_64/x86_terminal_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        terminal_test = (
+            ROOT / 'crabc-rs/tests/x86_64_terminal.rs'
+        ).read_text(encoding='utf-8')
+        terminal_direct_probe = (
+            ROOT / 'crabc-rs/examples/x86_64_terminal_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        mqueue_runner = (
+            ROOT / 'compat/x86_64/run_x86_mqueue_reference.sh'
+        ).read_text(encoding='utf-8')
+        mqueue_probe = (
+            ROOT / 'compat/x86_64/x86_mqueue_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        ipc_test = (ROOT / 'crabc-rs/tests/x86_64_ipc.rs').read_text(encoding='utf-8')
+        ipc_direct_probe = (
+            ROOT / 'crabc-rs/examples/ipc_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        shm_runner = (
+            ROOT / 'compat/x86_64/run_x86_shm_reference.sh'
+        ).read_text(encoding='utf-8')
+        shm_probe = (
+            ROOT / 'compat/x86_64/x86_shm_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        shm_test = (ROOT / 'crabc-rs/tests/x86_64_shm.rs').read_text(encoding='utf-8')
+        shm_direct_probe = (
+            ROOT / 'crabc-rs/examples/shm_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        inotify_runner = (
+            ROOT / 'compat/x86_64/run_x86_inotify_reference.sh'
+        ).read_text(encoding='utf-8')
+        inotify_probe = (
+            ROOT / 'compat/x86_64/x86_inotify_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        inotify_test = (ROOT / 'crabc-rs/tests/x86_64_inotify.rs').read_text(encoding='utf-8')
+        inotify_direct_probe = (
+            ROOT / 'crabc-rs/examples/inotify_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        calendar_time_runner = (
+            ROOT / 'compat/x86_64/run_x86_calendar_time_reference.sh'
+        ).read_text(encoding='utf-8')
+        calendar_time_probe = (
+            ROOT / 'compat/x86_64/x86_calendar_time_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        advanced_time_runner = (
+            ROOT / 'compat/x86_64/run_x86_advanced_time_reference.sh'
+        ).read_text(encoding='utf-8')
+        advanced_time_probe = (
+            ROOT / 'compat/x86_64/x86_advanced_time_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        advanced_time_test = (
+            ROOT / 'crabc-rs/tests/x86_64_advanced_time.rs'
+        ).read_text(encoding='utf-8')
+        calendar_oracle = (
+            'syscall=gettimeofday:96 abi=rdi-timeval:rsi-null '
+            'layout=timeval16/8:offsets=0,8 raw=normalized:record-bounded '
+            'utc=gmtime_r:timegm:epoch:pre-epoch:leap:400-year '
+            'tz=POSIX-EST5EDT4-M3.2.0-M11.1.0 dst=start-gap:end-fold '
+            'native=rule-input-only:no-c-time-abi:no-TZ-global '
+            'c-api-selection=excluded'
+        )
+        advanced_time_oracle = (
+            'layout=timespec16/8 itimerspec32/8 sigevent64/8 '
+            'offsets=timespec0,8/itimerspec0,16/sigevent0,8,12,16 '
+            'syscalls=timer:222,223,224,225,226/clock:227,229 '
+            'process-clock=encoded,current,missing:raw-EINVAL,musl-ESRCH '
+            'getres=musl+raw-normalized '
+            'settime=monotonic-no-mutate:EINVAL|EPERM '
+            'timers=SIGEV_NONE:initial,one-shot,periodic,'
+            'disarm-interval-zero:stale-value,delete '
+            'flags=ABSTIME+0x2,0x4,0x80000000-forwarded-ignored '
+            'errors=invalid-nsec-EINVAL'
+        )
         socket_transport_runner = (
             ROOT / 'compat/x86_64/run_x86_socket_transport_reference.sh'
         ).read_text(encoding='utf-8')
@@ -204,10 +741,298 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         socket_transport_test = (
             ROOT / 'crabc-rs/tests/x86_64_socket_transport.rs'
         ).read_text(encoding='utf-8')
+        interface_device_runner = (
+            ROOT / 'compat/x86_64/run_x86_interface_device_reference.sh'
+        ).read_text(encoding='utf-8')
+        interface_device_probe = (
+            ROOT / 'compat/x86_64/x86_interface_device_reference_probe.c'
+        ).read_text(encoding='utf-8')
+        interface_device_test = (
+            ROOT / 'crabc-rs/tests/x86_64_interface_device.rs'
+        ).read_text(encoding='utf-8')
+        resolver_transport_test = (
+            ROOT / 'crabc-core/tests/x86_64_resolver_transport.rs'
+        ).read_text(encoding='utf-8')
+        resolver_facade_test = (
+            ROOT / 'crabc-rs/tests/x86_64_resolver.rs'
+        ).read_text(encoding='utf-8')
+        resolver_hosts_probe = (
+            ROOT / 'crabc-rs/examples/resolver_hosts_direct_probe.rs'
+        ).read_text(encoding='utf-8')
+        netdb_test = (
+            ROOT / 'crabc-rs/tests/x86_64_netdb.rs'
+        ).read_text(encoding='utf-8')
+        resolver_direct_probe = (
+            ROOT / 'crabc-rs/examples/resolver_direct_probe.rs'
+        ).read_text(encoding='utf-8')
         self.assertIn('x86_path_lifecycle_reference_probe.c', path_lifecycle_runner)
         self.assertIn('x86_namespace_reference_probe.c', namespace_runner)
         self.assertIn('x86_64_path_lifecycle_is_descriptor_relative_and_typed', path_lifecycle_test)
         self.assertIn('x86_64_namespace_lifecycle_is_descriptor_relative', namespace_test)
+        self.assertIn('x86_xattr_reference_probe.c', xattr_runner)
+        self.assertIn('SYS_setxattr == 188', xattr_probe)
+        self.assertIn('SYS_fremovexattr == 199', xattr_probe)
+        self.assertIn('XATTR_CREATE == 1', xattr_probe)
+        self.assertIn('XATTR_REPLACE == 2', xattr_probe)
+        self.assertIn('x86_64_xattr_preserves_path_nofollow_fd_and_caller_buffer_contracts', xattr_test)
+        self.assertIn('crabc_rs_xattr_direct_probe', xattr_direct_probe)
+        self.assertIn('x86_directory_reference_probe.c', directory_runner)
+        self.assertIn('SYS_getdents64 == 217', directory_probe)
+        self.assertIn('SYS_lseek == 8', directory_probe)
+        self.assertIn('SYS_openat == 257', directory_probe)
+        self.assertIn('LINUX_DIRENT64_HEADER_SIZE = 19', directory_probe)
+        self.assertIn('opendir', directory_probe)
+        self.assertIn('fdopendir', directory_probe)
+        self.assertIn('seekdir', directory_probe)
+        self.assertIn('rewinddir', directory_probe)
+        self.assertIn('x86_64_raw_dir_preserves_unaligned_buffer_borrowed_names_and_small_buffer_error', raw_directory_test)
+        self.assertIn('x86_64_dir_owns_close_on_exec_descriptor_and_preserves_byte_names', directory_test)
+        self.assertIn('x86_64_dir_rewind_and_seek_discard_buffered_records', directory_position_test)
+        self.assertIn('crabc_rs_directory_direct_probe', directory_direct_probe)
+        self.assertIn('crabc_rs_directory_position_direct_probe', directory_position_direct_probe)
+        self.assertIn('x86_temporary_object_reference_probe.c', temporary_object_runner)
+        self.assertIn('anonymous=unavailable:EOPNOTSUPP', temporary_object_runner)
+        self.assertIn('SYS_openat == 257', temporary_object_probe)
+        self.assertIn('SYS_mkdirat == 258', temporary_object_probe)
+        self.assertIn('SYS_unlinkat == 263', temporary_object_probe)
+        self.assertIn('O_TMPFILE == 0x00410000', temporary_object_probe)
+        self.assertIn('stable-parent-unlink', temporary_object_probe)
+        self.assertIn('named_tempfile_is_private_cloexec_and_drop_unlinks', temporary_object_test)
+        self.assertIn('anonymous_tempfile_is_cloexec_unlinked_and_read_write', temporary_object_test)
+        self.assertIn('temporary_directories_are_private_byte_preserving_and_descriptor_relative', temporary_object_test)
+        self.assertIn('crabc_rs_fs_named_tempfile_direct_probe', named_tempfile_direct_probe)
+        self.assertIn('crabc_rs_fs_tempfile_direct_probe', tempfile_direct_probe)
+        self.assertIn('crabc_rs_fs_tempdir_direct_probe', tempdir_direct_probe)
+        self.assertIn('fs::rmdir(&output[..length])', tempdir_direct_probe)
+        self.assertIn('x86_statx_reference_probe.c', statx_runner)
+        self.assertIn('raw=ENOSYS-musl-fallback', statx_runner)
+        self.assertIn('SYS_statx == 332', statx_probe)
+        self.assertIn('sizeof(struct statx) == 256', statx_probe)
+        self.assertIn('AT_EMPTY_PATH == 0x1000', statx_probe)
+        self.assertIn('STATX__RESERVED == 0x80000000U', statx_probe)
+        self.assertIn('AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC', statx_probe)
+        self.assertIn('x86_64_statx_observes_descriptor_relative_metadata_only_when_masked_in', statx_test)
+        self.assertIn('x86_64_statx_keeps_operation_specific_nofollow_and_empty_path_semantics', statx_test)
+        self.assertIn('x86_64_statx_preserves_direct_validation_and_bounded_path_contracts', statx_test)
+        self.assertIn('crabc_rs_statx_direct_probe', statx_direct_probe)
+        self.assertIn('x86_cwd_canonicalize_reference_probe.c', cwd_canonicalize_runner)
+        self.assertIn('SYS_getcwd == 79', cwd_canonicalize_probe)
+        self.assertIn('SYS_chdir == 80', cwd_canonicalize_probe)
+        self.assertIn('SYS_fchdir == 81', cwd_canonicalize_probe)
+        self.assertIn('realpath', cwd_canonicalize_probe)
+        self.assertIn('cwd_mutation_child', cwd_canonicalize_probe)
+        self.assertIn('x86_64_canonicalize_into_is_physical_byte_preserving_and_noalloc', canonicalize_test)
+        self.assertIn('x86_64_cwd_mutation_is_child_contained_and_descriptor_restorable', cwd_mutation_test)
+        self.assertIn('crabc_rs_fs_canonicalize_direct_probe', canonicalize_direct_probe)
+        self.assertIn('crabc_rs_process_cwd_direct_probe', cwd_direct_probe)
+        self.assertIn('x86_root_change_reference_probe.c', root_change_runner)
+        self.assertIn('CAP_SYS_CHROOT', root_change_runner)
+        self.assertIn('SYS_chroot == 161', root_change_probe)
+        self.assertIn('root_change_child', root_change_probe)
+        self.assertIn(
+            'x86_64_chroot_is_child_contained_and_preserves_existing_cwd',
+            chroot_test,
+        )
+        self.assertIn('process::chroot', chroot_test)
+        self.assertIn('crabc_rs_process_chroot_direct_probe', chroot_direct_probe)
+        self.assertIn('x86_mount_reference_probe.c', mount_runner)
+        self.assertIn('mount=165 umount2=166', mount_runner)
+        self.assertIn('SYS_mount == 165', mount_probe)
+        self.assertIn('SYS_umount2 == 166', mount_probe)
+        self.assertIn('matching_missing_target_failure', mount_probe)
+        self.assertIn('run_in_child', mount_probe)
+        self.assertIn(
+            'x86_64_mount_basic_checks_paths_and_preserves_direct_missing_target_errors',
+            mount_test,
+        )
+        self.assertIn('mount::mount', mount_test)
+        self.assertIn('mount::unmount', mount_test)
+        self.assertIn('crabc_rs_mount_direct_probe', mount_direct_probe)
+        self.assertIn('x86_thread_kill_reference_probe.c', thread_kill_runner)
+        self.assertIn('pinned-musl/raw exact-thread signal-delivery reference', thread_kill_runner)
+        self.assertIn('SYS_tgkill == 234', thread_kill_probe)
+        self.assertIn('SYS_gettid == 186', thread_kill_probe)
+        self.assertIn('pthread_kill', thread_kill_probe)
+        self.assertIn('raw_missing_tid_is_esrch', thread_kill_probe)
+        self.assertIn('raw_invalid_signal_is_einval', thread_kill_probe)
+        self.assertIn('run_in_child', thread_kill_probe)
+        self.assertIn(
+            'x86_64_kill_thread_targets_the_selected_live_worker_and_preserves_errors',
+            thread_kill_test,
+        )
+        self.assertIn('signal::kill_thread', thread_kill_test)
+        self.assertIn('crabc_rs_thread_kill_direct_probe', thread_kill_direct_probe)
+        self.assertIn('x86_mapping_reference_probe.c', mapping_reference_runner)
+        self.assertIn(
+            'mmap=9 mprotect=10 munmap=11 raw+musl=anonymous-private rw=write '
+            'ro=readback rw-restored=write raw-unaligned-mprotect=EINVAL '
+            'unmap=exact child-contained',
+            mapping_reference_runner,
+        )
+        self.assertIn('SYS_mmap == 9', mapping_reference_probe)
+        self.assertIn('SYS_mprotect == 10', mapping_reference_probe)
+        self.assertIn('SYS_munmap == 11', mapping_reference_probe)
+        self.assertIn('raw_unaligned_mprotect_is_einval', mapping_reference_probe)
+        self.assertIn('run_in_child', mapping_reference_probe)
+        self.assertIn(
+            'x86_64_memory_mapping_preserves_protection_and_unique_unmap_lifetime',
+            memory_mapping_test,
+        )
+        self.assertIn(
+            'x86_64_memory_mapping_file_backed_boundary_and_direct_errors_are_precise',
+            memory_mapping_test,
+        )
+        self.assertIn('mm::mmap_anonymous', memory_mapping_test)
+        self.assertIn('mm::mprotect', memory_mapping_test)
+        self.assertIn('mm::munmap', memory_mapping_test)
+        self.assertIn('crabc_rs_mapping_direct_probe', mapping_direct_probe)
+        self.assertIn('x86_memory_vm_reference_probe.c', memory_vm_reference_runner)
+        self.assertIn(
+            'brk=12 raw=query+same-address-replay musl=sbrk(0)-query+brk=ENOMEM '
+            'mlockall=151 munlockall=152',
+            memory_vm_reference_runner,
+        )
+        self.assertIn('SYS_brk == 12', memory_vm_reference_probe)
+        self.assertIn('SYS_mlockall == 151', memory_vm_reference_probe)
+        self.assertIn('SYS_munlockall == 152', memory_vm_reference_probe)
+        self.assertIn('SYS_remap_file_pages == 216', memory_vm_reference_probe)
+        self.assertIn('check_brk_query_and_replay', memory_vm_reference_probe)
+        self.assertIn('check_mlockall_cleanup', memory_vm_reference_probe)
+        self.assertIn('check_anonymous_remap_rejected', memory_vm_reference_probe)
+        self.assertIn('run_in_child', memory_vm_reference_probe)
+        self.assertIn(
+            'x86_64_kernel_brk_queries_and_replays_without_allocator_mutation',
+            memory_vm_test,
+        )
+        self.assertIn(
+            'x86_64_mlockall_flags_are_the_closed_linux_vocabulary',
+            memory_vm_test,
+        )
+        self.assertIn(
+            'x86_64_mlockall_is_child_contained_and_unlocked_after_success',
+            memory_vm_test,
+        )
+        self.assertIn(
+            'x86_64_remap_file_pages_keeps_legacy_anonymous_error_typed',
+            memory_vm_test,
+        )
+        self.assertIn('process::kernel_brk', memory_vm_test)
+        self.assertIn('mm::mlockall', memory_vm_test)
+        self.assertIn('mm::munlockall', memory_vm_test)
+        self.assertIn('mm::remap_file_pages', memory_vm_test)
+        self.assertIn('crabc_rs_memory_vm_direct_probe', memory_vm_direct_probe)
+        self.assertIn('x86_pty_basic_reference_probe.c', pty_basic_reference_runner)
+        self.assertIn(
+            'ioctls=TIOCGPTN:0x80045430,TIOCSPTLCK:0x40045431,TIOCGPTPEER:0x5441',
+            pty_basic_reference_runner,
+        )
+        self.assertIn('c-api-selection=excluded', pty_basic_reference_runner)
+        self.assertIn('SYS_ioctl == 16', pty_basic_reference_probe)
+        self.assertIn('TIOCGPTN == 0x80045430UL', pty_basic_reference_probe)
+        self.assertIn('TIOCSPTLCK == 0x40045431UL', pty_basic_reference_probe)
+        self.assertIn('TIOCGPTPEER == 0x5441UL', pty_basic_reference_probe)
+        self.assertIn('run_pty_lifecycle', pty_basic_reference_probe)
+        self.assertIn('check_nonpty_rejection', pty_basic_reference_probe)
+        self.assertIn('ptsname_r(master, short_name, sizeof(short_name)) != ERANGE', pty_basic_reference_probe)
+        self.assertIn(
+            'x86_64_pair_requires_read_write_before_touching_devpts',
+            pty_basic_test,
+        )
+        self.assertIn(
+            'x86_64_pair_owns_both_descriptors_and_resolves_slave_name',
+            pty_basic_test,
+        )
+        self.assertIn('x86_64_ptsname_into_rejects_short_caller_storage', pty_basic_test)
+        self.assertIn('x86_64_slave_output_reaches_its_owned_master', pty_basic_test)
+        self.assertIn('pty::PtyPair::open', pty_basic_test)
+        self.assertIn('pty::ptsname_into', pty_basic_test)
+        self.assertIn('crabc_rs_pty_basic_direct_probe', pty_basic_direct_probe)
+        self.assertIn('PtyPair::open', pty_basic_direct_probe)
+        self.assertIn('pty::ptsname_into', pty_basic_direct_probe)
+        self.assertIn('x86_terminal_reference_probe.c', terminal_reference_runner)
+        self.assertIn('kernel-termios=36/4@0,4,8,12,16,17', terminal_reference_runner)
+        self.assertIn('raw+musl=pty-rawmode-termios-queue-exclusive-ttyname-session', terminal_reference_runner)
+        self.assertIn('sizeof(struct kernel_termios_x86) == 36', terminal_reference_probe)
+        self.assertIn('sizeof(struct termios) == 60', terminal_reference_probe)
+        self.assertIn('NCCS == 32', terminal_reference_probe)
+        self.assertIn('SYS_ioctl == 16', terminal_reference_probe)
+        self.assertIn('SYS_setsid == 112', terminal_reference_probe)
+        self.assertIn('compare_kernel_and_public', terminal_reference_probe)
+        self.assertIn('make_kernel_raw', terminal_reference_probe)
+        self.assertIn('terminal_session_child', terminal_reference_probe)
+        self.assertIn(
+            'x86_64_terminal_attributes_queue_special_codes_and_window_size_round_trip',
+            terminal_test,
+        )
+        self.assertIn('x86_64_explicit_session_handoff_is_confined_to_a_child', terminal_test)
+        self.assertIn('pair.establish_session_and_controlling_terminal(false)', terminal_test)
+        self.assertIn('termios::ttyname_into', terminal_test)
+        self.assertIn('raw.make_raw()', terminal_test)
+        self.assertIn('changed.set_input_speed(0)', terminal_test)
+        self.assertIn('crabc_rs_x86_64_terminal_direct_probe', terminal_direct_probe)
+        self.assertIn('termios::tcgetattr', terminal_direct_probe)
+        self.assertIn('termios::ioctl_tiocexcl', terminal_direct_probe)
+        self.assertIn('changed.make_raw()', terminal_direct_probe)
+        self.assertIn('changed.set_input_speed(0)', terminal_direct_probe)
+        self.assertIn('pair.establish_session_and_controlling_terminal(false)', terminal_direct_probe)
+        self.assertIn('x86_mqueue_reference_probe.c', mqueue_runner)
+        self.assertIn('SYS_mq_open == 240', mqueue_probe)
+        self.assertIn('SYS_mq_getsetattr == 245', mqueue_probe)
+        self.assertIn('sizeof(struct mq_attr) == 64', mqueue_probe)
+        self.assertIn('mq_unlink', mqueue_probe)
+        self.assertIn('x86_64_ipc_owns_attributes_priorities_nonblocking_and_unlink_lifetime', ipc_test)
+        self.assertIn('x86_64_ipc_uses_absolute_realtime_deadlines_and_validates_inputs', ipc_test)
+        self.assertIn('crabc_rs_ipc_direct_probe', ipc_direct_probe)
+        self.assertIn('x86_shm_reference_probe.c', shm_runner)
+        self.assertIn('SYS_openat == 257', shm_probe)
+        self.assertIn('SYS_unlinkat == 263', shm_probe)
+        self.assertIn('O_CLOEXEC == 0x00080000', shm_probe)
+        self.assertIn('O_NOFOLLOW', shm_probe)
+        self.assertIn('O_NONBLOCK', shm_probe)
+        self.assertIn('shm_open', shm_probe)
+        self.assertIn('x86_64_shm_owns_cloexec_descriptors_and_unlink_after_open_lifetime', shm_test)
+        self.assertIn('x86_64_shm_validates_posix_names_before_the_direct_syscall', shm_test)
+        self.assertIn('crabc_rs_shm_direct_probe', shm_direct_probe)
+        self.assertIn('x86_inotify_reference_probe.c', inotify_runner)
+        self.assertIn('SYS_inotify_init1 == 294', inotify_probe)
+        self.assertIn('SYS_inotify_add_watch == 254', inotify_probe)
+        self.assertIn('SYS_inotify_rm_watch == 255', inotify_probe)
+        self.assertIn('sizeof(struct inotify_event) == 16', inotify_probe)
+        self.assertIn('IN_NONBLOCK == 0x00000800', inotify_probe)
+        self.assertIn('x86_64_inotify_owns_nonblocking_cloexec_watches_and_byte_events', inotify_test)
+        self.assertIn('x86_64_inotify_preserves_direct_validation_and_noalloc_path_boundaries', inotify_test)
+        self.assertIn('crabc_rs_inotify_direct_probe', inotify_direct_probe)
+        self.assertIn('x86_calendar_time_reference_probe.c', calendar_time_runner)
+        self.assertIn('civil-time reference', calendar_time_runner)
+        self.assertIn('run_musl_oracle.sh', calendar_time_runner)
+        self.assertNotIn('-p crabc-libc', calendar_time_runner)
+        self.assertIn(calendar_oracle, calendar_time_runner)
+        self.assertIn(calendar_oracle, calendar_time_probe)
+        self.assertIn('SYS_gettimeofday == 96', calendar_time_probe)
+        self.assertIn('gmtime_r', calendar_time_probe)
+        self.assertIn('timegm', calendar_time_probe)
+        self.assertIn('setenv("TZ"', calendar_time_probe)
+        self.assertIn('tzset();', calendar_time_probe)
+        self.assertIn('x86_advanced_time_reference_probe.c', advanced_time_runner)
+        self.assertIn('advanced-time reference', advanced_time_runner)
+        self.assertIn('run_musl_oracle.sh', advanced_time_runner)
+        self.assertNotIn('-p crabc-libc', advanced_time_runner)
+        self.assertIn(advanced_time_oracle, advanced_time_runner)
+        self.assertIn(advanced_time_oracle, advanced_time_probe)
+        self.assertIn('SYS_timer_create == 222', advanced_time_probe)
+        self.assertIn('SYS_clock_settime == 227', advanced_time_probe)
+        self.assertIn('sizeof(struct sigevent) == 64', advanced_time_probe)
+        self.assertIn('clock_getcpuclockid', advanced_time_probe)
+        self.assertIn('INT_MAX - 1', advanced_time_probe)
+        self.assertIn('SIGEV_NONE', advanced_time_probe)
+        self.assertIn('forwarded_ignored_timer_settime_flags', advanced_time_probe)
+        self.assertIn('0x00000004', advanced_time_probe)
+        self.assertIn('INT_MIN', advanced_time_probe)
+        self.assertIn('itimerspec_has_zero_interval', advanced_time_probe)
+        self.assertIn('x86_64_advanced_clock_ids_are_validated_and_direct', advanced_time_test)
+        self.assertIn('x86_64_clock_settime_preflights_and_never_mutates_realtime', advanced_time_test)
+        self.assertIn('x86_64_posix_timer_owns_a_sigev_none_lifecycle', advanced_time_test)
+        self.assertIn('TimerSetFlags::from_bits_retain(2)', advanced_time_test)
         self.assertIn('x86_socket_transport_reference_probe.c', socket_transport_runner)
         self.assertIn('SYS_accept4 == 288', socket_transport_probe)
         self.assertIn('SYS_accept == 43', socket_transport_probe)
@@ -217,6 +1042,76 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('raw_recvmmsg', socket_transport_probe)
         self.assertIn('socketpair_transports_vectored_bytes_and_shutdown_is_typed', socket_transport_test)
         self.assertIn('ipv6_datagram_round_trip_preserves_native_endpoint_encoding', socket_transport_test)
+        self.assertIn('x86_interface_device_reference_probe.c', interface_device_runner)
+        self.assertIn('sizeof(struct ifreq) == 40', interface_device_probe)
+        self.assertIn('SIOCGIFNAME == 0x8910', interface_device_probe)
+        self.assertIn('RTM_GETLINK == 18', interface_device_probe)
+        self.assertIn('RTM_GETADDR == 22', interface_device_probe)
+        self.assertIn('SYS_recvmsg == 47', interface_device_probe)
+        self.assertIn('MSG_TRUNC == 0x20', interface_device_probe)
+        self.assertIn('AF_INET6', interface_device_probe)
+        self.assertIn('raw and musl loopback indexes agree', interface_device_probe)
+        self.assertIn('x86_64_interface_names_are_owned_and_self_consistent', interface_device_test)
+        self.assertIn('x86_64_interface_address_snapshot_keeps_the_two_netlink_phases_owned', interface_device_test)
+        self.assertIn(
+            'x86_64_udp_ignores_short_wrong_id_malformed_and_oversized_packets_before_an_answer',
+            resolver_transport_test,
+        )
+        self.assertIn(
+            'x86_64_udp_truncation_retries_the_exact_query_over_partial_tcp',
+            resolver_transport_test,
+        )
+        self.assertIn(
+            'x86_64_dns_response_rejects_an_out_of_bounds_compressed_record_owner',
+            resolver_transport_test,
+        )
+        self.assertIn(
+            'x86_64_dns_response_rejects_a_compressed_record_owner_in_the_header',
+            resolver_transport_test,
+        )
+        self.assertIn(
+            'x86_64_exchange_rejects_a_header_compression_pointer_in_the_caller_query',
+            resolver_transport_test,
+        )
+        self.assertIn(
+            'x86_64_failed_first_nameserver_advances_in_configured_order',
+            resolver_transport_test,
+        )
+        self.assertIn('x86_64_all_nameserver_failures_are_bounded', resolver_transport_test)
+        self.assertIn(
+            'x86_64_hosts_snapshot_is_owned_case_insensitive_and_precedes_dns',
+            resolver_facade_test,
+        )
+        self.assertIn(
+            'x86_64_resolver_search_cname_and_ptr_use_the_local_configured_server',
+            resolver_facade_test,
+        )
+        self.assertIn(
+            'x86_64_resolver_aaaa_and_timeout_map_through_the_facade',
+            resolver_facade_test,
+        )
+        self.assertIn('crabc_rs_resolver_hosts_direct_probe', resolver_hosts_probe)
+        self.assertNotIn('ServiceDatabase', resolver_hosts_probe)
+        self.assertNotIn('ProtocolDatabase', resolver_hosts_probe)
+        self.assertIn(
+            'x86_64_hosts_snapshot_is_owned_and_system_loader_matches_direct_snapshot',
+            netdb_test,
+        )
+        self.assertIn(
+            'x86_64_service_and_protocol_snapshots_are_owned_typed_and_ordered',
+            netdb_test,
+        )
+        self.assertIn(
+            'x86_64_service_and_protocol_malformed_records_reject_the_complete_snapshot',
+            netdb_test,
+        )
+        self.assertIn(
+            'x86_64_service_and_protocol_system_loaders_match_direct_snapshots',
+            netdb_test,
+        )
+        self.assertIn('crabc_rs_resolver_direct_probe', resolver_direct_probe)
+        self.assertIn('ServiceDatabase::from_bytes', resolver_direct_probe)
+        self.assertIn('ProtocolDatabase::from_bytes', resolver_direct_probe)
         self.assertIn('run_statat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_statat_reference.sh', source)
         self.assertIn('run_getcwd_reference()', source)
@@ -283,12 +1178,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_setitimer', source)
         self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_mm', source)
+        self.assertIn('--test x86_64_memory_mapping', source)
+        self.assertIn('--test x86_64_memory_vm', source)
+        self.assertIn('--test x86_64_pty_basic', source)
+        self.assertIn('--test x86_64_terminal', source)
+        self.assertIn('--test x86_64_mount', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('--test x86_64_poll', source)
         self.assertIn('--test x86_64_priority', source)
         self.assertIn('--test x86_64_setpriority', source)
         self.assertIn('--test x86_64_process_identity', source)
+        self.assertIn('--test x86_64_child_ownership', source)
         self.assertIn('--test x86_64_process_session', source)
         self.assertIn('--test x86_64_pidfd_open', source)
         self.assertIn('--test x86_64_rand', source)
@@ -306,21 +1207,188 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_getcwd', source)
         self.assertIn('--test x86_64_current_dir_name', source)
         self.assertIn('--test x86_64_readlink', source)
+        self.assertIn('--test x86_64_xattr', source)
+        self.assertIn('--test x86_64_raw_directory', source)
+        self.assertIn('--test x86_64_directory', source)
+        self.assertIn('--test x86_64_directory_position', source)
+        self.assertIn('--test x86_64_temporary_objects', source)
+        self.assertIn('--test x86_64_statx', source)
+        self.assertIn('--test x86_64_ipc', source)
+        self.assertIn('--test x86_64_shm', source)
+        self.assertIn('--test x86_64_inotify', source)
         self.assertIn('--test x86_64_sched_rr_interval', source)
         self.assertIn('--test x86_64_sched_affinity', source)
         self.assertIn('--test x86_64_sched_setaffinity', source)
         self.assertIn('--test x86_64_system', source)
         self.assertIn('--test x86_64_thread', source)
+        self.assertIn('--test x86_64_thread_kill', source)
         self.assertIn('--test x86_64_thread_credentials', source)
         self.assertIn('--test x86_64_time', source)
+        self.assertIn('--test time', source)
+        self.assertIn('--test calendar_utc', source)
+        self.assertIn('--test x86_64_calendar_time', source)
+        self.assertIn('--test x86_64_advanced_time', source)
+        self.assertIn('--test timezone_rules', source)
+        self.assertIn('--test calendar_local', source)
+        self.assertIn('--test x86_64_users_databases', source)
         self.assertIn('--test x86_64_timerfd', source)
         self.assertIn('--test x86_64_pselect', source)
         facade = source.split('    facade)\n', 1)[1].split('    libc-syscall)', 1)[0]
         self.assertIn('--test x86_64_rlimit_targeted', facade)
+        self.assertIn('--test x86_64_child_ownership', facade)
+        self.assertIn('run_in_chroot_cap_container cargo test', facade)
+        self.assertIn('--test x86_64_chroot', facade)
+        self.assertIn('--test x86_64_thread_kill', facade)
+        self.assertIn('--test x86_64_memory_mapping', facade)
+        self.assertIn('--test x86_64_memory_vm', facade)
+        self.assertIn('--test x86_64_pty_basic', facade)
+        self.assertIn('--test x86_64_terminal', facade)
+        self.assertIn('--test x86_64_mount', facade)
+        self.assertIn('--test x86_64_users_databases', facade)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_libc_errno_tls_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_errno_tls.sh', source)
+        self.assertIn('run_libc_stat_compat_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_stat_compat.sh', source)
+        self.assertIn('run_libc_credentials_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_credentials.sh', source)
+        self.assertIn('run_libc_bootstrap_primitives_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_bootstrap_primitives.sh', source
+        )
+        self.assertIn(
+            '    libc-credentials)\n        [ "$#" -eq 0 ] || fail "libc-credentials takes no arguments"',
+            source,
+        )
+        self.assertIn(
+            '    libc-bootstrap-primitives)\n        [ "$#" -eq 0 ] || fail "libc-bootstrap-primitives takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_signal_control_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_signal_control.sh', source
+        )
+        self.assertIn(
+            '    libc-signal-control)\n        [ "$#" -eq 0 ] || fail "libc-signal-control takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_termios_control_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_termios_control.sh', source
+        )
+        self.assertIn(
+            '    libc-termios-control)\n        [ "$#" -eq 0 ] || fail "libc-termios-control takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_process_context_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_process_context.sh', source
+        )
+        self.assertIn(
+            '    libc-process-context)\n        [ "$#" -eq 0 ] || fail "libc-process-context takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_descriptor_io_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_descriptor_io.sh', source
+        )
+        self.assertIn(
+            '    libc-descriptor-io)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-io takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_process_resources_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_process_resources.sh', source
+        )
+        self.assertIn(
+            '    libc-process-resources)\n        [ "$#" -eq 0 ] || fail "libc-process-resources takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_readiness_waits_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_readiness_waits.sh', source
+        )
+        self.assertIn(
+            '    libc-readiness-waits)\n        [ "$#" -eq 0 ] || fail "libc-readiness-waits takes no arguments"',
+            source,
+        )
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_libc_socket_transport.sh',
+            source,
+        )
+        self.assertIn(
+            '    libc-socket-transport)\n        [ "$#" -eq 0 ] || fail "libc-socket-transport takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_system_observation_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_system_observation.sh', source
+        )
+        self.assertIn(
+            '    libc-system-observation)\n        [ "$#" -eq 0 ] || fail "libc-system-observation takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_uts_identity_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_uts_identity.sh', source)
+        self.assertIn('run_in_uts_cap_container()', source)
+        self.assertIn('--cap-add=SYS_ADMIN', source)
+        self.assertIn(
+            '    libc-uts-identity)\n        [ "$#" -eq 0 ] || fail "libc-uts-identity takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-ctype', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_ctype.sh', source)
+        self.assertIn(
+            '    libc-ctype)\n        [ "$#" -eq 0 ] || fail "libc-ctype takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-integer-arithmetic', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_integer_arithmetic.sh', source,
+        )
+        self.assertIn(
+            '    libc-integer-arithmetic)\n        [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-credential-observation', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_credential_observation.sh', source,
+        )
+        self.assertIn(
+            '    libc-credential-observation)\n        [ "$#" -eq 0 ] || fail "libc-credential-observation takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-ffs', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_ffs.sh', source)
+        self.assertIn(
+            '    libc-ffs)\n        [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-byte-strings', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_byte_strings.sh', source)
+        self.assertIn(
+            '    libc-byte-strings)\n        [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-random-entropy', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_random_entropy.sh', source)
+        self.assertIn(
+            '    libc-random-entropy)\n        [ "$#" -eq 0 ] || fail "libc-random-entropy takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-memory-search', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_memory_search.sh', source)
+        self.assertIn(
+            '    libc-memory-search)\n        [ "$#" -eq 0 ] || fail "libc-memory-search takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-string-copy', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_string_copy.sh', source)
+        self.assertIn(
+            '    libc-string-copy)\n        [ "$#" -eq 0 ] || fail "libc-string-copy takes no arguments"',
+            source,
+        )
         self.assertIn('run_libc_thread_pointer_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_thread_pointer.sh', source)
         self.assertIn('run_libc_foundation_probe()', source)
@@ -344,7 +1412,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/ldso/run-x86_64-image.sh test', source)
         self.assertNotIn('"$ROOT_DIR/compat/allocator/run-x86_64.sh"', source)
         self.assertNotIn('cargo "$@"', source)
-        self.assertNotIn('-p crabc-libc', source)
         self.assertNotIn('-p crabc-ldso', source)
 
     def test_pinned_musl_oracle_and_reference_header_baseline_stay_closed(self) -> None:
@@ -417,9 +1484,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         signal = (ROOT / "compat" / "x86_64" / "run_signal_header_abi.sh").read_text(
             encoding="utf-8"
         )
+        termios_header = (
+            ROOT / "compat" / "x86_64" / "run_termios_header_abi.sh"
+        ).read_text(encoding="utf-8")
         mman = (ROOT / "compat" / "x86_64" / "run_mman_header_abi.sh").read_text(
             encoding="utf-8"
         )
+        resource_header = (
+            ROOT / "compat" / "x86_64" / "run_resource_header_abi.sh"
+        ).read_text(encoding="utf-8")
         random = (ROOT / "compat" / "x86_64" / "run_x86_rand_reference.sh").read_text(
             encoding="utf-8"
         )
@@ -432,6 +1505,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         poll_header = (ROOT / "compat" / "x86_64" / "run_poll_header_abi.sh").read_text(
             encoding="utf-8"
         )
+        select_header = (
+            ROOT / "compat" / "x86_64" / "run_select_header_abi.sh"
+        ).read_text(encoding="utf-8")
         fcntl_header = (ROOT / "compat" / "x86_64" / "run_fcntl_header_abi.sh").read_text(
             encoding="utf-8"
         )
@@ -672,12 +1748,26 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('signal_header_posix_abi_probe.c', signal)
         self.assertIn('-fsyntax-only', signal)
         self.assertNotIn('-p crabc-libc', signal)
+        self.assertIn('termios_header_abi_probe.c', termios_header)
+        self.assertIn('termios_header_abi_probe.cpp', termios_header)
+        self.assertIn('include/termios.h', termios_header)
+        self.assertIn('include/bits/alltypes.h', termios_header)
+        self.assertIn('-fsyntax-only', termios_header)
+        self.assertNotIn('-p crabc-libc', termios_header)
         self.assertIn('mman_header_abi_probe.c', mman)
         self.assertIn('mman_header_abi_probe.cpp', mman)
         self.assertIn('include/sys/mman.h', mman)
         self.assertIn('include/bits/mman.h', mman)
         self.assertIn('-fsyntax-only', mman)
         self.assertNotIn('-p crabc-libc', mman)
+        self.assertIn('resource_header_abi_probe.c', resource_header)
+        self.assertIn('resource_header_abi_probe.cpp', resource_header)
+        self.assertIn('sys/resource.h', resource_header)
+        self.assertIn('sys/time.h', resource_header)
+        self.assertIn('-D_GNU_SOURCE', resource_header)
+        self.assertIn('-D_LARGEFILE64_SOURCE', resource_header)
+        self.assertIn('-fsyntax-only', resource_header)
+        self.assertNotIn('-p crabc-libc', resource_header)
         self.assertIn('x86_rand_reference_probe.c', random)
         self.assertIn('getrandom ABI/behavior reference', random)
         self.assertNotIn('-p crabc-libc', random)
@@ -697,6 +1787,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('include/poll.h', poll_header)
         self.assertIn('-fsyntax-only', poll_header)
         self.assertNotIn('-p crabc-libc', poll_header)
+        self.assertIn('select_header_abi_probe.c', select_header)
+        self.assertIn('select_header_abi_probe.cpp', select_header)
+        self.assertIn('for header in sys/select.h time.h bits/alltypes.h', select_header)
+        self.assertIn('-fsyntax-only', select_header)
+        self.assertNotIn('-p crabc-libc', select_header)
         self.assertIn('fcntl_header_abi_probe.c', fcntl_header)
         self.assertIn('fcntl_header_abi_probe.cpp', fcntl_header)
         self.assertIn('include/fcntl.h', fcntl_header)
@@ -939,6 +2034,2496 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('-no-pie -pthread', script)
         self.assertNotIn('--allow-multiple-definition', script)
         self.assertNotIn('crabc_libc', rust_probe)
+
+    def test_libc_static_c_abi_artifact_boundaries(self) -> None:
+        libc_root = (ROOT / "libc" / "src" / "lib.rs").read_text(encoding="utf-8")
+        static_c_abi = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        stat_compat = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stat_compat.rs"
+        ).read_text(encoding="utf-8")
+        credentials = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "credentials.rs"
+        ).read_text(encoding="utf-8")
+        errno = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "errno.rs").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_stat_compat_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_stat_compat_start.S").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "compat" / "x86_64" / "run_libc_stat_compat.sh").read_text(
+            encoding="utf-8"
+        )
+        credential_probe = (
+            ROOT / "compat" / "x86_64" / "libc_credentials_probe.c"
+        ).read_text(encoding="utf-8")
+        credential_start = (
+            ROOT / "compat" / "x86_64" / "libc_credentials_start.S"
+        ).read_text(encoding="utf-8")
+        credential_script = (
+            ROOT / "compat" / "x86_64" / "run_libc_credentials.sh"
+        ).read_text(encoding="utf-8")
+        bootstrap_script = (
+            ROOT / "compat" / "x86_64" / "run_libc_bootstrap_primitives.sh"
+        ).read_text(encoding="utf-8")
+        bootstrap_probe = (
+            ROOT / "compat" / "x86_64" / "libc_bootstrap_primitives_probe.c"
+        ).read_text(encoding="utf-8")
+        process_context = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"
+        ).read_text(encoding="utf-8")
+        process_context_probe = (
+            ROOT / "compat" / "x86_64" / "libc_process_context_probe.c"
+        ).read_text(encoding="utf-8")
+        process_context_start = (
+            ROOT / "compat" / "x86_64" / "libc_process_context_start.S"
+        ).read_text(encoding="utf-8")
+        process_context_script = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_context.sh"
+        ).read_text(encoding="utf-8")
+        descriptor_io = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_io.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_io_script = (
+            ROOT / "compat" / "x86_64" / "run_libc_descriptor_io.sh"
+        ).read_text(encoding="utf-8")
+        process_resources = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_resources.rs"
+        ).read_text(encoding="utf-8")
+        process_resources_script = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_resources.sh"
+        ).read_text(encoding="utf-8")
+        readiness_waits = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "readiness_waits.rs"
+        ).read_text(encoding="utf-8")
+        readiness_waits_probe = (
+            ROOT / "compat" / "x86_64" / "libc_readiness_waits_probe.c"
+        ).read_text(encoding="utf-8")
+        readiness_waits_start = (
+            ROOT / "compat" / "x86_64" / "libc_readiness_waits_start.S"
+        ).read_text(encoding="utf-8")
+        readiness_waits_script = (
+            ROOT / "compat" / "x86_64" / "run_libc_readiness_waits.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+
+        self.assertIn('target_arch = "x86_64"', libc_root)
+        self.assertIn('#[path = "c_abi/x86_64/static_c_abi.rs"]', libc_root)
+        self.assertNotIn('mod c_abi_x86_64', libc_root)
+        for composition_member in (
+            '#[path = "errno.rs"]',
+            '#[path = "syscall.rs"]',
+            '#[path = "stat_compat.rs"]',
+            '#[path = "credentials.rs"]',
+            '#[path = "process_context.rs"]',
+            '#[path = "descriptor_io.rs"]',
+            '#[path = "process_resources.rs"]',
+            '#[path = "readiness_waits.rs"]',
+            'fn c_status',
+            'fn c_ssize_status',
+            'fn c_off_status',
+            'fn rust_eh_personality',
+        ):
+            self.assertIn(composition_member, static_c_abi)
+        self.assertIn('#[thread_local]', errno)
+        self.assertIn('struct Stat', stat_compat)
+        self.assertIn('size_of::<Stat>() == 144', stat_compat)
+        self.assertIn('raw_syscall::SYS_FSTAT', stat_compat)
+        self.assertIn('raw_syscall::SYS_NEWFSTATAT', stat_compat)
+        for symbol in (
+            'fn stat(',
+            'fn lstat(',
+            'fn fstat(',
+            'fn fstatat(',
+            'fn __xstat(',
+            'fn __lxstat(',
+            'fn __fxstat(',
+            'fn __fxstatat(',
+        ):
+            self.assertIn(symbol, stat_compat)
+        for symbol in (
+            'fn setgroups(',
+            'fn setuid(',
+            'fn setgid(',
+            'fn setresuid(',
+            'fn setresgid(',
+            'fn seteuid(',
+            'fn setegid(',
+            'fn setreuid(',
+            'fn setregid(',
+        ):
+            self.assertIn(symbol, credentials)
+        for syscall in (
+            'raw_syscall::SYS_SETGROUPS',
+            'raw_syscall::SYS_SETUID',
+            'raw_syscall::SYS_SETGID',
+            'raw_syscall::SYS_SETRESUID',
+            'raw_syscall::SYS_SETRESGID',
+        ):
+            self.assertIn(syscall, credentials)
+        self.assertIn('EOPNOTSUPP', credentials)
+        for static_source in (
+            static_c_abi,
+            stat_compat,
+            credentials,
+            process_context,
+            descriptor_io,
+            process_resources,
+            readiness_waits,
+            errno,
+        ):
+            self.assertNotIn('crabc_core', static_source)
+            self.assertNotIn('crabc_mimalloc', static_source)
+        self.assertIn('_Static_assert(sizeof(struct stat) == 144', probe)
+        self.assertIn('SYS_newfstatat == 262', probe)
+        self.assertIn('errno != ENOENT', probe)
+        self.assertIn('errno != EBADF', probe)
+        self.assertIn('errno != EINVAL', probe)
+        self.assertIn('ARCH_SET_FS', start)
+        self.assertIn('mov %rsi, %fs:0', start)
+        self.assertIn('crabc_x86_64_stat_compat_probe', start)
+        self.assertIn('cargo rustc --locked -p crabc-libc --lib', script)
+        self.assertIn('-nostdlib -static', script)
+        self.assertIn('-Wl,-e,_start', script)
+        self.assertIn('R_X86_64_TPOFF', script)
+        self.assertIn('Requesting program interpreter', script)
+        self.assertIn('__tls_get_addr', script)
+        self.assertNotIn('-p crabc-core', script)
+        self.assertNotIn('--whole-archive', script)
+        self.assertIn('#include <grp.h>', credential_probe)
+        self.assertIn('_Static_assert(SYS_setgroups == 116', credential_probe)
+        self.assertIn('UINT32_MAX', credential_probe)
+        self.assertIn('raw_syscall3', credential_probe)
+        self.assertIn('same_state', credential_probe)
+        self.assertIn('CRABC_CREDENTIAL_PROFILE', credential_probe)
+        self.assertIn('EOPNOTSUPP', credential_probe)
+        self.assertIn('ARCH_SET_FS', credential_start)
+        self.assertIn('mov %rsi, %fs:0', credential_start)
+        self.assertIn('crabc_x86_64_credentials_probe', credential_start)
+        self.assertIn('cargo rustc --locked -p crabc-libc --lib', credential_script)
+        self.assertIn('-DCRABC_CREDENTIAL_PROFILE', credential_script)
+        self.assertIn('-nostdlib -static', credential_script)
+        self.assertIn('-Wl,-e,_start', credential_script)
+        self.assertIn('R_X86_64_TPOFF', credential_script)
+        self.assertIn('Requesting program interpreter', credential_script)
+        self.assertIn('__tls_get_addr', credential_script)
+        self.assertNotIn('-p crabc-core', credential_script)
+        self.assertNotIn('--whole-archive', credential_script)
+        self.assertEqual(static_export_names, sorted(static_export_names))
+        self.assertEqual(len(static_export_names), len(set(static_export_names)))
+        for symbol in (
+            "__errno_location",
+            "stat",
+            "setgroups",
+            "getpid",
+            "read",
+            "getrlimit",
+            "memcpy",
+            "feclearexcept",
+            "setjmp",
+            "rust_eh_personality",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("raw_syscall::SYS_GETPID", process_context)
+        self.assertIn("raw_syscall::SYS_SETPGID", process_context)
+        self.assertIn("raw_syscall::SYS_UMASK", process_context)
+        self.assertIn("raw_syscall0", process_context_probe)
+        self.assertIn("raw_syscall4", process_context_probe)
+        self.assertIn("child_setpgrp_case", process_context_probe)
+        self.assertIn("child_setsid_case", process_context_probe)
+        self.assertIn("ARCH_SET_FS", process_context_start)
+        self.assertIn("mov %rsi, %fs:0", process_context_start)
+        self.assertIn("crabc_x86_64_process_context_probe", process_context_start)
+        self.assertIn("check_poll_and_ppoll", readiness_waits_probe)
+        self.assertIn("check_atomic_signal_waits", readiness_waits_probe)
+        self.assertIn("ARCH_SET_FS", readiness_waits_start)
+        self.assertIn("mov %rsi, %fs:0", readiness_waits_start)
+        self.assertIn("crabc_x86_64_readiness_waits_probe", readiness_waits_start)
+        for artifact_script in (
+            script,
+            credential_script,
+            bootstrap_script,
+            process_context_script,
+            descriptor_io_script,
+            process_resources_script,
+            readiness_waits_script,
+        ):
+            self.assertIn('TLSLD', artifact_script)
+            self.assertIn('DTPMOD', artifact_script)
+            self.assertIn('DTPOFF', artifact_script)
+            self.assertIn(
+                'candidate_relocations="$work_dir/candidate-relocations"',
+                artifact_script,
+            )
+            self.assertIn('readelf --relocs --wide "$candidate"', artifact_script)
+            self.assertIn(
+                'candidate relocations retain a dynamic TLS model', artifact_script
+            )
+            self.assertIn('ar t "$archive_path"', artifact_script)
+            self.assertIn('^c\\..+\\.rcgu\\.o$', artifact_script)
+            self.assertIn("static_c_abi_exports.txt", artifact_script)
+            self.assertIn('selected static C ABI export surface drifted', artifact_script)
+        self.assertIn('memmove(destination_end, source_end, length)', bootstrap_probe)
+        self.assertIn('memmove(overlap_source + 1, overlap_source, length)', bootstrap_probe)
+        self.assertIn('memcmp(source_end, destination_end, length)', bootstrap_probe)
+        self.assertIn('bcmp(source_end, destination_end, length)', bootstrap_probe)
+
+    def test_libc_static_c_abi_signal_control_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        signal_foundation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_foundation.rs"
+        ).read_text(encoding="utf-8")
+        signal_control = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
+        ).read_text(encoding="utf-8")
+        foundation_probe = (
+            ROOT / "compat" / "x86_64" / "libc_signal_foundation_probe.rs"
+        ).read_text(encoding="utf-8")
+        control_probe = (
+            ROOT / "compat" / "x86_64" / "libc_signal_control_probe.c"
+        ).read_text(encoding="utf-8")
+        control_start = (
+            ROOT / "compat" / "x86_64" / "libc_signal_control_start.S"
+        ).read_text(encoding="utf-8")
+        control_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_signal_control.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_foundation.rs"]', static_root)
+        self.assertIn('#[path = "signal_control.rs"]', static_root)
+        for symbol in (
+            "fn sigaction(",
+            "fn signal(",
+            "fn sigemptyset(",
+            "fn sigfillset(",
+            "fn sigaddset(",
+            "fn sigdelset(",
+            "fn sigismember(",
+            "fn sigprocmask(",
+            "fn sigpending(",
+            "fn __libc_current_sigrtmax(",
+        ):
+            self.assertIn(symbol, signal_control)
+        for required in (
+            "raw_syscall::SYS_RT_SIGACTION",
+            "raw_syscall::SYS_RT_SIGPROCMASK",
+            "raw_syscall::SYS_RT_SIGPENDING",
+            "raw_syscall::syscall4(",
+            "raw_syscall::syscall2(",
+            "SA_RESTORER",
+            "pack_public_action",
+            "unpack_kernel_action",
+        ):
+            self.assertIn(required, signal_control)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn raise(",
+            "fn kill(",
+            "fn tgkill(",
+            "fn sigsuspend(",
+            "fn sigtimedwait(",
+            "fn sigwaitinfo(",
+            "fn sigwait(",
+            "fn sigaltstack(",
+            "fn pthread_sigmask(",
+        ):
+            self.assertNotIn(forbidden, signal_control)
+        self.assertNotIn("#[no_mangle]", signal_foundation)
+        self.assertIn("fn pack_public_action", signal_foundation)
+        self.assertIn("fn unpack_kernel_action", signal_foundation)
+        self.assertIn("crabc_x86_64_signal_restorer", signal_foundation)
+        self.assertIn("crabc_x86_64_signal_action_pack", foundation_probe)
+        self.assertIn("raw_tgkill_self", control_probe)
+        self.assertIn("sigpending", control_probe)
+        self.assertIn("SA_RESTART", control_probe)
+        self.assertIn("ARCH_SET_FS", control_start)
+        self.assertIn("mov %rsi, %fs:0", control_start)
+        self.assertIn("crabc_x86_64_signal_control_probe", control_start)
+        # The archive is shared with the separately selected readiness/signal-
+        # waits artifact. Its `sigsuspend` export must not be treated as an
+        # accidental signal-control export by this older artifact gate.
+        self.assertNotIn("sigsuspend sigtimedwait", control_runner)
+        self.assertIn("sigtimedwait sigwaitinfo sigwait", control_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            'ar t "$archive_path"',
+            "selected static C ABI export surface drifted",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "crabc_x86_64_signal_restorer",
+            "GLOBAL +HIDDEN",
+            "mov rax, 15",
+            "syscall",
+        ):
+            self.assertIn(required, control_runner)
+        self.assertNotIn("--whole-archive", control_runner)
+        self.assertNotIn("crabc_x86_64_signal_action_pack", static_export_names)
+        for symbol in (
+            "__libc_current_sigrtmax",
+            "sigaction",
+            "signal",
+            "sigemptyset",
+            "sigfillset",
+            "sigaddset",
+            "sigdelset",
+            "sigismember",
+            "sigprocmask",
+            "sigpending",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("libc-signal-control", runner)
+
+    def test_libc_static_c_abi_termios_control_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        termios_control = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "termios_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "termios_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_termios_control_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_termios_control_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_termios_control.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "termios_control.rs"]', static_root)
+        for symbol in (
+            "fn cfgetispeed(",
+            "fn cfgetospeed(",
+            "fn cfsetispeed(",
+            "fn cfsetospeed(",
+            "fn cfsetspeed(",
+            "fn cfmakeraw(",
+            "fn tcgetattr(",
+            "fn tcsetattr(",
+            "fn tcflush(",
+            "fn tcflow(",
+            "fn tcsendbreak(",
+            "fn tcgetwinsize(",
+            "fn tcsetwinsize(",
+        ):
+            self.assertIn(symbol, termios_control)
+        for required in (
+            "struct PublicTermios",
+            "struct KernelTermios",
+            "struct Winsize",
+            "size_of::<PublicTermios>()",
+            "size_of::<KernelTermios>()",
+            "raw_syscall::SYS_IOCTL",
+            "raw_syscall::syscall3(",
+            "CBAUD",
+            "CIBAUD",
+            "TCGETS",
+            "TCSETS",
+            "TIOCGWINSZ",
+            "TIOCSWINSZ",
+            "TCSBRK, 0",
+        ):
+            self.assertIn(required, termios_control)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn ioctl(",
+            "fn tcdrain(",
+            "fn tcgetsid(",
+            "fn tcgetpgrp(",
+            "fn tcsetpgrp(",
+            "fn openpty(",
+            "fn forkpty(",
+            "fn login_tty(",
+        ):
+            self.assertNotIn(forbidden, termios_control)
+        self.assertIn('extern "C" {', header_cxx)
+        self.assertIn("CBAUD == 0x100f", header_c)
+        self.assertIn("B4000000", header_c)
+        self.assertIn("PUBLIC_TERMIOS_TAIL_BYTES", probe)
+        self.assertIn("public_tail_has_value", probe)
+        self.assertIn("tcsetattr(-1, -1, 0)", probe)
+        self.assertIn("tcsendbreak(master, 1)", probe)
+        self.assertIn("FIXTURE_TIOCGPTPEER", probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_termios_control_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "tcgetattr lacks the fixed TCGETS request",
+            "tcsetattr does not map actions onto TCSETS through TCSETSF",
+            "tcflush lacks the fixed TCFLSH request",
+            "tcflow lacks the fixed TCXONC request",
+            "tcsendbreak does not discard duration",
+            "tcgetwinsize lacks the fixed TIOCGWINSZ request",
+            "tcsetwinsize lacks the fixed TIOCSWINSZ request",
+        ):
+            self.assertIn(required, artifact_runner)
+        # qsort/bsearch are globally selected archive exports from the later
+        # callback-algorithms vertical, so this older focused runner may not
+        # classify either as an unselected symbol.
+        for globally_selected in ("bsearch", "qsort"):
+            self.assertIn(globally_selected, static_export_names)
+        self.assertNotIn("qsort bsearch", artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "cfgetispeed",
+            "cfgetospeed",
+            "cfsetispeed",
+            "cfsetospeed",
+            "cfsetspeed",
+            "cfmakeraw",
+            "tcgetattr",
+            "tcsetattr",
+            "tcflush",
+            "tcflow",
+            "tcsendbreak",
+            "tcgetwinsize",
+            "tcsetwinsize",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("termios-header-abi", runner)
+        self.assertIn("libc-termios-control", runner)
+
+    def test_libc_static_c_abi_process_context_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        process_context = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_process_context_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_process_context_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_context.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "process_context.rs"]', static_root)
+        for symbol in (
+            "fn getpid(",
+            "fn getppid(",
+            "fn getuid(",
+            "fn getgid(",
+            "fn geteuid(",
+            "fn getegid(",
+            "fn umask(",
+            "fn setsid(",
+            "fn setpgid(",
+            "fn getpgid(",
+            "fn getsid(",
+            "fn getpgrp(",
+            "fn setpgrp(",
+        ):
+            self.assertIn(symbol, process_context)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/getpid.c",
+            "src/unistd/setpgid.c",
+            "src/stat/umask.c",
+            "raw_syscall::SYS_GETPID",
+            "raw_syscall::SYS_UMASK",
+            "raw_syscall::SYS_SETSID",
+            "raw_syscall::SYS_SETPGID",
+            "raw_syscall::SYS_GETPGID",
+            "raw_syscall::SYS_GETSID",
+            "c_status(result)",
+        ):
+            self.assertIn(required, process_context)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn fork(",
+            "fn wait(",
+            "fn waitpid(",
+            "fn waitid(",
+            "fn execve(",
+            "fn kill(",
+            "fn raise(",
+            "fn gettid(",
+        ):
+            self.assertNotIn(forbidden, process_context)
+        self.assertIn("SYS_fork == 57", probe)
+        self.assertIn("SYS_wait4 == 61", probe)
+        self.assertIn("SYS_exit == 60", probe)
+        self.assertIn("check_failure_translation", probe)
+        self.assertIn("check_umask_exchange", probe)
+        self.assertIn("child_setpgrp_case", probe)
+        self.assertIn("child_setpgid_case", probe)
+        self.assertIn("child_setsid_case", probe)
+        self.assertIn("raw_syscall4", probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_process_context_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall getpid 27",
+            "assert_named_syscall getppid 6e",
+            "assert_named_syscall getuid 66",
+            "assert_named_syscall getgid 68",
+            "assert_named_syscall geteuid 6b",
+            "assert_named_syscall getegid 6c",
+            "assert_named_syscall umask 5f",
+            "assert_named_syscall setsid 70",
+            "assert_named_syscall setpgid 6d",
+            "assert_named_syscall getpgid 79",
+            "assert_named_syscall getsid 7c",
+            "assert_named_syscall getpgrp 79",
+            "setpgrp does not derive its legacy alias from setpgid(0, 0)",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "getpid",
+            "getppid",
+            "getuid",
+            "getgid",
+            "geteuid",
+            "getegid",
+            "umask",
+            "setsid",
+            "setpgid",
+            "getpgid",
+            "getsid",
+            "getpgrp",
+            "setpgrp",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("libc-process-context", runner)
+
+    def test_libc_static_c_abi_descriptor_io_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_io = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_io.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_io_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_io_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_descriptor_io.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "descriptor_io.rs"]', static_root)
+        for symbol in (
+            "fn close(",
+            "fn read(",
+            "fn write(",
+            "fn pread(",
+            "fn pwrite(",
+            "fn lseek(",
+            "fn ftruncate(",
+            "fn fsync(",
+            "fn fdatasync(",
+            "fn dup(",
+            "fn dup2(",
+            "fn dup3(",
+            "fn pipe(",
+            "fn pipe2(",
+        ):
+            self.assertIn(symbol, descriptor_io)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/pwrite.c",
+            "struct IoVec",
+            "raw_syscall::SYS_PWRITEV2",
+            "raw_syscall::SYS_PWRITE64",
+            "raw_syscall::SYS_FCNTL",
+            "RWF_NOAPPEND",
+            "if offset == -1 { -2 } else { offset }",
+            "raw_syscall::SYS_DUP2",
+            "raw_syscall::SYS_DUP3",
+            "if result != -EBUSY",
+            "if result == -EINTR",
+            "raw_syscall::SYS_PIPE",
+            "raw_syscall::SYS_PIPE2",
+            "c_ssize_status(result)",
+            "c_off_status(result)",
+        ):
+            self.assertIn(required, descriptor_io)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn open(",
+            "fn openat(",
+            "fn fcntl(",
+            "fn readv(",
+            "fn writev(",
+            "fn preadv(",
+            "fn pwritev(",
+            "fn socket(",
+            "fn pthread_",
+        ):
+            self.assertNotIn(forbidden, descriptor_io)
+        for required in (
+            "raw_memfd_create",
+            "raw_fcntl",
+            "check_transfer_position_truncate_and_sync",
+            "check_pwrite_append_boundary",
+            "check_dup_and_close",
+            "check_dup2_and_dup3",
+            "check_pipe_and_pipe2",
+            "O_APPEND",
+            "#include <sys/mman.h>",
+            "MFD_CLOEXEC",
+            'raw_memfd_create("crabc-dup-close", MFD_CLOEXEC)',
+            "raw_fcntl(file_descriptor, F_GETFD, 0) != FD_CLOEXEC",
+            "raw_fcntl(duplicate, F_GETFD, 0) != 0",
+            "O_CLOEXEC | O_NONBLOCK",
+            "pwrite(file_descriptor, \"X\", 1, -1)",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_descriptor_io_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall close 3",
+            "assert_named_syscall pread 11",
+            "assert_named_syscall dup3 124",
+            "assert_named_syscall pipe2 125",
+            "for syscall_word in 148 12 48; do",
+            "sys/mman.h",
+            "assert_ebusy_retry dup2",
+            "assert_ebusy_retry dup3",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "close",
+            "read",
+            "write",
+            "pread",
+            "pwrite",
+            "lseek",
+            "ftruncate",
+            "fsync",
+            "fdatasync",
+            "dup",
+            "dup2",
+            "dup3",
+            "pipe",
+            "pipe2",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("libc-descriptor-io", runner)
+
+    def test_libc_static_c_abi_process_resources_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        process_resources = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_resources.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_process_resources_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_process_resources_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_resources.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "process_resources.rs"]', static_root)
+        for symbol in (
+            "fn getrlimit(",
+            "fn setrlimit(",
+            "fn prlimit(",
+            "fn getrusage(",
+            "fn getpriority(",
+            "fn setpriority(",
+            "fn nice(",
+        ):
+            self.assertIn(symbol, process_resources)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/misc/getrlimit.c",
+            "src/misc/getrusage.c",
+            "src/linux/prlimit.c",
+            "src/unistd/nice.c",
+            "struct Rlimit",
+            "struct Rusage",
+            "size_of::<Rusage>() == 272",
+            "offset_of!(Rusage, reserved) == 144",
+            "raw_syscall::SYS_PRLIMIT64",
+            "raw_syscall::SYS_GETRUSAGE",
+            "raw_syscall::SYS_GETPRIORITY",
+            "raw_syscall::SYS_SETPRIORITY",
+            "errno::get_errno()",
+            "EACCES",
+            "EPERM",
+        ):
+            self.assertIn(required, process_resources)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn times(",
+            "fn sched_",
+            "fn fork(",
+            "fn wait",
+            "fn pthread_",
+        ):
+            self.assertNotIn(forbidden, process_resources)
+        for required in (
+            "check_limit_queries",
+            "child_limit_transaction",
+            "check_live_child_prlimit",
+            "check_rusage",
+            "check_priority_queries",
+            "child_priority_and_nice",
+            "raw_prlimit",
+            "RUSAGE_CHILDREN",
+            "reserved_tail_is_unchanged",
+            "raw_result == -EACCES",
+            "nice(-1) != -1 || errno != EPERM",
+            "nice(0) != 19 || errno != EINVAL",
+            "#include <sys/resource.h>",
+            "#include <sys/time.h>",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_process_resources_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall getrlimit 12e",
+            "assert_named_syscall getrusage 62",
+            "assert_named_syscall getpriority 8c",
+            "assert_named_syscall setpriority 8d",
+            "prlimit lacks the x86 r10 fourth-argument path",
+            "nice lacks the EACCES compatibility branch",
+            "sys/resource.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "getrlimit",
+            "setrlimit",
+            "prlimit",
+            "getrusage",
+            "getpriority",
+            "setpriority",
+            "nice",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertNotIn("prlimit64", static_export_names)
+        self.assertIn("libc-process-resources", runner)
+
+    def test_libc_static_c_abi_readiness_signal_waits_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        readiness_waits = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "readiness_waits.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_readiness_waits_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_readiness_waits_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_readiness_waits.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "readiness_waits.rs"]', static_root)
+        for symbol in (
+            "fn poll(",
+            "fn ppoll(",
+            "fn select(",
+            "fn pselect(",
+            "fn pause()",
+            "fn sigsuspend(",
+        ):
+            self.assertIn(symbol, readiness_waits)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/select/poll.c",
+            "src/select/ppoll.c",
+            "src/select/select.c",
+            "src/select/pselect.c",
+            "src/unistd/pause.c",
+            "src/signal/sigsuspend.c",
+            "struct PollFd",
+            "struct FdSet",
+            "struct Timeval",
+            "struct Timespec",
+            "struct PublicSigSet",
+            "struct PselectMaskArgument",
+            "size_of::<PollFd>() == 8",
+            "size_of::<FdSet>() == 128",
+            "size_of::<PublicSigSet>() == 128",
+            "raw_syscall::SYS_POLL",
+            "raw_syscall::SYS_PPOLL",
+            "raw_syscall::SYS_SELECT",
+            "raw_syscall::SYS_PSELECT6",
+            "raw_syscall::SYS_PAUSE",
+            "raw_syscall::SYS_RT_SIGSUSPEND",
+            "raw_syscall::syscall3(",
+            "raw_syscall::syscall5(",
+            "raw_syscall::syscall6(",
+            "raw_syscall::syscall0(",
+            "raw_syscall::syscall2(",
+            "KERNEL_SIGSET_SIZE",
+        ):
+            self.assertIn(required, readiness_waits)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn epoll",
+            "fn eventfd",
+            "fn open(",
+            "fn fcntl(",
+            "fn readv(",
+            "fn writev(",
+            "fn sigtimedwait(",
+            "fn sigwaitinfo(",
+            "fn sigwait(",
+            "fn sigaltstack(",
+            "fn pthread_",
+        ):
+            self.assertNotIn(forbidden, readiness_waits)
+        for required in (
+            "#include <poll.h>",
+            "#include <sys/select.h>",
+            "sizeof(struct pollfd) == 8",
+            "FD_SETSIZE == 1024",
+            "sizeof(sigset_t) == 128",
+            "check_poll_and_ppoll",
+            "check_select_and_pselect",
+            "check_atomic_signal_waits",
+            "raw_tgkill_self",
+            "retain_pause_without_a_racy_runtime_wait",
+            "CRABC_READINESS_WAITS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_readiness_waits_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall poll 7",
+            "assert_named_syscall ppoll 10f",
+            "assert_named_syscall select 17",
+            "assert_named_syscall pselect 10e",
+            "assert_named_syscall pause 22",
+            "assert_named_syscall sigsuspend 82",
+            "pselect lacks the x86 ${register} argument path",
+            "sigsuspend lacks Linux's eight-byte kernel signal-set size",
+            "epoll_create",
+            "pthread_sigmask",
+            "sys/select.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("poll", "ppoll", "select", "pselect", "pause", "sigsuspend"):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-readiness-signal-waits"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-readiness-waits"',
+            parity_ledger,
+        )
+        self.assertIn("libc-readiness-waits", runner)
+
+    def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        socket_transport = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "socket_transport.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_socket_transport_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_socket_transport_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_socket_transport.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "socket_transport.rs"]', static_root)
+        for symbol in (
+            "fn socket(",
+            "fn socketpair(",
+            "fn bind(",
+            "fn listen(",
+            "fn accept(",
+            "fn accept4(",
+            "fn connect(",
+            "fn send(",
+            "fn recv(",
+            "fn sendto(",
+            "fn recvfrom(",
+            "fn shutdown(",
+            "fn getsockname(",
+            "fn getpeername(",
+        ):
+            self.assertIn(symbol, socket_transport)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/network/socket.c",
+            "src/network/socketpair.c",
+            "src/network/bind.c",
+            "src/network/listen.c",
+            "src/network/accept.c",
+            "src/network/accept4.c",
+            "src/network/connect.c",
+            "src/network/send.c",
+            "src/network/recv.c",
+            "src/network/sendto.c",
+            "src/network/recvfrom.c",
+            "src/network/shutdown.c",
+            "src/network/getsockname.c",
+            "src/network/getpeername.c",
+            "raw_syscall::SYS_SOCKET",
+            "raw_syscall::SYS_SOCKETPAIR",
+            "raw_syscall::SYS_BIND",
+            "raw_syscall::SYS_LISTEN",
+            "raw_syscall::SYS_ACCEPT",
+            "raw_syscall::SYS_ACCEPT4",
+            "raw_syscall::SYS_CONNECT",
+            "raw_syscall::SYS_SENDTO",
+            "raw_syscall::SYS_RECVFROM",
+            "raw_syscall::SYS_SHUTDOWN",
+            "raw_syscall::SYS_GETSOCKNAME",
+            "raw_syscall::SYS_GETPEERNAME",
+            "c_status(result)",
+            "c_ssize_status(result)",
+        ):
+            self.assertIn(required, socket_transport)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn setsockopt(",
+            "fn getsockopt(",
+            "fn sendmsg(",
+            "fn recvmsg(",
+            "fn sendmmsg(",
+            "fn recvmmsg(",
+            "fn poll(",
+            "fn pthread_",
+            "pthread_cancel",
+        ):
+            self.assertNotIn(forbidden, socket_transport)
+        for required in (
+            "#include <sys/socket.h>",
+            "check_unix_pair",
+            "check_loopback_datagram",
+            "check_loopback_stream",
+            "check_error_translation",
+            "accept4",
+            "sendto",
+            "recvfrom",
+            "CRABC_SOCKET_TRANSPORT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_socket_transport_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall socket 29",
+            "assert_named_syscall socketpair 35",
+            "assert_named_syscall bind 31",
+            "assert_named_syscall listen 32",
+            "assert_named_syscall accept 2b",
+            "assert_named_syscall accept4 120",
+            "assert_named_syscall connect 2a",
+            "assert_named_syscall sendto 2c",
+            "assert_named_syscall recvfrom 2d",
+            "assert_named_syscall shutdown 30",
+            "assert_named_syscall getsockname 33",
+            "assert_named_syscall getpeername 34",
+            "sys/socket.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "socket",
+            "socketpair",
+            "bind",
+            "listen",
+            "accept",
+            "accept4",
+            "connect",
+            "send",
+            "recv",
+            "sendto",
+            "recvfrom",
+            "shutdown",
+            "getsockname",
+            "getpeername",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-socket-transport"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-socket-transport"',
+            parity_ledger,
+        )
+        self.assertIn("libc-socket-transport", runner)
+
+    def test_libc_static_c_abi_system_observation_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        system_observation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_observation.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_system_observation_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_system_observation_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_system_observation.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_observation.rs"]', static_root)
+        for symbol in ("fn uname(", "fn sysinfo("):
+            self.assertIn(symbol, system_observation)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/misc/uname.c",
+            "src/linux/sysinfo.c",
+            "struct UtsName",
+            "struct SysInfo",
+            "KERNEL_SYSINFO_BYTES",
+            "size_of::<UtsName>() == 390",
+            "size_of::<SysInfo>() == 368",
+            "offset_of!(SysInfo, compatibility_tail) == 108",
+            "raw_syscall::SYS_UNAME",
+            "raw_syscall::SYS_SYSINFO",
+            "raw_syscall::syscall1(",
+            "c_status(result)",
+        ):
+            self.assertIn(required, system_observation)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn sysconf(",
+            "fn pthread_",
+        ):
+            self.assertNotIn(forbidden, system_observation)
+        for required in (
+            "#include <sys/sysinfo.h>",
+            "#include <sys/utsname.h>",
+            "sizeof(struct utsname) == 390",
+            "sizeof(struct sysinfo) == 368",
+            "SYS_uname == 63 && SYS_sysinfo == 99",
+            "check_null_pointer_errors",
+            "check_uname_record",
+            "check_sysinfo_record_and_tail",
+            "SYSINFO_RESERVED_KERNEL_BYTES",
+            "CRABC_SYSTEM_OBSERVATION_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_system_observation_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall uname 3f",
+            "assert_named_syscall sysinfo 63",
+            "sys/utsname.h",
+            "sys/sysinfo.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("uname", "sysinfo"):
+            self.assertIn(symbol, static_export_names)
+        # These belong to the separately selected UTS-identity artifact. The
+        # system-observation leaf remains narrow through its own exact source
+        # export set, rather than by treating shared-archive exports as if
+        # they all belonged to this older artifact.
+        for separately_selected_uts_symbol in (
+            "gethostname",
+            "sethostname",
+            "getdomainname",
+            "setdomainname",
+        ):
+            self.assertIn(separately_selected_uts_symbol, static_export_names)
+        self.assertIn('id = "static-c-system-observation"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-system-observation"',
+            parity_ledger,
+        )
+        self.assertIn("libc-system-observation", runner)
+
+    def test_libc_static_c_abi_uts_identity_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        system_observation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "system_observation.rs"
+        ).read_text(encoding="utf-8")
+        uts_identity = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "uts_identity.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_uts_identity_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_uts_identity_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_uts_identity.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_observation.rs"]', static_root)
+        self.assertIn('#[path = "uts_identity.rs"]', static_root)
+        for required in (
+            "pub(super) struct UtsName",
+            "pub(super) const UTS_FIELD_BYTES: usize = 65",
+            "pub(super) unsafe fn uname_raw",
+        ):
+            self.assertIn(required, system_observation)
+        for symbol in (
+            "fn gethostname(",
+            "fn sethostname(",
+            "fn getdomainname(",
+            "fn setdomainname(",
+        ):
+            self.assertIn(symbol, uts_identity)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/gethostname.c",
+            "src/linux/sethostname.c",
+            "src/misc/getdomainname.c",
+            "src/misc/setdomainname.c",
+            "system_observation::UtsName",
+            "system_observation::UTS_FIELD_BYTES",
+            "system_observation::uname_raw",
+            "MaybeUninit",
+            "raw_syscall::SYS_SETHOSTNAME",
+            "raw_syscall::SYS_SETDOMAINNAME",
+            "raw_syscall::syscall2(",
+            "errno::set_errno(EINVAL)",
+            "c_status(result)",
+        ):
+            self.assertIn(required, uts_identity)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn gethostid(",
+            "fn sysconf(",
+            "fn fork(",
+            "fn pthread_",
+        ):
+            self.assertNotIn(forbidden, uts_identity)
+        for required in (
+            "#define _GNU_SOURCE 1",
+            "#include <sys/utsname.h>",
+            "#include <unistd.h>",
+            "SYS_uname == 63 && SYS_sethostname == 170",
+            "SYS_setdomainname == 171",
+            "check_selected_identity_setup",
+            "check_hostname_copy_contract",
+            "check_domain_copy_contract",
+            "check_setter_error_contract_and_stability",
+            "gethostname(NULL, 0)",
+            "getdomainname(NULL, 0)",
+            "sethostname(NULL, 1)",
+            "setdomainname(NULL, 1)",
+            "CRABC_UTS_IDENTITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("crabc_x86_64_uts_identity_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "run_in_fresh_uts_namespace",
+            "unshare --uts --fork",
+            "assert_named_syscall gethostname 3f",
+            "assert_named_syscall getdomainname 3f",
+            "assert_named_syscall sethostname aa",
+            "assert_named_syscall setdomainname ab",
+            "sys/utsname.h",
+            "unistd.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "gethostname",
+            "sethostname",
+            "getdomainname",
+            "setdomainname",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn("libc-uts-identity", runner)
+
+    def test_libc_static_c_abi_random_entropy_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        random_entropy = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "random_entropy.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_random_entropy_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_random_entropy_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_random_entropy.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "random_entropy.rs"]', static_root)
+        for symbol in ("fn getrandom(", "fn getentropy("):
+            self.assertIn(symbol, random_entropy)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/getrandom.c",
+            "src/misc/getentropy.c",
+            "raw_syscall::SYS_GETRANDOM",
+            "raw_syscall::syscall3(",
+            "GETENTROPY_MAX_BYTES: usize = 256",
+            "errno::set_errno(EIO)",
+            "errno::get_errno()",
+            "c_ssize_status(result)",
+            "syscall_cp",
+            "pthread_setcancelstate",
+        ):
+            self.assertIn(required, random_entropy)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn random(",
+            "fn srandom(",
+            "fn pthread_",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, random_entropy)
+        for required in (
+            "#include <sys/random.h>",
+            "#include <unistd.h>",
+            "GRND_NONBLOCK",
+            "getrandom",
+            "getentropy",
+            "256",
+            "CRABC_RANDOM_ENTROPY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("mov %rsi, %fs:0", start)
+        self.assertIn("libc_random_entropy_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "assert_named_syscall getrandom 13e",
+            "sys/random.h",
+            "unistd.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("getrandom", "getentropy"):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-random-entropy"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-random-entropy"',
+            parity_ledger,
+        )
+        self.assertIn("libc-random-entropy", runner)
+
+    def test_libc_static_c_abi_memory_search_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        memory_search = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_search.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_memory_search_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_memory_search.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "memory_search.rs"]', static_root)
+        for symbol in ("fn memchr(", "fn memmem(", "fn memrchr("):
+            self.assertIn(symbol, memory_search)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/string/memchr.c",
+            "src/string/memmem.c",
+            "src/string/memrchr.c",
+            "__memrchr",
+            "stateless",
+            "allocation-free",
+        ):
+            self.assertIn(required, memory_search)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn free(",
+            "fn __memrchr(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, memory_search)
+        for required in (
+            "#include <string.h>",
+            "memchr",
+            "memmem",
+            "memrchr",
+            "CRABC_MEMORY_SEARCH_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate unexpectedly selects TLS",
+            "candidate retains a dynamic TLS model",
+            "string.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("memchr", "memmem", "memrchr"):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-memory-search"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-memory-search"',
+            parity_ledger,
+        )
+        self.assertIn("libc-memory-search", runner)
+
+    def test_libc_static_c_abi_string_copy_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        string_copy = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "string_copy.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_string_copy_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_string_copy.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_string_copy_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "string_copy.rs"]', static_root)
+        for symbol in (
+            "fn stpcpy(",
+            "fn stpncpy(",
+            "fn strcpy(",
+            "fn strncpy(",
+            "fn strcat(",
+            "fn strncat(",
+            "fn strlcpy(",
+            "fn strlcat(",
+        ):
+            self.assertIn(symbol, string_copy)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/string/stpcpy.c",
+            "src/string/stpncpy.c",
+            "src/string/strcpy.c",
+            "src/string/strncpy.c",
+            "src/string/strcat.c",
+            "src/string/strncat.c",
+            "src/string/strlcpy.c",
+            "src/string/strlcat.c",
+            "__stpcpy",
+            "__stpncpy",
+            "stateless",
+            "allocation-free",
+            "scalar fallback",
+        ):
+            self.assertIn(required, string_copy)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn free(",
+            "fn __stpcpy(",
+            "fn __stpncpy(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, string_copy)
+        for required in (
+            "#include <string.h>",
+            "stpcpy",
+            "stpncpy",
+            "strcpy",
+            "strncpy",
+            "strcat",
+            "strncat",
+            "strlcpy",
+            "strlcat",
+            "CRABC_STRING_COPY_FREESTANDING",
+            "check_page_edges",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate unexpectedly selects TLS",
+            "candidate retains a dynamic TLS model",
+            "__stpcpy",
+            "__stpncpy",
+            "string.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_EXPECT_POSIX_COPY",
+            "CRABC_EXPECT_GNU_COPY",
+            "CRABC_REQUIRE_POSIX_COPY_HIDDEN",
+            "CRABC_REQUIRE_GNU_COPY_HIDDEN",
+            "-std=c++17",
+            "string.h",
+        ):
+            self.assertIn(required, header_runner)
+        for symbol in (
+            "stpcpy",
+            "stpncpy",
+            "strcpy",
+            "strncpy",
+            "strcat",
+            "strncat",
+            "strlcpy",
+            "strlcat",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-string-copy"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-string-copy"',
+            parity_ledger,
+        )
+        self.assertIn("libc-string-copy", runner)
+
+    def test_libc_static_c_abi_ctype_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        ctype = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ctype.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_ctype_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_ctype.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_ctype_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = (
+            "isalnum",
+            "isalpha",
+            "isblank",
+            "iscntrl",
+            "isdigit",
+            "isgraph",
+            "islower",
+            "isprint",
+            "ispunct",
+            "isspace",
+            "isupper",
+            "isxdigit",
+            "tolower",
+            "toupper",
+            "isascii",
+            "toascii",
+        )
+        self.assertIn('#[path = "ctype.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", ctype)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/ctype/isalnum.c",
+            "src/ctype/isalpha.c",
+            "src/ctype/isblank.c",
+            "src/ctype/iscntrl.c",
+            "src/ctype/isdigit.c",
+            "src/ctype/isgraph.c",
+            "src/ctype/islower.c",
+            "src/ctype/isprint.c",
+            "src/ctype/ispunct.c",
+            "src/ctype/isspace.c",
+            "src/ctype/isupper.c",
+            "src/ctype/isxdigit.c",
+            "src/ctype/tolower.c",
+            "src/ctype/toupper.c",
+            "src/ctype/isascii.c",
+            "src/ctype/toascii.c",
+            "fixed C locale",
+            "stateless",
+            "allocation-free",
+            "EOF",
+        ):
+            self.assertIn(required, ctype)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn free(",
+            "_l(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, ctype)
+        for required in (
+            "#include <ctype.h>",
+            "ctype_fn",
+            "value = -1",
+            "value <= 255",
+            "isascii",
+            "toascii",
+            "CRABC_CTYPE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains TLS",
+            "ctype.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_EXPECT_EXTENDED_CTYPE",
+            "CRABC_REQUIRE_EXTENDED_CTYPE_HIDDEN",
+            "-std=c++17",
+            "ctype.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn('id = "static-c-ctype"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-ctype"',
+            parity_ledger,
+        )
+        self.assertIn("libc-ctype", runner)
+
+    def test_libc_static_c_abi_integer_arithmetic_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        integer_arithmetic = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "integer_arithmetic.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_integer_arithmetic_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_integer_arithmetic.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_integer_arithmetic_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("abs", "labs", "llabs", "div", "ldiv", "lldiv")
+        self.assertIn('#[path = "integer_arithmetic.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", integer_arithmetic)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdlib/abs.c",
+            "src/stdlib/labs.c",
+            "src/stdlib/llabs.c",
+            "src/stdlib/div.c",
+            "src/stdlib/ldiv.c",
+            "src/stdlib/lldiv.c",
+            "stateless",
+            "allocation-free",
+            "wrapping_neg",
+            "native signed `idiv`",
+            "undefined",
+            "core::arch::asm!",
+        ):
+            self.assertIn(required, integer_arithmetic)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn rand(",
+            "wrapping_div",
+            "wrapping_rem",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, integer_arithmetic)
+        for required in (
+            "#include <stdlib.h>",
+            "abs_fn",
+            "div_fn",
+            "defined domain",
+            "-2147483647",
+            "CRABC_INTEGER_ARITHMETIC_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains TLS",
+            "strtoimax",
+            "stdlib.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "stdlib.h",
+            "features.h",
+            "bits/alltypes.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn('id = "static-c-integer-arithmetic"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-integer-arithmetic"',
+            parity_ledger,
+        )
+        self.assertIn("libc-integer-arithmetic", runner)
+
+    def test_libc_static_c_abi_intmax_arithmetic_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        intmax_arithmetic = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intmax_arithmetic.rs"
+        ).read_text(encoding="utf-8")
+        inttypes_header = (ROOT / "include" / "inttypes.h").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_intmax_arithmetic_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_intmax_arithmetic.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_intmax_arithmetic_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("imaxabs", "imaxdiv")
+        self.assertIn('#[path = "intmax_arithmetic.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", intmax_arithmetic)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdlib/imaxabs.c",
+            "src/stdlib/imaxdiv.c",
+            "intmax_t",
+            "imaxdiv_t",
+            "stateless",
+            "allocation-free",
+            "wrapping_neg",
+            "native signed `idiv`",
+            "undefined",
+            "core::arch::asm!",
+        ):
+            self.assertIn(required, intmax_arithmetic)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn strtoimax(",
+            "wrapping_div",
+            "wrapping_rem",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, intmax_arithmetic)
+        for required in (
+            "#include <inttypes.h>",
+            "imaxabs_fn",
+            "imaxdiv_fn",
+            "defined domain",
+            "INTMAX_MIN + INTMAX_C(1)",
+            "CRABC_INTMAX_ARITHMETIC_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains TLS",
+            "strtoimax",
+            "inttypes.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "nm --undefined-only",
+            "inttypes.h",
+            "bits/alltypes.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn('extern "C" {', inttypes_header)
+        self.assertIn('id = "static-c-intmax-arithmetic"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-intmax-arithmetic"',
+            parity_ledger,
+        )
+        self.assertIn("libc-intmax-arithmetic", runner)
+
+    def test_libc_static_c_abi_credential_observation_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        credential_observation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "credential_observation.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_credential_observation_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_credential_observation.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_credential_observation_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" /
+            "credential_observation_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" /
+            "credential_observation_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("getgroups", "getresuid", "getresgid")
+        self.assertIn('#[path = "credential_observation.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", credential_observation)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/getgroups.c",
+            "src/misc/getresuid.c",
+            "src/misc/getresgid.c",
+            "SYS_GETGROUPS",
+            "SYS_GETRESUID",
+            "SYS_GETRESGID",
+            "query-then-fill race",
+            "c_status",
+            "EFAULT",
+        ):
+            self.assertIn(required, credential_observation)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn setgroups(",
+            "fn setresuid(",
+            "fn setresgid(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, credential_observation)
+        for required in (
+            "GROUP_CAPTURE_ATTEMPTS",
+            "GROUP_STORAGE_CAPACITY",
+            "getgroups(-1",
+            "count-to-fill window",
+            "SYS_getresuid",
+            "SYS_getresgid",
+            "EFAULT",
+            "CRABC_CREDENTIAL_OBSERVATION_FREESTANDING",
+            "check_user_partial_fault_order",
+            "check_group_partial_fault_order",
+            "for (valid_mask = 0; valid_mask < 8; ++valid_mask)",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains a dynamic TLS model",
+            "getlogin",
+            "getgroups getresuid getresgid",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION",
+            "CRABC_REQUIRE_GETRES_HIDDEN",
+            "-U_GNU_SOURCE",
+            "-std=c++17",
+            "nm --undefined-only",
+            "unistd.h",
+        ):
+            self.assertIn(required, header_runner)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            self.assertIn("getresuid_must_be_hidden", header_probe)
+            self.assertIn("getresgid_must_be_hidden", header_probe)
+        self.assertIn('id = "static-c-credential-observation"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-credential-observation"',
+            parity_ledger,
+        )
+        self.assertIn("libc-credential-observation", runner)
+
+    def test_libc_static_c_abi_child_reaping_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        child_reaping = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "child_reaping.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_child_reaping_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_child_reaping.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_child_reaping_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" /
+            "child_reaping_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" /
+            "child_reaping_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("wait", "waitpid", "waitid")
+        self.assertIn('#[path = "child_reaping.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", child_reaping)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/process/wait.c",
+            "src/process/waitpid.c",
+            "src/process/waitid.c",
+            "SYS_WAIT4",
+            "SYS_WAITID",
+            "cancellation",
+            "WNOWAIT",
+            "initial-TLS",
+        ):
+            self.assertIn(required, child_reaping)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn fork(",
+            "fn execve(",
+            "fn wait4(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, child_reaping)
+        for required in (
+            "raw_clone_sigchld",
+            "returns_twice",
+            "WNOHANG",
+            "WNOWAIT",
+            "CLD_EXITED",
+            "CRABC_CHILD_REAPING_FREESTANDING",
+            "raw_wait4_cleanup",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains a dynamic TLS model",
+            "wait waitpid waitid",
+            "wait4",
+            "waitid f7",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "nm --undefined-only",
+            "sys/wait.h",
+            "siginfo_t",
+            "CRABC_CHILD_REAPING_POSIX",
+        ):
+            self.assertIn(required, header_runner)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            self.assertIn("waitid_signature", header_probe)
+            self.assertIn("siginfo_t", header_probe)
+        self.assertIn('id = "static-c-child-reaping"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-child-reaping"',
+            parity_ledger,
+        )
+        self.assertIn("child-reaping-header-abi", runner)
+        self.assertIn("libc-child-reaping", runner)
+
+    def test_libc_static_c_abi_immediate_termination_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        immediate_termination = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "immediate_termination.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_immediate_termination_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_immediate_termination.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_immediate_termination_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" /
+            "immediate_termination_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" /
+            "immediate_termination_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "immediate_termination.rs"]', static_root)
+        self.assertIn("fn _Exit(", immediate_termination)
+        self.assertIn("_Exit", static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/exit/_Exit.c",
+            "SYS_EXIT_GROUP",
+            "SYS_EXIT",
+            "exit_group",
+            "does not establish",
+        ):
+            self.assertIn(required, immediate_termination)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn at_quick_exit(",
+            "fn quick_exit(",
+            "fn _exit(",
+            "c_status",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, immediate_termination)
+        for required in (
+            "raw_clone_sigchld",
+            "returns_twice",
+            "SYS_exit_group",
+            "CRABC_IMMEDIATE_TERMINATION_FREESTANDING",
+            "wait_for_child",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains a dynamic TLS model",
+            "_Exit",
+            "assert_named_syscall e7",
+            "assert_named_syscall 3c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "nm --undefined-only",
+            "stdlib.h",
+            "_Exit",
+        ):
+            self.assertIn(required, header_runner)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            self.assertIn("immediate_exit_signature", header_probe)
+            self.assertIn("_Exit", header_probe)
+        self.assertIn('id = "static-c-immediate-termination"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-immediate-termination"',
+            parity_ledger,
+        )
+        self.assertIn("immediate-termination-header-abi", runner)
+        self.assertIn("libc-immediate-termination", runner)
+
+    def test_libc_static_c_abi_callback_algorithms_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        callback_algorithms = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "callback_algorithms.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_callback_algorithms_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_callback_algorithms.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_callback_algorithms_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" /
+            "callback_algorithms_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" /
+            "callback_algorithms_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "callback_algorithms.rs"]', static_root)
+        for symbol in ("bsearch", "__qsort_r", "qsort", "qsort_r"):
+            self.assertIn(symbol, callback_algorithms)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdlib/bsearch.c",
+            "src/stdlib/qsort.c",
+            "src/stdlib/qsort_nr.c",
+            "smoothsort",
+            "14 * core::mem::size_of::<usize>() + 1",
+            "12 * core::mem::size_of::<usize>()",
+            ".weak qsort_r",
+            ".set qsort_r, __qsort_r",
+            "qsort_copy_nonoverlapping",
+            "MaybeUninit",
+        ):
+            self.assertIn(required, callback_algorithms)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "c_status",
+            "__tls_get_addr",
+            "raw_syscall",
+            "alloc::",
+        ):
+            self.assertNotIn(forbidden, callback_algorithms)
+        for required in (
+            "bsearch",
+            "qsort",
+            "qsort_r",
+            "__qsort_r",
+            "CRABC_CALLBACK_ALGORITHMS_FREESTANDING",
+            "CRABC_CALLBACK_ALGORITHMS_OVERRIDE_QSORT_R",
+            "context_mismatch",
+            "wide_record",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "qsort_r",
+            "weak",
+            "same-address",
+            "unexpectedly selects TLS",
+            "Rust panic machinery",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "nm --undefined-only",
+            "stdlib.h",
+            "CRABC_EXPECT_QSORT_R",
+        ):
+            self.assertIn(required, header_runner)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            self.assertIn("bsearch_signature", header_probe)
+            self.assertIn("qsort_signature", header_probe)
+            self.assertIn("qsort_r_signature", header_probe)
+        self.assertIn('id = "static-c-callback-algorithms"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-callback-algorithms"',
+            parity_ledger,
+        )
+        self.assertIn("callback-algorithms-header-abi", runner)
+        self.assertIn("libc-callback-algorithms", runner)
+
+    def test_libc_static_c_abi_ffs_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        ffs = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ffs.rs").read_text(
+            encoding="utf-8"
+        )
+        strings_header = (ROOT / "include" / "strings.h").read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_ffs_probe.c").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (ROOT / "compat" / "x86_64" / "run_libc_ffs.sh").read_text(
+            encoding="utf-8"
+        )
+        header_runner = (ROOT / "compat" / "x86_64" / "run_ffs_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("ffs", "ffsl", "ffsll")
+        self.assertIn('#[path = "ffs.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", ffs)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/misc/ffs.c",
+            "src/misc/ffsl.c",
+            "src/misc/ffsll.c",
+            "src/internal/atomic.h",
+            "stateless",
+            "allocation-free",
+            "trailing_zeros",
+            "two's-complement",
+        ):
+            self.assertIn(required, ffs)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn malloc(",
+            "fn strtol(",
+            "__tls_get_addr",
+            "fn fls(",
+        ):
+            self.assertNotIn(forbidden, ffs)
+        for required in (
+            "#include <strings.h>",
+            "ffs_fn",
+            "ffsl_fn",
+            "ffsll_fn",
+            "first_set_u32",
+            "first_set_u64",
+            "-2147483647",
+            "CRABC_FFS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate retains TLS",
+            "strncasecmp",
+            "strings.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "CRABC_EXPECT_FFS",
+            "CRABC_REQUIRE_FFS_HIDDEN",
+            "-U_GNU_SOURCE",
+            "-std=c++17",
+            "nm --undefined-only",
+            "strings.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn('extern "C" {', strings_header)
+        self.assertIn('id = "static-c-ffs"', parity_ledger)
+        self.assertIn('command = "./scripts/dev-x86_64.sh libc-ffs"', parity_ledger)
+        self.assertIn("libc-ffs", runner)
 
     def test_libc_thread_pointer_probe_stays_a_private_opaque_fs_leaf(self) -> None:
         rust_probe = (
@@ -1352,6 +4937,1014 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn('objdump -d -- "$test_binary"', core_test_command)
             self.assertIn('fxrstor(64)?', core_test_command)
 
+    def test_advanced_time_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "advanced-time-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 4)
+            core_arguments, facade_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            core_cargo_index = core_arguments.index("cargo")
+            self.assertEqual(
+                core_arguments[core_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-core",
+                    "--lib",
+                    "--no-default-features",
+                    "x86_64_posix_timer_writes_exact_id_and_old_setting_records",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            facade_cargo_index = facade_arguments.index("cargo")
+            self.assertEqual(
+                facade_arguments[facade_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_advanced_time",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--example",
+                    "time_dynamic_direct_probe",
+                    "--example",
+                    "process_clock_id_direct_probe",
+                    "--example",
+                    "time_settime_direct_probe",
+                    "--example",
+                    "time_timers_direct_probe",
+                ],
+            )
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_advanced_time_reference.sh",
+                ],
+            )
+
+    def test_mapping_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "mapping-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 3)
+            test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_memory_mapping",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--example",
+                    "mapping_direct_probe",
+                ],
+            )
+
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_mapping_reference.sh",
+                ],
+            )
+
+    def test_memory_vm_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "memory-vm-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 3)
+            test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                self.assertNotIn("--cap-add=SYS_ADMIN", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_memory_vm",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--example",
+                    "memory_vm_direct_probe",
+                ],
+            )
+
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_memory_vm_reference.sh",
+                ],
+            )
+
+    def test_pty_basic_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "pty-basic-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 4)
+            test_arguments, alloc_test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                self.assertNotIn("--cap-add=SYS_ADMIN", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_pty_basic",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            alloc_test_cargo_index = alloc_test_arguments.index("cargo")
+            self.assertEqual(
+                alloc_test_arguments[alloc_test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--features",
+                    "alloc",
+                    "--test",
+                    "x86_64_pty_basic",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--example",
+                    "pty_basic_direct_probe",
+                ],
+            )
+
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_pty_basic_reference.sh",
+                ],
+            )
+
+    def test_terminal_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "terminal-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 4)
+            test_arguments, alloc_test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                self.assertNotIn("--cap-add=SYS_ADMIN", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+                    "-p", "crabc-rs", "--no-default-features", "--test", "x86_64_terminal",
+                    "--", "--test-threads=1",
+                ],
+            )
+            alloc_test_cargo_index = alloc_test_arguments.index("cargo")
+            self.assertEqual(
+                alloc_test_arguments[alloc_test_cargo_index:],
+                [
+                    "cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+                    "-p", "crabc-rs", "--no-default-features", "--features", "alloc",
+                    "--test", "x86_64_terminal", "--", "--test-threads=1",
+                ],
+            )
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo", "build", "--locked", "--target", "x86_64-unknown-linux-musl",
+                    "-p", "crabc-rs", "--no-default-features", "--example",
+                    "x86_64_terminal_direct_probe",
+                ],
+            )
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                ["bash", "/workspace/compat/x86_64/run_x86_terminal_reference.sh"],
+            )
+
+    def test_mount_reference_uses_the_native_amd64_container_and_unprivileged_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "mount-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 3)
+            test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                self.assertNotIn("--cap-add=SYS_ADMIN", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_mount",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--example",
+                    "mount_direct_probe",
+                ],
+            )
+
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_mount_reference.sh",
+                ],
+            )
+
+    def test_thread_kill_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "thread-kill-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 3)
+            test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_thread_kill",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--example",
+                    "thread_kill_direct_probe",
+                ],
+            )
+
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_thread_kill_reference.sh",
+                ],
+            )
+
+    def test_users_databases_reference_uses_the_native_amd64_container_and_focused_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+
+            fake_docker = bin_directory / "docker"
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "if [ \"$1\" = run ]; then\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                }
+            )
+            completed = subprocess.run(
+                ["bash", str(RUNNER), "users-databases-reference"],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
+            ]
+            self.assertEqual(len(invocations), 3)
+            test_arguments, probe_arguments, oracle_arguments = invocations
+            for arguments in invocations:
+                self.assertIn("--platform", arguments)
+                self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
+                platform_index = arguments.index("--platform")
+                self.assertEqual(arguments[platform_index + 1], "linux/amd64")
+
+            test_cargo_index = test_arguments.index("cargo")
+            self.assertEqual(
+                test_arguments[test_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--features",
+                    "alloc",
+                    "--test",
+                    "x86_64_users_databases",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+
+            probe_cargo_index = probe_arguments.index("cargo")
+            self.assertEqual(
+                probe_arguments[probe_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--features",
+                    "alloc",
+                    "--example",
+                    "users_databases_direct_probe",
+                ],
+            )
+
+            oracle_bash_index = oracle_arguments.index("bash")
+            self.assertEqual(
+                oracle_arguments[oracle_bash_index:],
+                [
+                    "bash",
+                    "/workspace/compat/x86_64/run_x86_users_databases_reference.sh",
+                ],
+            )
+
     def test_facade_uses_the_native_amd64_container_and_exact_cargo_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1379,7 +5972,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "  exit 0\n"
                 "fi\n"
                 "if [ \"$1\" = run ]; then\n"
-                "  printf '%s\\0' \"$@\" > \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "  {\n"
+                "    printf '%s\\0' \"$@\"\n"
+                "    printf '\\0'\n"
+                "  } >> \"${FAKE_DOCKER_ARGS:?}\"\n"
                 "  exit 0\n"
                 "fi\n"
                 "printf 'unexpected docker invocation: %s\\n' \"$*\" >&2\n"
@@ -1406,12 +6002,19 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
 
-            arguments = [
-                argument.decode("utf-8")
-                for argument in capture.read_bytes().split(bytes((0,)))
-                if argument
+            invocations = [
+                [
+                    argument.decode("utf-8")
+                    for argument in invocation.split(bytes((0,)))
+                    if argument
+                ]
+                for invocation in capture.read_bytes().split(bytes((0, 0)))
+                if invocation
             ]
+            self.assertEqual(len(invocations), 3)
+            arguments, chroot_arguments, allocation_arguments = invocations
             self.assertIn("--platform", arguments)
+            self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
             platform_index = arguments.index("--platform")
             self.assertEqual(arguments[platform_index + 1], "linux/amd64")
             cargo_index = arguments.index("cargo")
@@ -1433,6 +6036,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "futex",
                     "--test",
                     "x86_64_foundation",
+                    "--test",
+                    "x86_64_memory_mapping",
+                    "--test",
+                    "x86_64_memory_vm",
+                    "--test",
+                    "x86_64_pty_basic",
+                    "--test",
+                    "x86_64_terminal",
+                    "--test",
+                    "x86_64_mount",
                     "--test",
                     "x86_64_epoll",
                     "--test",
@@ -1471,6 +6084,28 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_path_lifecycle",
                     "--test",
                     "x86_64_namespace",
+                    "--test",
+                    "x86_64_xattr",
+                    "--test",
+                    "x86_64_raw_directory",
+                    "--test",
+                    "x86_64_directory",
+                    "--test",
+                    "x86_64_directory_position",
+                    "--test",
+                    "x86_64_temporary_objects",
+                    "--test",
+                    "x86_64_statx",
+                    "--test",
+                    "x86_64_canonicalize",
+                    "--test",
+                    "x86_64_cwd_mutation",
+                    "--test",
+                    "x86_64_ipc",
+                    "--test",
+                    "x86_64_shm",
+                    "--test",
+                    "x86_64_inotify",
                     "--test",
                     "x86_64_socket_transport",
                     "--test",
@@ -1548,13 +6183,85 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test",
                     "x86_64_thread",
                     "--test",
+                    "x86_64_thread_kill",
+                    "--test",
                     "x86_64_thread_credentials",
                     "--test",
                     "x86_64_time",
                     "--test",
+                    "time",
+                    "--test",
+                    "calendar_utc",
+                    "--test",
+                    "x86_64_calendar_time",
+                    "--test",
+                    "x86_64_advanced_time",
+                    "--test",
                     "x86_64_timerfd",
                     "--test",
                     "x86_64_times",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+            self.assertIn('--cap-add=SYS_CHROOT', chroot_arguments)
+            self.assertIn("--platform", chroot_arguments)
+            chroot_platform_index = chroot_arguments.index("--platform")
+            self.assertEqual(
+                chroot_arguments[chroot_platform_index + 1],
+                "linux/amd64",
+            )
+            chroot_cargo_index = chroot_arguments.index("cargo")
+            self.assertEqual(
+                chroot_arguments[chroot_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--test",
+                    "x86_64_chroot",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )
+            self.assertIn("--platform", allocation_arguments)
+            self.assertNotIn("--cap-add=SYS_CHROOT", allocation_arguments)
+            allocation_platform_index = allocation_arguments.index("--platform")
+            self.assertEqual(
+                allocation_arguments[allocation_platform_index + 1],
+                "linux/amd64",
+            )
+            allocation_cargo_index = allocation_arguments.index("cargo")
+            self.assertEqual(
+                allocation_arguments[allocation_cargo_index:],
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--features",
+                    "alloc",
+                    "--test",
+                    "timezone_rules",
+                    "--test",
+                    "calendar_local",
+                    "--test",
+                    "x86_64_child_ownership",
+                    "--test",
+                    "x86_64_pty_basic",
+                    "--test",
+                    "x86_64_terminal",
+                    "--test",
+                    "x86_64_users_databases",
                     "--",
                     "--test-threads=1",
                 ],

@@ -2,7 +2,8 @@
 //!
 //! Linux/AArch64 exposes the complete typed mask, waiting, queue, descriptor,
 //! and alternate-stack families. The staged x86-64 surface is deliberately
-//! narrower: one-argument handler actions and delivery to the current thread.
+//! narrower: one-argument handler actions and delivery to the current or a
+//! known thread in the calling process.
 //! Handler installation is unsafe because the kernel can later enter supplied
 //! code at an arbitrary interruption point. This module uses `crabc-core`'s
 //! direct kernel seams exclusively; it never calls the public C ABI or reads
@@ -1082,8 +1083,14 @@ pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
     unsafe { crabc_core::signal::rt_sigqueueinfo_raw(pid.as_raw_pid(), signal.as_raw(), &info.0) }
 }
 
-/// Sends `signal` to a known thread in the current process.
-#[cfg(target_arch = "aarch64")]
+/// Sends `signal` to a known thread in the calling process.
+///
+/// This is Linux `tgkill` with the calling process's thread-group ID. It does
+/// not send to another process, a process group, or an arbitrary thread group;
+/// it also does not configure signal masks, queued delivery, cancellation, or
+/// the C signal ABI. Linux reports direct errors such as [`crate::Errno::SRCH`]
+/// when `tid` is not a live thread in this process.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn kill_thread(tid: Pid, signal: Signal) -> Result<()> {
     crabc_core::process::tgkill(

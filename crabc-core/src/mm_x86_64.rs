@@ -1,14 +1,15 @@
 //! Deliberately bounded Linux/x86-64 virtual-memory syscall seams.
 //!
 //! This module exposes only the raw mapping, bounded remapping, protection,
-//! unmapping, and per-range memory-locking calls used by the staged Rust
-//! facade. It intentionally does not expose the broader AArch64 VM policy
-//! surface before each x86-specific contract is admitted and proven.
+//! unmapping, per-range/process-wide memory locking, and legacy file-page
+//! remapping calls used by the staged Rust facade. It intentionally does not
+//! expose the broader AArch64 VM policy surface before each x86-specific
+//! contract is admitted and proven.
 
 use crate::syscall::{
-    decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK, SYS_MLOCK2,
-    SYS_MADVISE, SYS_MMAP, SYS_MINCORE, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK,
-    SYS_MUNMAP,
+    decode, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK,
+    SYS_MLOCK2, SYS_MLOCKALL, SYS_MADVISE, SYS_MMAP, SYS_MINCORE, SYS_MPROTECT, SYS_MREMAP,
+    SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES,
 };
 use crate::{RawFd, Result};
 
@@ -216,6 +217,26 @@ pub unsafe fn munlock_raw(address: *mut u8, length: usize) -> Result<()> {
     decode(unsafe { syscall2(SYS_MUNLOCK, address as usize, length) }).map(|_| ())
 }
 
+/// Locks all current/future mappings in the calling process.
+///
+/// This operation changes process-global VM policy. It is kept as a direct
+/// raw seam so the native facade can expose that scope explicitly; no C
+/// allocator or thread-local error state is involved.
+#[inline]
+pub fn mlockall_raw(flags: u32) -> Result<()> {
+    // SAFETY: `flags` is an immediate Linux bit mask; Linux validates the
+    // combinations and process memlock limit.
+    decode(unsafe { syscall1(SYS_MLOCKALL, flags as usize) }).map(|_| ())
+}
+
+/// Removes all process-wide memory-lock policy.
+#[inline]
+pub fn munlockall_raw() -> Result<()> {
+    // SAFETY: The syscall has no pointer arguments and Linux validates the
+    // calling process state.
+    decode(unsafe { syscall0(SYS_MUNLOCKALL) }).map(|_| ())
+}
+
 /// Synchronizes a mapped range with its backing storage.
 ///
 /// This is the Linux/x86-64 `msync` syscall directly; it does not use libc or
@@ -282,6 +303,39 @@ pub unsafe fn posix_madvise_raw(address: *mut u8, length: usize, advice: u32) ->
     // POSIX advice value and reports invalid values as EINVAL.
     decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
         .map(|_| ())
+}
+
+/// Re-maps pages in a legacy file mapping through Linux's
+/// `remap_file_pages` syscall.
+///
+/// The protection and flags words are deliberately fixed to zero at this
+/// native boundary. They are C ABI compatibility fields rather than a Rust
+/// policy surface for this legacy operation.
+///
+/// # Safety
+///
+/// The caller must provide the page-aligned mapped range and file-page offset
+/// required by Linux, and must not retain Rust references whose interpretation
+/// changes when the mapping is re-arranged.
+#[inline]
+pub unsafe fn remap_file_pages_raw(
+    address: *mut u8,
+    size: usize,
+    page_offset: usize,
+) -> Result<()> {
+    // SAFETY: The caller owns the mapping and pointer-lifetime contract;
+    // Linux validates the legacy remapping request.
+    decode(unsafe {
+        syscall5(
+            SYS_REMAP_FILE_PAGES,
+            address as usize,
+            size,
+            0,
+            page_offset,
+            0,
+        )
+    })
+    .map(|_| ())
 }
 
 /// Queries Linux page residency for a mapped range.

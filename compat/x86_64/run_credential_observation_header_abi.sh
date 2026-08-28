@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Native Linux/x86-64 <unistd.h> credential-observation ABI slice.
+#
+# Pinned musl 1.2.6 is the declaration and C-linkage oracle. Project headers
+# are placed first for the candidate pass; neither pass links crabc-libc.
+# getgroups is unconditional, while getresuid/getresgid require GNU selection.
+set -euo pipefail
+
+readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+
+fail() {
+    printf 'ERROR: x86 unistd.h credential observation ABI: %s\n' "$*" >&2
+    exit 1
+}
+
+[ "$(uname -s)" = Linux ] || fail "requires native Linux"
+case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
+[ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
+command -v nm >/dev/null 2>&1 || fail "requires nm"
+bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
+
+c_probe="$ROOT_DIR/compat/x86_64/credential_observation_header_abi_probe.c"
+cxx_probe="$ROOT_DIR/compat/x86_64/credential_observation_header_abi_probe.cpp"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-credential-observation-header.XXXXXX)"
+trap 'rm -rf -- "$work_dir"' EXIT
+header_trace="$work_dir/header-trace"
+oracle_cxx_object="$work_dir/oracle-credential-observation-cxx.o"
+candidate_cxx_object="$work_dir/candidate-credential-observation-cxx.o"
+
+for compiler_args in -D_GNU_SOURCE; do
+    "$ORACLE_CC" -std=c11 "$compiler_args" \
+        -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin \
+        -fsyntax-only "$c_probe"
+    "$ORACLE_CC" -std=c++17 -x c++ "$compiler_args" \
+        -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin \
+        -fsyntax-only "$cxx_probe"
+    "$ORACLE_CC" -std=c11 "$compiler_args" \
+        -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin \
+        -I "$ROOT_DIR/include" -fsyntax-only "$c_probe"
+    "$ORACLE_CC" -std=c++17 -x c++ "$compiler_args" \
+        -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin \
+        -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
+done
+
+if ! "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin \
+    -I "$ROOT_DIR/include" -H -fsyntax-only "$c_probe" \
+    >/dev/null 2>"$header_trace"; then
+    sed -n '1,160p' "$header_trace" >&2
+    fail "project C credential-observation header contract drifted"
+fi
+for header in unistd.h sys/types.h features.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || {
+        fail "C probe did not use the project <$header>"
+    }
+done
+
+# C++ references must retain C names, not merely compatible function types.
+"$ORACLE_CC" -std=c++17 -x c++ -D_GNU_SOURCE \
+    -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin -c "$cxx_probe" \
+    -o "$oracle_cxx_object"
+"$ORACLE_CC" -std=c++17 -x c++ -D_GNU_SOURCE \
+    -DCRABC_EXPECT_GNU_CREDENTIAL_OBSERVATION -fno-builtin \
+    -I "$ROOT_DIR/include" -c "$cxx_probe" -o "$candidate_cxx_object"
+for object in "$oracle_cxx_object" "$candidate_cxx_object"; do
+    undefined="$(nm --undefined-only "$object")"
+    for symbol in getgroups getresuid getresgid; do
+        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" || {
+            fail "C++ probe does not retain C linkage for ${symbol}"
+        }
+    done
+    if printf '%s\n' "$undefined" | grep -Eq '_Z(9getgroups|9getresuid|9getresgid)'; then
+        fail "C++ probe retained a mangled credential-observation reference"
+    fi
+done
+
+for selector in -D_POSIX_SOURCE -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE; do
+    if "$ORACLE_CC" -std=c11 "$selector" -DCRABC_REQUIRE_GETRES_HIDDEN \
+        -fno-builtin -fsyntax-only "$c_probe" \
+        >/dev/null 2>"$work_dir/oracle-c-hidden-errors"; then
+        fail "pinned musl exposes getres* outside GNU selection"
+    fi
+    if "$ORACLE_CC" -std=c11 "$selector" -DCRABC_REQUIRE_GETRES_HIDDEN \
+        -fno-builtin -I "$ROOT_DIR/include" -fsyntax-only "$c_probe" \
+        >/dev/null 2>"$work_dir/project-c-hidden-errors"; then
+        fail "project unistd.h exposes getres* outside GNU selection"
+    fi
+    if "$ORACLE_CC" -std=c++17 -x c++ "$selector" -U_GNU_SOURCE \
+        -DCRABC_REQUIRE_GETRES_HIDDEN -fno-builtin -fsyntax-only "$cxx_probe" \
+        >/dev/null 2>"$work_dir/oracle-cxx-hidden-errors"; then
+        fail "pinned musl exposes getres* to strict/POSIX C++"
+    fi
+    if "$ORACLE_CC" -std=c++17 -x c++ "$selector" -U_GNU_SOURCE \
+        -DCRABC_REQUIRE_GETRES_HIDDEN -fno-builtin -I "$ROOT_DIR/include" \
+        -fsyntax-only "$cxx_probe" \
+        >/dev/null 2>"$work_dir/project-cxx-hidden-errors"; then
+        fail "project unistd.h exposes getres* to strict/POSIX C++"
+    fi
+done
+
+printf 'x86 pinned-musl/project C/C++ <unistd.h> credential observation ABI: PASS\n'

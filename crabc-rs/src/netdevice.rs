@@ -12,9 +12,10 @@ const IFNAMSIZ: usize = 16;
 const SIOCGIFINDEX: u32 = 0x8933;
 const SIOCGIFNAME: u32 = 0x8910;
 
-/// The Linux `ifreq` union is 24 bytes on AArch64. The `u64` storage keeps the
-/// private union correctly aligned and sized while these ioctls use only the
-/// `ifru_ifindex` member for their index input/output.
+/// The Linux LP64 `ifreq` union is 24 bytes on the admitted AArch64 and x86-64
+/// targets. The `u64` storage keeps the private union correctly aligned and
+/// sized while these ioctls use only the `ifru_ifindex` member for their index
+/// input/output.
 #[repr(C)]
 union IfreqData {
     ifindex: i32,
@@ -28,6 +29,9 @@ struct Ifreq {
 }
 
 const _: () = assert!(core::mem::size_of::<Ifreq>() == 40);
+const _: () = assert!(core::mem::align_of::<Ifreq>() == 8);
+const _: () = assert!(core::mem::offset_of!(Ifreq, name) == 0);
+const _: () = assert!(core::mem::offset_of!(Ifreq, data) == 16);
 
 /// Queries the Linux interface index for a name through `SIOCGIFINDEX`.
 ///
@@ -52,7 +56,8 @@ pub fn name_to_index<Fd: AsFd>(fd: Fd, if_name: &str) -> Result<u32> {
     };
     request.name[..bytes.len()].copy_from_slice(bytes);
 
-    // SAFETY: `request` is the complete 40-byte Linux/AArch64 `ifreq` layout,
+    // SAFETY: `request` is the complete 40-byte admitted Linux LP64 `ifreq`
+    // layout,
     // its name field is NUL-terminated and bounded, and SIOCGIFINDEX writes
     // the interface index into the union's `ifindex` member.
     unsafe {
@@ -157,7 +162,8 @@ fn index_to_name_raw<Fd: AsFd>(fd: Fd, index: u32) -> Result<(usize, [u8; IFNAMS
     // same low-bit-preserving cast from its public `u32` index.
     request.data.ifindex = index as i32;
 
-    // SAFETY: `request` is the complete 40-byte Linux/AArch64 `ifreq` layout,
+    // SAFETY: `request` is the complete 40-byte admitted Linux LP64 `ifreq`
+    // layout,
     // and SIOCGIFNAME reads its index member and writes the interface name.
     unsafe {
         crabc_core::io::ioctl_raw(
@@ -184,6 +190,7 @@ const SOCK_CLOEXEC: u32 = 0x0008_0000;
 const NLMSG_HEADER_LEN: usize = 16;
 const NLMSG_REQUEST_LEN: usize = 20;
 const NETLINK_BUFFER_LEN: usize = 8192;
+const MSG_TRUNC: u32 = 0x20;
 
 const NLM_F_REQUEST: u16 = 1;
 const NLM_F_ROOT: u16 = 0x100;
@@ -229,6 +236,42 @@ const AF_INET6: u8 = 10;
 const IFINFOMSG_LEN: usize = 16;
 const IFADDRMSG_LEN: usize = 8;
 const RTATTR_HEADER_LEN: usize = 4;
+
+/// Validates one bounded netlink receive before parsing its packet prefix.
+///
+/// The receive seam supplies Linux's full datagram length and returned message
+/// flags. Keeping this check outside either dump parser makes an oversized
+/// datagram an explicit error rather than an apparently complete snapshot.
+fn checked_netlink_receive(
+    received: usize,
+    message_flags: u32,
+    capacity: usize,
+) -> Result<usize> {
+    if received == 0 {
+        return Err(crate::Errno::IO);
+    }
+    if received > capacity || message_flags & MSG_TRUNC != 0 {
+        return Err(crate::Errno::OVERFLOW);
+    }
+    Ok(received)
+}
+
+/// Receives one netlink datagram without allowing a truncated packet prefix to
+/// reach either dump parser.
+fn receive_netlink_packet(fd: &OwnedFd, packet: &mut [u8]) -> Result<usize> {
+    let iovec = crabc_core::io::Iovec {
+        iov_base: packet.as_mut_ptr(),
+        iov_len: packet.len(),
+    };
+    // SAFETY: `iovec` describes exactly the writable `packet` storage and
+    // remains live for the syscall. `MSG_TRUNC` asks Linux to preserve the
+    // full datagram length, while the returned header flag catches a truncated
+    // packet even if an implementation does not report that length directly.
+    let (received, message_flags) = unsafe {
+        crabc_core::net::recvmsg_raw(fd.as_raw_fd(), &iovec, 1, MSG_TRUNC)?
+    };
+    checked_netlink_receive(received, message_flags, packet.len())
+}
 
 /// An owned Linux interface index/name pair.
 ///
@@ -295,7 +338,9 @@ impl InterfaceNameIndex {
 /// fixed-capacity record, so it may retain or copy it after returning. The
 /// callback's error stops the dump and is returned unchanged. Netlink kernel
 /// errors, malformed message lengths, and direct socket failures remain typed
-/// [`crate::Errno`] values; no libc, C ABI, allocator, or TLS `errno` is used.
+/// [`crate::Errno`] values. A netlink datagram larger than the fixed 8192-byte
+/// receive buffer returns [`crate::Errno::OVERFLOW`] before its partial prefix
+/// can reach `callback`; no libc, C ABI, allocator, or TLS `errno` is used.
 #[inline]
 pub fn for_each_link_name<F>(callback: F) -> Result<()>
 where
@@ -312,9 +357,11 @@ where
 /// use `IFLA_IFNAME`, address records use `IFA_LABEL`, and duplicate
 /// `(index,name)` pairs are suppressed before the returned vector is exposed.
 /// Allocation is explicit in the `alloc` feature and failures are reported as
-/// [`crate::Errno::NOBUFS`]. Dropping the returned vector releases its owned
-/// records; [`if_freenameindex`] is provided as a named consuming counterpart
-/// for code translating the musl operation.
+/// [`crate::Errno::NOBUFS`]. A netlink datagram larger than the fixed 8192-byte
+/// receive buffer returns [`crate::Errno::OVERFLOW`] rather than a partial
+/// collection. Dropping the returned vector releases its owned records;
+/// [`if_freenameindex`] is provided as a named consuming counterpart for code
+/// translating the musl operation.
 #[cfg(feature = "alloc")]
 #[inline]
 pub fn if_nameindex() -> Result<alloc::vec::Vec<InterfaceNameIndex>> {
@@ -677,6 +724,8 @@ mod interface_addresses {
     /// name, packet address, IP value, netmask, peer value, and link-statistics
     /// byte is copied into this value. Dropping it releases the Rust-owned `Vec`s;
     /// there is no C `freeifaddrs` analogue and no public C allocator boundary.
+    /// A netlink datagram larger than the fixed 8192-byte receive buffer returns
+    /// [`crate::Errno::OVERFLOW`] rather than yielding a partial snapshot.
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct InterfaceAddresses {
         entries: alloc::vec::Vec<InterfaceAddress>,
@@ -819,22 +868,7 @@ mod interface_addresses {
 
         let mut packet = [0u8; NETLINK_BUFFER_LEN];
         loop {
-            let received = unsafe {
-                // SAFETY: `packet` is writable for its complete fixed capacity;
-                // no source address is requested from this connected netlink
-                // receive boundary.
-                crabc_core::net::recvfrom_raw(
-                    fd.as_raw_fd(),
-                    packet.as_mut_ptr(),
-                    packet.len(),
-                    0,
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                )?
-            };
-            if received == 0 {
-                return Err(crate::Errno::IO);
-            }
+            let received = receive_netlink_packet(fd, &mut packet)?;
             if parse_interface_packet(&packet[..received], dump, sequence, entries)? {
                 return Ok(());
             }
@@ -1430,22 +1464,7 @@ where
 
     let mut packet = [0u8; NETLINK_BUFFER_LEN];
     loop {
-        let received = unsafe {
-            // SAFETY: `packet` is writable for its complete fixed capacity;
-            // no source address is requested from this connected netlink
-            // receive boundary.
-            crabc_core::net::recvfrom_raw(
-                fd.as_raw_fd(),
-                packet.as_mut_ptr(),
-                packet.len(),
-                0,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            )?
-        };
-        if received == 0 {
-            return Err(crate::Errno::IO);
-        }
+        let received = receive_netlink_packet(fd, &mut packet)?;
         parse_netlink_packet(&packet[..received], dump, sequence, callback)?;
         if packet_contains_done(&packet[..received], sequence)? {
             return Ok(());
@@ -1638,9 +1657,22 @@ fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
 #[cfg(test)]
 mod tests {
     use super::{
-        align4, parse_netlink_packet, write_u16, write_u32, InterfaceNameIndex, NetlinkDump,
-        IFA_LABEL, IFLA_IFNAME, NLMSG_HEADER_LEN, RTM_NEWADDR, RTM_NEWLINK,
+        align4, checked_netlink_receive, parse_netlink_packet, write_u16, write_u32,
+        InterfaceNameIndex, NetlinkDump, IFA_LABEL, IFLA_IFNAME, MSG_TRUNC,
+        NLMSG_HEADER_LEN, RTM_NEWADDR, RTM_NEWLINK,
     };
+
+    #[test]
+    fn truncated_netlink_datagrams_are_rejected_before_parsing() {
+        assert_eq!(
+            checked_netlink_receive(8, MSG_TRUNC, 8),
+            Err(crate::Errno::OVERFLOW)
+        );
+        assert_eq!(
+            checked_netlink_receive(9, 0, 8),
+            Err(crate::Errno::OVERFLOW)
+        );
+    }
 
     #[test]
     fn malformed_netlink_message_lengths_are_rejected() {

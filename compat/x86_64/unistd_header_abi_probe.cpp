@@ -35,6 +35,10 @@ using copy_file_range_function = ssize_t (*)(int, off_t *, int, off_t *,
     size_t, unsigned);
 using getgroups_function = int (*)(int, gid_t *);
 using lseek64_function = off_t (*)(int, off_t, int);
+using gethostname_function = int (*)(char *, size_t);
+using sethostname_function = int (*)(const char *, size_t);
+using getdomainname_function = int (*)(char *, size_t);
+using setdomainname_function = int (*)(const char *, size_t);
 
 static_assert(__is_same(decltype(&read), read_function), "C++ read declaration");
 static_assert(__is_same(decltype(&pread), pread_function),
@@ -45,6 +49,14 @@ static_assert(__is_same(decltype(&getgroups), getgroups_function),
     "C++ getgroups declaration");
 static_assert(__is_same(decltype(&lseek64), lseek64_function),
     "C++ lseek64 alias declaration");
+static_assert(__is_same(decltype(&gethostname), gethostname_function),
+    "C++ gethostname declaration");
+static_assert(__is_same(decltype(&sethostname), sethostname_function),
+    "C++ GNU sethostname declaration");
+static_assert(__is_same(decltype(&getdomainname), getdomainname_function),
+    "C++ GNU getdomainname declaration");
+static_assert(__is_same(decltype(&setdomainname), setdomainname_function),
+    "C++ GNU setdomainname declaration");
 
 int crabc_x86_64_unistd_header_abi_probe_cpp()
 {

@@ -1,11 +1,11 @@
-//! Stateless Linux/AArch64 message-queue operations.
+//! Stateless Linux LP64 message-queue operations.
 
 use core::{ffi::CStr, mem::MaybeUninit};
 
 use crate::{RawFd, Result};
 use crate::syscall::{decode, decode_i32, syscall1, syscall3, syscall4, syscall5, SYS_MQ_GETSETATTR, SYS_MQ_OPEN, SYS_MQ_TIMEDRECEIVE, SYS_MQ_TIMEDSEND, SYS_MQ_UNLINK};
 
-/// Linux/AArch64 `struct mq_attr` wire layout.
+/// Linux LP64 `struct mq_attr` wire layout.
 ///
 /// The public Rust facade validates and converts these signed native-long
 /// fields before exposing them. The reserved tail is retained because the
@@ -25,7 +25,15 @@ pub struct KernelMqAttr {
     pub reserved: [i64; 4],
 }
 
-/// Linux/AArch64 `struct timespec` used by absolute mq deadlines.
+const _: () = assert!(core::mem::size_of::<KernelMqAttr>() == 64);
+const _: () = assert!(core::mem::align_of::<KernelMqAttr>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelMqAttr, mq_flags) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelMqAttr, mq_maxmsg) == 8);
+const _: () = assert!(core::mem::offset_of!(KernelMqAttr, mq_msgsize) == 16);
+const _: () = assert!(core::mem::offset_of!(KernelMqAttr, mq_curmsgs) == 24);
+const _: () = assert!(core::mem::offset_of!(KernelMqAttr, reserved) == 32);
+
+/// Linux LP64 `struct timespec` used by absolute mq deadlines.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KernelMqTimespec {
@@ -34,6 +42,11 @@ pub struct KernelMqTimespec {
     /// Nanoseconds within the second.
     pub tv_nsec: i64,
 }
+
+const _: () = assert!(core::mem::size_of::<KernelMqTimespec>() == 16);
+const _: () = assert!(core::mem::align_of::<KernelMqTimespec>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelMqTimespec, tv_sec) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelMqTimespec, tv_nsec) == 8);
 
 /// Opens a kernel message queue using its fixed-arity syscall ABI.
 ///

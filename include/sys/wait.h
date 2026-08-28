@@ -25,8 +25,16 @@ typedef enum { P_ALL = 0, P_PID = 1, P_PGID = 2 } idtype_t;
 #define WCOREDUMP(s) ((s) & 0x80)
 #define WIFCONTINUED(s) ((s) == 0xffff)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 pid_t wait(int *);
 pid_t waitpid(pid_t, int *, int);
 int waitid(idtype_t, id_t, siginfo_t *, int);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

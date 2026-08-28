@@ -15,7 +15,10 @@
 use bitflags::bitflags;
 use core::ffi::CStr;
 
-use crate::path::Arg;
+#[cfg(target_arch = "aarch64")]
+use crate::path::Arg as QueueNameArg;
+#[cfg(target_arch = "x86_64")]
+use crate::fs::PathArg as QueueNameArg;
 use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
 pub use crate::fs::{Mode, Timespec};
@@ -276,7 +279,7 @@ impl AsFd for MessageQueue {
 }
 
 /// Opens an existing POSIX message queue.
-pub fn open<P: Arg>(name: P, flags: OpenFlags) -> Result<MessageQueue> {
+pub fn open<P: QueueNameArg>(name: P, flags: OpenFlags) -> Result<MessageQueue> {
     if flags.bits() & MQ_O_CREAT != 0 {
         return Err(Errno::INVAL);
     }
@@ -287,7 +290,7 @@ pub fn open<P: Arg>(name: P, flags: OpenFlags) -> Result<MessageQueue> {
 }
 
 /// Creates or opens a POSIX message queue with typed capacity attributes.
-pub fn create<P: Arg>(
+pub fn create<P: QueueNameArg>(
     name: P,
     flags: OpenFlags,
     create_flags: CreateFlags,
@@ -308,7 +311,7 @@ pub fn create<P: Arg>(
 
 /// Unlinks a POSIX message-queue name. Existing descriptors remain usable
 /// until closed, matching Linux's unlink-after-open lifetime rules.
-pub fn unlink<P: Arg>(name: P) -> Result<()> {
+pub fn unlink<P: QueueNameArg>(name: P) -> Result<()> {
     with_queue_name(name, crabc_core::ipc::unlink)
 }
 
@@ -322,7 +325,7 @@ fn kernel_deadline(deadline: Timespec) -> Result<crabc_core::ipc::KernelMqTimesp
     })
 }
 
-fn with_queue_name<P: Arg, T, F>(name: P, operation: F) -> Result<T>
+fn with_queue_name<P: QueueNameArg, T, F>(name: P, operation: F) -> Result<T>
 where
     F: FnOnce(&CStr) -> Result<T>,
 {

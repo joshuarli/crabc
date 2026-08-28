@@ -23,7 +23,7 @@ pub extern "C" fn crabc_rs_fs_tempdir_direct_probe() -> i32 {
     }
     // SAFETY: The output is the exact NUL-free pathname returned by the
     // direct mkdirat operation and remains valid for this call.
-    if fs::unlink(&output[..length]).is_err() {
+    if fs::rmdir(&output[..length]).is_err() {
         return 2;
     }
     0

@@ -1,10 +1,9 @@
 use crabc_rs::time::{wall_clock, UnixTime, NANOS_PER_SECOND};
 
 #[test]
-fn native_wall_clock_is_a_normalized_unix_epoch_value() {
+fn native_wall_clock_is_a_normalized_signed_unix_time() {
     let now = wall_clock().expect("Linux gettimeofday wall-clock query");
 
-    assert!(now >= UnixTime::UNIX_EPOCH);
     assert!(now.nanoseconds() < NANOS_PER_SECOND);
     assert_eq!(
         now.nanoseconds() % 1_000,
