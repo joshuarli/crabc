@@ -464,6 +464,55 @@ def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_flock_boundary(errors: list[str]) -> None:
+    """Keep direct x86 flock separate from fcntl record locking."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub enum FlockOperation {",
+        "LockShared = 1",
+        "LockExclusive = 2",
+        "Unlock = 8",
+        "NonBlockingLockShared = 1 | 4",
+        "NonBlockingLockExclusive = 2 | 4",
+        "NonBlockingUnlock = 8 | 4",
+        "pub fn flock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()>",
+        "crabc_core::fs::flock(fd.as_fd().as_raw_fd(), operation as u32)",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 flock slice is missing "
+                f"{required}"
+            )
+
+    if re.search(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+fcntl_lock(?:<|\s*\()", fs_text):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: admitted x86 flock slice must defer "
+            "fcntl record-lock mutation"
+        )
+
+    core_fs_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_fs_text = core_fs_source.read_text(errors="replace")
+    for required in (
+        "pub fn flock(fd: RawFd, operation: u32) -> Result<()>",
+        "syscall2(SYS_FLOCK, fd as usize, operation as usize)",
+    ):
+        if required not in core_fs_text:
+            errors.append(
+                "crabc-core/src/fs.rs: admitted x86 flock boundary is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    if "pub(crate) const SYS_FLOCK: usize = 73" not in syscall_text:
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: admitted x86 flock ABI proof is "
+            "missing SYS_FLOCK=73"
+        )
+
+
 def check_x86_sync_file_range_boundary(errors: list[str]) -> None:
     """Keep the admitted x86 range-writeback operation closed and typed."""
 
@@ -765,6 +814,7 @@ def main() -> int:
     check_x86_setitimer_boundary(errors)
     check_x86_access_boundary(errors)
     check_x86_fcntl_status_flags_boundary(errors)
+    check_x86_flock_boundary(errors)
     check_x86_sync_file_range_boundary(errors)
     check_x86_syncfs_boundary(errors)
     check_x86_sync_boundary(errors)

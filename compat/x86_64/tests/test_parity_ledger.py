@@ -142,6 +142,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.syncfs",
             "io.range-sync",
             "io.status-flags",
+            "io.advisory-flock",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
             "process.scheduling-priority-mutation",
@@ -164,6 +165,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for source_owner in (
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_fcntl_flags.rs",
+            "crabc-rs/tests/x86_64_flock.rs",
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
@@ -191,6 +193,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_ftruncate_reference_probe.c",
             "compat/x86_64/run_x86_fcntl_status_reference.sh",
             "compat/x86_64/x86_fcntl_status_reference_probe.c",
+            "compat/x86_64/run_x86_flock_reference.sh",
+            "compat/x86_64/x86_flock_reference_probe.c",
             "compat/x86_64/run_x86_epoll_reference.sh",
             "compat/x86_64/x86_epoll_reference_probe.c",
             "compat/x86_64/run_x86_pselect_reference.sh",
@@ -291,6 +295,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn(
             "./scripts/dev-x86_64.sh fcntl-status-reference", direct_commands
         )
+        self.assertIn("./scripts/dev-x86_64.sh flock-reference", direct_commands)
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct flock=73")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
         self.assertIn("./scripts/dev-x86_64.sh clock-nanosleep-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh rr-interval-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh sched-affinity-reference", direct_commands)
@@ -330,6 +341,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_epoll_reference_probe.c", remaining["source_owners"]
         )
         for source_owner in (
+            "crabc-rs/tests/x86_64_flock.rs",
+            "compat/x86_64/run_x86_flock_reference.sh",
+            "compat/x86_64/x86_flock_reference_probe.c",
             "crabc-rs/tests/x86_64_sync.rs",
             "compat/x86_64/run_x86_sync_reference.sh",
             "compat/x86_64/x86_sync_reference_probe.c",

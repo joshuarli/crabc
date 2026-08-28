@@ -116,6 +116,30 @@ bitflags! {
     }
 }
 
+/// Linux whole-file advisory-lock operations accepted by [`flock`].
+///
+/// These values apply to an open file description through the direct
+/// `flock(2)` syscall. They are deliberately distinct from the read-only
+/// [`crate::process::fcntl_getlk`] record-lock observation slice; this module
+/// does not expose `fcntl` record-lock mutation. The blocking variants may
+/// wait indefinitely for a conflicting advisory lock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum FlockOperation {
+    /// Acquire a shared lock, waiting if needed.
+    LockShared = 1,
+    /// Acquire an exclusive lock, waiting if needed.
+    LockExclusive = 2,
+    /// Release a lock.
+    Unlock = 8,
+    /// Acquire a shared lock without waiting.
+    NonBlockingLockShared = 1 | 4,
+    /// Acquire an exclusive lock without waiting.
+    NonBlockingLockExclusive = 2 | 4,
+    /// Release a lock without waiting.
+    NonBlockingUnlock = 8 | 4,
+}
+
 /// The largest byte pathname accepted by the fixed-stack [`PathArg`] boundary.
 ///
 /// One byte is reserved for the terminating NUL. This fixed-stack x86-64
@@ -313,6 +337,18 @@ pub fn fcntl_getfl<Fd: AsFd>(fd: Fd) -> Result<OFlags> {
 #[doc(alias = "F_SETFL")]
 pub fn fcntl_setfl<Fd: AsFd>(fd: Fd, flags: OFlags) -> Result<()> {
     crabc_core::io::fcntl_setfl(fd.as_fd().as_raw_fd(), flags.bits())
+}
+
+/// Acquires or releases a Linux whole-file `flock(2)` advisory lock.
+///
+/// The descriptor is borrowed only for the direct syscall. Blocking operations
+/// may wait indefinitely. This remains separate from
+/// [`crate::process::fcntl_getlk`], which only observes `fcntl` record
+/// locks; record-lock mutation and generic `fcntl` stay outside the x86-64
+/// facade.
+#[inline]
+pub fn flock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
+    crabc_core::fs::flock(fd.as_fd().as_raw_fd(), operation as u32)
 }
 
 /// The six POSIX filesystem access-pattern policies accepted by Linux
