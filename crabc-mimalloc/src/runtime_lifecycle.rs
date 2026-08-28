@@ -42,7 +42,13 @@ use crate::config::{
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
 };
-use crate::main_heap_page::MainHeapThreadProcessPageAllocator;
+use crate::main_heap_page::{
+    MainHeapThreadProcessPageAllocator,
+    MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure,
+    MainHeapThreadProcessPageExitMappedRegularPagesFreeResult,
+    MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin,
+    MainHeapThreadProcessPageExitMappedRegularPagesRoute,
+};
 use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
 use crate::main_theap::MainStaticHeapLease;
 use crate::os::{MemoryConfig, PageSize, StartupInput};
@@ -127,7 +133,126 @@ impl<'owner> TicketZeroRemoteFreeProducer<'owner> {
         }
     }
 
+    #[inline]
+    fn cancel(self) -> core::ptr::NonNull<u8> {
+        self.producer.cancel()
+    }
+
 }
+
+/// One private, linear source post-exit route whose client addresses remain
+/// inside the runtime witness. It is the only capability that may complete
+/// this bounded Gate 5C workload after A has detached its Theap/TLD.
+///
+/// The adapter may move it to exactly one joined pthread B and call
+/// [`Self::free_remaining`]. It neither exposes a client address nor creates
+/// an allocation, reclaim, or page-shape-specific owner-exit API.
+#[doc(hidden)]
+#[must_use = "the post-exit route must release every private client or remain terminally retained"]
+pub struct TicketZeroOwnerExitFreeRoute<'main> {
+    route: MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>,
+    blocks: [Option<core::ptr::NonNull<u8>>; 4],
+}
+
+// SAFETY: this private capability contains neither an old TLD nor a Theap.
+// Its only `NonNull` values are exact one-shot client identities that remain
+// inaccessible to its receiver. The underlying aggregate route is Send but
+// deliberately !Sync, so moving this value transfers its unique linear
+// source release authority to one joined consumer.
+unsafe impl Send for TicketZeroOwnerExitFreeRoute<'_> {}
+
+/// A proof that a private owner-exit route reached `ReleasedAll` and finished
+/// its PageMap lifecycle. Only [`TicketZeroOwnerExitFreeRoute::free_remaining`]
+/// can mint it; the runtime consumes it before releasing A's admission claim.
+#[doc(hidden)]
+#[must_use = "this proof must immediately complete the detached worker lifecycle"]
+pub struct TicketZeroOwnerExitRouteFinished {
+    _private: (),
+}
+
+/// A terminal outcome from the opaque B-side owner-exit consumer.
+#[doc(hidden)]
+#[must_use = "a retained route or poisoned outcome must retain the runtime boundary"]
+pub enum TicketZeroOwnerExitFreeOutcome<'main> {
+    /// B released every exact client and the last PageMap lifecycle completed.
+    Finished(TicketZeroOwnerExitRouteFinished),
+    /// A source release error left the still-owning route retained exactly as
+    /// returned by the aggregate path. The runtime must become retained.
+    Retained(TicketZeroOwnerExitFreeRoute<'main>),
+    /// The last page release completed but PageMap quiescence poisoned its
+    /// wake boundary, leaving no route to retry. The runtime must retain.
+    Poisoned,
+}
+
+impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
+    /// Releases the four private remaining clients through the single general
+    /// aggregate route. The fixed order exercises a post-exit small free,
+    /// leaves the medium page live after its first free, then performs the
+    /// final source terminal release.
+    pub fn free_remaining(mut self) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        for index in 0..self.blocks.len() {
+            let block = self.blocks[index]
+                .take()
+                .expect("every opaque owner-exit client is consumed exactly once");
+            // SAFETY: this capability owns the exact current private client
+            // and the only aggregate post-exit route that can consume it.
+            match unsafe { self.route.remote_free_after_thread_exit(block) } {
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
+                    self.route = route;
+                }
+                Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
+                    if self.blocks[index + 1..].iter().any(Option::is_some) {
+                        // A complete route cannot have unconsumed private
+                        // aliases. This is unreachable for the fixed witness,
+                        // but must not claim a lifecycle completion if its
+                        // invariant ever changes.
+                        return TicketZeroOwnerExitFreeOutcome::Poisoned;
+                    }
+                    return TicketZeroOwnerExitFreeOutcome::Finished(
+                        TicketZeroOwnerExitRouteFinished { _private: () },
+                    );
+                }
+                Err(MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure::Rejected {
+                    route,
+                    ..
+                })
+                | Err(MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure::Terminal {
+                    route,
+                    ..
+                }) => {
+                    self.route = route;
+                    return TicketZeroOwnerExitFreeOutcome::Retained(self);
+                }
+                Err(
+                    MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure::ReleasedAllPageMapPoisoned {
+                        ..
+                    },
+                ) => return TicketZeroOwnerExitFreeOutcome::Poisoned,
+            }
+        }
+
+        // Four currently live clients must leave the aggregate route's final
+        // release to the fourth consuming call. Treat an impossible residual
+        // route as terminal rather than releasing A's lifecycle admission.
+        TicketZeroOwnerExitFreeOutcome::Retained(self)
+    }
+}
+
+/// The adapter-supplied, joined B-side consumer for the private Gate 5C
+/// witness. The higher-ranked function pointer prevents retaining the route
+/// beyond the source owner's completed lifecycle boundary.
+#[doc(hidden)]
+pub type TicketZeroOwnerExitFreeConsumer = for<'owner> fn(
+    TicketZeroOwnerExitFreeRoute<'owner>,
+) -> TicketZeroOwnerExitFreeOutcome<'owner>;
+
+/// The adapter-supplied, joined B-side publisher for one exact pre-exit
+/// remote-free client. It receives no page engine, route, or client address.
+#[doc(hidden)]
+pub type TicketZeroRemoteFreeSinglePublisher = for<'owner> fn(
+    TicketZeroRemoteFreeProducer<'owner>,
+) -> Result<(), TicketZeroRemoteFreeProducer<'owner>>;
 
 /// Two opaque source remote-free capabilities for the same stopped worker A.
 /// The adapter may split and move them to two joined publisher pthreads B/C;
@@ -856,6 +981,87 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
     }
 }
 
+// This fixed witness enters one genuinely mixed departing Theap without
+// choosing a special exit geometry. The large client is published remotely
+// before A exits so source collection can release that page; two small and two
+// medium clients remain for B's opaque aggregate route. Every request stays
+// inside the regular mapped small/medium/large profile accepted by the general
+// traversal.
+const OWNER_EXIT_MAPPED_REGULAR_REQUESTS: [usize; 5] = [
+    37,
+    37,
+    SMALL_MAX_OBJ_SIZE + 1,
+    SMALL_MAX_OBJ_SIZE + 1,
+    MEDIUM_MAX_OBJ_SIZE + 1,
+];
+
+enum OwnerExitMappedRegularWorkerResult {
+    Completed(TicketZeroOwnerExitRouteFinished),
+    AllocationFailed,
+    PublicationFailed,
+    Retained,
+}
+
+#[inline]
+fn retain_current_thread_detached_owner_exit() {
+    let slot = current_thread_slot();
+    // The old Theap/TLD has either already detached or its typed terminal
+    // still owns it. In both cases a generic normal finish would be unsound;
+    // retain the admission claim so fork preservation remains closed.
+    slot.state = ThreadLifecycleState::Retained;
+    RUNTIME_PROCESS.retain();
+}
+
+/// Completes the runtime half of a source owner exit after a private typed
+/// process route has proved `ReleasedAll`.
+///
+/// The proof can only come from the aggregate route's final PageMap release.
+/// In particular, this intentionally does not call
+/// `finish_current_thread_after_user_destructors`: that no-page entry would
+/// attempt to access an attachment whose Theap/TLD boundary was already
+/// completed by `finish_after_detached_process_page_route`.
+fn finish_current_thread_after_detached_process_page_route(
+    _proof: TicketZeroOwnerExitRouteFinished,
+) -> ThreadFinishResult {
+    let slot = current_thread_slot();
+    match slot.state {
+        ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
+        ThreadLifecycleState::Finished => return ThreadFinishResult::AlreadyFinished,
+        ThreadLifecycleState::Retained => return ThreadFinishResult::Retained,
+        ThreadLifecycleState::Attached => {}
+    }
+    if !slot.admission_held || slot.attachment.is_some() {
+        retain_current_thread_detached_owner_exit();
+        return ThreadFinishResult::Retained;
+    }
+
+    if RUNTIME_FORK_ADMISSION.release_later_thread() {
+        slot.admission_held = false;
+        slot.state = ThreadLifecycleState::Finished;
+        ThreadFinishResult::Finished
+    } else {
+        // The old attachment is already gone, but the admission count no
+        // longer names this exact source transition. Preserve the process
+        // rather than making the post-exit route appear fork-quiescent.
+        retain_current_thread_detached_owner_exit();
+        ThreadFinishResult::Retained
+    }
+}
+
+fn free_owner_exit_locals(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    blocks: &mut [Option<core::ptr::NonNull<u8>>; OWNER_EXIT_MAPPED_REGULAR_REQUESTS.len()],
+) -> Result<(), ()> {
+    for block in blocks {
+        if let Some(block) = block.take() {
+            // SAFETY: this cleanup remains in A before any producer publishes
+            // or the engine enters the source owner-exit drain.
+            unsafe { allocator.free(block) }.map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
 // This fixed, pointer-private test workload deliberately crosses the source
 // small, medium, large, and singleton allocation branches. Two small and two
 // medium blocks remain live while their siblings are freed and reacquired, so
@@ -1111,6 +1317,173 @@ fn run_persistent_remote_worker_workload(
         Ok(())
     } else {
         Err(PersistentRemoteWorkerError::ReuseFailed)
+    }
+}
+
+/// Runs the bounded real-lifecycle Gate 5C witness against the dormant
+/// ticket-zero process pair.
+///
+/// A publishes one large-page remote free to joined B before it crosses the
+/// existing general mapped-regular owner-exit traversal. That traversal
+/// force-collects and releases the empty large page, detaches A's Theap/TLD,
+/// and returns one opaque aggregate route. A second joined B receives that
+/// route, frees every remaining private small/medium client, and returns a
+/// proof of the final PageMap lifecycle. This test-only seam accepts no raw
+/// pointer, does not route libc allocation, and does not create a new
+/// page-shape-specific owner-exit entry point.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_mapped_regular_owner_exit(
+    publish_before_exit: TicketZeroRemoteFreeSinglePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
+        let lifecycle_slot = current_thread_slot();
+        let Some(mut attachment) = lifecycle_slot.attachment.take() else {
+            return Err(());
+        };
+        let mut allocator = match MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair) {
+            Ok(allocator) => allocator,
+            Err(_) => {
+                lifecycle_slot.attachment = Some(attachment);
+                return Err(());
+            }
+        };
+        let mut blocks = [None; OWNER_EXIT_MAPPED_REGULAR_REQUESTS.len()];
+        for (block_slot, request) in blocks.iter_mut().zip(OWNER_EXIT_MAPPED_REGULAR_REQUESTS) {
+            let Some(block) = allocator.allocate(request, false) else {
+                let _ = free_owner_exit_locals(&mut allocator, &mut blocks);
+                if allocator.finish().is_err() {
+                    core::mem::forget(attachment);
+                    return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+                }
+                lifecycle_slot.attachment = Some(attachment);
+                return Ok(OwnerExitMappedRegularWorkerResult::AllocationFailed);
+            };
+            *block_slot = Some(block);
+        }
+
+        let large = blocks[4]
+            .take()
+            .expect("the bounded owner-exit witness allocated its large client");
+        // SAFETY: `large` is the exact current large-page client. B receives
+        // only the logical source remote-free producer; A remains alive until
+        // the joined publisher has either published or returned it.
+        let producer = match unsafe { allocator.begin_remote_free(large) } {
+            Ok(producer) => TicketZeroRemoteFreeProducer { producer },
+            Err(_) => {
+                blocks[4] = Some(large);
+                let _ = free_owner_exit_locals(&mut allocator, &mut blocks);
+                if allocator.finish().is_err() {
+                    core::mem::forget(attachment);
+                    return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+                }
+                lifecycle_slot.attachment = Some(attachment);
+                return Ok(OwnerExitMappedRegularWorkerResult::PublicationFailed);
+            }
+        };
+        if let Err(producer) = publish_before_exit(producer) {
+            blocks[4] = Some(producer.cancel());
+            let _ = free_owner_exit_locals(&mut allocator, &mut blocks);
+            if allocator.finish().is_err() {
+                core::mem::forget(attachment);
+                return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+            }
+            lifecycle_slot.attachment = Some(attachment);
+            return Ok(OwnerExitMappedRegularWorkerResult::PublicationFailed);
+        }
+
+        let drain = match allocator.begin_thread_exit_drain() {
+            Ok(drain) => drain,
+            Err(crate::main_heap_page::MainHeapThreadProcessPageExitDrainFailure::Retained {
+                allocator,
+                ..
+            }) => {
+                core::mem::forget(allocator);
+                core::mem::forget(attachment);
+                return Ok(OwnerExitMappedRegularWorkerResult::Retained);
+            }
+        };
+        match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+            Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
+                // The aggregate route has already detached every source page
+                // and completed the old Theap/TLD boundary. No normal finish
+                // may touch this attachment again.
+                drop(attachment);
+                let blocks = [
+                    Some(blocks[0].take().expect("the first small client survives owner exit")),
+                    Some(blocks[1].take().expect("the second small client survives owner exit")),
+                    Some(blocks[2].take().expect("the first medium client survives owner exit")),
+                    Some(blocks[3].take().expect("the second medium client survives owner exit")),
+                ];
+                match free_after_exit(TicketZeroOwnerExitFreeRoute { route, blocks }) {
+                    TicketZeroOwnerExitFreeOutcome::Finished(proof) => {
+                        Ok(OwnerExitMappedRegularWorkerResult::Completed(proof))
+                    }
+                    TicketZeroOwnerExitFreeOutcome::Retained(route) => {
+                        core::mem::forget(route);
+                        Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                    }
+                    TicketZeroOwnerExitFreeOutcome::Poisoned => {
+                        Ok(OwnerExitMappedRegularWorkerResult::Retained)
+                    }
+                }
+            }
+            Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                // The fixed workload retains multiple pages; a special
+                // one-page result means its source invariant no longer holds.
+                core::mem::forget(route);
+                core::mem::forget(attachment);
+                Ok(OwnerExitMappedRegularWorkerResult::Retained)
+            }
+            Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+                core::mem::forget(drain);
+                core::mem::forget(attachment);
+                Ok(OwnerExitMappedRegularWorkerResult::Retained)
+            }
+            Err(failure) => {
+                core::mem::forget(failure);
+                core::mem::forget(attachment);
+                Ok(OwnerExitMappedRegularWorkerResult::Retained)
+            }
+        }
+    });
+
+    match page_result {
+        Some(OwnerExitMappedRegularWorkerResult::Completed(proof)) => {
+            match finish_current_thread_after_detached_process_page_route(proof) {
+                ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::Completed,
+                ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+                ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                    TicketZeroLaterThreadPageResult::Unavailable
+                }
+            }
+        }
+        Some(
+            OwnerExitMappedRegularWorkerResult::AllocationFailed
+            | OwnerExitMappedRegularWorkerResult::PublicationFailed,
+        ) => match finish_current_thread_after_user_destructors() {
+            ThreadFinishResult::Finished => TicketZeroLaterThreadPageResult::AllocationFailed,
+            ThreadFinishResult::Retained => TicketZeroLaterThreadPageResult::Retained,
+            ThreadFinishResult::NotAttached | ThreadFinishResult::AlreadyFinished => {
+                TicketZeroLaterThreadPageResult::Unavailable
+            }
+        },
+        Some(OwnerExitMappedRegularWorkerResult::Retained) => {
+            retain_current_thread_detached_owner_exit();
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        None => {
+            retain_current_thread_detached_owner_exit();
+            TicketZeroLaterThreadPageResult::Retained
+        }
     }
 }
 
