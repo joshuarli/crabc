@@ -431,6 +431,62 @@ def check_x86_access_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_posix_fallocate_boundary(errors: list[str]) -> None:
+    """Keep x86 POSIX range allocation typed, mode-zero, and direct."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    start = fs_text.find("pub fn posix_fallocate<")
+    end = fs_text.find("\n/// Transfers", start)
+    if start < 0 or end < 0:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 posix_fallocate slice is missing"
+        )
+        return
+    posix_text = fs_text[start:end]
+    for required in (
+        "let max_loff_t = i64::MAX as u64;",
+        "offset > max_loff_t",
+        "length > max_loff_t",
+        ".checked_add(length)",
+        "crabc_core::fs::fallocate(",
+        "        0,",
+        "offset as i64,",
+        "length as i64,",
+    ):
+        if required not in posix_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: x86 posix_fallocate boundary is missing "
+                f"{required}"
+            )
+    if re.search(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+fallocate(?:<|\s*\()", fs_text):
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 POSIX allocation slice must not expose "
+            "the general fallocate mode API"
+        )
+
+    core_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub fn fallocate(fd: RawFd, mode: u32, offset: i64, length: i64)",
+        "SYS_FALLOCATE,",
+        "syscall4(",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/fs.rs: x86 fallocate syscall seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    if "pub(crate) const SYS_FALLOCATE: usize = 285" not in syscall_text:
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: x86 POSIX allocation ABI proof is "
+            "missing SYS_FALLOCATE=285"
+        )
+
+
 def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
     """Keep direct x86 status flags narrower than pathname or generic fcntl APIs."""
 
@@ -937,6 +993,7 @@ def main() -> int:
     check_x86_clock_nanosleep_boundary(errors)
     check_x86_setitimer_boundary(errors)
     check_x86_access_boundary(errors)
+    check_x86_posix_fallocate_boundary(errors)
     check_x86_fcntl_status_flags_boundary(errors)
     check_x86_flock_boundary(errors)
     check_x86_sendfile_boundary(errors)

@@ -165,6 +165,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("crabc-core/src/thread.rs", direct["source_owners"])
         self.assertIn("crabc-core/src/io.rs", direct["source_owners"])
         for source_owner in (
+            "crabc-rs/tests/x86_64_posix_fallocate.rs",
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_fcntl_flags.rs",
             "crabc-rs/tests/x86_64_flock.rs",
@@ -195,6 +196,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
+            "compat/x86_64/run_x86_posix_fallocate_reference.sh",
+            "compat/x86_64/x86_posix_fallocate_reference_probe.c",
             "compat/x86_64/run_x86_fcntl_status_reference.sh",
             "compat/x86_64/x86_fcntl_status_reference_probe.c",
             "compat/x86_64/run_x86_flock_reference.sh",
@@ -258,6 +261,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         direct_commands = {
             evidence["command"] for evidence in direct["native_evidence"]
         }
+        self.assertIn(
+            "./scripts/dev-x86_64.sh posix-fallocate-reference", direct_commands
+        )
         self.assertIn("./scripts/dev-x86_64.sh ftruncate-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh memfd-reference", direct_commands)
         self.assertIn(
@@ -283,6 +289,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct sync_file_range=277")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct posix_fallocate=285")
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
@@ -355,6 +367,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(capability, remaining["capabilities"])
         self.assertIn("time.process-interval-control", direct["capabilities"])
         self.assertNotIn("time.process-interval-control", remaining["capabilities"])
+        self.assertIn("filesystem.posix-allocate-range", direct["capabilities"])
+        self.assertNotIn("filesystem.posix-allocate-range", remaining["capabilities"])
+        self.assertNotIn("filesystem.allocate-range", direct["capabilities"])
+        self.assertIn("filesystem.allocate-range", remaining["capabilities"])
         self.assertNotIn(
             "crabc-rs/tests/x86_64_epoll.rs", remaining["source_owners"]
         )
@@ -365,6 +381,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_epoll_reference_probe.c", remaining["source_owners"]
         )
         for source_owner in (
+            "crabc-rs/tests/x86_64_posix_fallocate.rs",
+            "compat/x86_64/run_x86_posix_fallocate_reference.sh",
+            "compat/x86_64/x86_posix_fallocate_reference_probe.c",
             "crabc-rs/tests/x86_64_flock.rs",
             "compat/x86_64/run_x86_flock_reference.sh",
             "compat/x86_64/x86_flock_reference_probe.c",

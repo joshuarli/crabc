@@ -229,13 +229,14 @@ pub fn ftruncate(fd: RawFd, length: i64) -> Result<()> {
 /// TLS `errno`.
 ///
 /// `offset` and `length` are the signed Linux `loff_t` representation.
-/// The AArch64 Linux ABI passes both values as full-width registers after
-/// the descriptor and `mode` arguments; unlike 32-bit ABIs, no high/low
-/// word splitting is used here.
+/// Both supported 64-bit Linux syscall ABIs pass both values as full-width
+/// scalar registers after the descriptor and `mode` arguments; unlike 32-bit
+/// ABIs, no high/low word splitting is used here.
 #[inline]
 pub fn fallocate(fd: RawFd, mode: u32, offset: i64, length: i64) -> Result<()> {
     // SAFETY: The kernel validates the descriptor, mode, and signed file
-    // range. All four arguments are scalar AArch64 syscall registers.
+    // range. All four arguments are scalar registers in the target-specific
+    // Linux syscall ABI.
     decode(unsafe {
         syscall4(
             SYS_FALLOCATE,

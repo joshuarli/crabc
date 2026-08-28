@@ -5,8 +5,9 @@
 //! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, file-access advice, file readahead,
-//! descriptor-based file-length mutation, descriptor-to-descriptor transfer
-//! and descriptor-range copying, file-position and synchronization operations,
+//! descriptor-based file-length mutation, fixed-mode descriptor-range
+//! allocation, descriptor-to-descriptor transfer and descriptor-range copying,
+//! file-position and synchronization operations,
 //! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
 //! memory-file creation with bounded
 //! sealing.
@@ -579,6 +580,43 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     }
 
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
+}
+
+/// Allocates a non-negative byte range using Linux `fallocate(2)` mode zero,
+/// the native Rust spelling of POSIX `posix_fallocate`.
+///
+/// `offset`, `length`, and their checked half-open sum must fit Linux's signed
+/// `loff_t` representation. An invalid range returns [`Errno::INVAL`] before
+/// the descriptor is borrowed or a syscall is issued. A zero length is passed
+/// through unchanged, so its result is the direct Linux kernel result.
+///
+/// The syscall borrows the supplied raw descriptor for its duration: passing a
+/// reference or [`BorrowedFd`] retains Rust descriptor ownership, while an
+/// owning `AsFd` passed by value follows ordinary Rust move/drop semantics.
+/// Successful allocation never changes the shared file position. Kernel errors
+/// are returned directly as [`Errno`] values. Unlike the C
+/// `posix_fallocate` function's direct integer error convention, this API
+/// returns [`Result<(), Errno>`] and does not use libc or TLS `errno`. General
+/// Linux fallocate modes, pathname allocation, and a C ABI are outside this
+/// slice.
+#[inline]
+pub fn posix_fallocate<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
+    let max_loff_t = i64::MAX as u64;
+    if offset > max_loff_t
+        || length > max_loff_t
+        || offset
+            .checked_add(length)
+            .map_or(true, |end| end > max_loff_t)
+    {
+        return Err(Errno::INVAL);
+    }
+
+    crabc_core::fs::fallocate(
+        fd.as_fd().as_raw_fd(),
+        0,
+        offset as i64,
+        length as i64,
+    )
 }
 
 /// Transfers up to `count` bytes from the supplied input descriptor to the

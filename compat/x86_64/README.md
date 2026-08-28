@@ -6,6 +6,7 @@ the separately admitted direct `crabc-rs` subset for the
 `x86_64-unknown-linux-musl` target, including only the proved `fs::flock`
 whole-file advisory locking, `fs::sendfile` descriptor transfer,
 `fs::copy_file_range` descriptor-range copying,
+`fs::posix_fallocate` fixed-mode descriptor-range allocation,
 `fs::sync` system-wide and `fs::syncfs`
 descriptor-associated filesystem synchronization and
 `io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
@@ -36,6 +37,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mincore-reference
 ./scripts/dev-x86_64.sh fs-advice-reference
 ./scripts/dev-x86_64.sh ftruncate-reference
+./scripts/dev-x86_64.sh posix-fallocate-reference
 ./scripts/dev-x86_64.sh file-position-reference
 ./scripts/dev-x86_64.sh sync-reference
 ./scripts/dev-x86_64.sh syncfs-reference
@@ -216,6 +218,18 @@ with `file-position-reference`, it proves the admitted typed
 `io.file-position` family; it does not select C `unistd`/header behavior,
 pathname truncation, allocation, durability policy, or broader filesystem
 support.
+
+`posix-fallocate-reference` executes pinned-musl/raw x86 evidence plus the
+focused Rust regression for `fs::posix_fallocate`. It pins
+`fallocate=285`, signed 64-bit `off_t`, fixed mode zero, unlinked regular-file
+extension to 8192 bytes with a retained prefix and zero-filled new range, and
+preserved file position. Pinned musl's C spelling
+returns `EINVAL`/`EBADF` directly without changing `errno`, whereas the raw
+syscall returns `-1` and sets `errno`; the Rust facade returns `Errno` and
+preflights unsigned offset, length, and range representation before borrowing
+the descriptor. It admits neither general Linux fallocate modes, pathname
+allocation, C ABI/errno-TLS behavior, filesystem fallback or policy, nor
+durability.
 
 `file-position-reference` executes the remaining pinned-musl x86
 `lseek`/`fsync`/`fdatasync` lifecycle. It pins syscalls `8`/`74`/`75`,
@@ -710,6 +724,7 @@ selected `crabc-libc` artifact.
 `x86_64_flock`,
 `x86_64_sendfile`,
 `x86_64_copy_file_range`,
+`x86_64_posix_fallocate`,
 `x86_64_file_position`, `x86_64_sync`, `x86_64_syncfs`, `x86_64_sync_file_range`, `x86_64_ftruncate`,
 `x86_64_fs_credentials`,
 `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
@@ -751,6 +766,11 @@ and EOF-zero transfers, and the unsigned-range/error boundaries. It makes no
 C API, errno-TLS, pathname, copy-flag, sendfile/splice-fallback,
 filesystem-copy-policy, or durability claim. The syscall borrows raw descriptor
 values; the public `AsFd` arguments retain ordinary Rust value semantics. The
+posix-fallocate regression proves direct mode-zero range allocation through a
+borrowed descriptor with unchanged shared position, `i64::MAX` range
+preflight before `AsFd` conversion, and Linux's zero-length `EINVAL`. It
+exposes neither general allocation flags nor C/errno-TLS behavior, pathname
+allocation, filesystem fallback/policy, or durability. The
 global-sync regression proves only the unit-returning system-wide `sync(2)`
 request after dirtying a disposable regular file; it deliberately makes no
 timing, per-file, crash, or storage-media durability assertion. The
