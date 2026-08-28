@@ -42,7 +42,8 @@ pub mod collections;
 // alloc-gated `process::getcwd` observations, and
 // caller-buffer-only `fs::readlinkat_raw` slices,
 // `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking, direct
-// `fs::{sync, syncfs}` system-wide and descriptor-associated filesystem
+// `fs::sendfile` descriptor transfer, and direct `fs::{sync, syncfs}`
+// system-wide and descriptor-associated filesystem
 // synchronization, and direct
 // `io::{sync_file_range, SyncFileRangeFlags}` range-writeback
 // requests, remaining `io`, `ioctl`, bounded `mm`

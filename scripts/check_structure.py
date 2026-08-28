@@ -513,6 +513,62 @@ def check_x86_flock_boundary(errors: list[str]) -> None:
         )
 
 
+def check_x86_sendfile_boundary(errors: list[str]) -> None:
+    """Keep direct x86 sendfile descriptor-only and separate from splice/path/C APIs."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub fn sendfile<",
+        "offset: Option<&mut u64>",
+        "i64::MAX as u64",
+        "crabc_core::io::sendfile(",
+        "out_fd.as_fd().as_raw_fd()",
+        "in_fd.as_fd().as_raw_fd()",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 sendfile slice is missing "
+                f"{required}"
+            )
+
+    for forbidden in (
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:splice|vmsplice|tee)(?:<|\s*\()",
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:open|openat|openat2)(?:<|\s*\()",
+        r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
+    ):
+        if re.search(forbidden, fs_text):
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 sendfile slice must defer "
+                "splice-family, pathname-opening, and C ABI expansion"
+            )
+
+    core_io_source = ROOT / "crabc-core" / "src" / "io.rs"
+    core_io_text = core_io_source.read_text(errors="replace")
+    for required in (
+        "pub fn sendfile(",
+        "syscall4(",
+        "SYS_SENDFILE,",
+    ):
+        if required not in core_io_text:
+            errors.append(
+                "crabc-core/src/io.rs: admitted x86 sendfile boundary is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    for required in (
+        "pub(crate) const SYS_SENDFILE: usize = 40",
+        'in("r10") arg3',
+    ):
+        if required not in syscall_text:
+            errors.append(
+                "crabc-core/src/syscall_x86_64.rs: admitted x86 sendfile ABI proof is "
+                f"missing {required}"
+            )
+
+
 def check_x86_sync_file_range_boundary(errors: list[str]) -> None:
     """Keep the admitted x86 range-writeback operation closed and typed."""
 
@@ -815,6 +871,7 @@ def main() -> int:
     check_x86_access_boundary(errors)
     check_x86_fcntl_status_flags_boundary(errors)
     check_x86_flock_boundary(errors)
+    check_x86_sendfile_boundary(errors)
     check_x86_sync_file_range_boundary(errors)
     check_x86_syncfs_boundary(errors)
     check_x86_sync_boundary(errors)

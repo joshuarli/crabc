@@ -143,6 +143,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "io.range-sync",
             "io.status-flags",
             "io.advisory-flock",
+            "filesystem.descriptor-transfer",
             "process.fcntl-lock-observation",
             "process.scheduling-priority",
             "process.scheduling-priority-mutation",
@@ -166,6 +167,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_ftruncate.rs",
             "crabc-rs/tests/x86_64_fcntl_flags.rs",
             "crabc-rs/tests/x86_64_flock.rs",
+            "crabc-rs/tests/x86_64_sendfile.rs",
             "crabc-rs/tests/x86_64_epoll.rs",
             "crabc-rs/tests/x86_64_pselect.rs",
             "crabc-rs/tests/x86_64_file_position.rs",
@@ -195,6 +197,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_fcntl_status_reference_probe.c",
             "compat/x86_64/run_x86_flock_reference.sh",
             "compat/x86_64/x86_flock_reference_probe.c",
+            "compat/x86_64/run_x86_sendfile_reference.sh",
+            "compat/x86_64/x86_sendfile_reference_probe.c",
             "compat/x86_64/run_x86_epoll_reference.sh",
             "compat/x86_64/x86_epoll_reference_probe.c",
             "compat/x86_64/run_x86_pselect_reference.sh",
@@ -296,9 +300,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh fcntl-status-reference", direct_commands
         )
         self.assertIn("./scripts/dev-x86_64.sh flock-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh sendfile-reference", direct_commands)
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct flock=73")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct sendfile=40")
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
@@ -344,6 +355,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_flock.rs",
             "compat/x86_64/run_x86_flock_reference.sh",
             "compat/x86_64/x86_flock_reference_probe.c",
+            "crabc-rs/tests/x86_64_sendfile.rs",
+            "compat/x86_64/run_x86_sendfile_reference.sh",
+            "compat/x86_64/x86_sendfile_reference_probe.c",
             "crabc-rs/tests/x86_64_sync.rs",
             "compat/x86_64/run_x86_sync_reference.sh",
             "compat/x86_64/x86_sync_reference_probe.c",

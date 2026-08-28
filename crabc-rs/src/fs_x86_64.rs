@@ -5,9 +5,10 @@
 //! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
 //! mutation, file-access advice, file readahead,
-//! descriptor-based file-length mutation, file-position and synchronization
-//! operations, system-wide and descriptor-associated filesystem
-//! synchronization, and direct anonymous memory-file creation with bounded
+//! descriptor-based file-length mutation, descriptor-to-descriptor transfer,
+//! file-position and synchronization operations, system-wide and
+//! descriptor-associated filesystem synchronization, and direct anonymous
+//! memory-file creation with bounded
 //! sealing.
 //! The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
@@ -578,6 +579,46 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     }
 
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
+}
+
+/// Transfers up to `count` bytes from the supplied input descriptor to the
+/// supplied output descriptor through Linux `sendfile(2)`.
+///
+/// With `offset == Some`, Linux starts at the supplied non-negative input
+/// offset, leaves the input descriptor's shared position unchanged, and
+/// writes the resulting position back through the same mutable reference.
+/// With `offset == None`, Linux starts at and advances the input descriptor's
+/// shared position. The output descriptor's shared position advances in both
+/// forms. A short transfer is returned as its actual byte count. The syscall
+/// does not transfer kernel descriptor ownership. Passing a reference or
+/// [`BorrowedFd`] retains Rust descriptor ownership; as with any by-value
+/// Rust parameter, an owning `AsFd` value is consumed by the call.
+///
+/// The optional offset is a Rust in/out borrow, not a nullable C `off_t *`:
+/// values above Linux's signed `off_t` range are rejected with
+/// [`Errno::INVAL`] before the syscall, and the reference remains valid for
+/// the call. This direct descriptor-transfer boundary does not admit
+/// splice-family operations, pathname opening, or a C ABI.
+#[inline]
+pub fn sendfile<OutFd: AsFd, InFd: AsFd>(
+    out_fd: OutFd,
+    in_fd: InFd,
+    offset: Option<&mut u64>,
+    count: usize,
+) -> Result<usize> {
+    if offset
+        .as_ref()
+        .map_or(false, |offset| **offset > i64::MAX as u64)
+    {
+        return Err(Errno::INVAL);
+    }
+
+    crabc_core::io::sendfile(
+        out_fd.as_fd().as_raw_fd(),
+        in_fd.as_fd().as_raw_fd(),
+        offset,
+        count,
+    )
 }
 
 /// The Linux file-position origins accepted by [`seek`].

@@ -4,7 +4,8 @@ This closed, native Linux/x86_64 lane is foundation evidence named by
 [`x86-64.md`](../../x86-64.md). It runs the fixed `crabc-core` lib suite and
 the separately admitted direct `crabc-rs` subset for the
 `x86_64-unknown-linux-musl` target, including only the proved `fs::flock`
-whole-file advisory locking, `fs::sync` system-wide and `fs::syncfs`
+whole-file advisory locking, `fs::sendfile` descriptor transfer,
+`fs::sync` system-wide and `fs::syncfs`
 descriptor-associated filesystem synchronization and
 `io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
 public x86_64 runtime support.
@@ -57,6 +58,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
 ./scripts/dev-x86_64.sh fcntl-status-reference
 ./scripts/dev-x86_64.sh flock-reference
+./scripts/dev-x86_64.sh sendfile-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
 ./scripts/dev-x86_64.sh rr-interval-reference
 ./scripts/dev-x86_64.sh sched-affinity-reference
@@ -423,6 +425,17 @@ after release. Invalid operations and closed descriptors report direct
 interaction or `fcntl` record-lock mutation, C APIs or errno TLS, pathname
 opening, durability, or network/distributed-filesystem semantics.
 
+`sendfile-reference` executes pinned-musl/raw x86 evidence plus its focused
+Rust regression for `fs::sendfile`. It pins syscall `40` and signed
+64-bit `off_t`: an explicit input offset advances without moving the input
+descriptor's shared position, while a null offset advances that position.
+The regular-file fixture proves short and EOF-zero results, output bytes and
+position, and direct `EINVAL`/`EBADF` errors. It does not select a C API
+or errno TLS, pathname opening, socket/network or splice behavior, durability,
+or kernel descriptor ownership transfer. Passing a reference or `BorrowedFd`
+retains Rust descriptor ownership; an owning `AsFd` passed by value follows
+ordinary Rust move/drop semantics.
+
 `scheduler-priority-bounds-reference` executes a pinned-musl x86 probe for the
 `SCHED_OTHER`/`SCHED_FIFO`/`SCHED_RR` priority minima and maxima, raw syscall
 values, and invalid-policy behavior. It establishes only the typed Rust
@@ -680,6 +693,7 @@ selected `crabc-libc` artifact.
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`,
 `x86_64_fcntl_getlk`, `x86_64_fcntl_flags`, `x86_64_fs`, `x86_64_fs_advice`,
 `x86_64_flock`,
+`x86_64_sendfile`,
 `x86_64_file_position`, `x86_64_sync`, `x86_64_syncfs`, `x86_64_sync_file_range`, `x86_64_ftruncate`,
 `x86_64_fs_credentials`,
 `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
@@ -708,6 +722,12 @@ independent shared locks, and a nonblocking child contention/release lifecycle
 with direct invalid-operation and closed-descriptor errors. It does not assert
 `flock`/`fcntl` record-lock interaction, durability, or network filesystem
 behavior. The
+sendfile regression proves only direct descriptor inputs exercised through
+borrowed handles, explicit versus shared input-position modes, short and
+EOF-zero transfers, output bytes, and the signed-offset/closed-descriptor
+error boundaries. It makes no socket, network, splice, pathname, C API, or
+durability claim. The syscall does not transfer kernel descriptor ownership;
+the public `AsFd` argument semantics remain ordinary Rust value semantics. The
 global-sync regression proves only the unit-returning system-wide `sync(2)`
 request after dirtying a disposable regular file; it deliberately makes no
 timing, per-file, crash, or storage-media durability assertion. The
