@@ -34,8 +34,10 @@ pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
 // (eventfd counters plus bounded poll/ppoll/pause, select/pselect, and packed
-// epoll readiness with temporary signal masks),
-// descriptor `fs::fstat`,
+// epoll readiness with temporary signal masks), descriptor `fs::fstat`, and
+// typed filesystem-capacity observation through
+// `fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs,
+// fstatvfs}`,
 // direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}` and direct
 // `fs::{OFlags, fcntl_getfl, fcntl_setfl}` status flags, and the named
 // timestamp-mutation family: `fs::{Timespec, Timestamps, UTIME_NOW,

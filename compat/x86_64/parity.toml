@@ -135,6 +135,7 @@ source_owners = [
   "crabc-rs/tests/x86_64_pselect.rs",
   "crabc-rs/tests/x86_64_access.rs",
   "crabc-rs/tests/x86_64_fs.rs",
+  "crabc-rs/tests/x86_64_fs_capacity.rs",
   "crabc-rs/tests/x86_64_fs_advice.rs",
   "crabc-rs/tests/x86_64_memfd.rs",
   "crabc-rs/tests/x86_64_ftruncate.rs",
@@ -197,6 +198,7 @@ source_owners = [
   "compat/x86_64/run_x86_sync_file_range_reference.sh",
   "compat/x86_64/run_x86_access_reference.sh",
   "compat/x86_64/run_x86_fstat_reference.sh",
+  "compat/x86_64/run_x86_statfs_reference.sh",
   "compat/x86_64/run_x86_getcwd_reference.sh",
   "compat/x86_64/run_x86_madvise_reference.sh",
   "compat/x86_64/run_x86_mincore_reference.sh",
@@ -251,6 +253,7 @@ source_owners = [
   "compat/x86_64/x86_syncfs_reference_probe.c",
   "compat/x86_64/x86_sync_file_range_reference_probe.c",
   "compat/x86_64/x86_fstat_reference_probe.c",
+  "compat/x86_64/x86_statfs_reference_probe.c",
   "compat/x86_64/x86_getcwd_reference_probe.c",
   "compat/x86_64/x86_madvise_reference_probe.c",
   "compat/x86_64/x86_mincore_reference_probe.c",
@@ -342,6 +345,7 @@ native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh priority-reference", scope = "Pinned-musl x86 PRIO_PROCESS/PGRP/USER selectors, getpriority's encoded raw success range, and missing-process behavior for only the typed read-only Rust priority slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh setpriority-reference", scope = "Pinned-musl x86 setpriority=141, closed PRIO selectors/nice values, child-contained raw/musl calling-process set/read/no-op exchange, invalid-selector EINVAL, and missing process/group/user target ESRCH for the typed Rust scheduling-priority mutation only; it excludes scheduler-policy mutation and C process APIs." },
   { state = "verified", command = "./scripts/dev-x86_64.sh fstat-reference", scope = "Pinned-musl x86 144-byte fstat record and regular-file behavior for the bounded descriptor slice; it does not complete filesystem.path-core." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh statfs-reference", scope = "Pinned-musl/raw x86 statfs/fstatfs capacity metadata and typed Rust fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs, fstatvfs}; private Linux filesystem-statistics records and musl's statfs-to-statvfs mapping, including its first-filesystem-id-word rule, only. It excludes public C structs/ABI, allocator and errno TLS, pathname mutation, and broader filesystem metadata/path support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh access-reference", scope = "Pinned-musl/raw x86 `access`/`faccessat`/`faccessat2` evidence for typed Rust fs::{access, accessat}: legacy `faccessat=269` is the three-argument CWD or descriptor-relative real-credential check, and nonempty closed `AccessAtFlags` uses `faccessat2=439`. It proves F_OK/R_OK success, missing-path ENOENT, a dangling final symlink's follow versus NOFOLLOW result, invalid mode/flag EINVAL, and a child-contained root fixture where a differing real UID yields R_OK EACCES while AT_EACCESS retains effective-root success. The fixed-stack PathArg boundary rejects interior NULs and 256-byte inputs before the syscall. It excludes pathname mutation, allocation-backed path helpers, C APIs/errno TLS, and broader filesystem.path-core." },
   { state = "verified", command = "./scripts/dev-x86_64.sh getcwd-reference", scope = "Pinned-musl/raw x86 direct typed process::{getcwd,getcwd_alloc,get_current_dir_name,get_current_dir_name_alloc}: getcwd=79 returns the exact initialized NUL-terminated caller-buffer prefix and empty/undersized buffers return raw ERANGE, while musl's zero-size EINVAL wrapper policy is deliberately not emulated. Raw/musl newfstatat=262 over the 144-byte x86 stat layout's st_dev/st_ino identity fields establishes the identity decision behind musl's environment-backed logical-PWD spelling; Rust deliberately accepts an explicit nonempty absolute &CStr snapshot instead, never reads PWD, preserves its exact validated bytes, and otherwise falls back to physical getcwd. Focused Rust tests cover mismatch/relative/empty/absent fallback, non-UTF-8 spelling, RANGE, and alloc logical/physical results; the existing alloc-gated long-CWD regression retries only ERANGE. CWD mutation, general stat/path APIs, C APIs, errno TLS, and record-owning-family selection remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh system-reference", scope = "Pinned-musl x86 uname and kernel sysinfo-prefix behavior for the bounded typed system observations." },
@@ -376,6 +380,7 @@ capabilities = [
   "filesystem.global-sync",
   "filesystem.cwd",
   "filesystem.path-metadata",
+  "filesystem.capacity-metadata",
   "filesystem.fd-timestamps",
   "filesystem.directory-relative-timestamps",
   "filesystem.cwd-timestamps",
@@ -510,7 +515,6 @@ native_evidence = [
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]
 capabilities = [
-  "filesystem.capacity-metadata",
   "filesystem.canonicalize",
   "filesystem.remove-dispatch",
   "process.root-change",

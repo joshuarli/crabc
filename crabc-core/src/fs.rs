@@ -473,13 +473,13 @@ pub unsafe fn fstat_raw(fd: RawFd, buffer: *mut u8) -> Result<()> {
     decode(unsafe { syscall2(SYS_FSTAT, fd as usize, buffer as usize) }).map(|_| ())
 }
 
-/// Queries the Linux/AArch64 `struct statfs` representation for `fd`.
+/// Queries the target Linux `struct statfs` representation for `fd`.
 ///
 /// # Safety
 ///
 /// `buffer` must designate writable storage for the complete target
-/// Linux/AArch64 `struct statfs` layout. The descriptor's I/O safety is
-/// the caller's responsibility.
+/// Linux `struct statfs` layout selected for this target. The descriptor's
+/// I/O safety is the caller's responsibility.
 #[inline]
 pub unsafe fn fstatfs_raw(fd: RawFd, buffer: *mut u8) -> Result<()> {
     // SAFETY: The caller supplies complete writable `struct statfs`
@@ -487,13 +487,13 @@ pub unsafe fn fstatfs_raw(fd: RawFd, buffer: *mut u8) -> Result<()> {
     decode(unsafe { syscall2(SYS_FSTATFS, fd as usize, buffer as usize) }).map(|_| ())
 }
 
-/// Queries the Linux/AArch64 `struct statfs` representation for a C path.
+/// Queries the target Linux `struct statfs` representation for a C path.
 ///
 /// # Safety
 ///
 /// `path` must point to a readable NUL-terminated pathname and `buffer`
-/// must designate writable storage for the complete target Linux/AArch64
-/// `struct statfs` layout.
+/// must designate writable storage for the complete target Linux `struct
+/// statfs` layout selected for this target.
 #[inline]
 pub unsafe fn statfs_raw(path: *const u8, buffer: *mut u8) -> Result<()> {
     // SAFETY: The caller supplies the C-string and output-layout

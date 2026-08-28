@@ -431,6 +431,39 @@ def check_x86_access_boundary(errors: list[str]) -> None:
             )
 
 
+def check_x86_capacity_metadata_boundary(errors: list[str]) -> None:
+    """Keep x86 filesystem-capacity metadata typed, direct, and closed."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    text = fs_source.read_text(errors="replace")
+    for required in (
+        "pub struct StatFs",
+        "pub struct StatVfs",
+        "pub struct StatVfsMountFlags",
+        "pub fn statfs<",
+        "pub fn fstatfs<",
+        "pub fn statvfs<",
+        "pub fn fstatvfs<",
+        "crabc_core::fs::fstatfs_raw(",
+        "crabc_core::fs::statfs(",
+        "f_fsid: statfs.f_fsid[0] as u64,",
+    ):
+        if required not in text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 capacity-metadata slice is missing "
+                f"{required}"
+            )
+    for forbidden in (
+        r'(?m)^\s*(?:pub\s+)?(?:unsafe\s+)?extern\s+"C"',
+        r"(?m)^pub\s+(?:unsafe\s+)?fn\s+(?:open|openat|openat2)(?:<|\s*\()",
+    ):
+        if re.search(forbidden, text):
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: capacity-metadata slice must remain "
+                "Rust-only and must not add pathname opening"
+            )
+
+
 def check_x86_posix_fallocate_boundary(errors: list[str]) -> None:
     """Keep x86 POSIX range allocation typed and mode-zero."""
 
@@ -1128,6 +1161,7 @@ def main() -> int:
     check_x86_clock_nanosleep_boundary(errors)
     check_x86_setitimer_boundary(errors)
     check_x86_access_boundary(errors)
+    check_x86_capacity_metadata_boundary(errors)
     check_x86_posix_fallocate_boundary(errors)
     check_x86_fallocate_boundary(errors)
     check_x86_timestamp_boundary(errors)

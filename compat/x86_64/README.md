@@ -8,6 +8,8 @@ whole-file advisory locking, `fs::sendfile` descriptor transfer,
 `fs::copy_file_range` descriptor-range copying,
 `fs::posix_fallocate` fixed-mode descriptor-range allocation,
 `fs::fallocate` closed-mode descriptor-range allocation,
+`fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs, fstatvfs}`
+filesystem-capacity observation,
 the bounded timestamp-mutation family headed by
 `fs::{Timespec, Timestamps, UTIME_NOW, UTIME_OMIT, futimens}` for descriptor,
 directory-relative, current-directory, final-symlink, and whole-second forms,
@@ -82,6 +84,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh rusage-reference
 ./scripts/dev-x86_64.sh times-reference
 ./scripts/dev-x86_64.sh fstat-reference
+./scripts/dev-x86_64.sh statfs-reference
 ./scripts/dev-x86_64.sh statat-reference
 ./scripts/dev-x86_64.sh getcwd-reference
 ./scripts/dev-x86_64.sh readlinkat-reference
@@ -588,6 +591,14 @@ C `times`/`struct tms` support, tick-rate conversion, or a general x86 facade.
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
 not complete the broader filesystem path-core capability.
 
+`statfs-reference` completes the typed Rust `filesystem.capacity-metadata`
+slice: pinned-musl/raw x86 `statfs` and `fstatfs` capacity observations,
+private Linux filesystem-statistics records, and musl's `statfs`-to-`statvfs`
+mapping, including its first-filesystem-id-word rule. It is Rust-only; public
+C structs and ABI,
+allocator and errno TLS, pathname mutation, and broader filesystem metadata
+remain excluded.
+
 `statat-reference` records the private x86 144-byte stat record through
 `newfstatat(2)`, both relative to a borrowed directory descriptor and through
 `CWD`, with only `AT_SYMLINK_NOFOLLOW`. It does not expose `AT_EMPTY_PATH`,
@@ -752,7 +763,7 @@ selected `crabc-libc` artifact.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `futex`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`,
-`x86_64_fcntl_getlk`, `x86_64_fcntl_flags`, `x86_64_fs`, `x86_64_fs_advice`,
+`x86_64_fcntl_getlk`, `x86_64_fcntl_flags`, `x86_64_fs`, `x86_64_fs_capacity`, `x86_64_fs_advice`,
 `x86_64_flock`,
 `x86_64_sendfile`,
 `x86_64_copy_file_range`,
@@ -852,7 +863,8 @@ known and future flag forwarding, relative/absolute settings, `CANCEL_ON_SET`
 acceptance, periodic-setting inspection, epoll readiness, exact expiration reads, disarming, and
 invalid record/flag/descriptor handling. The filesystem
 regression proves a
-typed descriptor `fstat` record, a private descriptor-relative/CWD `statat`
+typed descriptor `fstat` record, typed `statfs`/`fstatfs` capacity metadata
+with its derived `statvfs` views, a private descriptor-relative/CWD `statat`
 metadata slice, direct `access`/`accessat` real/effective-credential
 observations, caller-buffer and alloc-gated `getcwd` plus caller-buffer-only
 `readlinkat` output, plus

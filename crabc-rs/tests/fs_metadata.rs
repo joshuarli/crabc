@@ -1,6 +1,13 @@
 use crabc_rs::fs::{self, Mode, OFlags};
 
 #[test]
+fn statvfs_mount_flags_match_the_linux_statfs_contract() {
+    assert_eq!(fs::StatVfsMountFlags::NOATIME.bits(), 0x0400);
+    assert_eq!(fs::StatVfsMountFlags::NODIRATIME.bits(), 0x0800);
+    assert_eq!(fs::StatVfsMountFlags::RELATIME.bits(), 0x1000);
+}
+
+#[test]
 fn statfs_and_fstatfs_report_the_same_filesystem() {
     let by_path = fs::statfs("/tmp").expect("statfs direct path query");
     let directory = fs::open("/tmp", OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
@@ -24,6 +31,16 @@ fn statvfs_maps_linux_statfs_without_process_state() {
     assert!(stats.f_blocks > 0);
     assert_eq!(stats.f_favail, stats.f_ffree);
     assert!(stats.f_namemax > 0);
+}
+
+#[test]
+fn statvfs_uses_only_the_first_linux_fsid_word() {
+    let mut stats = fs::statfs("/tmp").expect("statfs direct path query");
+    stats.f_fsid = [0x1234_5678, -1];
+    assert_eq!(fs::StatVfs::from(stats).f_fsid, 0x1234_5678);
+
+    stats.f_fsid = [-1, 0x1234_5678];
+    assert_eq!(fs::StatVfs::from(stats).f_fsid, u64::MAX);
 }
 
 #[test]

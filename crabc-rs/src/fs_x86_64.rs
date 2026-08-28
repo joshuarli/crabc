@@ -4,9 +4,11 @@
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
 //! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
-//! mutation, file-access advice, file readahead, descriptor-based file-length
-//! and timestamp mutation, and closed pathname timestamp mutation through a
-//! fixed-stack path boundary, fixed-mode descriptor-range allocation,
+//! mutation, filesystem-capacity observation through `statfs(2)` and
+//! `fstatfs(2)` plus derived `statvfs` views, file-access advice, file
+//! readahead, descriptor-based file-length and timestamp mutation, and closed
+//! pathname timestamp mutation through a fixed-stack path boundary, fixed-mode
+//! descriptor-range allocation,
 //! descriptor-to-descriptor transfer and descriptor-range copying,
 //! file-position and synchronization operations,
 //! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
@@ -19,9 +21,9 @@
 //! `CWD` and `AT_SYMLINK_NOFOLLOW`, while the direct permission-observation
 //! slice has its own closed access mode and flag types. The caller-buffer
 //! readlink target boundary remains private. `AT_EMPTY_PATH`, a general path
-//! module, `statx`, filesystem statistics, allocation-backed path helpers,
-//! and pathname mutation other than the closed timestamp family remain outside
-//! this staged target boundary until they have their own x86-64 evidence.
+//! module, `statx`, allocation-backed path helpers, and pathname mutation
+//! other than the closed timestamp family remain outside this staged target
+//! boundary until they have their own x86-64 evidence.
 
 use bitflags::bitflags;
 use crate::buffer::Buffer;
@@ -174,8 +176,8 @@ pub enum FlockOperation {
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
 /// A pathname or memory-file name input accepted by [`access`], [`accessat`],
-/// [`statat`], [`stat`], [`readlinkat_raw`], the timestamp-mutation family,
-/// and [`memfd_create`].
+/// [`statat`], [`stat`], [`statfs`], [`statvfs`], [`readlinkat_raw`], the
+/// timestamp-mutation family, and [`memfd_create`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
 /// buffer. The callback is invoked while that C string remains live, so the
@@ -1257,6 +1259,178 @@ const _: [(); 64] = [(); core::mem::offset_of!(Stat, st_blocks)];
 const _: [(); 72] = [(); core::mem::offset_of!(Stat, st_atime)];
 const _: [(); 88] = [(); core::mem::offset_of!(Stat, st_mtime)];
 const _: [(); 104] = [(); core::mem::offset_of!(Stat, st_ctime)];
+
+bitflags! {
+    /// Linux mount flags reported by [`StatFs`] and [`StatVfs`].
+    ///
+    /// Unknown bits are retained so observations from newer kernels are not
+    /// discarded. These are filesystem observations, not mount-changing
+    /// operation flags.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct StatVfsMountFlags: u64 {
+        /// `ST_RDONLY`.
+        const RDONLY = 0x0000_0001;
+        /// `ST_NOSUID`.
+        const NOSUID = 0x0000_0002;
+        /// `ST_NODEV`.
+        const NODEV = 0x0000_0004;
+        /// `ST_NOEXEC`.
+        const NOEXEC = 0x0000_0008;
+        /// `ST_SYNCHRONOUS`.
+        const SYNCHRONOUS = 0x0000_0010;
+        /// `ST_MANDLOCK`.
+        const MANDLOCK = 0x0000_0040;
+        /// `ST_NOATIME`.
+        const NOATIME = 0x0000_0400;
+        /// `ST_NODIRATIME`.
+        const NODIRATIME = 0x0000_0800;
+        /// `ST_RELATIME`.
+        const RELATIME = 0x0000_1000;
+        /// Preserve future Linux-defined mount bits.
+        const _ = !0;
+    }
+}
+
+/// Linux/x86-64 `struct statfs` filesystem statistics.
+///
+/// This is the kernel representation returned by [`statfs`] and
+/// [`fstatfs`], not a public C ABI alias. The spare words remain private so
+/// the output buffer retains the complete 120-byte x86-64 layout.
+#[doc(alias = "struct statfs")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct StatFs {
+    /// Filesystem type magic number.
+    pub f_type: i64,
+    /// Fundamental block size in bytes.
+    pub f_bsize: i64,
+    /// Total data blocks in the filesystem.
+    pub f_blocks: u64,
+    /// Free blocks, including blocks reserved for the superuser.
+    pub f_bfree: u64,
+    /// Free blocks available to an unprivileged caller.
+    pub f_bavail: u64,
+    /// Total file nodes.
+    pub f_files: u64,
+    /// Free file nodes.
+    pub f_ffree: u64,
+    /// Filesystem identifier words.
+    pub f_fsid: [i32; 2],
+    /// Maximum filename length.
+    pub f_namelen: i64,
+    /// Fragment size, or zero when not reported.
+    pub f_frsize: i64,
+    /// Linux mount flags.
+    pub f_flags: i64,
+    __spare: [i64; 4],
+}
+
+const _: [(); 120] = [(); core::mem::size_of::<StatFs>()];
+const _: [(); 8] = [(); core::mem::align_of::<StatFs>()];
+const _: [(); 0] = [(); core::mem::offset_of!(StatFs, f_type)];
+const _: [(); 8] = [(); core::mem::offset_of!(StatFs, f_bsize)];
+const _: [(); 16] = [(); core::mem::offset_of!(StatFs, f_blocks)];
+const _: [(); 24] = [(); core::mem::offset_of!(StatFs, f_bfree)];
+const _: [(); 32] = [(); core::mem::offset_of!(StatFs, f_bavail)];
+const _: [(); 40] = [(); core::mem::offset_of!(StatFs, f_files)];
+const _: [(); 48] = [(); core::mem::offset_of!(StatFs, f_ffree)];
+const _: [(); 56] = [(); core::mem::offset_of!(StatFs, f_fsid)];
+const _: [(); 64] = [(); core::mem::offset_of!(StatFs, f_namelen)];
+const _: [(); 72] = [(); core::mem::offset_of!(StatFs, f_frsize)];
+const _: [(); 80] = [(); core::mem::offset_of!(StatFs, f_flags)];
+const _: [(); 88] = [(); core::mem::offset_of!(StatFs, __spare)];
+
+/// POSIX-shaped filesystem statistics derived from Linux [`StatFs`].
+///
+/// Linux has no separate `statvfs` syscall. The facade performs `statfs` or
+/// `fstatfs` and applies musl's Linux field mapping: a zero fragment size
+/// falls back to the fundamental block size, available file nodes equal the
+/// reported free file nodes, and `f_fsid` is the first signed Linux
+/// filesystem-id word widened to `u64`.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct StatVfs {
+    /// Fundamental block size in bytes.
+    pub f_bsize: u64,
+    /// Fragment size in bytes, falling back to `f_bsize` when absent.
+    pub f_frsize: u64,
+    /// Total data blocks in the filesystem.
+    pub f_blocks: u64,
+    /// Free blocks, including blocks reserved for the superuser.
+    pub f_bfree: u64,
+    /// Free blocks available to an unprivileged caller.
+    pub f_bavail: u64,
+    /// Total file nodes.
+    pub f_files: u64,
+    /// Free file nodes.
+    pub f_ffree: u64,
+    /// Available file nodes; Linux supplies no distinct value.
+    pub f_favail: u64,
+    /// The first Linux filesystem-id word, widened with musl's signed-to-
+    /// unsigned conversion.
+    pub f_fsid: u64,
+    /// POSIX-shaped mount flags.
+    pub f_flag: StatVfsMountFlags,
+    /// Maximum filename length.
+    pub f_namemax: u64,
+}
+
+impl From<StatFs> for StatVfs {
+    #[inline]
+    fn from(statfs: StatFs) -> Self {
+        let f_bsize = statfs.f_bsize as u64;
+        Self {
+            f_bsize,
+            f_frsize: if statfs.f_frsize != 0 { statfs.f_frsize as u64 } else { f_bsize },
+            f_blocks: statfs.f_blocks,
+            f_bfree: statfs.f_bfree,
+            f_bavail: statfs.f_bavail,
+            f_files: statfs.f_files,
+            f_ffree: statfs.f_ffree,
+            f_favail: statfs.f_ffree,
+            f_fsid: statfs.f_fsid[0] as u64,
+            f_flag: StatVfsMountFlags::from_bits_retain(statfs.f_flags as u64),
+            f_namemax: statfs.f_namelen as u64,
+        }
+    }
+}
+
+/// Queries filesystem statistics for an open file or directory.
+#[inline]
+pub fn fstatfs<Fd: AsFd>(fd: Fd) -> Result<StatFs> {
+    let fd = fd.as_fd();
+    let mut statfs = MaybeUninit::<StatFs>::uninit();
+    // SAFETY: `StatFs` is the complete 120-byte Linux/x86-64 output layout.
+    unsafe { crabc_core::fs::fstatfs_raw(fd.as_raw_fd(), statfs.as_mut_ptr().cast())? };
+    // SAFETY: a successful syscall initialized the complete output record.
+    Ok(unsafe { statfs.assume_init() })
+}
+
+/// Queries filesystem statistics for `path` using the fixed-stack path boundary.
+#[inline]
+pub fn statfs<P: PathArg>(path: P) -> Result<StatFs> {
+    path.into_with_c_str(|path| {
+        let mut statfs = MaybeUninit::<StatFs>::uninit();
+        // SAFETY: `PathArg` keeps the C string live and `StatFs` is complete.
+        crabc_core::fs::statfs(path, statfs.as_mut_ptr().cast())?;
+        // SAFETY: a successful syscall initialized the complete output record.
+        Ok(unsafe { statfs.assume_init() })
+    })
+}
+
+/// Queries POSIX-shaped filesystem statistics for an open descriptor.
+#[inline]
+pub fn fstatvfs<Fd: AsFd>(fd: Fd) -> Result<StatVfs> {
+    fstatfs(fd).map(StatVfs::from)
+}
+
+/// Queries POSIX-shaped filesystem statistics for `path`.
+#[inline]
+pub fn statvfs<P: PathArg>(path: P) -> Result<StatVfs> {
+    statfs(path).map(StatVfs::from)
+}
 
 /// Queries metadata for an open file or directory descriptor.
 ///

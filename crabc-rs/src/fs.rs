@@ -891,24 +891,24 @@ bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct StatVfsMountFlags: u64 {
-        /// `ST_RDONLY`/`MS_RDONLY`.
+        /// `ST_RDONLY`.
         const RDONLY = 0x0000_0001;
-        /// `ST_NOSUID`/`MS_NOSUID`.
+        /// `ST_NOSUID`.
         const NOSUID = 0x0000_0002;
-        /// `ST_NODEV`/`MS_NODEV`.
+        /// `ST_NODEV`.
         const NODEV = 0x0000_0004;
-        /// `ST_NOEXEC`/`MS_NOEXEC`.
+        /// `ST_NOEXEC`.
         const NOEXEC = 0x0000_0008;
-        /// `ST_SYNCHRONOUS`/`MS_SYNCHRONOUS`.
+        /// `ST_SYNCHRONOUS`.
         const SYNCHRONOUS = 0x0000_0010;
-        /// `ST_MANDLOCK`/`MS_MANDLOCK`.
+        /// `ST_MANDLOCK`.
         const MANDLOCK = 0x0000_0040;
-        /// `ST_NOATIME`/`MS_NOATIME`.
-        const NOATIME = 0x0010_0000;
-        /// `ST_NODIRATIME`/`MS_NODIRATIME`.
-        const NODIRATIME = 0x0020_0000;
-        /// `ST_RELATIME`/`MS_RELATIME`.
-        const RELATIME = 0x0040_0000;
+        /// `ST_NOATIME`.
+        const NOATIME = 0x0000_0400;
+        /// `ST_NODIRATIME`.
+        const NODIRATIME = 0x0000_0800;
+        /// `ST_RELATIME`.
+        const RELATIME = 0x0000_1000;
         /// Preserve future Linux-defined mount bits.
         const _ = !0;
     }
@@ -1232,12 +1232,28 @@ pub struct StatFs {
     __spare: [i64; 4],
 }
 
+const _: [(); 120] = [(); core::mem::size_of::<StatFs>()];
+const _: [(); 8] = [(); core::mem::align_of::<StatFs>()];
+const _: [(); 0] = [(); core::mem::offset_of!(StatFs, f_type)];
+const _: [(); 8] = [(); core::mem::offset_of!(StatFs, f_bsize)];
+const _: [(); 16] = [(); core::mem::offset_of!(StatFs, f_blocks)];
+const _: [(); 24] = [(); core::mem::offset_of!(StatFs, f_bfree)];
+const _: [(); 32] = [(); core::mem::offset_of!(StatFs, f_bavail)];
+const _: [(); 40] = [(); core::mem::offset_of!(StatFs, f_files)];
+const _: [(); 48] = [(); core::mem::offset_of!(StatFs, f_ffree)];
+const _: [(); 56] = [(); core::mem::offset_of!(StatFs, f_fsid)];
+const _: [(); 64] = [(); core::mem::offset_of!(StatFs, f_namelen)];
+const _: [(); 72] = [(); core::mem::offset_of!(StatFs, f_frsize)];
+const _: [(); 80] = [(); core::mem::offset_of!(StatFs, f_flags)];
+const _: [(); 88] = [(); core::mem::offset_of!(StatFs, __spare)];
+
 /// POSIX-shaped filesystem statistics derived from Linux [`StatFs`].
 ///
 /// Linux has no separate `statvfs` syscall. [`statvfs`] and [`fstatvfs`]
-/// perform `statfs`/`fstatfs` and apply the same conservative field mapping as
-/// Rustix: a zero fragment size falls back to the fundamental block size, and
-/// available file nodes equal the reported free file nodes.
+/// perform `statfs`/`fstatfs` and apply musl's Linux field mapping: a zero
+/// fragment size falls back to the fundamental block size, available file nodes
+/// equal the reported free file nodes, and `f_fsid` is the first signed Linux
+/// filesystem-id word widened to `u64`.
 #[derive(Debug, Copy, Clone)]
 #[non_exhaustive]
 pub struct StatVfs {
@@ -1257,7 +1273,8 @@ pub struct StatVfs {
     pub f_ffree: u64,
     /// Available file nodes. Linux supplies no distinct value; this is `f_ffree`.
     pub f_favail: u64,
-    /// The two Linux filesystem-id words packed in native little-endian order.
+    /// The first Linux filesystem-id word, widened with musl's signed-to-
+    /// unsigned conversion.
     pub f_fsid: u64,
     /// POSIX-shaped mount flags.
     pub f_flag: StatVfsMountFlags,
@@ -1282,7 +1299,7 @@ impl From<StatFs> for StatVfs {
             f_files: statfs.f_files,
             f_ffree: statfs.f_ffree,
             f_favail: statfs.f_ffree,
-            f_fsid: u64::from(statfs.f_fsid[0] as u32) | (u64::from(statfs.f_fsid[1] as u32) << 32),
+            f_fsid: statfs.f_fsid[0] as u64,
             f_flag: StatVfsMountFlags::from_bits_retain(statfs.f_flags as u64),
             f_namemax: statfs.f_namelen as u64,
         }
