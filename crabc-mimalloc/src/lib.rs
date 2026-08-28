@@ -113,6 +113,7 @@ pub mod __crabc_runtime {
         after_fork_parent, attach_current_thread, before_fork,
         finish_current_thread_after_user_destructors, initialize_process,
         process_is_active, ticket_zero_allocate, ticket_zero_free,
-        ticket_zero_later_thread_page_roundtrip, ticket_zero_reallocate,
+        ticket_zero_later_thread_page_roundtrip,
+        ticket_zero_later_thread_persistent_local_workload, ticket_zero_reallocate,
     };
 }

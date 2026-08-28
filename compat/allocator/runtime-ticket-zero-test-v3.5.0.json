@@ -21,13 +21,15 @@
     "crabc_ticket_zero_test_init",
     "crabc_ticket_zero_test_malloc",
     "crabc_ticket_zero_test_realloc",
+    "crabc_ticket_zero_test_worker_mixed_roundtrip",
     "crabc_ticket_zero_test_worker_roundtrip",
     "crabc_ticket_zero_test_zalloc"
   ],
   "caller_contract": [
     "The fixture is one fresh Linux/AArch64 process and calls init once with its original thread's nonzero AT_PAGESZ value.",
     "Every allocation, reallocation, and free is serialized on that original thread.",
-    "After the original thread frees every adapter allocation, one fresh pthread may make one pointer-free worker round trip; it creates and finishes one scoped later-main page engine before its normal worker teardown.",
+    "After the original thread frees every adapter allocation, one fresh pthread may make one pointer-free narrow worker round trip or one pointer-private persistent mixed-local worker round trip; either creates and finishes one later-main page engine before its normal worker teardown.",
+    "The persistent worker keeps one engine through multiple simultaneously live small, medium, large, singleton, and multi-page singleton allocations, checks their contents, locally reuses freed small and medium blocks, and frees every block before engine finish; no pointer crosses the worker boundary.",
     "Only current pointers returned by this adapter may reach its realloc or free entry points.",
     "No shutdown is exposed: the permanent source-shaped ticket-zero page owner remains live until process exit.",
     "The adapter exports no malloc, free, or mi_* ELF symbol and never selects crabc-libc's production backend."
@@ -38,7 +40,8 @@
     "realloc preserves the initialized prefix",
     "zalloc returns zeroed bytes",
     "after all exact allocations free, the owner releases only its Rust PageMap lifecycle lease",
-    "one fresh worker can borrow that dormant published pair for an empty scoped later-main page-engine round trip and finish its normal attachment",
+    "one fresh worker can borrow that dormant published pair for the retained narrow scoped page-engine round trip and finish its normal attachment",
+    "three fresh workers can each retain one engine through the pointer-private mixed local small/medium/large/singleton/multi-page workload, locally reuse freed small and medium blocks, free all blocks, and restore normal attachment teardown",
     "ticket zero reactivates afterward through the same first arena"
   ],
   "compile_requirements": {

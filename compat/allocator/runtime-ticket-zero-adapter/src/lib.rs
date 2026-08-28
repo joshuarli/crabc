@@ -1,7 +1,7 @@
 //! Test-only prefixed C ABI for the private ticket-zero runtime page owner.
 //!
 //! This crate is deliberately outside `crabc-libc` and is linked only by the
-//! allocator evidence harness. Its six `crabc_ticket_zero_test_*` exports
+//! allocator evidence harness. Its seven `crabc_ticket_zero_test_*` exports
 //! exercise one process's original thread plus one fresh scoped worker through
 //! the hidden Rust runtime seam; they are neither `malloc`/`free`
 //! interposition symbols nor a production backend-selection mechanism.
@@ -22,7 +22,7 @@ use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroPageAllocationResult,
     TicketZeroPageFreeResult, initialize_process, ticket_zero_allocate,
     ticket_zero_free, ticket_zero_later_thread_page_roundtrip,
-    ticket_zero_reallocate,
+    ticket_zero_later_thread_persistent_local_workload, ticket_zero_reallocate,
 };
 
 const ENOMEM: c_int = 12;
@@ -233,6 +233,38 @@ pub unsafe extern "C" fn crabc_ticket_zero_test_worker_roundtrip(size: usize) ->
         return -1;
     }
     match ticket_zero_later_thread_page_roundtrip(size, false) {
+        TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
+        TicketZeroLaterThreadPageResult::AllocationFailed => {
+            set_errno(ENOMEM);
+            -1
+        }
+        TicketZeroLaterThreadPageResult::Unavailable | TicketZeroLaterThreadPageResult::Retained => {
+            set_errno(EBUSY);
+            -1
+        }
+    }
+}
+
+/// Attaches this fresh worker for one persistent mixed local page-engine
+/// workload and normal teardown.
+///
+/// # Safety
+///
+/// The caller must invoke this only on one fresh pthread after init and after
+/// every ticket-zero adapter allocation has freed. The worker must not use any
+/// other adapter operation. The pointer-private Rust workload retains one
+/// engine while it allocates, checks, locally frees, and locally reuses small,
+/// medium, large, singleton, and multi-page singleton blocks. Success
+/// preserves its incoming `errno`. This is a test-only lifecycle witness, not
+/// a C allocator operation or backend selector.
+#[no_mangle]
+pub unsafe extern "C" fn crabc_ticket_zero_test_worker_mixed_roundtrip() -> c_int {
+    let saved_errno = errno_value();
+    if !is_ready() {
+        set_errno(EBUSY);
+        return -1;
+    }
+    match ticket_zero_later_thread_persistent_local_workload() {
         TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
         TicketZeroLaterThreadPageResult::AllocationFailed => {
             set_errno(ENOMEM);

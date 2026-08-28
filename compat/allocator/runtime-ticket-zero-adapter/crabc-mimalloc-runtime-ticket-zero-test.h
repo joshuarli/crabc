@@ -42,6 +42,19 @@ void crabc_ticket_zero_test_free(void *p);
  */
 int crabc_ticket_zero_test_worker_roundtrip(size_t size);
 
+/*
+ * After the original thread has freed every adapter allocation, one fresh
+ * pthread may call this to retain one page engine through a pointer-private
+ * mixed local workload. That workload keeps multiple allocations live across
+ * small, medium, large, singleton, and multi-page singleton requests, checks
+ * their contents, locally reuses freed small and medium blocks, frees every
+ * block, and completes normal teardown. It accepts and returns no pointer.
+ * On success it returns 0 and preserves errno; on failure it returns -1 with
+ * errno set. It is not valid on the original thread, a reused worker, or while
+ * ticket-zero allocations are live.
+ */
+int crabc_ticket_zero_test_worker_mixed_roundtrip(void);
+
 #ifdef __cplusplus
 }
 #endif

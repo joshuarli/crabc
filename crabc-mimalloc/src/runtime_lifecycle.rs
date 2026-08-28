@@ -36,6 +36,7 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
+use crate::config::{LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE};
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
 };
@@ -787,6 +788,208 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
     }
 }
 
+// This fixed, pointer-private test workload deliberately crosses the source
+// small, medium, large, and singleton allocation branches. Two small and two
+// medium blocks remain live while their siblings are freed and reacquired, so
+// the reuse check observes local page ownership rather than a freshly released
+// page or a ticket-zero handoff. The final singleton is larger than one large
+// page to require a multi-page source singleton span.
+const PERSISTENT_WORKER_LOCAL_REQUESTS: [(usize, u8); 7] = [
+    (37, 0x11),
+    (37, 0x22),
+    (SMALL_MAX_OBJ_SIZE + 1, 0x33),
+    (SMALL_MAX_OBJ_SIZE + 1, 0x44),
+    (MEDIUM_MAX_OBJ_SIZE + 1, 0x55),
+    (LARGE_MAX_OBJ_SIZE + 1, 0x66),
+    (LARGE_MAX_OBJ_SIZE + 64 * 1024 + 1, 0x77),
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentLocalWorkerError {
+    AllocationFailed,
+    PatternMismatch,
+    Free,
+}
+
+#[inline]
+unsafe fn fill_worker_pattern(block: core::ptr::NonNull<u8>, size: usize, seed: u8) {
+    for offset in 0..size {
+        // SAFETY: the caller proves this exact current allocation has at
+        // least `size` writable bytes and no concurrent or aliased access.
+        unsafe {
+            block
+                .as_ptr()
+                .add(offset)
+                .write(seed.wrapping_add(offset as u8));
+        }
+    }
+}
+
+#[inline]
+unsafe fn worker_pattern_matches(block: core::ptr::NonNull<u8>, size: usize, seed: u8) -> bool {
+    for offset in 0..size {
+        // SAFETY: the caller proves this exact current allocation has at
+        // least `size` readable bytes and no concurrent or aliased access.
+        let observed = unsafe { block.as_ptr().add(offset).read() };
+        if observed != seed.wrapping_add(offset as u8) {
+            return false;
+        }
+    }
+    true
+}
+
+#[inline]
+fn free_persistent_worker_block(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    block: &mut Option<core::ptr::NonNull<u8>>,
+) -> Result<(), PersistentLocalWorkerError> {
+    let block = block.take().ok_or(PersistentLocalWorkerError::Free)?;
+    // SAFETY: this helper consumes exactly one current local allocation and
+    // never publishes it outside the persistent worker engine.
+    unsafe { allocator.free(block) }.map_err(|_| PersistentLocalWorkerError::Free)
+}
+
+fn free_remaining_persistent_worker_blocks(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+    blocks: &mut [Option<core::ptr::NonNull<u8>>; PERSISTENT_WORKER_LOCAL_REQUESTS.len()],
+) -> Result<(), PersistentLocalWorkerError> {
+    for block in blocks {
+        if block.is_some() {
+            free_persistent_worker_block(allocator, block)?;
+        }
+    }
+    Ok(())
+}
+
+/// Exercises one worker-owned page engine for the complete local Gate 5A
+/// witness. It has no transfer, remote-free, abandonment, or owner-exit
+/// operation: every pointer stays private to this thread and is freed before
+/// its enclosing engine can finish.
+fn run_persistent_local_worker_workload(
+    allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+) -> Result<(), PersistentLocalWorkerError> {
+    let mut blocks = [None; PERSISTENT_WORKER_LOCAL_REQUESTS.len()];
+
+    for (slot, (request, seed)) in blocks.iter_mut().zip(PERSISTENT_WORKER_LOCAL_REQUESTS) {
+        let Some(block) = allocator.allocate(request, false) else {
+            free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+            return Err(PersistentLocalWorkerError::AllocationFailed);
+        };
+        // SAFETY: `block` is the exact newly allocated, local block and the
+        // request is the checked allocation length for this workload.
+        unsafe { fill_worker_pattern(block, request, seed) };
+        *slot = Some(block);
+    }
+
+    for (block, (request, seed)) in blocks.iter().zip(PERSISTENT_WORKER_LOCAL_REQUESTS) {
+        let block = block.ok_or(PersistentLocalWorkerError::PatternMismatch)?;
+        // SAFETY: each allocation remains current and exclusively local until
+        // the mixed free sequence below consumes it.
+        if !unsafe { worker_pattern_matches(block, request, seed) } {
+            free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+            return Err(PersistentLocalWorkerError::PatternMismatch);
+        }
+    }
+
+    free_persistent_worker_block(allocator, &mut blocks[0])?;
+    let Some(reused_small) = allocator.allocate(PERSISTENT_WORKER_LOCAL_REQUESTS[0].0, false)
+    else {
+        free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentLocalWorkerError::AllocationFailed);
+    };
+    blocks[0] = Some(reused_small);
+    // SAFETY: this post-free allocation is current and private to this worker.
+    unsafe {
+        fill_worker_pattern(
+            reused_small,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[0].0,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[0].1,
+        )
+    };
+
+    free_persistent_worker_block(allocator, &mut blocks[2])?;
+    let Some(reused_medium) = allocator.allocate(PERSISTENT_WORKER_LOCAL_REQUESTS[2].0, false)
+    else {
+        free_remaining_persistent_worker_blocks(allocator, &mut blocks)?;
+        return Err(PersistentLocalWorkerError::AllocationFailed);
+    };
+    blocks[2] = Some(reused_medium);
+    // SAFETY: this post-free allocation is current and private to this worker.
+    unsafe {
+        fill_worker_pattern(
+            reused_medium,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[2].0,
+            PERSISTENT_WORKER_LOCAL_REQUESTS[2].1,
+        )
+    };
+
+    // Deliberately free across page kinds rather than in allocation order.
+    for index in [4, 1, 6, 5, 3, 2, 0] {
+        free_persistent_worker_block(allocator, &mut blocks[index])?;
+    }
+    Ok(())
+}
+
+/// Runs one complete persistent later-worker page-engine lifecycle against
+/// the dormant ticket-zero process pair.
+///
+/// This private evidence/control seam attaches a fresh worker exactly once,
+/// retains one page engine through a fixed mixed local workload, returns that
+/// engine empty, and only then completes normal worker attachment teardown.
+/// It accepts and returns no allocation pointer, does not route libc
+/// allocation, and is deliberately not a concurrent or general worker-owner
+/// API.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_persistent_local_workload() -> TicketZeroLaterThreadPageResult {
+    match attach_current_thread() {
+        ThreadAttachResult::Attached => {}
+        ThreadAttachResult::Retained => return TicketZeroLaterThreadPageResult::Retained,
+        ThreadAttachResult::Inactive
+        | ThreadAttachResult::AlreadyAttached
+        | ThreadAttachResult::Finished => return TicketZeroLaterThreadPageResult::Unavailable,
+    }
+
+    enum PersistentWorkerResult {
+        Completed,
+        AllocationFailed,
+    }
+
+    let page_result = RUNTIME_PROCESS.with_dormant_page_pair(|pair| {
+        let slot = current_thread_slot();
+        let attachment = slot.attachment.as_mut().ok_or(())?;
+        let mut allocator = MainHeapThreadProcessPageAllocator::begin(attachment, pair)
+            .map_err(|_| ())?;
+        let workload = run_persistent_local_worker_workload(&mut allocator);
+        allocator.finish().map_err(|_| ())?;
+        match workload {
+            Ok(()) => Ok(PersistentWorkerResult::Completed),
+            Err(PersistentLocalWorkerError::AllocationFailed) => {
+                Ok(PersistentWorkerResult::AllocationFailed)
+            }
+            Err(
+                PersistentLocalWorkerError::PatternMismatch
+                | PersistentLocalWorkerError::Free,
+            ) => Err(()),
+        }
+    });
+    let finish = finish_current_thread_after_user_destructors();
+    match (page_result, finish) {
+        (Some(PersistentWorkerResult::Completed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::Completed
+        }
+        (Some(PersistentWorkerResult::AllocationFailed), ThreadFinishResult::Finished) => {
+            TicketZeroLaterThreadPageResult::AllocationFailed
+        }
+        (_, ThreadFinishResult::Retained)
+        | (_, _) if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_RETAINED
+            || RUNTIME_PROCESS.state.load(Ordering::Acquire) == PROCESS_RETAINED =>
+        {
+            TicketZeroLaterThreadPageResult::Retained
+        }
+        _ => TicketZeroLaterThreadPageResult::Unavailable,
+    }
+}
+
 /// Runs one complete later-worker page-engine lifecycle against the dormant
 /// ticket-zero process pair.
 ///
@@ -1059,6 +1262,80 @@ mod tests {
         )
     }
 
+    /// A read-only audit of the process-long objects that a completed Gate 5A
+    /// worker must return to their pre-worker state. `total_thread_count` is
+    /// intentionally separate: mimalloc's source sequence is monotonic, while
+    /// `live_thread_count` and the shared-later-Theap count must be restored.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct PersistentWorkerStateAudit {
+        page_map_root: usize,
+        page_map_committed_count: usize,
+        page_map_reserved_count: usize,
+        page_map_registered_entry_count: usize,
+        page_map_published_submap_count: usize,
+        page_map_lazy_submap_allocation_count: usize,
+        arena_address: usize,
+        arena_registry_count: usize,
+        total_thread_count: usize,
+        live_thread_count: usize,
+        shared_later_theap_count: usize,
+    }
+
+    fn persistent_worker_state_audit(
+        runtime: &'static RuntimeProcessStorage,
+        arena_storage: &'static ProcessSharedArenaStorage,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+    ) -> PersistentWorkerStateAudit {
+        // SAFETY: this fixture leaked the one permanent process owner before
+        // starting its workers, and this audit runs only after a worker join.
+        let owner = unsafe { runtime.active_owner() }
+            .expect("the isolated runtime keeps its process owner published");
+        let ready = owner
+            .ready()
+            .expect("the permanent ticket-zero owner remains process-ready");
+        let process_page_map = ready
+            .page_map()
+            .expect("the process-ready owner retains its PageMap lease");
+        let page_map = process_page_map
+            .page_map()
+            .expect("the initialized PageMap root remains auditably published");
+        let arena = arena_storage
+            .ready_lease()
+            .expect("the first ticket-zero request published one retained arena");
+        PersistentWorkerStateAudit {
+            page_map_root: process_page_map
+                .root()
+                .expect("the PageMap root remains stable")
+                .as_ptr()
+                .addr(),
+            page_map_committed_count: page_map
+                .committed_count()
+                .expect("the PageMap committed extent remains readable"),
+            page_map_reserved_count: page_map.reserved_count(),
+            page_map_registered_entry_count: page_map
+                .test_registered_entry_count()
+                .expect("the finished worker leaves only stable PageMap entries"),
+            page_map_published_submap_count: page_map
+                .test_published_submap_count()
+                .expect("the PageMap published-submap audit remains readable"),
+            page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
+            arena_address: core::ptr::from_ref(
+                arena
+                    .arena()
+                    .expect("the process arena remains registry-published")
+                    .arena(),
+            )
+            .addr(),
+            arena_registry_count: arena
+                .test_registry_count()
+                .expect("the process arena registry remains readable"),
+            total_thread_count: subprocess.total_thread_count(),
+            live_thread_count: subprocess.live_thread_count(),
+            shared_later_theap_count: main_static.test_shared_later_theap_count(),
+        }
+    }
+
     /// Publishes a fully constructed isolated source ticket-zero owner into
     /// a fresh runtime slot. The test owns this one thread, has no worker
     /// admission, and deliberately leaks the final process lifetime state.
@@ -1181,7 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn dormant_ticket_zero_page_owner_lends_one_scoped_later_main_page_engine() {
+    fn dormant_ticket_zero_page_owner_lends_persistent_mixed_local_worker_engine() {
         thread::spawn(|| {
             let process_storage = ProcessMainInitializationStorage::test_static_owner();
             let main_static = MainStaticAttachmentStorage::test_static_owner();
@@ -1219,44 +1496,108 @@ mod tests {
                 .expect("the ticket-zero owner remains callable")
                 .expect("the first ticket-zero block frees into the dormant state");
 
-            thread::spawn(move || {
-                // SAFETY: the test's permanent process owner and copied main
-                // Heap lease remain in final runtime storage for this worker.
-                let process_owner = unsafe { runtime.active_owner() }
-                    .expect("the process owner stays published for the worker");
-                let config = process_owner
-                    .ready()
-                    .and_then(|ready| ready.memory_config())
-                    .expect("the worker observes the frozen process config");
-                let main_heap = unsafe { runtime.active_main_heap() }
-                    .expect("the worker copies the ticket-zero main Heap witness");
-                let mut attachment = match unsafe {
-                    MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
-                } {
-                    Ok(attachment) => attachment,
-                    Err(_) => panic!("the worker begins its normal shared-main attachment"),
-                };
+            let baseline = persistent_worker_state_audit(runtime, arena_storage, main_static, subprocess);
+            assert_eq!(baseline.page_map_registered_entry_count, 0);
+            assert_eq!(baseline.live_thread_count, 1);
+            assert_eq!(baseline.shared_later_theap_count, 0);
 
-                let completed = runtime.with_dormant_page_pair(|pair| {
-                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
-                        .map_err(|_| ())?;
-                    let block = allocator.allocate(73, false).ok_or(())?;
-                    // SAFETY: `block` is the exact current allocation of this
-                    // scoped later-main page engine.
-                    unsafe { allocator.free(block) }.map_err(|_| ())?;
-                    allocator.finish().map_err(|_| ())
-                });
+            for worker_number in 1..=3 {
+                thread::spawn(move || {
+                    // SAFETY: the test's permanent process owner and copied
+                    // main Heap lease remain in final runtime storage for this
+                    // worker.
+                    let process_owner = unsafe { runtime.active_owner() }
+                        .expect("the process owner stays published for the worker");
+                    let config = process_owner
+                        .ready()
+                        .and_then(|ready| ready.memory_config())
+                        .expect("the worker observes the frozen process config");
+                    let main_heap = unsafe { runtime.active_main_heap() }
+                        .expect("the worker copies the ticket-zero main Heap witness");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(attachment) => attachment,
+                        Err(_) => panic!("the worker begins its normal shared-main attachment"),
+                    };
+
+                    let completed = runtime.with_dormant_page_pair(|pair| {
+                        let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                            .map_err(|_| ())?;
+                        run_persistent_local_worker_workload(&mut allocator)
+                            .expect("the persistent local workload completes before engine teardown");
+                        allocator.finish().map_err(|_| ())
+                    });
+                    assert_eq!(
+                        completed,
+                        Some(()),
+                        "the dormant ticket-zero owner lends its published pair to persistent local worker {worker_number}"
+                    );
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the empty persistent worker engine restores normal worker teardown");
+                })
+                .join()
+                .expect("each later-main page engine stays on its worker thread");
+
+                let after_worker =
+                    persistent_worker_state_audit(runtime, arena_storage, main_static, subprocess);
                 assert_eq!(
-                    completed,
-                    Some(()),
-                    "only the dormant ticket-zero owner lends its published pair to the empty worker engine"
+                    after_worker.page_map_root,
+                    baseline.page_map_root,
+                    "worker {worker_number} retains the one process PageMap root"
                 );
-                attachment
-                    .finish_after_user_destructors()
-                    .expect("the empty scoped page engine restores normal worker teardown");
-            })
-            .join()
-            .expect("the one later-main page engine stays on its worker thread");
+                assert_eq!(
+                    after_worker.page_map_committed_count,
+                    baseline.page_map_committed_count,
+                    "worker {worker_number} returns the PageMap commitment boundary"
+                );
+                assert_eq!(
+                    after_worker.page_map_reserved_count,
+                    baseline.page_map_reserved_count,
+                    "worker {worker_number} does not change PageMap reservation ownership"
+                );
+                assert_eq!(
+                    after_worker.page_map_registered_entry_count,
+                    baseline.page_map_registered_entry_count,
+                    "worker {worker_number} leaves no PageMap registrations"
+                );
+                assert_eq!(
+                    after_worker.page_map_published_submap_count,
+                    baseline.page_map_published_submap_count,
+                    "worker {worker_number} leaves no additional published PageMap submap"
+                );
+                assert_eq!(
+                    after_worker.page_map_lazy_submap_allocation_count,
+                    baseline.page_map_lazy_submap_allocation_count,
+                    "worker {worker_number} leaves no lazy PageMap allocation"
+                );
+                assert_eq!(
+                    after_worker.arena_address,
+                    baseline.arena_address,
+                    "worker {worker_number} retains the one process arena identity"
+                );
+                assert_eq!(
+                    after_worker.arena_registry_count,
+                    baseline.arena_registry_count,
+                    "worker {worker_number} leaves no arena registry ownership"
+                );
+                assert_eq!(
+                    after_worker.live_thread_count,
+                    baseline.live_thread_count,
+                    "worker {worker_number} restores the source live-TLD count"
+                );
+                assert_eq!(
+                    after_worker.shared_later_theap_count,
+                    baseline.shared_later_theap_count,
+                    "worker {worker_number} restores the shared-later-Theap count"
+                );
+                assert_eq!(
+                    after_worker.total_thread_count,
+                    baseline.total_thread_count + worker_number,
+                    "worker {worker_number} consumes exactly one monotonic source thread sequence"
+                );
+            }
 
             let resumed = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
@@ -1273,6 +1614,6 @@ mod tests {
                 .expect("the resumed ticket-zero block frees normally");
         })
         .join()
-        .expect("the runtime alternates the one process pair between ticket zero and one worker");
+        .expect("the runtime alternates the one process pair between ticket zero and one persistent worker");
     }
 }

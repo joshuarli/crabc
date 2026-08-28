@@ -988,17 +988,21 @@ root, page, or general fork repair.
 The adjacent permanent ticket-zero page owner remains outside that production
 bridge. `compat/allocator/runtime-ticket-zero-adapter` is a separate `no_std`
 C evidence staticlib, not an installed or selected libc
-interface: in one fresh process it exports only six prefixed operations
-(init with `AT_PAGESZ`, malloc, zalloc, realloc, free, and a pointer-free
-worker round trip) against that exact owner. Its fixture proves first-page
-activation, realloc prefix copying, zeroing, exact free, the all-free release
-of only the Rust PageMap lifecycle lease, one fresh worker's scoped page
-engine and normal attachment teardown, same-arena ticket-zero reactivation,
-and successful-path `errno` preservation; its symbol audit rejects normal
-`malloc`/`free` and `mi_*` exports. The permanent session and arena remain
-retained after that handoff, so it has no shutdown, concurrent/general
-later-thread route, fork repair, pointer-domain fallback, or backend-promotion
-meaning.
+interface: in one fresh process it exports only seven prefixed operations
+(init with `AT_PAGESZ`, malloc, zalloc, realloc, free, a retained narrow
+worker witness, and a persistent mixed-local worker witness) against that
+exact owner. The mixed witness keeps one page engine through simultaneously
+live small, medium, large, singleton, and multi-page singleton blocks; frees
+and reissues local small/medium requests; then frees every block before normal
+attachment teardown. Its Rust state audit proves PageMap registrations and
+arena ownership stay at the retained process baseline while live-TLD and
+later-Theap counts return to baseline across three fresh workers. The C
+fixture proves the same repeated pthread boundary, same-arena ticket-zero
+reactivation, and successful-path `errno` preservation; its symbol audit
+rejects normal `malloc`/`free` and `mi_*` exports. The permanent session and
+arena remain retained after that handoff, so it has no shutdown,
+concurrent/general later-thread route, fork repair, pointer-domain fallback,
+or backend-promotion meaning.
 
 `main_theap.rs` is the sole static-TLD exception. It owns one private,
 process-static owner whose aligned/address-stable `Heap` and default `Theap`

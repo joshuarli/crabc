@@ -10,12 +10,8 @@ The project remains a compatibility-engineering project, not allocator research.
 
 ## Current checkpoint — 2026-08-27
 
-Current crabc checkpoint:
-
-```
-0d1baeb970d44ad17def64c3ee7e7e88a7a2a18b
-feat(mimalloc): extend native process page lifecycle
-```
+Current capability checkpoint: Gate 5A's bounded persistent mixed-local worker
+witness is complete. Gate 5B's real remote-free integration is next.
 
 The implementation has reached an important phase boundary.
 
@@ -35,7 +31,7 @@ Substantial foundations already exist:
 * a conservative quiescent fork bridge;
 * default arena reservation and process PageMap lifecycle;
 * many carefully proven owner-exit page shapes;
-* a test-only ticket-zero C adapter that proves real first allocation, zeroing, realloc, free, one scoped worker page-engine round trip, and same-arena reactivation;
+* a test-only ticket-zero C adapter that proves real first allocation, zeroing, realloc, free, a retained narrow worker witness, repeated persistent mixed-local worker ownership, and same-arena reactivation;
 * deterministic source-map and ratchet infrastructure;
 * hundreds of focused allocator tests.
 
@@ -48,9 +44,12 @@ At this checkpoint:
 * no performance workload is yet qualified;
 * `libmimalloc-sys` remains the production allocator;
 * crabc-libc does not yet route its malloc family through the Rust engine;
-* later workers do not yet own a general persistent page-bearing allocation engine;
-* the worker runtime seam still deliberately prevents pointers from crossing its bounded round trip;
+* Gate 5A proves a bounded persistent page-bearing worker engine, but later workers do not yet own a public, concurrent, or general persistent allocator route;
+* the worker runtime seam still deliberately prevents pointers from crossing its bounded local-only witnesses;
 * integrated remote free, general page-bearing owner exit, reclamation, and pthread stress remain incomplete.
+
+The critical path is now Gate 5B: real remote free while the page owner remains
+alive. Do not add another owner-exit shape before that gate requires it.
 
 This is no longer primarily a "port another function" problem.
 
@@ -853,6 +852,10 @@ Milestone 5 is now the only primary implementation frontier.
 Do not proceed into broad optional APIs, generalized arena features, secure modes, or nonquiescent fork repair while these gates remain incomplete, except for work directly required to unblock a gate.
 
 ## Gate 5A — persistent page-bearing pthread lifecycle
+
+Status: complete. The retained test-only worker witness now keeps one engine
+through mixed local allocations and normal teardown; Gate 5B remains the next
+integration gate.
 
 Goal: prove that a real later worker can be an allocator owner rather than a pointer-free round trip.
 
@@ -1824,13 +1827,13 @@ Do not hide a regression by weakening its test in the same commit unless the com
 
 ---
 
-# 35. IMMEDIATE NEXT WORK FROM `0d1baeb`
+# 35. IMMEDIATE NEXT WORK AFTER GATE 5A
 
 The next agent should **not** pick another page-shape exception.
 
 Proceed in this order.
 
-## Step 1 — define the general M5 integration fixture
+## Step 1 — evolve the general M5 integration fixture (complete)
 
 Evolve the existing prefixed runtime evidence seam rather than creating many independent adapters.
 
@@ -1847,17 +1850,19 @@ Keep symbols prefixed and test-only.
 
 Do not export public `malloc`, `free`, or `mi_*` from this adapter.
 
-## Step 2 — persistent worker-local allocator
+## Step 2 — persistent worker-local allocator (complete)
 
-Replace the pointer-free worker round trip with a worker attachment capable of retaining its page-bearing engine across multiple operations.
+Keep the retained narrow worker witness, and add a worker attachment capable
+of retaining its page-bearing engine across multiple local operations.
 
 Start local-only.
 
 Use mixed allocations.
 
-Close Gate 5A.
+Gate 5A is closed by focused Rust state auditing and the prefixed C pthread
+fixture. It does not create a general worker allocator route.
 
-## Step 3 — real remote free
+## Step 3 — real remote free (next)
 
 Allow a block allocated by worker A to be freed by worker B through the real production protocol.
 

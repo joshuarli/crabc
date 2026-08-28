@@ -35,6 +35,16 @@ static void *run_worker_roundtrip(void *argument)
     return NULL;
 }
 
+static void *run_worker_mixed_roundtrip(void *argument)
+{
+    (void)argument;
+
+    errno = EAGAIN;
+    if (crabc_ticket_zero_test_worker_mixed_roundtrip() != 0 || errno != EAGAIN)
+        return (void *)(uintptr_t)1;
+    return NULL;
+}
+
 int main(void)
 {
     const size_t first_size = 37;
@@ -86,16 +96,23 @@ int main(void)
     if (pthread_join(worker, &worker_result) != 0 || worker_result != NULL)
         return 10;
 
+    for (index = 0; index < 3; index++) {
+        if (pthread_create(&worker, NULL, run_worker_mixed_roundtrip, NULL) != 0)
+            return 11;
+        if (pthread_join(worker, &worker_result) != 0 || worker_result != NULL)
+            return 12;
+    }
+
     errno = ENOSPC;
     block = crabc_ticket_zero_test_malloc(grown_size);
     if (block == NULL || errno != ENOSPC)
-        return 11;
+        return 13;
     memset(block, 0x4d, grown_size);
 
     errno = EBUSY;
     crabc_ticket_zero_test_free(block);
     if (errno != EBUSY)
-        return 12;
+        return 14;
 
     fputs("runtime ticket-zero allocator ok\n", stdout);
     return 0;

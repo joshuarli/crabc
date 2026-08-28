@@ -935,7 +935,7 @@ impl ProcessSharedArenaLease {
 
     #[cfg(test)]
     #[inline]
-    fn registry_count(self) -> Result<usize, ProcessSharedArenaError> {
+    pub(crate) fn test_registry_count(self) -> Result<usize, ProcessSharedArenaError> {
         self.ensure_ready()?;
         Ok(self.storage.registry.count())
     }
@@ -1422,7 +1422,7 @@ mod tests {
             assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
             assert_eq!(arena.arena().memid.initially_committed(), access == MapAccess::Committed);
             assert!(arena.arena().memid.initially_zero());
-            assert_eq!(lease.registry_count().unwrap(), 1);
+            assert_eq!(lease.test_registry_count().unwrap(), 1);
             assert_eq!(
                 unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) },
                 core::ptr::null_mut(),
@@ -1450,7 +1450,7 @@ mod tests {
             !arena.arena().memid.initially_committed(),
             "the non-overcommit fixture preserves source lazy page commitment"
         );
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         assert!(
             unsafe { page_map.page_map().unwrap().checked_lookup(arena.slice_start(0).unwrap()) }
                 .is_null(),
@@ -1637,7 +1637,7 @@ mod tests {
         ));
         assert_eq!(fault.observed(), 0, "a foreign root rejects before mapping");
         assert_eq!(selected.root().unwrap(), root);
-        assert_eq!(selected.registry_count().unwrap(), 1);
+        assert_eq!(selected.test_registry_count().unwrap(), 1);
     }
 
     #[test]
@@ -1671,7 +1671,7 @@ mod tests {
             Err(_) => panic!("the selected source pair retries after successful unmap"),
         };
         assert_eq!(lease.root().unwrap(), root);
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         assert_eq!(lease.arena().unwrap().arena().memid.kind(), crate::types::MemoryKind::Os);
     }
 
@@ -1739,7 +1739,7 @@ mod tests {
         assert_eq!(lease.root().unwrap(), root);
         assert_eq!(lease.memory_config().unwrap(), config);
         assert_eq!(lease.subprocess().unwrap().as_ptr(), subprocess.as_ptr());
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         let arena = lease.arena().unwrap();
         assert_eq!(arena.slice_start(0), Some(base));
         assert_eq!(arena.size(), Some(ARENA_MIN_SIZE));
@@ -1770,7 +1770,7 @@ mod tests {
             Err(_) => panic!("the process-owned mapping commits its arena metadata"),
         };
         assert_eq!(lease.root().unwrap(), root);
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
         let arena = lease.arena().expect("the committed reserved arena publishes");
         assert_eq!(arena.slice_start(0), Some(base));
 
@@ -1938,7 +1938,7 @@ mod tests {
             Err(_) => panic!("a later complete arena can install against the same map"),
         };
         assert_eq!(lease.root().unwrap(), root);
-        assert_eq!(lease.registry_count().unwrap(), 1);
+        assert_eq!(lease.test_registry_count().unwrap(), 1);
     }
 
     #[test]
@@ -1968,7 +1968,7 @@ mod tests {
         assert_eq!(error, ProcessSharedArenaError::PairMismatch);
         assert_eq!(storage.test_state(), READY);
         assert_eq!(selected.root().unwrap(), root);
-        assert_eq!(selected.registry_count().unwrap(), 1);
+        assert_eq!(selected.test_registry_count().unwrap(), 1);
         assert_eq!(selected.arena().unwrap().slice_start(0), Some(arena_start));
         returned.unmap().expect("caller releases foreign unpublished backing");
     }

@@ -724,12 +724,17 @@ it empty, and then completes the normal no-page attachment teardown before
 ticket zero may reactivate. The seam is not called by libc, admits no
 concurrent or general later-worker page engine, and does not alter the C
 backend or repair a fork child. A separate `no_std` evidence staticlib,
-`compat/allocator/runtime-ticket-zero-adapter`, exposes six prefixed C calls to
-a fresh test process: init with `AT_PAGESZ`, malloc, zalloc, realloc, free,
-and a pointer-free worker round trip. Its exact-symbol audit rejects ordinary
-`malloc`/`free` and `mi_*` exports, and its direct fixture proves first-page
-activation, replacement copying, zeroing, exact free, all-free dormant
-handoff, the worker's scoped allocation/free plus normal attachment teardown,
+`compat/allocator/runtime-ticket-zero-adapter`, exposes seven prefixed C calls
+to a fresh test process: init with `AT_PAGESZ`, malloc, zalloc, realloc, free,
+a retained narrow worker round trip, and a pointer-private persistent
+mixed-local worker round trip. The latter holds one page engine while multiple
+small, medium, large, singleton, and multi-page singleton blocks are live,
+frees and reissues local small/medium requests, frees every block, and then
+performs normal attachment teardown. Its isolated Rust state audit verifies
+that PageMap registration/submap state and the retained arena stay at baseline
+while live-TLD and later-Theap counts return to baseline across repeated
+workers. Its exact-symbol audit rejects ordinary `malloc`/`free` and `mi_*`
+exports; the direct C fixture confirms that same repeated pthread boundary,
 same-arena ticket-zero reactivation, and successful-path `errno` preservation.
 It intentionally has no shutdown because the source owner is process-lifetime.
 That test ABI does not make the runtime seam a

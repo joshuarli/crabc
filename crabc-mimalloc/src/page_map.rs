@@ -212,6 +212,10 @@ pub(crate) struct PageMap {
     #[cfg(test)]
     submap_allocations: AtomicUsize,
     #[cfg(test)]
+    published_submap_count: AtomicUsize,
+    #[cfg(test)]
+    registered_entry_count: AtomicUsize,
+    #[cfg(test)]
     fail_next_top_release: bool,
 }
 
@@ -326,6 +330,10 @@ impl PageMap {
             #[cfg(test)]
             submap_allocations: AtomicUsize::new(0),
             #[cfg(test)]
+            published_submap_count: AtomicUsize::new(1),
+            #[cfg(test)]
+            registered_entry_count: AtomicUsize::new(0),
+            #[cfg(test)]
             fail_next_top_release: false,
         })
     }
@@ -335,6 +343,30 @@ impl PageMap {
     }
 
     pub(crate) const fn reserved_count(&self) -> usize { self.reserved_count }
+
+    /// Returns a read-only ownership audit after callers have established the
+    /// PageMap's normal external no-mutation boundary. This test-only view
+    /// counts source-plain live registrations rather than treating retained
+    /// process-lifetime submaps as worker-owned leaks.
+    #[cfg(test)]
+    pub(crate) fn test_registered_entry_count(&self) -> Result<usize> {
+        self.header()?;
+        Ok(self.registered_entry_count.load(Ordering::Acquire))
+    }
+
+    /// Counts published submaps and the lazy publications that created them.
+    /// Both are process-map ownership observations, not allocator policy.
+    #[cfg(test)]
+    pub(crate) fn test_published_submap_count(&self) -> Result<usize> {
+        self.header()?;
+        Ok(self.published_submap_count.load(Ordering::Acquire))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_lazy_submap_allocation_count(&self) -> usize {
+        self.submap_allocations.load(Ordering::Relaxed)
+    }
 
     #[inline]
     fn header(&self) -> Result<&PageMapHeader> {
@@ -422,6 +454,8 @@ impl PageMap {
             ) {
                 Ok(_) => {
                     candidate.into_published()?;
+                    #[cfg(test)]
+                    self.published_submap_count.fetch_add(1, Ordering::Release);
                     NonNull::new(candidate_base).ok_or(Errno::NOMEM)
                 }
                 Err(winner) => {
@@ -505,7 +539,27 @@ impl PageMap {
                 // SAFETY: the submap has PAGE_MAP_SUB_COUNT initialized slots;
                 // the iterator bounds the index and the caller owns the plain
                 // entry synchronization contract.
-                unsafe { *(*submap.as_ptr().add(sub_index)).0.get() = page };
+                let entry = unsafe { (*submap.as_ptr().add(sub_index)).0.get() };
+                // SAFETY: the iterator bounds the entry, and the caller owns
+                // the source-plain registration synchronization contract.
+                #[cfg(test)]
+                // SAFETY: the same synchronized source-plain ownership that
+                // permits the write also permits this audit-only old-value
+                // observation.
+                let previous = unsafe { entry.read() };
+                // SAFETY: this is the one synchronized source-plain entry
+                // write for the current register or unregister transition.
+                unsafe { entry.write(page) };
+                #[cfg(test)]
+                match (previous.is_null(), page.is_null()) {
+                    (true, false) => {
+                        self.registered_entry_count.fetch_add(1, Ordering::Release);
+                    }
+                    (false, true) => {
+                        self.registered_entry_count.fetch_sub(1, Ordering::Release);
+                    }
+                    (true, true) | (false, false) => {}
+                }
             }
         }
         Ok(())
@@ -764,6 +818,9 @@ mod tests {
             page_map
                 .register_range(start, 2 * ARENA_SLICE_SIZE, page)
                 .expect("commit a top-level extension and publish one submap");
+            assert_eq!(page_map.test_registered_entry_count(), Ok(2));
+            assert_eq!(page_map.test_published_submap_count(), Ok(2));
+            assert_eq!(page_map.test_lazy_submap_allocation_count(), 1);
             assert_eq!(page_map.checked_lookup(start), page.as_ptr());
             assert_eq!(
                 page_map.checked_lookup(start.wrapping_add(ARENA_SLICE_SIZE)),
@@ -773,6 +830,7 @@ mod tests {
                 .unregister_range(start, 2 * ARENA_SLICE_SIZE)
                 .expect("clear the exact registered range");
             assert!(page_map.checked_lookup(start).is_null());
+            assert_eq!(page_map.test_registered_entry_count(), Ok(0));
         }
         let expected_extension_size = invariants::align_up(
             size_of::<PageMapHeader>() + map_index * size_of::<*mut PageEntry>(),
