@@ -44,7 +44,8 @@ pub mod collections;
 // `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking, direct
 // `fs::sendfile` descriptor transfer, direct `fs::copy_file_range`
 // descriptor-range copying, direct `fs::posix_fallocate` mode-zero
-// descriptor-range allocation, and direct `fs::{sync, syncfs}`
+// descriptor-range allocation, direct `fs::{FallocateFlags, fallocate}`
+// closed-mode descriptor-range allocation, and direct `fs::{sync, syncfs}`
 // system-wide and descriptor-associated filesystem
 // synchronization, and direct
 // `io::{sync_file_range, SyncFileRangeFlags}` range-writeback

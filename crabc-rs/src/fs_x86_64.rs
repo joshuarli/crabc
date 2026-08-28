@@ -31,6 +31,29 @@ use core::num::NonZeroU64;
 use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
 bitflags! {
+    /// The bounded Linux `fallocate` modes supported by this facade.
+    ///
+    /// This is a closed set: unknown mode bits, and Linux modes with stronger
+    /// filesystem-specific range semantics, are not forwarded by the safe
+    /// [`fallocate`] API. `PUNCH_HOLE` must be combined with `KEEP_SIZE`, as
+    /// required by Linux; `ZERO_RANGE` may be combined with `KEEP_SIZE`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct FallocateFlags: u32 {
+        /// Allocate blocks and extend the file when the range reaches beyond
+        /// its current end (Linux's mode-zero operation).
+        const ALLOCATE = 0;
+        /// Do not change the file length while allocating or zeroing.
+        const KEEP_SIZE = 0x01;
+        /// Deallocate the range and make reads return zero; requires
+        /// [`Self::KEEP_SIZE`].
+        const PUNCH_HOLE = 0x02;
+        /// Convert the range to zeros, allocating blocks as needed.
+        const ZERO_RANGE = 0x10;
+    }
+}
+
+bitflags! {
     /// Permission checks accepted by [`access`] and [`accessat`].
     ///
     /// This closed set mirrors Linux's `R_OK`, `W_OK`, `X_OK`, and `F_OK`
@@ -582,41 +605,58 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
 }
 
-/// Allocates a non-negative byte range using Linux `fallocate(2)` mode zero,
-/// the native Rust spelling of POSIX `posix_fallocate`.
-///
-/// `offset`, `length`, and their checked half-open sum must fit Linux's signed
-/// `loff_t` representation. An invalid range returns [`Errno::INVAL`] before
-/// the descriptor is borrowed or a syscall is issued. A zero length is passed
-/// through unchanged, so its result is the direct Linux kernel result.
+/// Allocates, zeros, or punches a range in an open file.
 ///
 /// The syscall borrows the supplied raw descriptor for its duration: passing a
 /// reference or [`BorrowedFd`] retains Rust descriptor ownership, while an
-/// owning `AsFd` passed by value follows ordinary Rust move/drop semantics.
-/// Successful allocation never changes the shared file position. Kernel errors
-/// are returned directly as [`Errno`] values. Unlike the C
-/// `posix_fallocate` function's direct integer error convention, this API
-/// returns [`Result<(), Errno>`] and does not use libc or TLS `errno`. General
-/// Linux fallocate modes, pathname allocation, and a C ABI are outside this
-/// slice.
+/// owning [`AsFd`] passed by value follows ordinary Rust move/drop semantics.
+/// `offset` and `length` are non-negative byte counts. Both must fit Linux's
+/// signed `loff_t`, and their sum must not overflow that range; these invalid
+/// ranges return [`Errno::INVAL`] before a syscall.
+/// `PUNCH_HOLE` requires `KEEP_SIZE`, and unknown or unsupported mode bits are
+/// rejected before a syscall. The operation never changes the descriptor's
+/// current file position. `ALLOCATE` extends the file when necessary;
+/// `KEEP_SIZE` suppresses that extension.
 #[inline]
-pub fn posix_fallocate<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
-    let max_loff_t = i64::MAX as u64;
-    if offset > max_loff_t
-        || length > max_loff_t
+pub fn fallocate<Fd: AsFd>(
+    fd: Fd,
+    flags: FallocateFlags,
+    offset: u64,
+    length: u64,
+) -> Result<()> {
+    if FallocateFlags::from_bits(flags.bits()).is_none()
+        || (flags.contains(FallocateFlags::PUNCH_HOLE)
+            && !flags.contains(FallocateFlags::KEEP_SIZE))
+        || (flags.contains(FallocateFlags::PUNCH_HOLE)
+            && flags.contains(FallocateFlags::ZERO_RANGE))
+        || offset > i64::MAX as u64
+        || length > i64::MAX as u64
         || offset
             .checked_add(length)
-            .map_or(true, |end| end > max_loff_t)
+            .map_or(true, |end| end > i64::MAX as u64)
     {
         return Err(Errno::INVAL);
     }
 
     crabc_core::fs::fallocate(
         fd.as_fd().as_raw_fd(),
-        0,
+        flags.bits(),
         offset as i64,
         length as i64,
     )
+}
+
+/// Allocates a non-negative byte range using Linux `fallocate(2)` mode zero,
+/// the native Rust spelling of POSIX `posix_fallocate`.
+///
+/// This fixes the mode to zero and otherwise has the same descriptor,
+/// range-validation, position, and direct-kernel-error contract as
+/// [`fallocate`]. Unlike the C `posix_fallocate` function's direct integer
+/// error convention, this API returns [`Result<(), Errno>`] and does not use
+/// libc or TLS `errno`.
+#[inline]
+pub fn posix_fallocate<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
+    fallocate(fd, FallocateFlags::empty(), offset, length)
 }
 
 /// Transfers up to `count` bytes from the supplied input descriptor to the

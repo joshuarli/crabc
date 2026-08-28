@@ -7,6 +7,7 @@ the separately admitted direct `crabc-rs` subset for the
 whole-file advisory locking, `fs::sendfile` descriptor transfer,
 `fs::copy_file_range` descriptor-range copying,
 `fs::posix_fallocate` fixed-mode descriptor-range allocation,
+`fs::fallocate` closed-mode descriptor-range allocation,
 `fs::sync` system-wide and `fs::syncfs`
 descriptor-associated filesystem synchronization and
 `io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
@@ -38,6 +39,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fs-advice-reference
 ./scripts/dev-x86_64.sh ftruncate-reference
 ./scripts/dev-x86_64.sh posix-fallocate-reference
+./scripts/dev-x86_64.sh fallocate-reference
 ./scripts/dev-x86_64.sh file-position-reference
 ./scripts/dev-x86_64.sh sync-reference
 ./scripts/dev-x86_64.sh syncfs-reference
@@ -230,6 +232,20 @@ preflights unsigned offset, length, and range representation before borrowing
 the descriptor. It admits neither general Linux fallocate modes, pathname
 allocation, C ABI/errno-TLS behavior, filesystem fallback or policy, nor
 durability.
+
+`fallocate-reference` is the separate general typed-Rust gate. It pins x86
+`fallocate=285` with signed 64-bit `off_t` and only the closed modes
+`ALLOCATE=0`, `KEEP_SIZE=0x01`, `PUNCH_HOLE=0x02`, and `ZERO_RANGE=0x10`.
+Pinned-musl/raw evidence covers extension, keep-size, stable descriptor
+position, invalid combinations and unknown bits, zero-length/negative ranges,
+read-only and closed descriptors, and pipe errors. On a fixture filesystem
+that supports them, it also proves zero-range and punch-hole effects; otherwise
+both C paths must return `EOPNOTSUPP` without changing size or position. Safe
+Rust preflights flags and unsigned range overflow before borrowing the
+descriptor. The ordinary C `fallocate` spelling and raw syscall use `-1` plus
+`errno`; this does not admit C ABI or errno TLS behavior. Future flags,
+pathname allocation, filesystem fallback/policy, durability, and public x86
+support remain excluded.
 
 `file-position-reference` executes the remaining pinned-musl x86
 `lseek`/`fsync`/`fdatasync` lifecycle. It pins syscalls `8`/`74`/`75`,
@@ -725,6 +741,7 @@ selected `crabc-libc` artifact.
 `x86_64_sendfile`,
 `x86_64_copy_file_range`,
 `x86_64_posix_fallocate`,
+`x86_64_fallocate`,
 `x86_64_file_position`, `x86_64_sync`, `x86_64_syncfs`, `x86_64_sync_file_range`, `x86_64_ftruncate`,
 `x86_64_fs_credentials`,
 `x86_64_getgroups`, `x86_64_getitimer`, `x86_64_setitimer`, `x86_64_io`,
@@ -771,6 +788,8 @@ borrowed descriptor with unchanged shared position, `i64::MAX` range
 preflight before `AsFd` conversion, and Linux's zero-length `EINVAL`. It
 exposes neither general allocation flags nor C/errno-TLS behavior, pathname
 allocation, filesystem fallback/policy, or durability. The
+separate `fallocate` regression owns the closed general mode vocabulary and
+its direct range effects; it does not broaden the public x86 support boundary.
 global-sync regression proves only the unit-returning system-wide `sync(2)`
 request after dirtying a disposable regular file; it deliberately makes no
 timing, per-file, crash, or storage-media durability assertion. The

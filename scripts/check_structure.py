@@ -432,7 +432,7 @@ def check_x86_access_boundary(errors: list[str]) -> None:
 
 
 def check_x86_posix_fallocate_boundary(errors: list[str]) -> None:
-    """Keep x86 POSIX range allocation typed, mode-zero, and direct."""
+    """Keep x86 POSIX range allocation typed and mode-zero."""
 
     fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
     fs_text = fs_source.read_text(errors="replace")
@@ -444,26 +444,73 @@ def check_x86_posix_fallocate_boundary(errors: list[str]) -> None:
         )
         return
     posix_text = fs_text[start:end]
+    if "fallocate(fd, FallocateFlags::empty(), offset, length)" not in posix_text:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 posix_fallocate delegation must "
+            "fix the general mode to FallocateFlags::empty()"
+        )
+    if "crabc_core::fs::fallocate(" in posix_text:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 posix_fallocate must delegate "
+            "through the closed general fallocate boundary"
+        )
+
+
+def check_x86_fallocate_boundary(errors: list[str]) -> None:
+    """Keep the x86 general allocation facade closed and preflighted."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    flags_start = fs_text.find("pub struct FallocateFlags: u32")
+    flags_end = fs_text.find("\n}\n\nbitflags!", flags_start)
+    start = fs_text.find("pub fn fallocate<")
+    end = fs_text.find("\n/// Allocates a non-negative", start)
+    if flags_start < 0 or flags_end < 0 or start < 0 or end < 0:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: x86 general fallocate slice is missing"
+        )
+        return
+    flags_text = fs_text[flags_start:flags_end]
+    general_text = fs_text[start:end]
     for required in (
-        "let max_loff_t = i64::MAX as u64;",
-        "offset > max_loff_t",
-        "length > max_loff_t",
-        ".checked_add(length)",
-        "crabc_core::fs::fallocate(",
-        "        0,",
-        "offset as i64,",
-        "length as i64,",
+        "pub struct FallocateFlags: u32",
+        "const ALLOCATE = 0",
+        "const KEEP_SIZE = 0x01",
+        "const PUNCH_HOLE = 0x02",
+        "const ZERO_RANGE = 0x10",
     ):
-        if required not in posix_text:
+        if required not in flags_text:
             errors.append(
-                "crabc-rs/src/fs_x86_64.rs: x86 posix_fallocate boundary is missing "
+                "crabc-rs/src/fs_x86_64.rs: x86 fallocate flag set is missing "
                 f"{required}"
             )
-    if re.search(r"(?m)^pub\s+(?:unsafe\s+)?fn\s+fallocate(?:<|\s*\()", fs_text):
-        errors.append(
-            "crabc-rs/src/fs_x86_64.rs: x86 POSIX allocation slice must not expose "
-            "the general fallocate mode API"
-        )
+    for forbidden in (
+        "NO_HIDE_STALE",
+        "COLLAPSE_RANGE",
+        "INSERT_RANGE",
+        "UNSHARE_RANGE",
+    ):
+        if forbidden in flags_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: x86 fallocate flag set must not "
+                f"expose {forbidden}"
+            )
+    for required in (
+        "FallocateFlags::from_bits",
+        "FallocateFlags::PUNCH_HOLE",
+        "FallocateFlags::KEEP_SIZE",
+        "FallocateFlags::ZERO_RANGE",
+        ".checked_add",
+        "i64::MAX",
+        "crabc_core::fs::fallocate(",
+        "flags.bits()",
+        "fd.as_fd().as_raw_fd()",
+    ):
+        if required not in general_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: x86 fallocate boundary is missing "
+                f"{required}"
+            )
 
     core_source = ROOT / "crabc-core" / "src" / "fs.rs"
     core_text = core_source.read_text(errors="replace")
@@ -994,6 +1041,7 @@ def main() -> int:
     check_x86_setitimer_boundary(errors)
     check_x86_access_boundary(errors)
     check_x86_posix_fallocate_boundary(errors)
+    check_x86_fallocate_boundary(errors)
     check_x86_fcntl_status_flags_boundary(errors)
     check_x86_flock_boundary(errors)
     check_x86_sendfile_boundary(errors)

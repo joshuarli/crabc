@@ -42,6 +42,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memfd-reference  verify direct typed x86 memfd/sealing ABI and lifecycle
   ftruncate-reference  verify pinned-musl x86 descriptor-length ABI and lifecycle
   posix-fallocate-reference  verify pinned-musl x86 POSIX range-allocation ABI and behavior
+  fallocate-reference  verify pinned-musl/raw x86 general range-allocation ABI and behavior
   file-position-reference  verify pinned-musl x86 lseek/fsync/fdatasync ABI and behavior
   sync-reference  verify pinned-musl/raw x86 global sync ABI and request contract
   syncfs-reference  verify pinned-musl/raw x86 syncfs ABI and filesystem requests
@@ -112,6 +113,7 @@ subset, including borrowed-atomic futex wait/wake and the complete typed
 `fs::sendfile` descriptor-to-descriptor transfer with an optional input
 offset, `fs::copy_file_range` descriptor-range copying, and
 `fs::posix_fallocate` mode-zero descriptor-range allocation,
+`fs::fallocate` closed-mode descriptor-range allocation,
 `fs::sync` system-wide filesystem synchronization,
 `fs::syncfs` descriptor-associated filesystem synchronization, and typed
 `io::{sync_file_range, SyncFileRangeFlags}` range-writeback requests,
@@ -217,6 +219,18 @@ raw syscall returns `-1` with `errno`; the typed Rust boundary instead returns
 `Errno` and rejects unrepresentable unsigned ranges before it borrows the
 descriptor. It does not select a C API, pathname allocation, general Linux
 fallocate modes, filesystem fallback or policy, durability, or errno TLS.
+`fallocate-reference` establishes the separate typed Rust `fs::fallocate`
+closed-mode boundary: x86 `fallocate=285`, signed 64-bit `off_t`,
+`ALLOCATE=0`, `KEEP_SIZE=0x01`, `PUNCH_HOLE=0x02`, and `ZERO_RANGE=0x10`,
+stable file position, extension and keep-size behavior, and direct invalid
+combinations. A fixture filesystem that supports zero-range or punch-hole
+proves their retained-edge and zeroed-range effects; otherwise matched C/raw
+`EOPNOTSUPP` preserves size and position. The safe Rust facade preflights
+unknown flags, invalid combinations, and unsigned ranges before borrowing the
+descriptor. The ordinary C `fallocate` wrapper uses `-1` with `errno`, as does
+the raw syscall; C ABI and errno TLS remain excluded. It does not select future
+flags, pathname allocation, filesystem fallback or policy, durability, or
+public x86 support.
 `file-position-reference` establishes the remaining admitted typed x86
 `lseek`/`fsync`/`fdatasync` boundary: signed 64-bit `off_t`, syscall numbers
 8/74/75, `SEEK_SET`/`SEEK_CUR`/`SEEK_END` positions, accepted descriptor-sync
@@ -604,6 +618,12 @@ run_posix_fallocate_reference() {
         -p crabc-rs --no-default-features --test x86_64_posix_fallocate -- --test-threads=1
 }
 
+run_fallocate_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_fallocate_reference.sh
+    run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
+        -p crabc-rs --no-default-features --test x86_64_fallocate -- --test-threads=1
+}
+
 run_file_position_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_file_position_reference.sh
 }
@@ -879,7 +899,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|posix-fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -1007,6 +1027,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "posix-fallocate-reference takes no arguments"
         ensure_image
         run_posix_fallocate_reference
+        ;;
+    fallocate-reference)
+        [ "$#" -eq 0 ] || fail "fallocate-reference takes no arguments"
+        ensure_image
+        run_fallocate_reference
         ;;
     file-position-reference)
         [ "$#" -eq 0 ] || fail "file-position-reference takes no arguments"
@@ -1248,7 +1273,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_posix_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_posix_fallocate --test x86_64_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_credentials --test x86_64_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         ;;
     libc-syscall)
