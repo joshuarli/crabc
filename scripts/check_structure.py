@@ -534,6 +534,94 @@ def check_x86_fallocate_boundary(errors: list[str]) -> None:
         )
 
 
+def check_x86_timestamp_boundary(errors: list[str]) -> None:
+    """Keep the named x86 timestamp-mutation family layout-explicit and closed."""
+
+    fs_source = ROOT / "crabc-rs" / "src" / "fs_x86_64.rs"
+    fs_text = fs_source.read_text(errors="replace")
+    start = fs_text.find("pub type Secs = i64")
+    end = fs_text.find("\n/// Allocates, zeros, or punches", start)
+    if start < 0 or end < 0:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: admitted x86 timestamp-mutation slice is missing"
+        )
+        return
+    timestamp_text = fs_text[start:end]
+    for required in (
+        "pub struct TimestampAtFlags: u32",
+        "const SYMLINK_NOFOLLOW = 0x0000_0100",
+        "pub type Secs = i64",
+        "pub type Nsecs = i64",
+        "pub struct Timespec",
+        "pub const UTIME_NOW: Nsecs = 0x3fff_ffff",
+        "pub const UTIME_OMIT: Nsecs = 0x3fff_fffe",
+        "pub struct Timestamps",
+        "pub struct Timeval",
+        "pub struct Utimbuf",
+        "[(); 16] = [(); core::mem::size_of::<Timespec>()]",
+        "[(); 8] = [(); core::mem::align_of::<Timespec>()]",
+        "[(); 32] = [(); core::mem::size_of::<Timestamps>()]",
+        "[(); 16] = [(); core::mem::size_of::<Timeval>()]",
+        "[(); 8] = [(); core::mem::align_of::<Timeval>()]",
+        "pub fn utimensat<",
+        "pub fn futimens<",
+        "pub fn futimes<",
+        "pub fn futimesat<",
+        "pub fn lutimes<",
+        "pub fn utimes<",
+        "pub fn utime<",
+        "fn timeval_to_timespec",
+        "time.tv_usec < 0 || time.tv_usec >= 1_000_000",
+        "crabc_core::fs::utimensat_raw(",
+        "fd.as_fd().as_raw_fd()",
+        "core::ptr::null()",
+        "crabc_core::AT_FDCWD",
+        "TimestampAtFlags::SYMLINK_NOFOLLOW.bits()",
+        "TimestampAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?",
+    ):
+        if required not in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: admitted x86 timestamp-mutation "
+                f"boundary is missing {required}"
+            )
+    if timestamp_text.count("crabc_core::fs::utimensat_raw(") < 7:
+        errors.append(
+            "crabc-rs/src/fs_x86_64.rs: each named x86 timestamp-mutation "
+            "form must remain on the direct utimensat seam"
+        )
+    for forbidden in (
+        "pub fn utimensat_raw",
+        "pub fn utimensat_all",
+        "pub fn timestamp_path",
+    ):
+        if forbidden in fs_text:
+            errors.append(
+                "crabc-rs/src/fs_x86_64.rs: x86 timestamp mutation must not "
+                f"admit a broader pathname API {forbidden}"
+            )
+
+    core_source = ROOT / "crabc-core" / "src" / "fs.rs"
+    core_text = core_source.read_text(errors="replace")
+    for required in (
+        "pub unsafe fn utimensat_raw(",
+        "SYS_UTIMENSAT,",
+        "syscall4(",
+    ):
+        if required not in core_text:
+            errors.append(
+                "crabc-core/src/fs.rs: x86 timestamp syscall seam is missing "
+                f"{required}"
+            )
+
+    syscall_source = ROOT / "crabc-core" / "src" / "syscall_x86_64.rs"
+    syscall_text = syscall_source.read_text(errors="replace")
+    if "pub(crate) const SYS_UTIMENSAT: usize = 280" not in syscall_text:
+        errors.append(
+            "crabc-core/src/syscall_x86_64.rs: x86 timestamp ABI proof is "
+            "missing SYS_UTIMENSAT=280"
+        )
+
+
 def check_x86_fcntl_status_flags_boundary(errors: list[str]) -> None:
     """Keep direct x86 status flags narrower than pathname or generic fcntl APIs."""
 
@@ -1042,6 +1130,7 @@ def main() -> int:
     check_x86_access_boundary(errors)
     check_x86_posix_fallocate_boundary(errors)
     check_x86_fallocate_boundary(errors)
+    check_x86_timestamp_boundary(errors)
     check_x86_fcntl_status_flags_boundary(errors)
     check_x86_flock_boundary(errors)
     check_x86_sendfile_boundary(errors)

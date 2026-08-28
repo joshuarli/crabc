@@ -770,10 +770,11 @@ pub fn fchownat(dirfd: RawFd, path: &CStr, owner: u32, group: u32, flags: u32) -
 ///
 /// # Safety
 ///
-/// `path` may be null only for the kernel-defined `futimens` form. When
-/// non-null it must point to a readable NUL-terminated pathname. `times`
-/// must point to two target-Linux `timespec` values for the duration of
-/// the call.
+/// `path` may be null only for the kernel-defined descriptor (`futimens`)
+/// form, in which case `flags` must be zero. When non-null it must point to a
+/// readable NUL-terminated pathname. `times` may be null to request Linux's
+/// current-time update for both timestamps; when non-null it must point to two
+/// target-Linux `timespec` values for the duration of the call.
 #[inline]
 pub unsafe fn utimensat_raw(
     dirfd: RawFd,
@@ -781,8 +782,8 @@ pub unsafe fn utimensat_raw(
     times: *const u8,
     flags: u32,
 ) -> Result<()> {
-    // SAFETY: The caller supplies the nullable pathname and two-timespec
-    // layout contracts; the kernel validates descriptor and flags.
+    // SAFETY: The caller supplies the nullable pathname/timestamp-pointer
+    // contracts; the kernel validates descriptor and flags.
     decode(unsafe {
         syscall4(
             SYS_UTIMENSAT,

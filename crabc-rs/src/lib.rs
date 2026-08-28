@@ -37,8 +37,12 @@ pub mod collections;
 // epoll readiness with temporary signal masks),
 // descriptor `fs::fstat`,
 // direct `fs::{memfd_create, fcntl_get_seals, fcntl_add_seals}` and direct
-// `fs::{OFlags, fcntl_getfl, fcntl_setfl}` status flags, plus private
-// CWD/AT_SYMLINK_NOFOLLOW `statat` metadata, direct caller-buffer and
+// `fs::{OFlags, fcntl_getfl, fcntl_setfl}` status flags, and the named
+// timestamp-mutation family: `fs::{Timespec, Timestamps, UTIME_NOW,
+// UTIME_OMIT, futimens}` plus `utimensat`, `futimes`, `futimesat`, `lutimes`,
+// `utimes`, and `utime` for bounded directory-relative, current-directory,
+// final-symlink, and whole-second forms, plus private CWD/AT_SYMLINK_NOFOLLOW
+// `statat` metadata, direct caller-buffer and
 // alloc-gated `process::getcwd` observations, and
 // caller-buffer-only `fs::readlinkat_raw` slices,
 // `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking, direct

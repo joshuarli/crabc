@@ -8,6 +8,9 @@ whole-file advisory locking, `fs::sendfile` descriptor transfer,
 `fs::copy_file_range` descriptor-range copying,
 `fs::posix_fallocate` fixed-mode descriptor-range allocation,
 `fs::fallocate` closed-mode descriptor-range allocation,
+the bounded timestamp-mutation family headed by
+`fs::{Timespec, Timestamps, UTIME_NOW, UTIME_OMIT, futimens}` for descriptor,
+directory-relative, current-directory, final-symlink, and whole-second forms,
 `fs::sync` system-wide and `fs::syncfs`
 descriptor-associated filesystem synchronization and
 `io::{sync_file_range, SyncFileRangeFlags}` range-writeback request; it is not
@@ -38,6 +41,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mincore-reference
 ./scripts/dev-x86_64.sh fs-advice-reference
 ./scripts/dev-x86_64.sh ftruncate-reference
+./scripts/dev-x86_64.sh timestamp-reference
 ./scripts/dev-x86_64.sh posix-fallocate-reference
 ./scripts/dev-x86_64.sh fallocate-reference
 ./scripts/dev-x86_64.sh file-position-reference
@@ -220,6 +224,18 @@ with `file-position-reference`, it proves the admitted typed
 `io.file-position` family; it does not select C `unistd`/header behavior,
 pathname truncation, allocation, durability policy, or broader filesystem
 support.
+
+`timestamp-reference` executes the consolidated pinned-musl/raw x86
+timestamp-mutation evidence plus focused Rust regressions. It pins
+`utimensat=280`, the `rdi`/`rsi`/`rdx`/`r10` syscall4 ABI, and the signed
+16-byte align-8 `timespec` pair used by
+`fs::{Timespec, Timestamps, UTIME_NOW, UTIME_OMIT, futimens}`. It covers the
+descriptor/null-path form, bounded directory-relative and current-directory
+forms, final-symlink no-follow mutation, and the legacy whole-second form.
+Explicit/current/omit behavior, path selection, direct validation, and the
+legacy conversion boundary remain direct Rust behavior. This does not select
+general `filesystem.path-core`, public C timestamp APIs or errno TLS, or
+broader filesystem metadata policy.
 
 `posix-fallocate-reference` executes pinned-musl/raw x86 evidence plus the
 focused Rust regression for `fs::posix_fallocate`. It pins

@@ -137,6 +137,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "filesystem.seal-mutation",
             "filesystem.cwd",
             "filesystem.path-metadata",
+            "filesystem.fd-timestamps",
+            "filesystem.directory-relative-timestamps",
+            "filesystem.cwd-timestamps",
+            "filesystem.symlink-timestamps",
+            "filesystem.second-resolution-timestamps",
             "io.file-position",
             "filesystem.global-sync",
             "io.syncfs",
@@ -168,6 +173,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_posix_fallocate.rs",
             "crabc-rs/tests/x86_64_fallocate.rs",
             "crabc-rs/tests/x86_64_ftruncate.rs",
+            "crabc-rs/tests/x86_64_futimens.rs",
+            "crabc-rs/tests/x86_64_timestamp_paths.rs",
             "crabc-rs/tests/x86_64_fcntl_flags.rs",
             "crabc-rs/tests/x86_64_flock.rs",
             "crabc-rs/tests/x86_64_sendfile.rs",
@@ -197,6 +204,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_umask.rs",
             "compat/x86_64/run_x86_ftruncate_reference.sh",
             "compat/x86_64/x86_ftruncate_reference_probe.c",
+            "compat/x86_64/run_x86_timestamp_reference.sh",
+            "compat/x86_64/x86_timestamp_reference_probe.c",
             "compat/x86_64/run_x86_posix_fallocate_reference.sh",
             "compat/x86_64/x86_posix_fallocate_reference_probe.c",
             "compat/x86_64/run_x86_fallocate_reference.sh",
@@ -264,11 +273,23 @@ class X86ParityLedgerTests(unittest.TestCase):
         direct_commands = {
             evidence["command"] for evidence in direct["native_evidence"]
         }
+        facade_evidence = next(
+            evidence
+            for evidence in direct["native_evidence"]
+            if evidence["command"] == "./scripts/dev-x86_64.sh facade"
+        )
+        self.assertIn("timestamp-mutation family", facade_evidence["scope"])
+        self.assertIn(
+            "fs::{Timespec, Timestamps, UTIME_NOW, UTIME_OMIT, futimens}",
+            facade_evidence["scope"],
+        )
+        self.assertIn("filesystem.path-core", facade_evidence["scope"])
         self.assertIn(
             "./scripts/dev-x86_64.sh posix-fallocate-reference", direct_commands
         )
         self.assertIn("./scripts/dev-x86_64.sh fallocate-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh ftruncate-reference", direct_commands)
+        self.assertIn("./scripts/dev-x86_64.sh timestamp-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh memfd-reference", direct_commands)
         self.assertIn(
             "./scripts/dev-x86_64.sh file-position-reference", direct_commands
@@ -305,6 +326,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(
             any(
                 prerequisite.startswith("x86 direct fallocate=285")
+                for prerequisite in direct["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                prerequisite.startswith("x86 direct timestamp mutation through utimensat=280")
                 for prerequisite in direct["x86_abi_prerequisites"]
             )
         )
@@ -381,6 +408,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn("filesystem.posix-allocate-range", remaining["capabilities"])
         self.assertIn("filesystem.allocate-range", direct["capabilities"])
         self.assertNotIn("filesystem.allocate-range", remaining["capabilities"])
+        for capability in (
+            "filesystem.fd-timestamps",
+            "filesystem.directory-relative-timestamps",
+            "filesystem.cwd-timestamps",
+            "filesystem.symlink-timestamps",
+            "filesystem.second-resolution-timestamps",
+        ):
+            self.assertIn(capability, direct["capabilities"])
+            self.assertNotIn(capability, remaining["capabilities"])
         self.assertNotIn(
             "crabc-rs/tests/x86_64_epoll.rs", remaining["source_owners"]
         )
@@ -397,6 +433,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/x86_posix_fallocate_reference_probe.c",
             "compat/x86_64/run_x86_fallocate_reference.sh",
             "compat/x86_64/x86_fallocate_reference_probe.c",
+            "crabc-rs/tests/x86_64_futimens.rs",
+            "crabc-rs/tests/x86_64_timestamp_paths.rs",
+            "compat/x86_64/run_x86_timestamp_reference.sh",
+            "compat/x86_64/x86_timestamp_reference_probe.c",
             "crabc-rs/tests/x86_64_flock.rs",
             "compat/x86_64/run_x86_flock_reference.sh",
             "compat/x86_64/x86_flock_reference_probe.c",

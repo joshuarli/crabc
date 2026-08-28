@@ -4,9 +4,10 @@
 //! query-only `statat(2)` path-metadata boundary, caller-buffer-only
 //! `readlinkat(2)` target reads, `access(2)` and `faccessat2(2)` permission
 //! checks, direct `fcntl(F_GETFL/F_SETFL)` status-flag observation and
-//! mutation, file-access advice, file readahead,
-//! descriptor-based file-length mutation, fixed-mode descriptor-range
-//! allocation, descriptor-to-descriptor transfer and descriptor-range copying,
+//! mutation, file-access advice, file readahead, descriptor-based file-length
+//! and timestamp mutation, and closed pathname timestamp mutation through a
+//! fixed-stack path boundary, fixed-mode descriptor-range allocation,
+//! descriptor-to-descriptor transfer and descriptor-range copying,
 //! file-position and synchronization operations,
 //! system-wide and descriptor-associated filesystem synchronization, and direct anonymous
 //! memory-file creation with bounded
@@ -19,8 +20,8 @@
 //! slice has its own closed access mode and flag types. The caller-buffer
 //! readlink target boundary remains private. `AT_EMPTY_PATH`, a general path
 //! module, `statx`, filesystem statistics, allocation-backed path helpers,
-//! and mutating pathname operations remain outside this staged target boundary
-//! until they have their own x86-64 evidence.
+//! and pathname mutation other than the closed timestamp family remain outside
+//! this staged target boundary until they have their own x86-64 evidence.
 
 use bitflags::bitflags;
 use crate::buffer::Buffer;
@@ -173,7 +174,8 @@ pub enum FlockOperation {
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
 /// A pathname or memory-file name input accepted by [`access`], [`accessat`],
-/// [`statat`], [`stat`], [`readlinkat_raw`], and [`memfd_create`].
+/// [`statat`], [`stat`], [`readlinkat_raw`], the timestamp-mutation family,
+/// and [`memfd_create`].
 ///
 /// Implementations borrow an existing C string or form one in a fixed stack
 /// buffer. The callback is invoked while that C string remains live, so the
@@ -256,8 +258,9 @@ impl PathArg for &str {
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
-/// accepted only as the directory argument to [`accessat`], [`statat`], and
-/// [`readlinkat_raw`], and can never become an owned descriptor.
+/// accepted only as the directory argument to [`accessat`], [`statat`],
+/// [`readlinkat_raw`], and [`utimensat`], and can never become an owned
+/// descriptor.
 pub const CWD: BorrowedFd<'static> =
     // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
     // narrowly documented exception in `BorrowedFd::borrow_raw` permits it.
@@ -273,6 +276,23 @@ bitflags! {
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct AtFlags: u32 {
         /// `AT_SYMLINK_NOFOLLOW`.
+        const SYMLINK_NOFOLLOW = 0x0000_0100;
+    }
+}
+
+bitflags! {
+    /// The closed `utimensat(2)` pathname flag vocabulary.
+    ///
+    /// Linux reuses `AT_*` values across unrelated syscall families. Keeping
+    /// this timestamp-specific type separate from [`AtFlags`] and
+    /// [`AccessAtFlags`] prevents metadata or access selections from crossing
+    /// into a timestamp mutation request. `AT_EMPTY_PATH`, `AT_SYMLINK_FOLLOW`,
+    /// and unknown bits are rejected before a descriptor is borrowed or a
+    /// pathname is converted.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct TimestampAtFlags: u32 {
+        /// Update a final symbolic link itself rather than its target.
         const SYMLINK_NOFOLLOW = 0x0000_0100;
     }
 }
@@ -448,6 +468,81 @@ bitflags! {
 /// Raw Linux st_mode bits.
 pub type RawMode = u32;
 
+/// Seconds in a Linux/x86-64 `timespec`.
+pub type Secs = i64;
+
+/// Nanoseconds in a Linux/x86-64 `timespec`.
+pub type Nsecs = i64;
+
+/// A Linux/x86-64 `timespec` used for descriptor timestamp updates.
+///
+/// The representation is the direct kernel record consumed by
+/// [`futimens`], rather than a public C `struct timespec` compatibility
+/// declaration. `tv_nsec` accepts ordinary nanoseconds and the
+/// [`UTIME_NOW`]/[`UTIME_OMIT`] sentinels; Linux validates every supplied
+/// value.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Timespec {
+    /// Whole seconds.
+    pub tv_sec: Secs,
+    /// Nanoseconds, or [`UTIME_NOW`]/[`UTIME_OMIT`] for timestamp updates.
+    pub tv_nsec: Nsecs,
+}
+
+const _: [(); 16] = [(); core::mem::size_of::<Timespec>()];
+const _: [(); 8] = [(); core::mem::align_of::<Timespec>()];
+
+/// The current-time sentinel accepted in [`Timespec::tv_nsec`] by Linux
+/// `utimensat`.
+pub const UTIME_NOW: Nsecs = 0x3fff_ffff;
+
+/// The leave-unchanged sentinel accepted in [`Timespec::tv_nsec`] by Linux
+/// `utimensat`.
+pub const UTIME_OMIT: Nsecs = 0x3fff_fffe;
+
+/// The access and modification timestamps consumed by [`futimens`].
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct Timestamps {
+    /// Last-access timestamp.
+    pub last_access: Timespec,
+    /// Last-modification timestamp.
+    pub last_modification: Timespec,
+}
+
+const _: [(); 32] = [(); core::mem::size_of::<Timestamps>()];
+const _: [(); 8] = [(); core::mem::align_of::<Timestamps>()];
+
+/// A legacy Linux/x86-64 `timeval` value expressed in whole seconds and
+/// microseconds.
+///
+/// This native Rust value is converted to [`Timespec`] before the direct
+/// syscall. Its microsecond field must be in `0..1_000_000`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Timeval {
+    /// Whole seconds.
+    pub tv_sec: Secs,
+    /// Microseconds within `tv_sec`.
+    pub tv_usec: i64,
+}
+
+const _: [(); 16] = [(); core::mem::size_of::<Timeval>()];
+const _: [(); 8] = [(); core::mem::align_of::<Timeval>()];
+
+/// A legacy Linux timestamp pair expressed in whole seconds.
+///
+/// [`utime`] converts these values to two [`Timespec`] records with zero
+/// nanoseconds before entering Linux.
+#[derive(Debug, Clone, Copy, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct Utimbuf {
+    /// Last-access timestamp in whole seconds.
+    pub actime: Secs,
+    /// Last-modification timestamp in whole seconds.
+    pub modtime: Secs,
+}
+
 impl Mode {
     /// Extracts permission bits from a Linux st_mode value.
     #[inline]
@@ -603,6 +698,241 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
     }
 
     crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
+}
+
+/// Sets access and modification timestamps relative to `dirfd`.
+///
+/// The descriptor and fixed-stack pathname are borrowed only for the direct
+/// Linux `utimensat(2)` syscall. This closed operation accepts only
+/// [`TimestampAtFlags::SYMLINK_NOFOLLOW`]; it does not expose `AT_EMPTY_PATH`,
+/// general pathname mutation, or a public C timestamp API. Linux validates
+/// ordinary nanoseconds and [`UTIME_NOW`]/[`UTIME_OMIT`] directly.
+#[inline]
+pub fn utimensat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    times: &Timestamps,
+    flags: TimestampAtFlags,
+) -> Result<()> {
+    let flags = TimestampAtFlags::from_bits(flags.bits()).ok_or(Errno::INVAL)?;
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        // SAFETY: `path` and `times` remain valid for the direct syscall, and
+        // `Timestamps` is exactly two Linux/x86-64 `timespec` values.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                dirfd.as_raw_fd(),
+                path.as_ptr().cast(),
+                (times as *const Timestamps).cast(),
+                flags.bits(),
+            )
+        }
+    })
+}
+
+/// Sets access and modification timestamps on an open file or directory.
+///
+/// This is the descriptor-only `utimensat(2)` form: Linux receives the
+/// borrowed descriptor, a null pathname, two exact x86-64 [`Timespec`]
+/// records, and zero flags. The timestamp pair remains live for the direct
+/// syscall, and Linux validates normal nanoseconds, [`UTIME_NOW`], and
+/// [`UTIME_OMIT`] without a libc wrapper or TLS `errno`.
+#[inline]
+pub fn futimens<Fd: AsFd>(fd: Fd, times: &Timestamps) -> Result<()> {
+    // SAFETY: `times` remains valid for the direct syscall, and its layout is
+    // exactly two Linux/x86-64 `timespec` values. A null path selects the
+    // kernel's futimens form.
+    unsafe {
+        crabc_core::fs::utimensat_raw(
+            fd.as_fd().as_raw_fd(),
+            core::ptr::null(),
+            (times as *const Timestamps).cast(),
+            0,
+        )
+    }
+}
+
+/// Sets access and modification times on an open file using microseconds.
+///
+/// `None` sends a null timestamp pointer and asks Linux to set both values to
+/// the current time. For explicit values, each `tv_usec` must be in
+/// `0..1_000_000`; invalid values return [`Errno::INVAL`] before the
+/// descriptor is borrowed or the direct syscall is issued.
+#[inline]
+pub fn futimes<Fd: AsFd>(fd: Fd, times: Option<&[Timeval; 2]>) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+
+    // SAFETY: the borrowed descriptor and optional converted timestamp array
+    // remain valid for this direct syscall. A null timestamp pointer selects
+    // Linux's current-time behavior.
+    unsafe {
+        crabc_core::fs::utimensat_raw(
+            fd.as_fd().as_raw_fd(),
+            core::ptr::null(),
+            times_ptr.cast(),
+            0,
+        )
+    }
+}
+
+/// Sets timestamps for a final symbolic link rather than its target.
+///
+/// `None` asks Linux to set both link timestamps to the current time. Explicit
+/// microsecond values are validated before the fixed-stack pathname conversion
+/// and direct syscall.
+#[inline]
+pub fn lutimes<P: PathArg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    path.into_with_c_str(|path| {
+        // SAFETY: the path and optional converted timestamp array remain live
+        // for the direct syscall. The no-follow flag updates the final
+        // symbolic link itself rather than resolving it to its target.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                crabc_core::AT_FDCWD,
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                TimestampAtFlags::SYMLINK_NOFOLLOW.bits(),
+            )
+        }
+    })
+}
+
+/// Sets timestamps for a path relative to `dirfd`, following a final symlink.
+///
+/// `None` asks Linux to set both timestamps to the current time. Explicit
+/// microsecond values are validated before the descriptor is borrowed or the
+/// fixed-stack pathname is converted.
+#[inline]
+pub fn futimesat<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    times: Option<&[Timeval; 2]>,
+) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        // SAFETY: the borrowed directory descriptor, path, and optional
+        // converted timestamp array remain live for the direct syscall.
+        // Zero flags preserve final-symlink-following behavior.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                dirfd.as_raw_fd(),
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                0,
+            )
+        }
+    })
+}
+
+/// Sets timestamps for a current-directory-relative path, following a final
+/// symbolic link.
+///
+/// `None` asks Linux to set both timestamps to the current time. Explicit
+/// microsecond values are validated before the fixed-stack pathname conversion
+/// and direct syscall.
+#[inline]
+pub fn utimes<P: PathArg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
+    let converted = match times {
+        None => None,
+        Some(times) => Some([
+            timeval_to_timespec(times[0])?,
+            timeval_to_timespec(times[1])?,
+        ]),
+    };
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    path.into_with_c_str(|path| {
+        // SAFETY: the path and optional converted timestamp array remain live
+        // for the direct syscall. Zero flags preserve final-symlink-following
+        // behavior.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                crabc_core::AT_FDCWD,
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                0,
+            )
+        }
+    })
+}
+
+/// Sets timestamps for a current-directory-relative path at whole-second
+/// precision, following a final symbolic link.
+///
+/// `None` asks Linux to set both timestamps to the current time. Explicit
+/// [`Utimbuf`] values are converted to two [`Timespec`] records with zero
+/// nanoseconds before entering the direct syscall.
+#[inline]
+pub fn utime<P: PathArg>(path: P, times: Option<&Utimbuf>) -> Result<()> {
+    let converted = times.map(|times| {
+        [
+            Timespec {
+                tv_sec: times.actime,
+                tv_nsec: 0,
+            },
+            Timespec {
+                tv_sec: times.modtime,
+                tv_nsec: 0,
+            },
+        ]
+    });
+    let times_ptr = converted
+        .as_ref()
+        .map_or(core::ptr::null(), |times| times.as_ptr());
+    path.into_with_c_str(|path| {
+        // SAFETY: the path and optional converted timestamp array remain live
+        // for the direct syscall. Zero flags preserve final-symlink-following
+        // behavior.
+        unsafe {
+            crabc_core::fs::utimensat_raw(
+                crabc_core::AT_FDCWD,
+                path.as_ptr().cast(),
+                times_ptr.cast(),
+                0,
+            )
+        }
+    })
+}
+
+#[inline]
+fn timeval_to_timespec(time: Timeval) -> Result<Timespec> {
+    if time.tv_usec < 0 || time.tv_usec >= 1_000_000 {
+        return Err(Errno::INVAL);
+    }
+    Ok(Timespec {
+        tv_sec: time.tv_sec,
+        tv_nsec: time.tv_usec * 1_000,
+    })
 }
 
 /// Allocates, zeros, or punches a range in an open file.
