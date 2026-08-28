@@ -30,6 +30,7 @@ cfmakeraw
 cfsetispeed
 cfsetospeed
 cfsetspeed
+clock_nanosleep
 close
 connect
 div

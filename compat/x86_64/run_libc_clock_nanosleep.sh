@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc readiness/signal-waits evidence.
+# Native Linux/x86-64 selected static crabc-libc clock_nanosleep evidence.
 #
-# The same project-header C fixture first runs against pinned musl, then as a
-# true `-nostdlib -static` candidate linked solely through the selected crabc
-# archive. It proves only poll/ppoll/select/pselect readiness plus pause and
-# sigsuspend signal-wait endpoints. Pre-existing selected pipe and simple
-# signal-control calls provide fixture plumbing; raw tgkill creates atomic
-# pending-signal observations. It does not select epoll/eventfd, C pathname or
-# fcntl APIs, process lifecycle, pthread cancellation, timers, CRT, loader,
-# sysroot, or public x86 support.
+# The same project-header C fixture first executes through pinned musl, then
+# as a true -nostdlib -static candidate linked solely through the selected
+# crabc archive. It proves only clock_nanosleep's zero-or-positive-errno
+# convention and direct non-cancellation path; local raw timer/clock calls
+# merely trigger deterministic interruption. It is not a C nanosleep/clock/
+# timer surface, pthread cancellation, libc.so, CRT, loader, sysroot, or
+# public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,7 +15,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
-    printf 'ERROR: x86 static libc readiness/signal waits: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc clock_nanosleep: %s\n' "$*" >&2
     exit 1
 }
 
@@ -39,10 +38,8 @@ assert_selected_c_abi_surface() {
     local members_path="$work_dir/selected-c-abi-members"
     local -a members
 
-    # `libc/Cargo.toml` fixes the Rust staticlib crate name to `c`. Inspect
-    # only its C object members, so toolchain compiler-builtins do not blur
-    # the explicitly closed selected C export contract. The signal restorer
-    # remains the one audited hidden frame-internal exception.
+    # Inspect only crate-owned C object members. Compiler-builtins remains
+    # toolchain support rather than a selected C ABI export surface.
     mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
     [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
     mkdir "$members_path"
@@ -66,10 +63,15 @@ assert_named_syscall() {
     local disassembly="$work_dir/${symbol}-disassembly"
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq "\\\$0x${syscall_word}" "$disassembly" \
-        || fail "${symbol} lacks the fixed syscall ${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" \
-        || fail "${symbol} lacks its named Linux syscall"
+    grep -Eq "\\\$0x${syscall_word}" "$disassembly" ||
+        fail "${symbol} lacks fixed syscall ${syscall_word}"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        fail "${symbol} lacks its named Linux syscall"
+    grep -Fq '%r10' "$disassembly" ||
+        fail "${symbol} lacks the x86 fourth-argument r10 path"
+    if grep -Eq '%fs:' "$disassembly"; then
+        fail "${symbol} must return positive errors without touching errno TLS"
+    fi
 }
 
 require_native_linux_x86_64
@@ -79,12 +81,13 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-readiness-waits.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-clock-nanosleep.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-readiness-waits-reference"
-candidate="$work_dir/crabc-static-readiness-waits-candidate"
+reference="$work_dir/musl-clock-nanosleep-reference"
+candidate="$work_dir/crabc-static-clock-nanosleep-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -100,21 +103,21 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_readiness_waits_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h poll.h signal.h sys/select.h sys/syscall.h sys/types.h \
-    time.h unistd.h bits/alltypes.h bits/syscall.h; do
-    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
-        || fail "fixture did not use the project $header header"
+    compat/x86_64/libc_clock_nanosleep_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h signal.h time.h sys/types.h sys/syscall.h bits/alltypes.h \
+    bits/syscall.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
+        fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_readiness_waits_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_clock_nanosleep_probe.c \
     -o "$reference"
 if "$reference"; then
     :
 else
     status=$?
-    fail "pinned-musl readiness/signal-waits fixture exited ${status}"
+    fail "pinned-musl clock_nanosleep fixture exited ${status}"
 fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
@@ -123,48 +126,42 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
-assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-for symbol in __errno_location close read write pipe sigaction sigemptyset \
-    sigaddset sigismember sigprocmask poll ppoll select pselect pause \
-    sigsuspend; do
-    grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
-        || fail "archive does not define ${symbol}"
+assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
+    "$expected_c_abi_symbols"
+for symbol in __errno_location clock_nanosleep; do
+    grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
+        fail "archive does not define ${symbol}"
 done
-for unselected in epoll_create epoll_create1 epoll_ctl epoll_wait epoll_pwait \
-    eventfd eventfd_read eventfd_write open openat creat fcntl readv writev \
-    preadv pwritev splice vmsplice tee sendfile copy_file_range fork _Fork \
-    vfork clone execve kill raise tgkill alarm sleep \
-    usleep nanosleep sigtimedwait sigwaitinfo sigwait \
-    sigaltstack sigqueue pthread_sigmask signalfd syscall malloc free calloc \
-    realloc pthread_create mmap mprotect munmap; do
+for unselected in nanosleep sleep usleep clock_gettime clock_getres clock_settime \
+    clock_getcpuclockid timer_create timer_delete timer_getoverrun timer_gettime \
+    timer_settime gettimeofday setitimer alarm ualarm pthread_create malloc free \
+    calloc realloc mmap mprotect munmap; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
 readelf --relocs --wide "$archive" >"$archive_relocations"
-grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" \
-    || fail "archive errno lacks an initial-TLS TPOFF relocation"
+grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
+    fail "archive errno lacks an initial-TLS TPOFF relocation"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
     "$archive_relocations"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_READINESS_WAITS_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CLOCK_NANOSLEEP_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_readiness_waits_probe.c \
-    compat/x86_64/libc_readiness_waits_start.S "$archive" -o "$candidate"
+    -Wl,--no-undefined compat/x86_64/libc_clock_nanosleep_probe.c \
+    compat/x86_64/libc_clock_nanosleep_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location close read write pipe sigaction sigemptyset \
-    sigaddset sigismember sigprocmask poll ppoll select pselect pause \
-    sigsuspend crabc_x86_64_signal_restorer; do
-    grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
-        || fail "candidate does not define ${symbol}"
+for symbol in __errno_location clock_nanosleep; do
+    grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
+        fail "candidate does not define ${symbol}"
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
@@ -177,8 +174,8 @@ fi
 if grep -Eq 'NEEDED' "$candidate_dynamic"; then
     fail "candidate selected a dynamic dependency"
 fi
-grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" \
-    || fail "candidate lacks the selected errno TLS segment"
+grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" ||
+    fail "candidate lacks the selected errno TLS segment"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate relocations retain a dynamic TLS model"
@@ -188,42 +185,16 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     fail "candidate selects an unowned runtime dependency"
 fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
-grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
-    || fail "candidate errno does not use direct fs initial TLS"
+grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
+    fail "candidate errno does not use direct fs initial TLS"
 
-# The fixture proves descriptor readiness, timeout copying, and atomic
-# temporary-mask restoration. `pause` has no race-free in-process signal
-# trigger under this deliberately closed scope, so retain it in the candidate
-# and pin its direct Linux instruction path instead of risking a hanging test.
-assert_named_syscall poll 7
-assert_named_syscall ppoll 10f
-assert_named_syscall select 17
-assert_named_syscall pselect 10e
-assert_named_syscall pause 22
-assert_named_syscall sigsuspend 82
-
-for symbol in ppoll select; do
-    disassembly="$work_dir/${symbol}-disassembly"
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Fq '%r8' "$disassembly" \
-        || fail "${symbol} lacks its x86 fifth-argument path"
-done
-pselect_disassembly="$work_dir/pselect-disassembly"
-objdump -d --disassemble=pselect "$candidate" >"$pselect_disassembly"
-for register in '%r8' '%r9'; do
-    grep -Fq "$register" "$pselect_disassembly" \
-        || fail "pselect lacks the x86 ${register} argument path"
-done
-sigsuspend_disassembly="$work_dir/sigsuspend-disassembly"
-objdump -d --disassemble=sigsuspend "$candidate" >"$sigsuspend_disassembly"
-grep -Eq '\$0x8,%e(si|dx)|\$0x8,%r(si|dx)' "$sigsuspend_disassembly" \
-    || fail "sigsuspend lacks Linux's eight-byte kernel signal-set size"
+assert_named_syscall clock_nanosleep e6
 
 if "$candidate"; then
     :
 else
     status=$?
-    fail "freestanding readiness/signal-waits fixture exited ${status}"
+    fail "freestanding clock_nanosleep fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc readiness/signal waits: PASS\n'
+printf 'x86 static crabc-libc clock_nanosleep: PASS\n'

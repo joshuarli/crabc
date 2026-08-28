@@ -42,7 +42,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 22)
+        self.assertEqual(report["verified_artifact_count"], 23)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -118,7 +118,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 21
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 22
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -657,6 +657,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("src/stdlib/qsort.c", callback_algorithms["oracle"][0]["role"])
         self.assertIn(
             "libc/src/c_abi/x86_64/callback_algorithms.rs",
+            posix_runtime["source_owners"],
+        )
+        clock_nanosleep = artifacts_by_id["static-c-clock-nanosleep"]
+        assert isinstance(clock_nanosleep, dict)
+        self.assertNotIn("capabilities", clock_nanosleep)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/clock_nanosleep.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/signal_control.rs",
+            "include/time.h",
+            "compat/x86_64/time_header_abi_probe.c",
+            "compat/x86_64/time_header_abi_probe.cpp",
+            "compat/x86_64/run_time_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_clock_nanosleep_probe.c",
+            "compat/x86_64/libc_clock_nanosleep_start.S",
+            "compat/x86_64/run_libc_clock_nanosleep.sh",
+        ):
+            self.assertIn(owner, clock_nanosleep["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in clock_nanosleep["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-clock-nanosleep"},
+        )
+        self.assertIn("positive errno", clock_nanosleep["description"])
+        self.assertIn("__syscall_cp", clock_nanosleep["description"])
+        self.assertIn("CLOCK_REALTIME", clock_nanosleep["description"])
+        self.assertIn("does not select nanosleep/sleep", clock_nanosleep["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/clock_nanosleep.rs",
             posix_runtime["source_owners"],
         )
         ffs = artifacts_by_id["static-c-ffs"]
@@ -3077,6 +3108,41 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-immediate-termination"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-callback-algorithms command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_clock_nanosleep_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-nanosleep"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace(
+            "clock_nanosleep=230", "clock_nanosleep=999"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "four-register syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-nanosleep"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh clock-nanosleep-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-clock-nanosleep command"
         ):
             ledger.validate_ledger(data)
 

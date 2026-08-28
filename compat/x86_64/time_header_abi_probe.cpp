@@ -27,6 +27,8 @@ static_assert(TIME_UTC == 1, "TIME_UTC");
 
 static clock_t (*clock_signature)(void) = clock;
 static int (*clock_gettime_signature)(clockid_t, struct timespec *) = clock_gettime;
+static int (*clock_nanosleep_signature)(clockid_t, int, const struct timespec *,
+                                        struct timespec *) = clock_nanosleep;
 static int (*timer_create_signature)(clockid_t, struct sigevent *, timer_t *) = timer_create;
 
 int main()
@@ -36,6 +38,7 @@ int main()
     calendar.tm_zone = NULL;
     (void)clock_signature;
     (void)clock_gettime_signature;
+    (void)clock_nanosleep_signature;
     (void)timer_create_signature;
     return calendar.tm_zone != NULL;
 }

@@ -800,6 +800,56 @@ def require_callback_algorithms_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct-positive-error clock sleep boundary durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-clock-nanosleep"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-clock-nanosleep artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "POSIX clock_nanosleep block",
+        "`clock_nanosleep`",
+        "positive errno",
+        "CLOCK_REALTIME",
+        "__syscall_cp",
+        "omits cancellation",
+        "nanosleep/sleep",
+        "initial-TLS errno",
+    ):
+        require(
+            phrase in description,
+            f"static-c-clock-nanosleep description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("clock_nanosleep=230" in item and "rdi/rsi/rdx/r10" in item for item in prerequisites),
+        "static-c-clock-nanosleep must record its four-register syscall ABI",
+    )
+    require(
+        any("remaining timespec only on EINTR" in item for item in prerequisites),
+        "static-c-clock-nanosleep must record the relative remainder contract",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-clock-nanosleep"},
+        "static-c-clock-nanosleep must use the closed libc-clock-nanosleep command",
+    )
+
+
 def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     """Keep the stateless find-first-set artifact identity and scope durable."""
     artifacts = require_verified_artifacts(
@@ -1012,6 +1062,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
+    require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]

@@ -9,7 +9,8 @@
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, intmax-arithmetic,
-//! find-first-set, C11 immediate-termination, and callback-algorithms
+//! find-first-set, C11 immediate-termination, callback-algorithms, and POSIX
+//! `clock_nanosleep`
 //! artifacts.
 //! It deliberately shares only the raw
 //! Linux syscall register boundary and one initial-TLS C `errno` slot. The
@@ -72,6 +73,8 @@ mod child_reaping;
 mod immediate_termination;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
+#[path = "clock_nanosleep.rs"]
+mod clock_nanosleep;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
 #[path = "process_resources.rs"]
