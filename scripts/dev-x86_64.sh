@@ -36,6 +36,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   public-header-surface  inventory all pinned x86 public headers for C consumability
   candidate-header-closure  require isolated C11/C++17 public-header include closure
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
+  epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
@@ -1137,6 +1138,10 @@ run_uapi_wrapper_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_uapi_wrapper_matrix.sh
 }
 
+run_epoll_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_epoll_header_abi.sh
+}
+
 run_header_abi_project() {
     run_in_container bash /workspace/compat/x86_64/run_project_header_abi.sh
 }
@@ -2100,6 +2105,7 @@ case "$command" in
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     uapi-wrapper-matrix) ;;
+    epoll-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
@@ -2151,6 +2157,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "uapi-wrapper-matrix takes no arguments"
         ensure_image
         run_uapi_wrapper_matrix
+        ;;
+    epoll-header-abi)
+        [ "$#" -eq 0 ] || fail "epoll-header-abi takes no arguments"
+        ensure_image
+        run_epoll_header_abi
         ;;
     header-abi-project)
         [ "$#" -eq 0 ] || fail "header-abi-project takes no arguments"

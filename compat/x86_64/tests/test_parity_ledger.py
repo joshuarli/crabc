@@ -51,17 +51,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
         self.assertEqual(report["verified_artifact_count"], 37)
-        self.assertEqual(report["header_layout_probe_count"], 30)
+        self.assertEqual(report["header_layout_probe_count"], 31)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
         self.assertEqual(report["header_foundation_project_only_header_count"], 8)
         self.assertEqual(report["header_foundation_uapi_path_count"], 3)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
+        self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 13)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 14)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -99,7 +100,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 30)
+        self.assertEqual(report["header_layout_probe_count"], 31)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -148,6 +149,21 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/math_complex_header_abi_probe.c",
                 "compat/x86_64/math_complex_header_abi_probe.cpp",
                 "compat/x86_64/run_math_complex_header_abi.sh",
+            ],
+        )
+        epoll = next(probe for probe in probes if probe["id"] == "epoll")
+        assert isinstance(epoll, dict)
+        self.assertEqual(epoll["kind"], "compile-only")
+        self.assertEqual(
+            epoll["headers"],
+            ["include/stddef.h", "include/sys/epoll.h", "include/sys/ioctl.h"],
+        )
+        self.assertEqual(
+            epoll["sources"],
+            [
+                "compat/x86_64/epoll_header_abi_probe.c",
+                "compat/x86_64/epoll_header_abi_probe.cpp",
+                "compat/x86_64/run_epoll_header_abi.sh",
             ],
         )
 
@@ -199,7 +215,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v3"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v4"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -215,6 +231,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
+        self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
 
         classes = manifest["header_class"]
         assert isinstance(classes, list)
@@ -316,9 +333,41 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for row in rows
             )
         )
+        epoll_matrix = manifest["epoll_header_profile_matrix"]
+        assert isinstance(epoll_matrix, dict)
+        self.assertEqual(epoll_matrix["id"], "x86-epoll-header-profile-matrix")
+        self.assertEqual(epoll_matrix["state"], "partial-verified")
+        self.assertEqual(epoll_matrix["required_result"], "pass")
+        self.assertEqual(
+            epoll_matrix["command"], "./scripts/dev-x86_64.sh epoll-header-abi"
+        )
+        self.assertEqual(epoll_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(epoll_matrix["subject_header"], "sys/epoll.h")
+        self.assertEqual(epoll_matrix["direct_macro_header"], "sys/ioctl.h")
+        self.assertEqual(
+            epoll_matrix["profiles"], list(ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES)
+        )
+        self.assertEqual(epoll_matrix["row_count"], 7)
+        epoll_rows = epoll_matrix["row"]
+        assert isinstance(epoll_rows, list)
+        self.assertEqual(len(epoll_rows), 7)
+        self.assertEqual(
+            [row["profile"] for row in epoll_rows if isinstance(row, dict)],
+            list(ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES),
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in epoll_rows
+            )
+        )
         completion = manifest["completion"]
         assert isinstance(completion, dict)
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
+        self.assertTrue(completion["epoll_header_profile_matrix_slice"])
         self.assertFalse(completion["family_promotion"])
         self.assertFalse(completion["public_support"])
 
@@ -414,6 +463,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(rows, list) and isinstance(rows[0], dict)
         rows[0]["candidate"] = "incomplete"
         with self.assertRaisesRegex(ledger.LedgerError, "resolved compile-only result"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        epoll_matrix = manifest["epoll_header_profile_matrix"]
+        assert isinstance(epoll_matrix, dict)
+        epoll_rows = epoll_matrix["row"]
+        assert isinstance(epoll_rows, list)
+        epoll_rows.pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "epoll header matrix row roster drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        epoll_matrix = manifest["epoll_header_profile_matrix"]
+        assert isinstance(epoll_matrix, dict)
+        epoll_matrix["direct_macro_header"] = "sys/socket.h"
+        with self.assertRaisesRegex(ledger.LedgerError, "direct macro header drifted"):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()

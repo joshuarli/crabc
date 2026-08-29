@@ -388,3 +388,15 @@ sources = [
   "compat/x86_64/run_socket_header_abi.sh",
 ]
 headers = ["include/netinet/in.h", "include/stddef.h", "include/sys/socket.h"]
+
+[[probe]]
+id = "epoll"
+command = "./scripts/dev-x86_64.sh epoll-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/epoll_header_abi_probe.c",
+  "compat/x86_64/epoll_header_abi_probe.cpp",
+  "compat/x86_64/run_epoll_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/sys/epoll.h", "include/sys/ioctl.h"]

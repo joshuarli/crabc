@@ -22,12 +22,16 @@ int ioctl(int, unsigned long, ...);
 #define _IOC_TYPESHIFT (_IOC_NRSHIFT + _IOC_NRBITS)
 #define _IOC_SIZESHIFT (_IOC_TYPESHIFT + _IOC_TYPEBITS)
 #define _IOC_DIRSHIFT (_IOC_SIZESHIFT + _IOC_SIZEBITS)
+/* Keep the high direction bit unsigned for read request encodings. */
+#define _IOC_NONE 0U
+#define _IOC_WRITE 1U
+#define _IOC_READ 2U
 #define _IOC(dir, type, nr, size) (((dir) << _IOC_DIRSHIFT) | ((type) << _IOC_TYPESHIFT) | ((nr) << _IOC_NRSHIFT) | ((size) << _IOC_SIZESHIFT))
 #define _IOC_TYPECHECK(type) (sizeof(type))
-#define _IO(type, nr) _IOC(0, (type), (nr), 0)
-#define _IOR(type, nr, size) _IOC(2, (type), (nr), _IOC_TYPECHECK(size))
-#define _IOW(type, nr, size) _IOC(1, (type), (nr), _IOC_TYPECHECK(size))
-#define _IOWR(type, nr, size) _IOC(3, (type), (nr), _IOC_TYPECHECK(size))
+#define _IO(type, nr) _IOC(_IOC_NONE, (type), (nr), 0)
+#define _IOR(type, nr, size) _IOC(_IOC_READ, (type), (nr), _IOC_TYPECHECK(size))
+#define _IOW(type, nr, size) _IOC(_IOC_WRITE, (type), (nr), _IOC_TYPECHECK(size))
+#define _IOWR(type, nr, size) _IOC(_IOC_READ | _IOC_WRITE, (type), (nr), _IOC_TYPECHECK(size))
 
 /* Linux generic file-descriptor requests. */
 #define FIONREAD 0x541b

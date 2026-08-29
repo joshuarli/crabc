@@ -35,7 +35,18 @@ enum EPOLL_EVENTS { __EPOLL_DUMMY };
 #define EPOLL_CTL_MOD 3
 
 typedef union epoll_data { void *ptr; int fd; uint32_t u32; uint64_t u64; } epoll_data_t;
-struct epoll_event { uint32_t events; epoll_data_t data; };
+
+/*
+ * Linux/x86-64 UAPI packs this record to place data at byte four. Keep the
+ * target-local rule here: AArch64 has the natural 16-byte layout instead.
+ */
+#if defined(__x86_64__) && defined(__LP64__)
+#define __CRABC_EPOLL_EVENT_PACKED __attribute__((__packed__))
+#else
+#define __CRABC_EPOLL_EVENT_PACKED
+#endif
+struct epoll_event { uint32_t events; epoll_data_t data; } __CRABC_EPOLL_EVENT_PACKED;
+#undef __CRABC_EPOLL_EVENT_PACKED
 
 struct epoll_params {
     uint32_t busy_poll_usecs;

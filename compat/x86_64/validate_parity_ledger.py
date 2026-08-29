@@ -31,13 +31,14 @@ CANDIDATE_HEADER_CLOSURE_RUNNER_PATH = (
 UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
 )
+EPOLL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_epoll_header_abi.sh"
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v3"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v4"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -49,6 +50,11 @@ EXPECTED_UAPI_WRAPPER_MATRIX_ID = "linux-5.10-uapi-wrapper-profile-matrix"
 EXPECTED_UAPI_WRAPPER_MATRIX_COMMAND = "./scripts/dev-x86_64.sh uapi-wrapper-matrix"
 EXPECTED_UAPI_WRAPPER_MATRIX_HEADERS = tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS)
 EXPECTED_UAPI_WRAPPER_MATRIX_ROW_COUNT = 21
+EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID = "x86-epoll-header-profile-matrix"
+EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh epoll-header-abi"
+EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/epoll.h"
+EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_DIRECT_MACRO_HEADER = "sys/ioctl.h"
+EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
 EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "daemon.h",
     "dn_expand.h",
@@ -139,6 +145,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "public-path-inventory",
         "candidate-tree-presence",
         "c11-gnu-consumability",
+        "epoll-header-profile-matrix",
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
@@ -312,6 +319,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         ("public-header-c-consumability",),
     ),
+    "epoll-header-profile-matrix": (
+        "partial-verified",
+        "sys/epoll.h plus selected sys/ioctl.h macro encoding subset",
+        "libc.headers-layouts",
+        (EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "uapi-input-provenance": (
         "partial-verified",
         "pinned-uapi-inputs",
@@ -426,6 +439,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "mman": "./scripts/dev-x86_64.sh mman-header-abi",
     "resource": "./scripts/dev-x86_64.sh resource-header-abi",
     "socket": "./scripts/dev-x86_64.sh socket-header-abi",
+    "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -576,6 +590,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/socket_header_abi_probe.cpp",
         "compat/x86_64/socket_header_ipv6_macro_probe.c",
         "compat/x86_64/run_socket_header_abi.sh",
+    ),
+    "epoll": (
+        "compat/x86_64/epoll_header_abi_probe.c",
+        "compat/x86_64/epoll_header_abi_probe.cpp",
+        "compat/x86_64/run_epoll_header_abi.sh",
     ),
 }
 
@@ -1048,10 +1067,10 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v3 contract resolves every current pathname into one class and expands
+    The v4 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
-    Linux-UAPI input, resolves one selected three-wrapper-by-seven-profile ABI
-    matrix, and requires a live C11/C++17 empty-TU closure diagnostic, while
+    Linux-UAPI input, resolves selected UAPI-wrapper and epoll-header ABI
+    matrices, and requires a live C11/C++17 empty-TU closure diagnostic, while
     keeping aggregate applicability, declaration/layout comparisons, and
     declared-callable linkage in planned evidence lanes.
     """
@@ -1072,6 +1091,7 @@ def validate_header_layout_foundation_manifest(
         "profile_matrix",
         "uapi_input",
         "uapi_wrapper_matrix",
+        "epoll_header_profile_matrix",
         "closure_diagnostic",
         "language_profile",
         "profile_obligation",
@@ -1132,6 +1152,7 @@ def validate_header_layout_foundation_manifest(
             "callable_linkage_owners_accounted": True,
             "legacy_direct_inputs_accounted": True,
             "uapi_wrapper_profile_matrix_slice": True,
+            "epoll_header_profile_matrix_slice": True,
             "candidate_transitive_include_closure": False,
             "c11_consumer_matrix": False,
             "cxx17_consumer_matrix": False,
@@ -1202,11 +1223,15 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_uapi_wrapper_matrix.sh",
         "compat/x86_64/uapi_wrappers_header_abi_probe.c",
         "compat/x86_64/uapi_wrappers_header_abi_probe.cpp",
+        "compat/x86_64/run_epoll_header_abi.sh",
+        "compat/x86_64/epoll_header_abi_probe.c",
+        "compat/x86_64/epoll_header_abi_probe.cpp",
         "compat/x86_64/run_candidate_header_closure.sh",
         "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/tests/test_candidate_header_closure.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
+        "compat/x86_64/tests/test_epoll_header_abi.py",
         "compat/x86_64/tests/test_runner.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -1629,6 +1654,152 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts UAPI wrapper matrix evidence must retain its non-completion boundary",
     )
 
+    epoll_header_profile_matrix = manifest["epoll_header_profile_matrix"]
+    require(
+        isinstance(epoll_header_profile_matrix, Mapping),
+        "header-foundation epoll header matrix must be a table",
+    )
+    require(
+        set(epoll_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_header",
+            "direct_macro_header",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation epoll header matrix keys drifted",
+    )
+    require(
+        epoll_header_profile_matrix["id"] == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation epoll header matrix id drifted",
+    )
+    require(
+        epoll_header_profile_matrix["state"] == "partial-verified"
+        and epoll_header_profile_matrix["required_result"] == "pass",
+        "header-foundation epoll header matrix must remain partial verified evidence",
+    )
+    require(
+        epoll_header_profile_matrix["command"] == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation epoll header matrix command drifted",
+    )
+    require(
+        epoll_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation epoll header matrix must remain scoped to one pinned non-UAPI header",
+    )
+    require(
+        epoll_header_profile_matrix["subject_header"]
+        == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER,
+        "header-foundation epoll header matrix subject header drifted",
+    )
+    require(
+        epoll_header_profile_matrix["direct_macro_header"]
+        == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_DIRECT_MACRO_HEADER,
+        "header-foundation epoll header matrix direct macro header drifted",
+    )
+    epoll_profiles = string_list(
+        epoll_header_profile_matrix["profiles"], "header-foundation epoll header matrix profiles"
+    )
+    require(
+        tuple(epoll_profiles) == EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+        "header-foundation epoll header matrix profiles drifted",
+    )
+    require(
+        epoll_header_profile_matrix["row_count"] == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and epoll_header_profile_matrix["row_count"] == len(epoll_profiles),
+        "header-foundation epoll header matrix row count drifted",
+    )
+    epoll_scope = epoll_header_profile_matrix["scope"]
+    require(
+        isinstance(epoll_scope, str)
+        and all(
+            phrase in epoll_scope
+            for phrase in (
+                "direct sys/ioctl.h callable declaration parity",
+                "epoll callable linkage",
+                "epoll runtime/device behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation epoll header matrix scope must retain its non-completion boundary",
+    )
+    epoll_rows = epoll_header_profile_matrix["row"]
+    require(
+        isinstance(epoll_rows, list)
+        and len(epoll_rows) == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation epoll header matrix row roster drifted",
+    )
+    expected_epoll_rows = EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES
+    observed_epoll_rows: list[str] = []
+    for index, row in enumerate(epoll_rows):
+        location = f"header-foundation epoll_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(isinstance(profile, str), f"{location} profile is invalid")
+        require(
+            profile in EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+            f"{location} profile is not a declared epoll header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_epoll_rows.append(profile)
+    require(
+        tuple(observed_epoll_rows) == expected_epoll_rows,
+        "header-foundation epoll header matrix row order or cross-product drifted",
+    )
+    require(
+        EPOLL_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation epoll header matrix runner is missing",
+    )
+    require(
+        "epoll-header-abi)" in dispatch_source,
+        "epoll-header-abi is absent from the native dispatcher",
+    )
+    epoll_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(epoll_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one epoll header matrix evidence command",
+    )
+    require(
+        epoll_matrix_evidence[0].get("state") == "required"
+        and isinstance(epoll_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in epoll_matrix_evidence[0]["scope"]
+            for phrase in (
+                "direct sys/ioctl.h callable declaration parity",
+                "epoll callable linkage",
+                "epoll runtime/device behavior",
+                "all-header closure",
+                "runtime",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts epoll header matrix evidence must retain its non-completion boundary",
+    )
+
     inventory_text = inventory_path.read_text(encoding="utf-8")
     pinned_paths = inventory_text.splitlines()
     require(inventory_text.endswith("\n"), "header-foundation pinned inventory must end with a newline")
@@ -1937,6 +2108,7 @@ def validate_header_layout_foundation_manifest(
         "project_only_header_count": len(project_only_set),
         "uapi_path_count": len(observed_uapi_paths),
         "uapi_wrapper_matrix_row_count": len(observed_matrix_rows),
+        "epoll_header_profile_matrix_row_count": len(observed_epoll_rows),
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -4031,6 +4203,9 @@ def validate_ledger(
         ],
         "header_foundation_uapi_wrapper_matrix_row_count": header_layout_foundation_report[
             "uapi_wrapper_matrix_row_count"
+        ],
+        "header_foundation_epoll_header_profile_matrix_row_count": header_layout_foundation_report[
+            "epoll_header_profile_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"
