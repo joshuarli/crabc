@@ -2,8 +2,9 @@
 //!
 //! This target root owns one dependency-free `libc.a` artifact containing the
 //! independently evidenced metadata and credential verticals alongside the x86
-//! bulk-memory, floating-environment, and continuation primitives as a real C
-//! bootstrap block, plus deliberately narrow simple signal action/mask,
+//! bulk-memory, floating-environment, continuation, binary32/binary64/x87
+//! classification/sign, and basic complex accessor/conjugation primitives as a
+//! real C bootstrap block, plus deliberately narrow simple signal action/mask,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
@@ -59,6 +60,8 @@ mod ffs;
 mod random_entropy;
 #[path = "fenv.rs"]
 mod fenv;
+#[path = "math_complex.rs"]
+mod math_complex;
 #[path = "setjmp.rs"]
 mod setjmp;
 #[path = "signal_foundation.rs"]

@@ -1454,6 +1454,7 @@ source_owners = [
   "include/bits/stat.h",
   "include/bits/syscall.h",
   "include/ctype.h",
+  "include/complex.h",
   "include/features.h",
   "include/arpa/inet.h",
   "include/inttypes.h",
@@ -1463,6 +1464,7 @@ source_owners = [
   "include/fcntl.h",
   "include/fenv.h",
   "include/float.h",
+  "include/math.h",
   "include/poll.h",
   "include/sys/select.h",
   "include/setjmp.h",
@@ -1470,6 +1472,7 @@ source_owners = [
   "include/string.h",
   "include/strings.h",
   "include/termios.h",
+  "include/tgmath.h",
   "include/sys/random.h",
   "include/sys/reg.h",
   "include/sys/resource.h",
@@ -1486,6 +1489,9 @@ source_owners = [
   "include/sys/utsname.h",
   "compat/x86_64/project_header_abi_probe.c",
   "compat/x86_64/run_project_header_abi.sh",
+  "compat/x86_64/math_complex_header_abi_probe.c",
+  "compat/x86_64/math_complex_header_abi_probe.cpp",
+  "compat/x86_64/run_math_complex_header_abi.sh",
   "compat/x86_64/sys_reg_header_abi_probe.c",
   "compat/x86_64/run_sys_reg_header_abi.sh",
   "compat/x86_64/types_header_abi_probe.c",
@@ -1627,7 +1633,7 @@ source_owners = [
 header_manifest = "compat/x86_64/headers-layouts.toml"
 x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags", "x86 fcntl flags and flock/file-handle record layouts", "x86 144-byte struct stat, LP64 time, and pollfd record layouts", "x86 sys/select ABI: FD_SETSIZE=1024, 128-byte align-8 fd_set, 16-byte align-8 timeval/timespec, 128-byte align-8 sigset_t, and C-linkage select/pselect declarations", "x86 SysV direction-flag-clear entry/return convention and musl memcpy/memmove/memset string-instruction kernels", "x86 32-byte x87/MXCSR fenv_t, the six FE exception bits, four rounding encodings, and FE_DFL_ENV", "setjmp's six callee-saved GPRs, post-return stack, instruction pointer, and kernel-sized signal mask", "musl x86 public 152-byte sigaction to Linux 32-byte kernel-action packing, one-word signal mask, SA_RESTORER, and private syscall-15 restorer", "musl x86 public termios is a 60-byte align-4 NCCS=32 C record whose first 36 bytes are Linux TCGETS/TCSETS*'s four-u32/line/19-control-byte prefix; winsize is four u16 values at 8-byte align-2", "musl x86 public resource records: unsigned-long-long rlim_t, 16-byte rlimit, and 272-byte rusage whose kernel-initialized 144-byte prefix precedes a caller-resident 128-byte tail", "x86 child-reaping records: signed four-byte pid_t, unsigned four-byte id_t, P_ALL/P_PID/P_PGID values 0/1/2, WNOHANG=1/WEXITED=4/WNOWAIT=0x01000000, and a 128-byte align-8 siginfo_t with signo/errno/code at 0/4/8 and child pid/uid/status at 16/20/24", "x86 C11 immediate termination uses an LP64 SysV int status in rdi for exit_group=231, with exit=60 only as musl's defensive nonreturn fallback; it has no errno return or hook-state ABI", "x86 callback algorithms use LP64 pointer and size_t words: bsearch(key, base, nel, width, cmp) arrives in rdi/rsi/rdx/rcx/r8; qsort(base, nel, width, cmp) in rdi/rsi/rdx/rcx; and __qsort_r/qsort_r(base, nel, width, cmp, arg) in rdi/rsi/rdx/rcx/r8. qsort comparators receive a/b in rdi/rsi, qsort_r comparators receive a/b/arg in rdi/rsi/rdx, signed four-byte int returns in eax, and qsort_r is a same-address weak ELF alias of global __qsort_r with no errno/TLS, allocator, or runtime-state ABI"]
 x86_header_prerequisites = [
-  "`compat/x86_64/headers-layouts.toml` is the authoritative inventory of the twenty-nine required native header gates. Each entry records only direct C/C++ includes and its runner; it intentionally does not assert a transitive include closure, all installed headers, archive linkage, runtime completion, or public x86 support.",
+  "`compat/x86_64/headers-layouts.toml` is the authoritative inventory of the thirty required native header gates. Each entry records only direct C/C++ includes and its runner; it intentionally does not assert a transitive include closure, all installed headers, archive linkage, runtime completion, or public x86 support.",
   "The verified `public-header-c-consumability` artifact derives its 183-entry public-header inventory from the pinned musl 1.2.6 x86 installation and rejects any candidate-side missing or differently consumable public header. It compiles each reference and project-header-first translation unit in C11+GNU mode, records eight candidate-only headers, and records the native image's shared missing-Linux-UAPI inputs for sys/kd.h, sys/soundcard.h, and sys/vt.h. This is header-consumability accounting only, without declaration, layout, linkage, runtime, or public-support parity.",
   "The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; C/C++ alltypes/sys/types, sys/stat, time, poll, sys/select, fcntl, unistd, sys/utsname, sys/sysinfo, syscall, signal, termios, sys/mman, sys/resource, and setjmp layouts/declarations match musl in their named compile-only probes. The C/C++ poll probe and strict/GNU C/C++ select probe cover the readiness records, declarations, and C linkage; the select probe additionally covers fd_set and FD_* macros. The resource probe covers strict plus GNU/LFS declarations, LP64 rlimit/rusage layouts, selectors, priorities, and prlimit64/LFS aliases. The selected static bootstrap artifact additionally compiles project errno, string/strings, fenv, setjmp/bits/setjmp, signal, sys/mman, and syscall headers into one freestanding C consumer and executes their exact small memory/fenv/continuation surface. The selected static termios artifact separately compiles the project errno, fcntl, termios, alltypes, and syscall headers into a freestanding C consumer and proves the direct 36-byte termios-prefix contract. The selected static process-context artifact separately compiles project errno, sys/stat, sys/types, unistd, and syscall headers into a freestanding C consumer and proves the named identity/group/session/mask declarations. The selected static child-reaping artifact separately compiles project errno, signal, sys/types, sys/wait, and syscall headers into a freestanding C consumer and proves only wait-status declarations, siginfo_t facts, and x86 syscall constants. The selected static immediate-termination artifact separately compiles project stdlib, signal, sys/types, sys/wait, and syscall headers into a freestanding C consumer and proves one child _Exit status through fixture-local raw clone/wait control, not a lifecycle API. The selected static descriptor-I/O artifact separately compiles project errno, fcntl/bits-fcntl, sys/mman, sys/types, unistd, and syscall headers into a freestanding C consumer and proves the selected descriptor declarations, MFD_CLOEXEC fixture flag, and x86 constants. The selected static process-resources artifact separately compiles project errno, limits, sys/resource, sys/time, sys/types, unistd, and syscall headers into a freestanding C consumer and proves the selected LP64 resource records, aliases, errno, and x86 constants. The selected static readiness/signal-waits artifact separately compiles project errno, poll, signal, sys/select, sys/types, time, unistd, and syscall headers into a freestanding C consumer and proves the named readiness, timeout-copy, and temporary-mask declarations. The selected static C-string-copy artifact separately compiles project string.h declarations and proves unconditional strcpy/strncpy/strcat/strncat, POSIX/XOPEN/GNU/BSD-gated stpcpy/stpncpy, and GNU/BSD-gated strlcpy/strlcat selections against pinned musl. The selected static C ctype artifact separately compiles project ctype.h declarations and proves its fourteen unconditional classification/case-conversion declarations plus POSIX/XOPEN/GNU/BSD-gated isascii/toascii selections against pinned musl. The selected static integer-arithmetic artifact separately compiles project stddef.h and stdlib.h declarations and proves all six unconditional abs/labs/llabs/div/ldiv/lldiv entries plus the LP64 div_t/ldiv_t/lldiv_t record layouts against pinned musl. The selected static find-first-set artifact separately compiles project strings.h declarations and proves the XOPEN/GNU/BSD-gated ffs/ffsl/ffsll signatures, strict/POSIX hiding, and unmangled C++ linkage against pinned musl. The selected static random-entropy artifact separately compiles project errno, stddef, sys/random, sys/types, unistd, and syscall headers into a freestanding C consumer and proves the named getrandom/getentropy declarations, feature gates, constants, errno, and x86 syscall number. Every remaining selected installed header still needs a native compile-time and layout probe against the x86 artifact.",
   "The selected static intmax-arithmetic artifact separately compiles project stddef.h, stdint.h, and inttypes.h declarations and proves unconditional imaxabs/imaxdiv signatures, the LP64 imaxdiv_t layout, and unmangled C++ linkage against pinned musl.",
@@ -1638,9 +1644,11 @@ x86_header_prerequisites = [
   "The selected static callback-algorithms header gate proves unconditional C/C++ bsearch and qsort declarations plus GNU/BSD-only qsort_r with its final-context comparator ABI, strict/POSIX/XOPEN hiding, private __qsort_r rejection, and unmangled C++ linkage against pinned musl; it selects no callback ownership, C longjmp, C++ exception, or general stdlib lifecycle contract.",
   "The selected static descriptor-entry artifact runs the project/pinned-musl C/C++ fcntl declaration gate, then separately compiles project errno, fcntl/bits-fcntl, sys/stat, sys/types, unistd, and syscall headers into a freestanding C consumer. It proves variadic open/openat and mode_t creat declarations, selected descriptor flags, and x86 syscall facts without selecting a general filesystem header or runtime surface.",
   "The socket-header gate compile-checks project-first and pinned-musl GNU C/C++ base socket transport declarations and address layouts, then executes the installed netinet/in.h IPv6 address-classification macros through both header sets. It proves only generic/IPv4/IPv6 socket-address records, selected transport declarations/constants, and the named classification macros; socket options, vectored/ancillary messages, address-conversion behavior, and C networking runtime behavior remain outside this partial header-evidence slice.",
+  "The math-complex header gate runs C11 and C++ project-header-first and pinned-musl consumers in default SSE and `-mfpmath=387` modes. It proves the named x87 long-double/complex layouts and constants, float_t/double_t evaluation-mode selection, math_errhandling and fast-FMA macro policy, GNU `HUGE`, C complex accessor macros, tgmath dispatch and single evaluation, relational-predicate single evaluation, classification/sign declarations, and unmangled C++ linkage for the selected accessor/classifier symbols. It deliberately links pinned musl for C execution and therefore does not establish scalar/complex math runtime completion or public x86 support.",
 ]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh math-complex-header-abi", scope = "This project-first/pinned-musl C11/C++ x87 math, complex, and tgmath header-semantics gate runs in SSE and -mfpmath=387 modes. It proves only the named declaration, macro, layout, type-selection, and C-linkage boundary; its C executable intentionally uses pinned musl libm and does not select crabc-libc scalar/complex math or public x86 support." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-fenv", scope = "This standalone source-only pinned-musl x86 fenv leaf differentially executes the 32-byte x87/MXCSR fenv_t, FE flag, rounding, saved/update, and default-environment behavior. Its separate selected archive use is recorded only by `static-c-bootstrap-primitives`; this command does not make general crabc-libc selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-memory", scope = "This standalone source-only pinned-musl x86 memory leaf differentially executes alignment/length matrices, overlap direction, guard-page boundaries, return values, and direction-flag restoration. Its separate selected archive use is recorded only by `static-c-bootstrap-primitives`; this command does not make general crabc-libc selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh sys-reg-header-abi", scope = "This compile-only ptrace register-index slice is partial evidence." },
@@ -2947,6 +2955,42 @@ capabilities = [
   "time.clock-calendar",
 ]
 status = "planned"
+
+[[family.verified_artifact]]
+id = "static-c-math-complex-foundation"
+description = "Private native x86 selected-static long-double/complex foundation. One dependency-free `crabc-libc` archive resolves exactly `__fpclassify`, `__fpclassifyf`, `__fpclassifyl`, `__signbit`, `__signbitf`, `__signbitl`, and the C99 `creal`, `crealf`, `creall`, `cimag`, `cimagf`, `cimagl`, `conj`, `conjf`, and `conjl` entries into a freestanding C fixture after an equivalent pinned-musl execution. The leaf preserves the SysV AMD64 x87 storage, argument, and return ABI for 80-bit long double and 32-byte long-double complex while retaining the ordinary SSE ABI for float/double complex. This artifact excludes scalar math, cabs/carg/cproj, complex powers and transcendentals, errno/fenv behavior beyond the named classifiers, libm, libc.so, CRT, loader, sysroot, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/math_complex.rs",
+  "include/complex.h",
+  "include/float.h",
+  "include/math.h",
+  "include/tgmath.h",
+  "compat/x86_64/math_complex_header_abi_probe.c",
+  "compat/x86_64/math_complex_header_abi_probe.cpp",
+  "compat/x86_64/run_math_complex_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_math_complex_probe.c",
+  "compat/x86_64/libc_math_complex_start.S",
+  "compat/x86_64/run_libc_math_complex.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 stores an x87 80-bit long double in 16-byte align-16 storage; scalar long-double arguments use stack storage and scalar results use st0. A long double complex uses 32-byte align-16 stack storage and returns real in st0 plus imaginary in st1.",
+  "System V AMD64 float complex occupies one SSE eightbyte, while double complex uses real xmm0 and imaginary xmm1; the selected accessors/conjugation leaf changes only the documented return component or sign bit.",
+  "Pinned musl 1.2.6 src/math/__fpclassify.c, __fpclassifyf.c, __fpclassifyl.c, __signbit.c, __signbitf.c, and __signbitl.c define the selected binary32/binary64/x87 classification and sign contracts; src/complex/{creal,crealf,creall,cimag,cimagf,cimagl,conj,conjf,conjl}.c map the selected stateless C99 entries. Rust has no stable C f80 representation, so one target-private assembly leaf implements that ABI without sharing AArch64 binary128 code.",
+]
+x86_header_prerequisites = [
+  "The separate project-first/pinned-musl C11/C++ header gate runs in default SSE and -mfpmath=387 modes. It proves long-double/complex storage, float_t/double_t selection, math_errhandling/fast-FMA policy, GNU HUGE, C complex accessor macros, tgmath dispatch and single evaluation, relational-predicate single evaluation, and unmangled C++ references for the selected ABI symbols.",
+  "C callers use musl's function-like creal*/cimag* macros for ordinary expressions and parenthesize their names to take the ABI function addresses; C++ sees the declarations inside extern C. The static fixture deliberately takes each selected address and does not infer general math or complex runtime support from header declarations.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-complex", scope = "Pinned-musl C reference plus one true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact closed archive exports; selected function-pointer ABI calls for binary32/binary64/x87 zero/subnormal/normal/infinity/NaN and signed zero plus float/double/long-double real/imaginary access and conjugation; no interpreter/DT_NEEDED/unresolved symbol or TLS/dynamic-TLS resolver; no libm or unowned runtime dependency; and generated x87 fldt/fchs instructions. It rejects unselected cabs/carg/cproj, complex power/transcendental, and scalar-math exports. It does not select libc.so, a general libc/libm, CRT startup, pthreads, allocator, loader, sysroot, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for the selected src/math binary32/binary64/x87 classifiers/sign predicates and src/complex accessors/conjugation leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "x87 long-double and complex-long-double storage/calling/return convention plus float/double complex SSE register contract." }]
 
 [[family]]
 id = "libc.resolver"

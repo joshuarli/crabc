@@ -45,8 +45,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 30)
-        self.assertEqual(report["header_layout_probe_count"], 29)
+        self.assertEqual(report["verified_artifact_count"], 31)
+        self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
@@ -57,7 +57,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 29)
+        self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -86,6 +86,26 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/socket_header_abi_probe.cpp",
                 "compat/x86_64/socket_header_ipv6_macro_probe.c",
                 "compat/x86_64/run_socket_header_abi.sh",
+            ],
+        )
+        math_complex = next(probe for probe in probes if probe["id"] == "math-complex")
+        assert isinstance(math_complex, dict)
+        self.assertEqual(math_complex["kind"], "macro-runtime")
+        self.assertEqual(
+            math_complex["headers"],
+            [
+                "include/complex.h",
+                "include/float.h",
+                "include/math.h",
+                "include/tgmath.h",
+            ],
+        )
+        self.assertEqual(
+            math_complex["sources"],
+            [
+                "compat/x86_64/math_complex_header_abi_probe.c",
+                "compat/x86_64/math_complex_header_abi_probe.cpp",
+                "compat/x86_64/run_math_complex_header_abi.sh",
             ],
         )
 
@@ -163,6 +183,69 @@ class X86ParityLedgerTests(unittest.TestCase):
             "without declaration, layout, linkage, runtime, or public-support parity",
             artifact["description"],
         )
+
+    def test_math_complex_foundation_remains_a_closed_non_capability_artifact(self) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 1
+        artifact = artifacts[0]
+        assert isinstance(artifact, dict)
+        self.assertEqual(artifact["id"], "static-c-math-complex-foundation")
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/math_complex.rs",
+            "include/complex.h",
+            "include/float.h",
+            "include/math.h",
+            "include/tgmath.h",
+            "compat/x86_64/math_complex_header_abi_probe.c",
+            "compat/x86_64/math_complex_header_abi_probe.cpp",
+            "compat/x86_64/run_math_complex_header_abi.sh",
+            "compat/x86_64/libc_math_complex_probe.c",
+            "compat/x86_64/libc_math_complex_start.S",
+            "compat/x86_64/run_libc_math_complex.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-math-complex"},
+        )
+        for phrase in (
+            "long-double/complex foundation",
+            "__fpclassify",
+            "__fpclassifyf",
+            "__fpclassifyl",
+            "__signbit",
+            "__signbitf",
+            "__signbitl",
+            "cabs/carg/cproj",
+            "complex powers and transcendentals",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and isinstance(artifacts[0], dict)
+        artifacts[0]["description"] = artifacts[0]["description"].replace(
+            "public x86 support", "x86 support"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "public x86 support"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and isinstance(artifacts[0], dict)
+        evidence = artifacts[0]["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-math-complex command"):
+            ledger.validate_ledger(data)
 
     def test_foundations_remain_narrow_and_source_or_artifact_scoped(self) -> None:
         data = self.data()

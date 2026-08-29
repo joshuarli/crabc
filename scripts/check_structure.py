@@ -116,7 +116,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, nanosleep, and
-# clock_nanosleep, descriptor entry, and bounded fcntl status control.
+# clock_nanosleep, descriptor entry, bounded fcntl status control, and the
+# basic x87 classification/sign plus complex accessor/conjugation foundation.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
 # exception.
@@ -140,6 +141,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/integer_parse.rs"),
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
+    Path("libc/src/c_abi/x86_64/math_complex.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/fenv.rs"),
     Path("libc/src/c_abi/x86_64/foundation.rs"),

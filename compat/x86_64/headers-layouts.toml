@@ -33,6 +33,18 @@ sources = [
 headers = ["include/bits/alltypes.h", "include/fenv.h", "include/float.h"]
 
 [[probe]]
+id = "math-complex"
+command = "./scripts/dev-x86_64.sh math-complex-header-abi"
+state = "required"
+kind = "macro-runtime"
+sources = [
+  "compat/x86_64/math_complex_header_abi_probe.c",
+  "compat/x86_64/math_complex_header_abi_probe.cpp",
+  "compat/x86_64/run_math_complex_header_abi.sh",
+]
+headers = ["include/complex.h", "include/float.h", "include/math.h", "include/tgmath.h"]
+
+[[probe]]
 id = "sys-reg"
 command = "./scripts/dev-x86_64.sh sys-reg-header-abi"
 state = "required"

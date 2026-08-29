@@ -3,6 +3,13 @@
 
 #include <features.h>
 
+/* `float_t` and `double_t` are compiler-evaluation-mode types, not fixed
+ * aliases. In particular, the x86 -mfpmath=387 contract promotes both to
+ * long double; the pinned musl alltypes source owns that selection. */
+#define __NEED_float_t
+#define __NEED_double_t
+#include <bits/alltypes.h>
+
 #if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define M_E        2.71828182845904523536
 #define M_LOG2E    1.44269504088896340736
@@ -31,6 +38,10 @@
 #define HUGE_VAL  ((double)INFINITY)
 #define HUGE_VALL ((long double)INFINITY)
 
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define HUGE 3.40282346638528859812e+38F
+#endif
+
 #define FP_ILOGBNAN (-1-0x7fffffff)
 #define FP_ILOGB0 FP_ILOGBNAN
 
@@ -41,22 +52,46 @@
 #define FP_NORMAL    4
 #define MATH_ERRNO 1
 #define MATH_ERREXCEPT 2
+#if defined(__x86_64__)
+/* Pinned musl's x86 math contract reports floating-point exceptions rather
+ * than advertising errno-only handling. The selected x87 classifiers below
+ * are a prerequisite, not a claim that all x86 scalar math is implemented. */
+#define math_errhandling MATH_ERREXCEPT
+#else
 #define math_errhandling MATH_ERRNO
+#endif
 
-/* AArch64 provides fused multiply-add for binary32 and binary64. These
- * performance indicators belong to `<math.h>` in the public C interface. */
+/* AArch64 provides fused multiply-add for binary32 and binary64. On x86,
+ * match the pinned compiler's advertised fast-math indicators rather than
+ * promising FMA where the selected target has not enabled it. */
+#if defined(__x86_64__)
+#ifdef __FP_FAST_FMA
+#define FP_FAST_FMA 1
+#endif
+#ifdef __FP_FAST_FMAF
+#define FP_FAST_FMAF 1
+#endif
+#ifdef __FP_FAST_FMAL
+#define FP_FAST_FMAL 1
+#endif
+#else
 #define FP_FAST_FMA 1
 #define FP_FAST_FMAF 1
+#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef float  float_t;
-typedef double double_t;
 #if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 extern int signgam;
 #endif
+
+/* Match musl's public ABI declarations. The selected x86 archive supplies all
+ * six entries; AArch64 retains its existing exported implementations. */
+int __fpclassify(double);
+int __fpclassifyf(float);
+int __fpclassifyl(long double);
 
 static __inline unsigned __FLOAT_BITS(float __f)
 {
@@ -72,42 +107,11 @@ static __inline unsigned long long __DOUBLE_BITS(double __f)
     return __u.__i;
 }
 
-static __inline int __fpclassifyf(float __f)
-{
-    unsigned __i = __FLOAT_BITS(__f);
-    int __e = (__i >> 23) & 0xff;
-    if (!__e) return (__i & 0x007fffff) ? FP_SUBNORMAL : FP_ZERO;
-    if (__e == 0xff) return (__i & 0x007fffff) ? FP_NAN : FP_INFINITE;
-    return FP_NORMAL;
-}
-
-static __inline int __fpclassify(double __f)
-{
-    unsigned long long __i = __DOUBLE_BITS(__f);
-    int __e = (__i >> 52) & 0x7ff;
-    if (!__e) return (__i & 0x000fffffffffffffULL) ? FP_SUBNORMAL : FP_ZERO;
-    if (__e == 0x7ff) return (__i & 0x000fffffffffffffULL) ? FP_NAN : FP_INFINITE;
-    return FP_NORMAL;
-}
-
-int __fpclassifyl(long double);
-
-static __inline int __signbitf(float __f)
-{
-    return (int)(__FLOAT_BITS(__f) >> 31);
-}
-
-static __inline int __signbit(double __f)
-{
-    return (int)(__DOUBLE_BITS(__f) >> 63);
-}
-
-static __inline int __signbitl(long double __f)
-{
-    unsigned long long __hi;
-    __builtin_memcpy(&__hi, (const char *)&__f + 8, 8);
-    return __hi >> 63;
-}
+/* Preserve musl's external __signbit* ABI on each target. Long-double storage
+ * is target-specific: x86 uses x87 extended precision and AArch64 binary128. */
+int __signbit(double);
+int __signbitf(float);
+int __signbitl(long double);
 
 #define fpclassify(x) ( \
     sizeof(x) == sizeof(float) ? __fpclassifyf(x) : \
@@ -140,11 +144,40 @@ static __inline int __signbitl(long double __f)
     __signbitl(x) )
 
 #define isunordered(x,y) (isnan((x)) ? ((void)(y),1) : isnan((y)))
-#define isgreater(x,y) (!isunordered((x),(y)) && (x) > (y))
-#define isgreaterequal(x,y) (!isunordered((x),(y)) && (x) >= (y))
-#define isless(x,y) (!isunordered((x),(y)) && (x) < (y))
-#define islessequal(x,y) (!isunordered((x),(y)) && (x) <= (y))
-#define islessgreater(x,y) (!isunordered((x),(y)) && (x) != (y))
+
+/* Keep musl's typed helpers instead of spelling each comparison from the
+ * macro arguments: C relational predicates must evaluate each operand once.
+ * `float_t`/`double_t` intentionally preserve the target evaluation mode. */
+#define __ISREL_DEF(rel, op, type) \
+static __inline int __is##rel(type __x, type __y) \
+{ return !isunordered(__x,__y) && __x op __y; }
+
+__ISREL_DEF(lessf, <, float_t)
+__ISREL_DEF(less, <, double_t)
+__ISREL_DEF(lessl, <, long double)
+__ISREL_DEF(lessequalf, <=, float_t)
+__ISREL_DEF(lessequal, <=, double_t)
+__ISREL_DEF(lessequall, <=, long double)
+__ISREL_DEF(lessgreaterf, !=, float_t)
+__ISREL_DEF(lessgreater, !=, double_t)
+__ISREL_DEF(lessgreaterl, !=, long double)
+__ISREL_DEF(greaterf, >, float_t)
+__ISREL_DEF(greater, >, double_t)
+__ISREL_DEF(greaterl, >, long double)
+__ISREL_DEF(greaterequalf, >=, float_t)
+__ISREL_DEF(greaterequal, >=, double_t)
+__ISREL_DEF(greaterequall, >=, long double)
+
+#define __tg_pred_2(x, y, p) ( \
+	sizeof((x)+(y)) == sizeof(float) ? p##f(x, y) : \
+	sizeof((x)+(y)) == sizeof(double) ? p(x, y) : \
+	p##l(x, y) )
+
+#define isless(x, y)            __tg_pred_2(x, y, __isless)
+#define islessequal(x, y)       __tg_pred_2(x, y, __islessequal)
+#define islessgreater(x, y)     __tg_pred_2(x, y, __islessgreater)
+#define isgreater(x, y)         __tg_pred_2(x, y, __isgreater)
+#define isgreaterequal(x, y)    __tg_pred_2(x, y, __isgreaterequal)
 
 double      acos(double);
 float       acosf(float);

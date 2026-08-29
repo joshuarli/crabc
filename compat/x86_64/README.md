@@ -193,6 +193,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh header-abi-reference
 ./scripts/dev-x86_64.sh public-header-surface
 ./scripts/dev-x86_64.sh header-abi-project
+./scripts/dev-x86_64.sh math-complex-header-abi
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
 ./scripts/dev-x86_64.sh stat-header-abi
@@ -340,6 +341,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-thread-pointer
 ./scripts/dev-x86_64.sh libc-foundation
 ./scripts/dev-x86_64.sh libc-fenv
+./scripts/dev-x86_64.sh libc-math-complex
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -368,7 +370,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the twenty-nine selected
+`headers-layouts.toml` is the checked-in contract for the thirty selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -394,6 +396,16 @@ remain a source-only ABI slice. The relevant declarations are also
 prerequisites of the separate `libc-bootstrap-primitives` artifact gate, but
 this compile-only command does not select the header family, `crabc-libc`, or
 general x86 C-header support.
+
+`math-complex-header-abi` runs project-header-first and pinned-musl C11/C++
+consumers in default SSE and `-mfpmath=387` modes. It proves the named x87
+`long double`/complex layouts and constants, `float_t`/`double_t` selection,
+`math_errhandling` and fast-FMA macro policy, GNU `HUGE`, C accessor macros,
+`tgmath` dispatch with single evaluation, relational-predicate single
+evaluation, classification/sign declarations, C/C++ project-header provenance,
+and unmangled C++ linkage. Its C executables intentionally link pinned musl's
+math runtime, so it is header semantics only—not general math, `crabc-libc`,
+or public x86 support.
 
 `sys-reg-header-abi` places the project headers first and compile-checks the
 27 Linux/x86-64 ptrace register-index macros in `<sys/reg.h>`. It is another
@@ -1573,10 +1585,10 @@ selecting `crabc-libc` or a public C ABI.
 native C fixture through the installed project `errno.h`. It proves a local
 initial-TLS datum with `R_X86_64_TPOFF*`, no `__tls_get_addr` path, zero
 initialization, and independent main/pthread `errno` slots. This standalone
-probe remains direct relocation evidence; the shared archive is selected by
-thirty separately recorded static artifact boundaries, while only their
-errno-observing leaves link this owner. It is not a musl differential or a
-general C ABI claim.
+probe remains direct relocation evidence; separately recorded static archive
+artifact boundaries select the shared archive, while only their errno-observing
+leaves link this owner. It is not a musl differential or a general C ABI
+claim.
 
 `libc-stat-compat` and `libc-credentials` are two private static
 `crabc-libc` semantic-vertical gates over one dependency-free `libc.a`. The
@@ -1590,9 +1602,9 @@ proves direct all-ones no-change and rejected-input `EINVAL` behavior, while
 expecting the candidate aliases to return `-1`/`EOPNOTSUPP` without mutation
 where musl succeeds through its process-wide credential rendezvous.
 
-The remaining twenty-six static artifacts are non-capability archive boundaries;
-they remain distinct from the `filesystem.stat-compat` and
-`process.credentials` semantic leaves.
+The other static archive artifacts are non-capability boundaries; they remain
+distinct from the `filesystem.stat-compat` and `process.credentials` semantic
+leaves.
 
 `libc-bootstrap-primitives` is a third, separately recorded static
 `verified_artifact` gate over the same archive, not a semantic-capability
@@ -2046,6 +2058,18 @@ the default-environment path. This standalone source-only runner is direct
 leaf evidence; the same implementation is selected only through
 `libc-bootstrap-primitives`, not as a general x86 C ABI claim.
 
+`libc-math-complex` is the separately recorded
+`static-c-math-complex-foundation` artifact. Its freestanding project-header C
+fixture runs first through pinned musl and then through one `-nostdlib -static`
+candidate archive. It selects exactly binary32/binary64/x87
+`__fpclassify*`/`__signbit*` plus the `creal*`/`cimag*`/`conj*` ABI entries,
+proving zero/subnormal/normal/infinity/NaN and signed-zero classification plus
+float/double/long-double complex access and conjugation. The gate rejects
+ambient `libm`, unselected `cabs*`/`carg*`/`cproj*`, powers, and
+transcendentals. It is only a classification/sign and x87 long-double/complex
+foundation, not scalar/complex math completion, `libc.so`, CRT/TLS lifecycle,
+loader, sysroot, or public x86 support.
+
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project
 `<string.h>` first. It proves the fixed `memcpy`, `memmove`, and `memset`
@@ -2287,7 +2311,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
-and `libc-ffs` static archive harnesses, and the separately scoped
+`libc-ffs`, and `libc-math-complex` static archive harnesses, and the separately scoped
 `static-pie` CRT gate,
 the lane owns no
 allocator evidence and exposes no generic Cargo, shell, general `crabc-libc`

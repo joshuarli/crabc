@@ -36,6 +36,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    byte-strings-header-abi) ;;", source)
         self.assertIn("    memory-search-header-abi) ;;", source)
         self.assertIn("    string-copy-header-abi) ;;", source)
+        self.assertIn("    math-complex-header-abi)", source)
+        self.assertIn("    libc-math-complex)", source)
         source = source.replace(
             "msync-reference|mincore-reference",
             "msync-reference|madvise-reference|mincore-reference",
@@ -48,9 +50,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = source.replace("libc-uts-identity|", "", 1)
         source = source.replace("resource-header-abi|random-entropy-header-abi|mm-abi-reference|", "resource-header-abi|mm-abi-reference|", 1)
         self.assertIn("public-header-surface", source)
+        self.assertIn("math-complex-header-abi", source)
         source = source.replace(
-            "header-abi-reference|public-header-surface|header-abi-project",
+            "header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi",
             "header-abi-reference|header-abi-project",
+            1,
+        )
+        self.assertIn("libc-math-complex", source)
+        source = source.replace(
+            "libc-fenv|libc-math-complex|libc-memory",
+            "libc-fenv|libc-memory",
             1,
         )
         self.assertIn(
@@ -77,6 +86,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_public_header_surface.sh', source)
         self.assertIn('run_header_abi_project()', source)
         self.assertIn('compat/x86_64/run_project_header_abi.sh', source)
+        self.assertIn('run_math_complex_header_abi()', source)
+        self.assertIn('compat/x86_64/run_math_complex_header_abi.sh', source)
         self.assertIn('run_sys_reg_header_abi()', source)
         self.assertIn('compat/x86_64/run_sys_reg_header_abi.sh', source)
         self.assertIn('run_types_header_abi()', source)
@@ -1480,6 +1491,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/compat/x86_64/run_libc_foundation.sh', source)
         self.assertIn('run_libc_fenv_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_fenv.sh', source)
+        self.assertIn('run_libc_math_complex_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_math_complex.sh', source)
         self.assertIn('run_libc_memory_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_memory.sh', source)
         self.assertIn('run_libc_setjmp_probe()', source)

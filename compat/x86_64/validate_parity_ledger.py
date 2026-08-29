@@ -45,6 +45,7 @@ EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
 
 EXPECTED_HEADER_LAYOUT_PROBES = {
     "project": "./scripts/dev-x86_64.sh header-abi-project",
+    "math-complex": "./scripts/dev-x86_64.sh math-complex-header-abi",
     "sys-reg": "./scripts/dev-x86_64.sh sys-reg-header-abi",
     "types": "./scripts/dev-x86_64.sh types-header-abi",
     "stat": "./scripts/dev-x86_64.sh stat-header-abi",
@@ -79,6 +80,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
     "project": (
         "compat/x86_64/project_header_abi_probe.c",
         "compat/x86_64/run_project_header_abi.sh",
+    ),
+    "math-complex": (
+        "compat/x86_64/math_complex_header_abi_probe.c",
+        "compat/x86_64/math_complex_header_abi_probe.cpp",
+        "compat/x86_64/run_math_complex_header_abi.sh",
     ),
     "sys-reg": (
         "compat/x86_64/sys_reg_header_abi_probe.c",
@@ -374,6 +380,24 @@ CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
 FFS_SYMBOLS = ("ffs", "ffsl", "ffsll")
 
+MATH_COMPLEX_FOUNDATION_SYMBOLS = (
+    "__fpclassify",
+    "__fpclassifyf",
+    "__fpclassifyl",
+    "__signbit",
+    "__signbitf",
+    "__signbitl",
+    "creal",
+    "crealf",
+    "creall",
+    "cimag",
+    "cimagf",
+    "cimagl",
+    "conj",
+    "conjf",
+    "conjl",
+)
+
 
 class LedgerError(ValueError):
     """The parity ledger does not describe a reviewable closed contract."""
@@ -561,7 +585,11 @@ def validate_header_layout_manifest(
             f"{location}.command drifted from its selected header gate",
         )
         require(entry["state"] == "required", f"{location}.state must remain required")
-        expected_kind = "macro-runtime" if identifier == "socket" else "compile-only"
+        expected_kind = (
+            "macro-runtime"
+            if identifier in {"math-complex", "socket"}
+            else "compile-only"
+        )
         require(entry["kind"] == expected_kind, f"{location}.kind drifted")
 
         source_names = nonempty_strings(entry["sources"], f"{location}.sources")
@@ -1837,6 +1865,186 @@ def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the x87-only math/complex foundation distinct from math parity.
+
+    This artifact is intentionally a narrow ABI leaf inside a still-planned
+    family. The checks below make its selected symbols, target-private f80
+    representation, static link boundary, and non-completion wording durable
+    without letting it consume a broad math capability.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-math-complex-foundation"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-math-complex-foundation artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-math-complex-foundation description omits {symbol}",
+        )
+    for phrase in (
+        "long-double/complex foundation",
+        "x87",
+        "scalar math",
+        "cabs/carg/cproj",
+        "complex powers and transcendentals",
+        "libm",
+        "libc.so",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-math-complex-foundation description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-math-complex-foundation.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/math_complex.rs",
+        "include/complex.h",
+        "include/float.h",
+        "include/math.h",
+        "include/tgmath.h",
+        "compat/x86_64/math_complex_header_abi_probe.c",
+        "compat/x86_64/math_complex_header_abi_probe.cpp",
+        "compat/x86_64/run_math_complex_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_math_complex_probe.c",
+        "compat/x86_64/libc_math_complex_start.S",
+        "compat/x86_64/run_libc_math_complex.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-math-complex-foundation omits {owner}",
+        )
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-math-complex-foundation.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "st0" in item and "st1" in item and "32-byte" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-math-complex-foundation must record the x87 complex return ABI",
+    )
+    require(
+        any(
+            "xmm0" in item and "xmm1" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-math-complex-foundation must record the SSE complex ABI",
+    )
+    require(
+        any(
+            "__fpclassify.c" in item
+            and "__fpclassifyf.c" in item
+            and "__fpclassifyl.c" in item
+            and "__signbit.c" in item
+            and "__signbitf.c" in item
+            and "__signbitl.c" in item
+            and "src/complex/" in item
+            and "AArch64 binary128" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-math-complex-foundation must record its pinned-musl and target boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-math-complex-foundation.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "-mfpmath=387" in item
+            and "tgmath" in item
+            and "unmangled C++" in item
+            for item in header_prerequisites
+        ),
+        "static-c-math-complex-foundation must record the two-mode header gate",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-math-complex"},
+        "static-c-math-complex-foundation must use the closed libc-math-complex command",
+    )
+
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "math_complex.rs"]\nmod math_complex;' in static_root,
+        "x86 static C ABI must compose the math_complex leaf",
+    )
+    implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_complex.rs").read_text(
+        encoding="utf-8"
+    )
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
+        require(
+            f".global {symbol}" in implementation,
+            f"math_complex leaf omits {symbol}",
+        )
+    for instruction in ("fld tbyte ptr", "fchs", "xorpd xmm1"):
+        require(
+            instruction in implementation,
+            f"math_complex leaf omits its required {instruction} ABI operation",
+        )
+
+    exports = [
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(
+        exports == sorted(exports),
+        "static C ABI export contract must remain ASCII-sorted",
+    )
+    for symbol in MATH_COMPLEX_FOUNDATION_SYMBOLS:
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits {symbol}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_math_complex.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "-nostdlib -static",
+        "--no-undefined",
+        "fldt",
+        "fchs",
+        "cabs",
+        "carg",
+        "cproj",
+        "libm",
+    ):
+        require(
+            snippet in runner,
+            f"libc-math-complex runner omits {snippet}",
+        )
+
+
 def baseline_capability_ids(path: Path) -> set[str]:
     """Load the checked-in baseline ledger instead of freezing its ID count here."""
     baseline = load_toml(path)
@@ -2047,6 +2255,7 @@ def validate_ledger(
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
+    require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")
