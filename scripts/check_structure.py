@@ -3282,7 +3282,165 @@ def check_x86_terminal_boundary(errors: list[str]) -> None:
             errors.append(
                 "crabc-core/src/syscall_x86_64.rs: selected x86 terminal ABI proof "
                 f"is missing SYS_{name}={value}"
+        )
+
+
+def check_x86_header_layouts_baseline(errors: list[str]) -> None:
+    """Keep the C/C++ aggregate a consumer-only header/layout artifact.
+
+    It may compose existing selected C archive APIs to prove real static C++
+    linkage, but it must not become another implementation module, a new C
+    export, or a hidden C++ runtime/constructor path.
+    """
+
+    c_probe_path = ROOT / "compat" / "x86_64" / "libc_header_layouts_baseline_probe.c"
+    cxx_probe_path = ROOT / "compat" / "x86_64" / "libc_header_layouts_baseline_probe.cpp"
+    start_path = ROOT / "compat" / "x86_64" / "libc_header_layouts_baseline_start.S"
+    runner_path = ROOT / "compat" / "x86_64" / "run_libc_header_layouts_baseline.sh"
+    for path in (c_probe_path, cxx_probe_path, start_path, runner_path):
+        if not path.is_file():
+            errors.append(f"x86 header-layout baseline is missing {path.relative_to(ROOT)}")
+            return
+
+    c_probe = c_probe_path.read_text(errors="replace")
+    cxx_probe = cxx_probe_path.read_text(errors="replace")
+    start = start_path.read_text(errors="replace")
+    runner = runner_path.read_text(errors="replace")
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(errors="replace")
+    exports = (
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    ).read_text(errors="replace")
+
+    headers = (
+        "errno.h",
+        "fcntl.h",
+        "netinet/in.h",
+        "poll.h",
+        "signal.h",
+        "sys/mman.h",
+        "sys/resource.h",
+        "sys/select.h",
+        "sys/socket.h",
+        "sys/stat.h",
+        "sys/sysinfo.h",
+        "sys/utsname.h",
+        "termios.h",
+        "time.h",
+        "unistd.h",
+    )
+    for header in headers:
+        include = f"#include <{header}>"
+        if include not in c_probe or include not in cxx_probe:
+            errors.append(
+                "compat/x86_64: static C/C++ header-layout baseline must use "
+                f"the project {header} header in both fixtures"
             )
+    for required in (
+        "crabc_x86_64_header_layouts_baseline_cxx_probe",
+        "check_observation_records",
+        "check_mapping_records",
+        "check_descriptor_records",
+        "check_signal_and_termios_records",
+        "CRABC_HEADER_LAYOUTS_BASELINE_FREESTANDING",
+    ):
+        if required not in c_probe:
+            errors.append(
+                "compat/x86_64/libc_header_layouts_baseline_probe.c: static "
+                f"header-layout baseline is missing {required!r}"
+            )
+    for required in (
+        'extern "C" int crabc_x86_64_header_layouts_baseline_cxx_probe',
+        "check_cpp_observation",
+        "check_cpp_mapping",
+        "check_cpp_descriptor_and_signal",
+    ):
+        if required not in cxx_probe:
+            errors.append(
+                "compat/x86_64/libc_header_layouts_baseline_probe.cpp: "
+                f"freestanding C++ companion is missing {required!r}"
+            )
+    for forbidden in (
+        "#include <vector>",
+        "#include <string>",
+        "#include <type_traits>",
+        "throw ",
+        "typeid",
+        "new ",
+        "delete ",
+        "thread_local",
+        "static std::",
+    ):
+        if forbidden in cxx_probe:
+            errors.append(
+                "compat/x86_64/libc_header_layouts_baseline_probe.cpp: "
+                f"freestanding C++ companion must not contain {forbidden!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_header_layouts_baseline_probe",
+    ):
+        if required not in start:
+            errors.append(
+                "compat/x86_64/libc_header_layouts_baseline_start.S: fixture "
+                f"TLS shim is missing {required!r}"
+            )
+    for required in (
+        "run_types_header_abi.sh",
+        "run_stat_header_abi.sh",
+        "run_time_header_abi.sh",
+        "run_poll_header_abi.sh",
+        "run_select_header_abi.sh",
+        "run_fcntl_header_abi.sh",
+        "run_unistd_header_abi.sh",
+        "run_system_header_abi.sh",
+        "run_signal_header_abi.sh",
+        "run_termios_header_abi.sh",
+        "run_mman_header_abi.sh",
+        "run_resource_header_abi.sh",
+        "run_socket_header_abi.sh",
+        "-std=c++17",
+        "-ffreestanding",
+        "-fno-exceptions",
+        "-fno-rtti",
+        "-fno-threadsafe-statics",
+        "-fno-use-cxa-atexit",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
+        "-nostdinc++",
+        "assert_cxx_c_linkage",
+        "__gxx_personality_v0",
+        "__cxa",
+        "_Unwind_",
+        "__stack_chk_fail",
+        "__tls_get_addr",
+        "-nostdlib -static",
+        "-Wl,-e,_start",
+        "R_X86_64_TPOFF",
+        "static_c_abi_exports.txt",
+    ):
+        if required not in runner:
+            errors.append(
+                "compat/x86_64/run_libc_header_layouts_baseline.sh: static "
+                f"C/C++ boundary is missing {required!r}"
+            )
+    if "--whole-archive" in runner:
+        errors.append(
+            "compat/x86_64/run_libc_header_layouts_baseline.sh: static "
+            "C/C++ boundary must not force-link the whole archive"
+        )
+    if "header_layouts_baseline" in static_root:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: header-layout baseline "
+            "must remain a fixture, not a selected implementation module"
+        )
+    if "header_layouts_baseline" in exports:
+        errors.append(
+            "compat/x86_64/static_c_abi_exports.txt: header-layout baseline "
+            "must not introduce a C export"
+        )
 
 
 def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
@@ -5383,6 +5541,7 @@ def main() -> int:
     check_x86_memory_mapping_boundary(errors)
     check_x86_memory_vm_boundary(errors)
     check_x86_terminal_boundary(errors)
+    check_x86_header_layouts_baseline(errors)
     check_x86_libc_static_c_abi_boundary(errors)
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)

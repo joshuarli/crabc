@@ -335,6 +335,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-clock-gettime
 ./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-mapping-core
+./scripts/dev-x86_64.sh libc-header-layouts-baseline
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
@@ -1792,6 +1793,21 @@ memfd paths, mapping policy, allocator, libc.so, CRT, loader, sysroot, and
 public x86 support. This is one artifact within planned `libc.posix-runtime`,
 not full `<sys/mman.h>`, family, C-runtime, or platform completion.
 
+`libc-header-layouts-baseline` is a separately recorded
+`static-c-header-layouts-baseline` artifact within planned
+`libc.headers-layouts`, not header or C-runtime completion. It runs the
+existing types/stat/time/poll/select/fcntl/unistd/system/signal/termios/mman/
+resource/socket C/C++ header gates, then links one C fixture and one
+freestanding C++17 companion through the existing static archive after the
+same pair succeeds with pinned musl. The C++ entry has C linkage and is called
+from C; the runner proves its selected archive references are unmangled and
+rejects standard C++ headers, constructors, exceptions, RTTI, C++ runtime
+helpers, and dynamic TLS. It consumes only the already selected errno, stat,
+clock, mapping, resource, readiness, socket/close, signal-mask, termios,
+uname/sysinfo, and page-size leaves. It adds no C export or project header,
+and does not claim every installed header, complete C++ support, a general C
+ABI, libc.so, CRT, loader, sysroot, or public x86 support.
+
 `libc-nanosleep` is a separately recorded `static-c-nanosleep`
 `verified_artifact` gate over that archive, not a C time or runtime capability.
 Its project-header C body first executes through pinned musl and then through
@@ -2355,6 +2371,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-clock-gettime`,
 `libc-system-configuration`,
 `libc-mapping-core`,
+`libc-header-layouts-baseline`,
 `libc-nanosleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,

@@ -45,7 +45,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 34)
+        self.assertEqual(report["verified_artifact_count"], 35)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertFalse(report["promotion_ready"])
@@ -183,6 +183,78 @@ class X86ParityLedgerTests(unittest.TestCase):
             "without declaration, layout, linkage, runtime, or public-support parity",
             artifact["description"],
         )
+
+    def test_header_layouts_baseline_is_a_closed_c_and_cxx_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertEqual(headers_layouts["status"], "planned")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 3
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-header-layouts-baseline"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/x86_64/libc_header_layouts_baseline_probe.c",
+            "compat/x86_64/libc_header_layouts_baseline_probe.cpp",
+            "compat/x86_64/libc_header_layouts_baseline_start.S",
+            "compat/x86_64/run_libc_header_layouts_baseline.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/tests/test_runner.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-header-layouts-baseline"},
+        )
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "freestanding C++17 companion",
+            "unmangled C entry called from C",
+            "no new C export",
+            "`include/**` edit",
+            "installed-header closure",
+            "C++ runtime",
+            "complete C ABI",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.headers-layouts")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-header-layouts-baseline"
+        )
+        artifact["native_evidence"][0]["command"] = "./scripts/dev-x86_64.sh mman-header-abi"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-header-layouts-baseline command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.headers-layouts")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-header-layouts-baseline"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "complete C ABI", "completed C runtime"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "complete C ABI"):
+            ledger.validate_ledger(data)
 
     def test_math_complex_foundation_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
@@ -1424,7 +1496,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(socket_header_evidence["state"], "required")
         self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 2
+        assert isinstance(artifacts, list) and len(artifacts) == 3
         bootstrap = next(
             entry
             for entry in artifacts
@@ -3661,7 +3733,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 2
+        assert isinstance(artifacts, list) and len(artifacts) == 3
         artifact = next(
             entry
             for entry in artifacts
@@ -3675,7 +3747,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 2
+        assert isinstance(artifacts, list) and len(artifacts) == 3
         artifact = next(
             entry
             for entry in artifacts

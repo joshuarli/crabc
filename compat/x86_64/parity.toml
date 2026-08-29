@@ -1497,6 +1497,10 @@ source_owners = [
   "compat/x86_64/headers-layouts.toml",
   "compat/x86_64/public_headers.txt",
   "compat/x86_64/run_public_header_surface.sh",
+  "compat/x86_64/libc_header_layouts_baseline_probe.c",
+  "compat/x86_64/libc_header_layouts_baseline_probe.cpp",
+  "compat/x86_64/libc_header_layouts_baseline_start.S",
+  "compat/x86_64/run_libc_header_layouts_baseline.sh",
   "include/bits/alltypes.h",
   "include/bits/fcntl.h",
   "include/bits/mman.h",
@@ -1757,6 +1761,32 @@ x86_abi_prerequisites = ["Pinned x86-64 musl 1.2.6 compiler/header tree", "C11 t
 x86_header_prerequisites = ["Every pinned musl public .h path is enumerated in compat/x86_64/public_headers.txt; musl private bits/ headers are deliberately excluded", "The project include tree is searched first, with the pinned musl tree supplying its ordinary dependent header search", "This checks only empty include consumers, not individual declaration, feature-visibility, macro-value, record-layout, archive-linkage, or runtime contracts"]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh public-header-surface", scope = "Native pinned-musl/project-header-first C11+GNU consumability inventory. It reports every reference header, the three shared missing-Linux-UAPI reference inputs, and candidate-only headers; it fails on a candidate-side missing or differently consumable pinned header and does not select ABI/layout/runtime or public support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "The complete public-header pathname and C-consumability oracle." }]
+
+[[family.verified_artifact]]
+id = "static-c-header-layouts-baseline"
+description = "Private native x86 static C/C++ header-layout baseline artifact within still-planned `libc.headers-layouts`. One project-header C fixture and one separately compiled freestanding C++17 companion execute first through pinned musl and then in one `-nostdlib -static` candidate with fixture-only initial TLS. The companion has an unmangled C entry called from C, rejects C++ runtime/constructor/exception/RTTI and dynamic-TLS paths, and retains only the named existing selected archive references: `__errno_location`, `fstat`, `clock_gettime`, `mmap`/`munmap`/`mprotect`/`madvise`/`posix_madvise`/`mincore`, `getrlimit`, `poll`/`select`, `socketpair`/`close`, `sigemptyset`, `cfmakeraw`, `uname`/`sysinfo`, and `getpagesize`. It joins their already proved x86 records and C/C++ declarations with no new C export or `include/**` edit. This is not installed-header closure, a complete C ABI, a C++ runtime, libc.so, CRT, loader, sysroot, pthread lifecycle, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/x86_64/libc_header_layouts_baseline_probe.c",
+  "compat/x86_64/libc_header_layouts_baseline_probe.cpp",
+  "compat/x86_64/libc_header_layouts_baseline_start.S",
+  "compat/x86_64/run_libc_header_layouts_baseline.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/tests/test_runner.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The freestanding candidate uses the System V AMD64 C ABI and a fixture-only x86 Variant-II %fs initial-TLS errno block. The shim calls the C entry only; it supplies no CRT, C++ constructor/destructor, exception, pthread, dynamic-TLS, loader, or application-startup contract.",
+  "The C++17 companion is separately compiled with no C++ standard headers, exceptions, RTTI, thread-safe local statics, C++ atexit registration, unwind tables, builtins, stack protector, PIE, or standard C++ include path. It exports one unmangled C entry and its unresolved references must be the named existing C symbols, never _Z*, __gxx_personality_v0, __cxa*, _Unwind_*, operator new/delete, __stack_chk_fail, or __tls_get_addr. Pinned musl marks __errno_location const while the staged header keeps an ordinary callable accessor; this artifact calls it but makes no optimizer-attribute parity claim.",
+  "The checked C/C++ records are the already gated x86 LP64 stat=144, timespec=16, pollfd=8, fd_set=128, sigset_t=128, rlimit=16, sockaddr=16, sockaddr_in=16, sockaddr_storage=128, utsname=390, sysinfo=368, and termios=60 layouts. Socket readiness is an empty AF_UNIX stream pair: zero-timeout poll/select report no readable descriptor before close. Musl and the selected sigemptyset leaf clear only the Linux one-word signal mask; the public sigset_t tail is sentinel-preserved caller storage.",
+]
+x86_header_prerequisites = [
+  "The C and C++ fixtures each preprocess project errno.h, fcntl.h, netinet/in.h, poll.h, signal.h, sys/mman.h, sys/resource.h, sys/select.h, sys/socket.h, sys/stat.h, sys/sysinfo.h, sys/utsname.h, termios.h, time.h, and unistd.h. Project-header provenance is checked independently for both translation units.",
+  "The existing types, stat, time, poll, select, fcntl, unistd, system, signal, termios, mman, resource, and socket C/C++ header gates remain required inputs. This aggregate links only their already selected static archive APIs and does not alter headers-layouts.toml's direct probe inventory or make the header family complete.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-header-layouts-baseline", scope = "Pinned-musl C/C++ reference plus one true dependency-free x86 crabc-libc static archive and freestanding C/C++ candidate. It runs the selected C/C++ header gates; proves project-header provenance; ratchets the exact crate-owned static C export set separately from compiler-builtins; rejects dynamic runtime/TLS, unresolved symbols, C++ constructors/exceptions/RTTI/runtime helpers, and non-C C++ references; verifies direct initial-TLS errno; then executes both C and C++ record/API paths. It adds no C export, header, capability, family completion, support, libc.so, CRT, loader, sysroot, or public x86 claim." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX declaration, record-layout, C-linkage, and selected runtime oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C/C++ call and initial-exec TLS fixture ABI oracle." }]
 
 [[family.verified_artifact]]
 id = "static-c-bootstrap-primitives"

@@ -37,6 +37,17 @@ inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
 family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
 shared-memory, and process-wide VM synchronization remain unselected.
 
+`./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
+`static-c-header-layouts-baseline` artifact within still-planned
+`libc.headers-layouts`. It composes the existing selected archive through a
+project-header C fixture and a separately compiled freestanding C++17
+companion, after both pass with pinned musl. The C++ entry has unmangled C
+linkage and is called from C; the evidence rejects C++ runtime, constructor,
+exception, RTTI, and dynamic-TLS paths while retaining only existing selected
+C API references. It adds no export or installed-header edit, and is not
+all-header closure, general C/C++ runtime support, libc.so, CRT, loader,
+sysroot, family/platform parity, or public x86 support.
+
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
 [`docs/design/allocator.md`](docs/design/allocator.md), and

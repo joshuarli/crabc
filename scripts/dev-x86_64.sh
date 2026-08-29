@@ -166,6 +166,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
   libc-mapping-core  run the static x86 crabc-libc caller-owned mapping-core slice
+  libc-header-layouts-baseline  run the static x86 crabc-libc C/C++ header/layout baseline
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
@@ -851,6 +852,13 @@ no-op VM-wait site is explicitly not musl's process-wide `__vm_wait` contract.
 It does not select `msync` cancellation, `mremap`, `mlock*`, shared memory,
 allocator, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
 support.
+`libc-header-layouts-baseline` links one project-header C fixture and one
+separately compiled freestanding C++17 companion into the same static
+candidate after an equivalent pinned-musl run. It proves the named existing
+record layouts and unmangled C++ references resolve only through already
+selected archive APIs; it neither adds an export/header nor selects
+installed-header closure, a C++ runtime, dynamic libc, CRT/TLS lifecycle,
+loader, sysroot, or public x86 support.
 `libc-nanosleep` links that archive into a separate freestanding project-header
 C fixture after an equivalent pinned-musl run. It selects only the normal
 `nanosleep` result/errno and relative remaining-pointer boundary: zero
@@ -1181,6 +1189,10 @@ run_libc_system_configuration() {
 
 run_libc_mapping_core() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mapping_core.sh
+}
+
+run_libc_header_layouts_baseline() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_header_layouts_baseline.sh
 }
 
 run_libc_nanosleep() {
@@ -2055,7 +2067,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2827,6 +2839,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"
         ensure_image
         run_libc_mapping_core
+        ;;
+    libc-header-layouts-baseline)
+        [ "$#" -eq 0 ] || fail "libc-header-layouts-baseline takes no arguments"
+        ensure_image
+        run_libc_header_layouts_baseline
         ;;
     libc-nanosleep)
         [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"

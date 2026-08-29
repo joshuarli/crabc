@@ -5226,6 +5226,182 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_header_layouts_baseline_stays_c_and_cxx_only(self) -> None:
+        """The aggregate records must not smuggle in a C++ runtime or exports."""
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_header_layouts_baseline_probe.c"
+        )
+        cxx_probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_header_layouts_baseline_probe.cpp"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_header_layouts_baseline_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_header_layouts_baseline.sh"
+        )
+        for path in (probe_path, cxx_probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing header-layout baseline input: {path}")
+
+        probe = probe_path.read_text(encoding="utf-8")
+        cxx_probe = cxx_probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for header in (
+            "errno.h",
+            "fcntl.h",
+            "netinet/in.h",
+            "poll.h",
+            "signal.h",
+            "sys/mman.h",
+            "sys/resource.h",
+            "sys/select.h",
+            "sys/socket.h",
+            "sys/stat.h",
+            "sys/sysinfo.h",
+            "sys/utsname.h",
+            "termios.h",
+            "time.h",
+            "unistd.h",
+        ):
+            self.assertIn(f"#include <{header}>", probe)
+            self.assertIn(f"#include <{header}>", cxx_probe)
+        for required in (
+            "crabc_x86_64_header_layouts_baseline_cxx_probe",
+            "check_observation_records",
+            "check_mapping_records",
+            "check_descriptor_records",
+            "check_signal_and_termios_records",
+            "CRABC_HEADER_LAYOUTS_BASELINE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            'extern "C" int crabc_x86_64_header_layouts_baseline_cxx_probe',
+            "check_cpp_observation",
+            "check_cpp_mapping",
+            "check_cpp_descriptor_and_signal",
+            "__errno_location",
+            "fstat",
+            "clock_gettime",
+            "mmap",
+            "munmap",
+            "mprotect",
+            "madvise",
+            "posix_madvise",
+            "mincore",
+            "getrlimit",
+            "poll",
+            "select",
+            "socketpair",
+            "close",
+            "sigemptyset",
+            "cfmakeraw",
+            "uname",
+            "sysinfo",
+            "getpagesize",
+        ):
+            self.assertIn(required, cxx_probe)
+        for forbidden in (
+            "#include <vector>",
+            "#include <string>",
+            "#include <type_traits>",
+            "throw ",
+            "typeid",
+            "new ",
+            "delete ",
+            "thread_local",
+            "static std::",
+        ):
+            self.assertNotIn(forbidden, cxx_probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_header_layouts_baseline_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_types_header_abi.sh",
+            "run_stat_header_abi.sh",
+            "run_time_header_abi.sh",
+            "run_poll_header_abi.sh",
+            "run_select_header_abi.sh",
+            "run_fcntl_header_abi.sh",
+            "run_unistd_header_abi.sh",
+            "run_system_header_abi.sh",
+            "run_signal_header_abi.sh",
+            "run_termios_header_abi.sh",
+            "run_mman_header_abi.sh",
+            "run_resource_header_abi.sh",
+            "run_socket_header_abi.sh",
+            "-std=c++17",
+            "-ffreestanding",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-fno-threadsafe-statics",
+            "-fno-use-cxa-atexit",
+            "-fno-unwind-tables",
+            "-fno-asynchronous-unwind-tables",
+            "-nostdinc++",
+            "assert_cxx_c_linkage",
+            "__gxx_personality_v0",
+            "__cxa",
+            "_Unwind_",
+            "__stack_chk_fail",
+            "__tls_get_addr",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "static_c_abi_exports.txt",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "__errno_location",
+            "fstat",
+            "clock_gettime",
+            "mmap",
+            "munmap",
+            "mprotect",
+            "madvise",
+            "posix_madvise",
+            "mincore",
+            "getrlimit",
+            "poll",
+            "select",
+            "socketpair",
+            "close",
+            "sigemptyset",
+            "cfmakeraw",
+            "uname",
+            "sysinfo",
+            "getpagesize",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-header-layouts-baseline"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-header-layouts-baseline"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_header_layouts_baseline()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_header_layouts_baseline.sh", runner
+        )
+        self.assertIn(
+            '    libc-header-layouts-baseline)\n        [ "$#" -eq 0 ] || fail "libc-header-layouts-baseline takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_clock_nanosleep_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

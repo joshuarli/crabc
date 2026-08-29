@@ -800,6 +800,140 @@ def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
     return len(names)
 
 
+def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the C/C++ static aggregate below header-family promotion.
+
+    It deliberately joins existing selected archive leaves and existing
+    direct header gates.  The artifact must never turn that useful linkage
+    proof into an installed-header, general-C-ABI, C++ runtime, or x86 support
+    claim.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-header-layouts-baseline"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one static-c-header-layouts-baseline artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "freestanding C++17 companion",
+        "unmangled C entry called from C",
+        "`__errno_location`",
+        "`fstat`",
+        "`clock_gettime`",
+        "`mmap`/`munmap`/`mprotect`/`madvise`/`posix_madvise`/`mincore`",
+        "`getrlimit`",
+        "`poll`/`select`",
+        "`socketpair`/`close`",
+        "`sigemptyset`",
+        "`cfmakeraw`",
+        "`uname`/`sysinfo`",
+        "`getpagesize`",
+        "no new C export",
+        "`include/**` edit",
+        "installed-header closure",
+        "C++ runtime",
+        "complete C ABI",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-header-layouts-baseline description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/x86_64/libc_header_layouts_baseline_probe.c",
+        "compat/x86_64/libc_header_layouts_baseline_probe.cpp",
+        "compat/x86_64/libc_header_layouts_baseline_start.S",
+        "compat/x86_64/run_libc_header_layouts_baseline.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_runner.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-header-layouts-baseline must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("Variant-II %fs" in item and "no CRT" in item for item in prerequisites),
+        "static-c-header-layouts-baseline must retain the fixture-only TLS boundary",
+    )
+    require(
+        any(
+            "no C++ standard headers" in item
+            and "__gxx_personality_v0" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-header-layouts-baseline must retain the C++ runtime rejection boundary",
+    )
+    require(
+        any(
+            "stat=144" in item
+            and "timespec=16" in item
+            and "termios=60" in item
+            and "zero-timeout poll/select" in item
+            for item in prerequisites
+        ),
+        "static-c-header-layouts-baseline must retain its selected record/layout boundary",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    for header in (
+        "errno.h",
+        "fcntl.h",
+        "netinet/in.h",
+        "poll.h",
+        "signal.h",
+        "sys/mman.h",
+        "sys/resource.h",
+        "sys/select.h",
+        "sys/socket.h",
+        "sys/stat.h",
+        "sys/sysinfo.h",
+        "sys/utsname.h",
+        "termios.h",
+        "time.h",
+        "unistd.h",
+    ):
+        require(
+            any(header in item for item in header_prerequisites),
+            f"static-c-header-layouts-baseline omits project header {header}",
+        )
+    require(
+        any("headers-layouts.toml" in item and "does not alter" in item for item in header_prerequisites),
+        "static-c-header-layouts-baseline must retain the closed direct-probe inventory",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-header-layouts-baseline"},
+        "static-c-header-layouts-baseline must use the closed libc-header-layouts-baseline command",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-header-layouts-baseline)" in dispatch_source,
+        "libc-header-layouts-baseline is absent from the native dispatcher",
+    )
+
+
 def require_evidence_state(
     value: Any, location: str, expected_state: str
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
@@ -2328,6 +2462,7 @@ def validate_ledger(
     public_header_inventory_count = require_public_header_surface_artifact(
         by_id["libc.headers-layouts"]
     )
+    require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
 
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
