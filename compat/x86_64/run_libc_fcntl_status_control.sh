@@ -53,7 +53,7 @@ assert_selected_c_abi_surface() {
         cd "$members_path"
         ar x "$archive_path" "${members[@]}"
         nm -g --defined-only --format=posix "${members[@]}"
-    ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" { print $1 }' |
+    ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         sort -u >"$symbols_path"
     [ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing static C ABI export contract"
     grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_path"
@@ -240,7 +240,7 @@ done
 for unselected in fcntl64 lockf lockf64 flock fchmod fchown ioctl readv writev \
     preadv pwritev preadv2 pwritev2 openat2 open_by_handle_at close_range \
     fork _Fork vfork clone execve kill raise gettid syscall setfsuid setfsgid \
-    malloc free calloc realloc pthread_create mmap mprotect munmap; do
+    malloc free calloc realloc mmap mprotect munmap; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

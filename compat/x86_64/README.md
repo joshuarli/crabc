@@ -310,6 +310,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-credentials
 ./scripts/dev-x86_64.sh libc-bootstrap-primitives
 ./scripts/dev-x86_64.sh libc-signal-control
+./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1635,6 +1636,19 @@ evidence only: it selects no C `kill`, `raise`, or `tgkill` wrapper. It also exc
 cancellation points, queues, alternate stacks, pthread signal policy, legacy
 helpers, generic signal management, and public x86 support.
 
+`libc-pthread-create-join-tls` is a separately recorded static
+`verified_artifact` under the still-planned `libc.pthread-tls` family. Its
+project-header C body first runs against pinned musl and then in a
+`-nostdlib -static` candidate. It selects only a normal-returning
+`pthread_create` with a null attributes pointer and one `pthread_join`: each
+concurrently live worker has a distinct zeroed initial-TLS `errno` slot, a
+pointer result crosses the join boundary, and the creator's `errno` remains
+unchanged. The gate proves the hidden musl-shaped clone=56 register shuffle,
+the clear-child-tid shared futex=202 wait, and post-exit munmap=11 reclamation.
+It does not select attributes, detach, exit/self, cancellation, TSD,
+synchronization objects, dynamic TLS/DTV, loader or CRT TLS, C11 threads, or
+public x86 support.
+
 `libc-termios-control` is a fifth, separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
 project-header C body first executes through pinned musl and then through a
@@ -2025,8 +2039,10 @@ the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 All candidates have no interpreter,
 `DT_NEEDED`, unresolved symbols, dynamic TLS resolver, allocator, or ambient C
-runtime. Their fixture setup is not a CRT, general TLS lifecycle, pthread,
-dynamic-loader, sysroot, `libc.so`, or public-x86-support claim.
+runtime. Apart from the bounded child mapping established by
+`libc-pthread-create-join-tls`, their fixture setup is not a CRT, general TLS
+lifecycle, pthread runtime, dynamic-loader, sysroot, `libc.so`, or public-x86-
+support claim.
 
 `libc-thread-pointer` compiles only the private
 `libc/src/c_abi/x86_64/thread_pointer.rs` leaf. It maps pinned musl 1.2.6
@@ -2297,7 +2313,8 @@ x86-support claim.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, and
-`libc-termios-control`, `libc-process-context`, `libc-child-reaping`, and
+`libc-pthread-create-join-tls`, `libc-termios-control`,
+`libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
 `libc-system-configuration`,

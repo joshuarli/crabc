@@ -6,6 +6,12 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+The x86 lane now also has one private static `pthread_create`/`pthread_join`
+initial-TLS artifact: it proves a null-attribute, normal-returning worker with
+isolated child `errno`, result handoff, and clear-child-tid join reclamation.
+`libc.pthread-tls` remains planned; this is not general pthread/TLS parity,
+dynamic TLS, CRT/sysroot support, or public x86 support.
+
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
 [`docs/design/allocator.md`](docs/design/allocator.md), and

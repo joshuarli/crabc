@@ -4,7 +4,7 @@
 # This is a deliberately closed foundation lane. It proves explicitly named
 # native core, direct-facade, raw-C-syscall, source-only relocation, and a closed
 # set of static C ABI archive boundaries (stat, credentials, bootstrap primitives,
-# simple signal control, named termios control, selected process context, child reaping,
+# simple signal control, bounded pthread create/join initial TLS, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_gettime,
 # system configuration,
 # nanosleep, and clock_nanosleep,
@@ -157,6 +157,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credentials  run the static x86 crabc-libc credential/errno compatibility slice
   libc-bootstrap-primitives  run the static x86 crabc-libc memory/fenv/setjmp slice
   libc-signal-control  run the static x86 crabc-libc simple signal action/mask slice
+  libc-pthread-create-join-tls  run the static x86 crabc-libc private create/join TLS slice
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
@@ -209,7 +210,13 @@ not a dynamic libc or application-startup claim. `libc-signal-control` exercises
 the same static archive through a freestanding simple action/set/mask/pending
 fixture after an equivalent pinned-musl run. It does not select generic signal
 delivery, waits, queues, pthread signal behavior, dynamic libc, or application
-startup. `libc-termios-control` exercises the same archive through a
+startup. `libc-pthread-create-join-tls` exercises one private normal-returning
+null-attribute worker through that same archive: each child gets a distinct
+zeroed initial-TLS errno slot, returns one pointer through pthread_join, and
+the kernel clear-child-tid futex gates mapping reclamation. It is not a general
+pthread runtime: attributes, detach, cancellation, TSD, synchronization,
+dynamic TLS/DTV, loader/CRT integration, and public x86 support remain outside
+this artifact. `libc-termios-control` exercises the same archive through a
 freestanding project-header C fixture after an equivalent pinned-musl run. It
 selects only fixed baud/raw helpers, named attribute/queue/flow/break requests,
 and fixed window-size records; it does not select generic ioctl,
@@ -758,19 +765,19 @@ fixture; the same owner supplies the selected static archive boundaries.
 links one freestanding C `stat` fixture after the pinned-musl oracle run. Its
 test-only initial-TLS setup proves only `stat`/`lstat`/`fstat`/`fstatat`, their
 historical aliases, the x86 `struct stat` record, and calling-thread `errno`.
-It does not provide `libc.so`, dynamic TLS, pthreads, normal CRT startup,
+It does not provide `libc.so`, dynamic TLS, a general pthread runtime, normal CRT startup,
 sysroot integration, allocator, or general C ABI support.
 `libc-credentials` links the same static archive into a separate freestanding
 C fixture. It proves only the selected credential setter profiles and
-initial-TLS errno translation; it does not provide `libc.so`, dynamic TLS,
-pthreads, normal CRT startup, sysroot integration, allocator, or general C ABI
+initial-TLS errno translation; it does not provide `libc.so`, dynamic TLS, a
+general pthread runtime, normal CRT startup, sysroot integration, allocator, or general C ABI
 support.
 `libc-bootstrap-primitives` links the same static archive into one
 freestanding project-header C fixture after an equivalent pinned-musl run. It
 selects only fixed musl-derived memory comparison/copy/fill, x87/MXCSR fenv,
 and normal/signal-mask continuation leaves, plus the fixture-local initial-TLS
 errno setup it observes. It proves narrow primitive behavior and no ambient
-runtime dependency; it does not provide `libc.so`, dynamic TLS, pthreads,
+runtime dependency; it does not provide `libc.so`, dynamic TLS, a general pthread runtime,
 normal CRT startup, sysroot integration, allocator, or general C ABI support.
 `libc-signal-control` links that static archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
@@ -1927,6 +1934,10 @@ run_libc_signal_control_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_signal_control.sh
 }
 
+run_libc_pthread_create_join_tls_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_create_join_tls.sh
+}
+
 run_libc_termios_control_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_termios_control.sh
 }
@@ -2013,7 +2024,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     madvise-reference) ;;
     ctype-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
@@ -2687,6 +2698,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-signal-control takes no arguments"
         ensure_image
         run_libc_signal_control_probe
+        ;;
+    libc-pthread-create-join-tls)
+        [ "$#" -eq 0 ] || fail "libc-pthread-create-join-tls takes no arguments"
+        ensure_image
+        run_libc_pthread_create_join_tls_probe
         ;;
     libc-termios-control)
         [ "$#" -eq 0 ] || fail "libc-termios-control takes no arguments"

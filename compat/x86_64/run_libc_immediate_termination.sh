@@ -22,7 +22,7 @@ assert_selected_c_abi_surface() {
     mkdir "$members_path"
     ( cd "$members_path"; ar x "$archive_path" "${members[@]}"; \
       nm -g --defined-only --format=posix "${members[@]}" ) |
-        awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" { print $1 }' |
+        awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         sort -u >"$symbols_path"
     [ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing static C ABI export contract"
     grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_path"
@@ -73,7 +73,7 @@ assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 grep -Eq '[[:space:]][TW][[:space:]]_Exit$' "$archive_symbols" \
     || fail "archive does not define _Exit"
 for unselected in _exit exit abort atexit at_quick_exit quick_exit fork vfork clone \
-    execve pthread_atfork pthread_create malloc free; do
+    execve pthread_atfork malloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi

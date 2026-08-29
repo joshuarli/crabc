@@ -5,6 +5,7 @@
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, and basic complex accessor/conjugation primitives as a
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask,
+//! one default-attribute create/join worker with private initial-TLS `errno`,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
@@ -16,8 +17,10 @@
 //! It deliberately shares only the raw
 //! Linux syscall register boundary and one initial-TLS C `errno` slot. The
 //! archive is not `libc.so`,
-//! a general C runtime, a CRT, pthread/TLS lifecycle, a dynamic-TLS
-//! implementation, a loader, or a sysroot.
+//! a general C runtime, a CRT, a general pthread/TLS lifecycle, a dynamic-TLS
+//! implementation, a loader, or a sysroot. The one pthread artifact is
+//! intentionally bounded to normal-returning, null-attribute workers and is
+//! not a claim for the broader pthread header surface.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
 //! artifact evidence. The shared result translator is intentionally smaller
@@ -68,6 +71,8 @@ mod setjmp;
 mod signal_foundation;
 #[path = "signal_control.rs"]
 mod signal_control;
+#[path = "pthread_create_join.rs"]
+mod pthread_create_join;
 #[path = "termios_control.rs"]
 mod termios_control;
 #[path = "process_context.rs"]

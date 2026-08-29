@@ -22,7 +22,7 @@ assert_selected_c_abi_surface() {
     mkdir "$members_path"
     ( cd "$members_path"; ar x "$archive_path" "${members[@]}"; \
       nm -g --defined-only --format=posix "${members[@]}" ) |
-        awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" { print $1 }' |
+        awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         sort -u >"$symbols_path"
     [ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing static C ABI export contract"
     grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_path"
@@ -76,7 +76,7 @@ for symbol in wait waitpid waitid; do
         || fail "archive does not define $symbol"
 done
 for unselected in fork _Fork vfork clone execve wait4 syscall posix_spawn \
-    pthread_atfork pthread_create kill raise sigwaitinfo sigwait wait3 malloc free \
+    pthread_atfork kill raise sigwaitinfo sigwait wait3 malloc free \
     calloc realloc mmap mprotect munmap; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

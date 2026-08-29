@@ -45,7 +45,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 31)
+        self.assertEqual(report["verified_artifact_count"], 32)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertFalse(report["promotion_ready"])
@@ -3353,6 +3353,36 @@ class X86ParityLedgerTests(unittest.TestCase):
             pthread_tls["native_evidence"][1]["command"],
             "./scripts/dev-x86_64.sh libc-clone-raw",
         )
+
+    def test_pthread_create_join_tls_artifact_is_verified_without_promoting_pthread_parity(
+        self,
+    ) -> None:
+        data = self.data()
+        pthread_tls = self.family(data, "libc.pthread-tls")
+        self.assertEqual(pthread_tls["status"], "planned")
+        artifacts = pthread_tls["verified_artifact"]
+        self.assertEqual(len(artifacts), 1)
+        artifact = artifacts[0]
+        self.assertEqual(artifact["id"], "static-c-pthread-create-join-tls")
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            artifact["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-create-join-tls",
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "compat/x86_64/libc_pthread_create_join_tls_probe.c",
+            "compat/x86_64/libc_pthread_create_join_tls_start.S",
+            "compat/x86_64/run_libc_pthread_create_join_tls.sh",
+            "include/pthread.h",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertIn("null attributes pointer", artifact["description"])
+        self.assertIn("each concurrently live worker", artifact["description"])
+        self.assertIn("thread.pthread-c11", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+        self.assertIn("not pthread/TLS parity", pthread_tls["description"])
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()

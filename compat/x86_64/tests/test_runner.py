@@ -48,6 +48,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = source.replace("libc-socket-transport|", "", 1)
         source = source.replace("libc-system-observation|", "", 1)
         source = source.replace("libc-uts-identity|", "", 1)
+        source = source.replace("libc-pthread-create-join-tls|", "", 1)
         source = source.replace("resource-header-abi|random-entropy-header-abi|mm-abi-reference|", "resource-header-abi|mm-abi-reference|", 1)
         self.assertIn("public-header-surface", source)
         self.assertIn("math-complex-header-abi", source)
@@ -70,6 +71,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-credentials", source)
         self.assertIn("libc-bootstrap-primitives", source)
         self.assertIn("libc-signal-control", source)
+        self.assertIn("libc-pthread-create-join-tls", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -1352,6 +1354,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-signal-control)\n        [ "$#" -eq 0 ] || fail "libc-signal-control takes no arguments"',
             source,
         )
+        self.assertIn('run_libc_pthread_create_join_tls_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_pthread_create_join_tls.sh', source
+        )
+        self.assertIn(
+            '    libc-pthread-create-join-tls)\n        [ "$#" -eq 0 ] || fail "libc-pthread-create-join-tls takes no arguments"',
+            source,
+        )
         self.assertIn('run_libc_termios_control_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_termios_control.sh', source
@@ -2498,6 +2508,118 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-signal-control", runner)
+
+    def test_libc_static_c_abi_pthread_create_join_tls_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_create_join_tls_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_create_join_tls_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_create_join_tls.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_create_join.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_create.c::__pthread_create",
+            "src/thread/x86_64/clone.s::__clone",
+            "src/thread/pthread_join.c",
+            "struct ThreadControl",
+            "PTHREAD_CLONE_FLAGS",
+            "CLONE_SETTLS",
+            "CLONE_PARENT_SETTID",
+            "CLONE_CHILD_CLEARTID",
+            "FUTEX_WAIT",
+            "raw_syscall::SYS_MMAP",
+            "raw_syscall::SYS_MUNMAP",
+            "raw_syscall::SYS_FUTEX",
+            "initial_errno_offset",
+            "finished",
+            ".hidden __crabc_x86_pthread_clone",
+            "fn pthread_create(",
+            "fn pthread_join(",
+        ):
+            self.assertIn(required, pthread_create_join)
+        for forbidden in (
+            "fn pthread_detach(",
+            "fn pthread_exit(",
+            "fn pthread_self(",
+            "fn pthread_cancel(",
+            "fn pthread_key_create(",
+            "fn pthread_mutex_",
+            "__tls_get_addr",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, pthread_create_join)
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "run_worker_round",
+            "run_null_result_join",
+            "run_concurrent_worker_round",
+            "__atomic_fetch_add",
+            "first.errno_location == second.errno_location",
+            "CRABC_PTHREAD_CREATE_JOIN_TLS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_pthread_create_join_tls_probe",
+            "CLONE_SETTLS",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_types_header_abi.sh",
+            "-pthread",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "__crabc_x86_pthread_clone",
+            "GLOBAL +HIDDEN",
+            "R_X86_64_TPOFF",
+            "candidate relocations retain a dynamic TLS model",
+            "pthread clone boundary lacks clone syscall number 56",
+            "seventh-argument child-tid shuffle",
+            "child exit syscall number 60",
+            "pthread_join lacks futex syscall number 202",
+            "pthread_join lacks munmap syscall number 11",
+            "pthread_detach",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("pthread_create", "pthread_join"):
+            self.assertIn(symbol, static_export_names)
+        for forbidden in (
+            "pthread_detach",
+            "pthread_exit",
+            "pthread_self",
+            "pthread_cancel",
+            "pthread_mutex_init",
+        ):
+            self.assertNotIn(forbidden, static_export_names)
+        self.assertIn("libc-pthread-create-join-tls", runner)
 
     def test_libc_static_c_abi_termios_control_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -146,6 +146,8 @@ ppoll
 pread
 prlimit
 pselect
+pthread_create
+pthread_join
 pwrite
 qsort
 qsort_r

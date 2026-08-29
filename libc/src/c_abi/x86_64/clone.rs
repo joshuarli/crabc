@@ -41,7 +41,9 @@ __crabc_x86_clone_raw:
     xor eax, eax
     mov al, 56
     mov r11, rdi
-    // clone(flags, stack, ptid, tls, ctid): rdx,rsi,r8,r10,r9.
+    // SysV inputs are fn=rdi, stack=rsi, flags=rdx, arg=rcx, ptid=r8,
+    // tls=r9, ctid=[rsp+8]. Linux clone then receives
+    // flags=rdi, stack=rsi, ptid=rdx, ctid=r10, tls=r8.
     mov rdi, rdx
     mov rdx, r8
     mov r8, r9

@@ -49,7 +49,7 @@ assert_selected_c_abi_surface() {
         cd "$members_path"
         ar x "$archive_path" "${members[@]}"
         nm -g --defined-only --format=posix "${members[@]}"
-    ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" { print $1 }' |
+    ) | awk '$2 ~ /^[TWDVBR]$/ && $1 !~ /^(_R|_ZN|DW\.ref\.|anon\.)/ && $1 != "crabc_x86_64_signal_restorer" && $1 != "__crabc_x86_pthread_clone" { print $1 }' |
         sort -u >"$symbols_path"
     [ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing static C ABI export contract"
     grep -Ev '^(#|$)' "$STATIC_C_ABI_EXPORTS" | LC_ALL=C sort -u >"$expected_path"
@@ -121,7 +121,7 @@ if grep -Eq '[[:space:]][TW][[:space:]]crabc_x86_64_signal_action_pack$' \
 fi
 # `sigsuspend` is owned by the separately selected readiness/signal-waits
 # artifact in this shared archive; the remaining signal waits stay unselected.
-for unselected in syscall malloc free calloc realloc pthread_create raise kill tgkill \
+for unselected in syscall malloc free calloc realloc raise kill tgkill \
     sigtimedwait sigwaitinfo sigwait sigaltstack sigqueue pthread_sigmask \
     signalfd; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

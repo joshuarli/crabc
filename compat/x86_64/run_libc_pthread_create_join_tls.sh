@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc process-resources evidence.
+# Native Linux/x86-64 bounded static crabc-libc pthread create/join evidence.
 #
-# The same project-header C fixture first runs against pinned musl, then as a
-# true `-nostdlib -static` candidate linked solely through the selected crabc
-# archive. It proves only the closed limits, usage, priority, and nice block.
-# Fixture-local raw child/pipe control contains mutations and holds a live
-# prlimit target; it does not select C process, pipe, descriptor, scheduler,
-# CRT, pthread/TLS, loader, sysroot, or public x86 support.
+# The same project-header fixture first runs with pinned musl 1.2.6, then as
+# a true `-nostdlib -static` executable linked only with the selected crabc
+# archive. It proves one private joinable-worker/TLS lifecycle, not a general
+# pthread implementation, C runtime, CRT, loader, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,7 +12,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
-    printf 'ERROR: x86 static libc process resources: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc pthread create/join TLS: %s\n' "$*" >&2
     exit 1
 }
 
@@ -37,10 +35,6 @@ assert_selected_c_abi_surface() {
     local members_path="$work_dir/selected-c-abi-members"
     local -a members
 
-    # `libc/Cargo.toml` fixes the Rust staticlib crate name to `c`. Inspect
-    # only its C object members, so toolchain compiler-builtins do not blur
-    # the explicitly closed selected C export contract. The signal restorer
-    # remains the one audited hidden frame-internal exception.
     mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
     [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
     mkdir "$members_path"
@@ -58,68 +52,48 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-assert_named_syscall() {
-    local symbol="$1"
-    local syscall_word="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
-
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    if [ "$syscall_word" = 0 ]; then
-        grep -Eq 'xor[[:space:]]+%eax,%eax|mov[[:space:]]+\$0x0,%eax' "$disassembly" \
-            || fail "${symbol} lacks the fixed syscall zero register setup"
-    else
-        grep -Eq "\\\$0x${syscall_word}" "$disassembly" \
-            || fail "${symbol} lacks the fixed syscall ${syscall_word}"
-    fi
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" \
-        || fail "${symbol} lacks its named Linux syscall"
-}
-
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff grep mkdir nm objdump readelf rustup; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-process-resources.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-create-join-tls.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-process-resources-reference"
-candidate="$work_dir/crabc-static-process-resources-candidate"
+reference="$work_dir/musl-pthread-create-join-tls-reference"
+candidate="$work_dir/crabc-static-pthread-create-join-tls-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
+archive_elf_symbols="$work_dir/archive-elf-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
 expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
 archive_relocations="$work_dir/archive-relocations"
+archive_disassembly="$work_dir/archive-disassembly"
 candidate_symbols="$work_dir/candidate-symbols"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+clone_disassembly="$work_dir/pthread-clone-disassembly"
+join_disassembly="$work_dir/pthread-join-disassembly"
 
 cd "$ROOT_DIR"
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE \
-    -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_process_resources_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h limits.h sys/resource.h sys/time.h sys/types.h unistd.h \
-    sys/syscall.h bits/syscall.h; do
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+    compat/x86_64/libc_pthread_create_join_tls_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h pthread.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
 done
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE \
-    -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_process_resources_probe.c -o "$reference"
-if "$reference"; then
-    :
-else
-    status=$?
-    fail "pinned-musl resource fixture exited ${status}"
-fi
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
+    compat/x86_64/libc_pthread_create_join_tls_probe.c -o "$reference"
+"$reference"
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -127,22 +101,26 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
-assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-for symbol in __errno_location getrlimit setrlimit prlimit getrusage getpriority \
-    setpriority nice; do
+readelf --symbols --wide "$archive" >"$archive_elf_symbols"
+assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
+    "$expected_c_abi_symbols"
+for symbol in __errno_location pthread_create pthread_join; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in getrlimit64 setrlimit64 prlimit64 times sched_getscheduler \
-    sched_setscheduler sched_getparam sched_setparam sched_yield setfsuid \
-    setfsgid fork _Fork vfork clone execve kill raise syscall malloc free calloc \
-    realloc mmap \
-    mprotect munmap; do
+grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
+    || fail "archive pthread clone boundary is not hidden"
+for unselected in clone __clone pthread_detach pthread_exit pthread_self pthread_equal \
+    pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
+    pthread_key_create pthread_setspecific pthread_getspecific pthread_mutex_init \
+    pthread_mutex_lock pthread_mutex_unlock pthread_cond_wait pthread_sigmask \
+    malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
 done
 readelf --relocs --wide "$archive" >"$archive_relocations"
+objdump -dr "$archive" >"$archive_disassembly"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" \
     || fail "archive errno lacks an initial-TLS TPOFF relocation"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
@@ -150,23 +128,23 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE \
-    -DCRABC_PROCESS_RESOURCES_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_CREATE_JOIN_TLS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_process_resources_probe.c \
-    compat/x86_64/libc_process_resources_start.S "$archive" -o "$candidate"
+    -Wl,--no-undefined compat/x86_64/libc_pthread_create_join_tls_probe.c \
+    compat/x86_64/libc_pthread_create_join_tls_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location getrlimit setrlimit prlimit getrusage getpriority \
-    setpriority nice; do
+for symbol in __errno_location pthread_create pthread_join __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
+grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$candidate_symbols" \
+    || fail "candidate pthread clone boundary is not hidden"
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
@@ -191,38 +169,23 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
     || fail "candidate errno does not use direct fs initial TLS"
+objdump -d --disassemble=__crabc_x86_pthread_clone "$candidate" >"$clone_disassembly"
+grep -Eq '\bsyscall\b' "$clone_disassembly" \
+    || fail "pthread clone boundary lacks an x86 syscall instruction"
+grep -Eq '\$0x38,%al|\$0x0000000000000038,%rax|\$0x38,%rax' "$clone_disassembly" \
+    || fail "pthread clone boundary lacks clone syscall number 56"
+grep -Eq '0x8\(%rsp\),%r10' "$clone_disassembly" \
+    || fail "pthread clone boundary lacks the seventh-argument child-tid shuffle"
+grep -Eq '\$0x3c,%al|\$0x000000000000003c,%rax|\$0x3c,%rax' "$clone_disassembly" \
+    || fail "pthread clone boundary lacks child exit syscall number 60"
+objdump -d --disassemble=pthread_join "$candidate" >"$join_disassembly"
+grep -Eq '\bsyscall\b' "$join_disassembly" \
+    || fail "pthread_join lacks an x86 futex/munmap syscall instruction"
+grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' "$join_disassembly" \
+    || fail "pthread_join lacks futex syscall number 202"
+grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' "$join_disassembly" \
+    || fail "pthread_join lacks munmap syscall number 11"
 
-# The fixture differentially proves limits, usage, priority, and nice
-# behavior. These emitted-code gates pin Linux numbers and prlimit's r10
-# old-limit pointer rather than inferring them from one successful run.
-assert_named_syscall getrlimit 12e
-assert_named_syscall setrlimit 12e
-assert_named_syscall prlimit 12e
-assert_named_syscall getrusage 62
-assert_named_syscall getpriority 8c
-assert_named_syscall setpriority 8d
+"$candidate"
 
-prlimit_disassembly="$work_dir/prlimit-disassembly"
-objdump -d --disassemble=prlimit "$candidate" >"$prlimit_disassembly"
-grep -Fq '%r10' "$prlimit_disassembly" \
-    || fail "prlimit lacks the x86 r10 fourth-argument path"
-
-nice_disassembly="$work_dir/nice-disassembly"
-objdump -d --disassemble=nice "$candidate" >"$nice_disassembly"
-grep -Eq '<getpriority>|\$0x8c' "$nice_disassembly" \
-    || { cat "$nice_disassembly" >&2; fail "nice does not reach getpriority"; }
-grep -Eq '<setpriority>|\$0x8d' "$nice_disassembly" \
-    || fail "nice does not reach setpriority"
-grep -Eq '\$0xd|\$13' "$nice_disassembly" \
-    || fail "nice lacks the EACCES compatibility branch"
-grep -Eq '\$0x1|\$1' "$nice_disassembly" \
-    || fail "nice lacks the EPERM compatibility mapping"
-
-if "$candidate"; then
-    :
-else
-    status=$?
-    fail "freestanding resource fixture exited ${status}"
-fi
-
-printf 'x86 static crabc-libc process resources: PASS\n'
+printf 'x86 static crabc-libc pthread create/join TLS: PASS\n'

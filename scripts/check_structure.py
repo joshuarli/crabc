@@ -108,7 +108,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 }
 # The selected x86 `crabc-libc` artifact admits independently evidenced static
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
-# primitives, narrow simple signal control, named termios control, selected
+# primitives, narrow simple signal control, one bounded pthread create/join
+# initial-TLS worker, named termios control, selected
 # process context, child reaping, C11 immediate termination, callback algorithms,
 # selected descriptor entry and fcntl status control, selected descriptor I/O,
 # selected process resources,
@@ -148,6 +149,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
@@ -3312,6 +3314,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "setjmp.rs"]',
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
+        '#[path = "pthread_create_join.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "child_reaping.rs"]',
@@ -3536,6 +3539,47 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/signal_control.rs: selected static signal "
             "artifact must export only simple action/set/mask/pending symbols"
+        )
+
+    pthread_create_join_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+    )
+    pthread_create_join_text = pthread_create_join_source.read_text(errors="replace")
+    for required in (
+        "src/thread/pthread_create.c::__pthread_create",
+        "src/thread/x86_64/clone.s::__clone",
+        "src/thread/pthread_join.c",
+        "struct ThreadControl",
+        "PTHREAD_CLONE_FLAGS",
+        "CLONE_SETTLS",
+        "CLONE_PARENT_SETTID",
+        "CLONE_CHILD_CLEARTID",
+        "FUTEX_WAIT",
+        "raw_syscall::SYS_MMAP",
+        "raw_syscall::SYS_MUNMAP",
+        "raw_syscall::SYS_FUTEX",
+        "initial_errno_offset",
+        "finished",
+        ".hidden __crabc_x86_pthread_clone",
+        "pthread_create",
+        "pthread_join",
+        "ENOTSUP",
+    ):
+        if required not in pthread_create_join_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
+                f"pthread worker is missing {required!r}"
+            )
+    pthread_create_join_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_create_join_text,
+        )
+    )
+    if pthread_create_join_exports != {"pthread_create", "pthread_join"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
+            "pthread worker must export only pthread_create and pthread_join"
         )
 
     termios_control_source = (
@@ -4732,6 +4776,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errno_text,
         fenv_text,
         signal_control_text,
+        pthread_create_join_text,
         termios_control_text,
         process_context_text,
         child_reaping_text,
@@ -4836,6 +4881,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigprocmask",
         "sigpending",
         "__libc_current_sigrtmax",
+        "pthread_create",
+        "pthread_join",
         "cfgetispeed",
         "cfgetospeed",
         "cfsetispeed",
@@ -4992,7 +5039,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, nanosleep, and clock_nanosleep, selected "
+            "signal-control, bounded pthread create/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -5011,6 +5058,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
+        ("pthread_create_join.rs", pthread_create_join_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),
