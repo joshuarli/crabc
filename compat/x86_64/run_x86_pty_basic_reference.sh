@@ -36,7 +36,7 @@ env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
     "$ROOT_DIR/compat/x86_64/x86_pty_basic_reference_probe.c" \
     -o "$probe"
 
-expected='syscalls=openat:257,ioctl:16,read:0,write:1,close:3 ioctls=TIOCGPTN:0x80045430,TIOCSPTLCK:0x40045431,TIOCGPTPEER:0x5441 flags=RDWR|NOCTTY|CLOEXEC raw+musl=ptmx-lifecycle name=exact+ERANGE nonpty=ENOTTY peer=owned-noctty-cloexec io=slave-to-master-roundtrip c-api-selection=excluded'
+expected='syscalls=openat:257,ioctl:16,read:0,write:1,close:3 ioctls=TIOCGPTN:0x80045430,TIOCSPTLCK:0x40045431,TIOCGPTPEER:0x5441 flags=RDWR|NOCTTY|CLOEXEC raw+musl=ptmx-lifecycle name=exact+ERANGE nonpty=raw-ENOTTY+musl-grant-noop peer=owned-noctty-cloexec io=slave-to-master-roundtrip c-api-selection=excluded'
 actual="$(env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
     -u LIBRARY_PATH -u GCC_EXEC_PREFIX -u COMPILER_PATH -u LD_LIBRARY_PATH \
     -u LD_PRELOAD "$probe")"

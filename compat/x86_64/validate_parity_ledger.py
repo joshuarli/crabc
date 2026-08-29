@@ -273,10 +273,19 @@ def require_verified_slices(
     status: str,
     family_capabilities: list[str],
 ) -> list[Mapping[str, Any]]:
-    """Validate completed vertical slices while their aggregate family stays planned."""
+    """Validate completed vertical slices for a planned or foundation family.
+
+    Planned families may retain independently completed partial slices. A
+    foundation family may retain them as the provenance for its aggregate
+    evidence; family-specific promotion ratchets below decide when that
+    aggregate has accounted for every declared capability.
+    """
     if value is None:
         return []
-    require(status == "planned", f"{location} is allowed only on a planned family")
+    require(
+        status in {"planned", "foundation-verified"},
+        f"{location} is allowed only on a planned or foundation-verified family",
+    )
     require(isinstance(value, list) and value, f"{location} must be a non-empty array")
     records: list[Mapping[str, Any]] = []
     family_capability_set = set(family_capabilities)
@@ -1253,6 +1262,20 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
                     f"{location}.verified_slice duplicates a capability: {capability}",
                 )
                 verified_slice_capabilities.add(capability)
+        if identifier == "facade.record-owning" and status == "foundation-verified":
+            family_capability_set = set(family_capabilities)
+            missing_slice_capabilities = sorted(
+                family_capability_set - verified_slice_capabilities
+            )
+            unexpected_slice_capabilities = sorted(
+                verified_slice_capabilities - family_capability_set
+            )
+            require(
+                not missing_slice_capabilities and not unexpected_slice_capabilities,
+                f"{location}.verified_slice must exactly cover the foundation family capabilities; "
+                f"missing: {', '.join(missing_slice_capabilities) or 'none'}; "
+                f"unexpected: {', '.join(unexpected_slice_capabilities) or 'none'}",
+            )
         for artifact_entry in require_verified_artifacts(
             entry.get("verified_artifact"),
             f"{location}.verified_artifact",

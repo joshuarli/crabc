@@ -4,7 +4,7 @@
 
 use core::mem::MaybeUninit;
 
-use crabc_rs::{io, pty, Errno};
+use crabc_rs::{fs, io, pty, Errno};
 
 fn flags() -> pty::OpenptFlags {
     pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC
@@ -16,6 +16,21 @@ fn x86_64_pair_requires_read_write_before_touching_devpts() {
         pty::PtyPair::open(pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC),
         Err(Errno::INVAL)
     ));
+}
+
+#[test]
+fn x86_64_grantpt_validates_a_non_pty_descriptor() {
+    let null = fs::open(
+        "/dev/null",
+        fs::OFlags::RDWR | fs::OFlags::CLOEXEC,
+        fs::Mode::empty(),
+    )
+    .expect("open a non-PTY descriptor");
+
+    // Linux devpts grants access when a PTY master is allocated. The private
+    // Rust operation still validates its descriptor through TIOCGPTN, unlike
+    // musl's C grantpt no-op wrapper, so it cannot manufacture success here.
+    assert_eq!(pty::grantpt(null), Err(Errno::NOTTY));
 }
 
 #[test]

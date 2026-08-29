@@ -48,7 +48,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = source.replace("libc-uts-identity|", "", 1)
         source = source.replace("resource-header-abi|random-entropy-header-abi|mm-abi-reference|", "resource-header-abi|mm-abi-reference|", 1)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn("libc-stat-compat", source)
@@ -927,17 +927,24 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             pty_basic_reference_runner,
         )
         self.assertIn('c-api-selection=excluded', pty_basic_reference_runner)
+        self.assertIn('nonpty=raw-ENOTTY+musl-grant-noop', pty_basic_reference_runner)
         self.assertIn('SYS_ioctl == 16', pty_basic_reference_probe)
         self.assertIn('TIOCGPTN == 0x80045430UL', pty_basic_reference_probe)
         self.assertIn('TIOCSPTLCK == 0x40045431UL', pty_basic_reference_probe)
         self.assertIn('TIOCGPTPEER == 0x5441UL', pty_basic_reference_probe)
         self.assertIn('run_pty_lifecycle', pty_basic_reference_probe)
         self.assertIn('check_nonpty_rejection', pty_basic_reference_probe)
+        self.assertIn('if (grantpt(null_fd) != 0)', pty_basic_reference_probe)
         self.assertIn('ptsname_r(master, short_name, sizeof(short_name)) != ERANGE', pty_basic_reference_probe)
         self.assertIn(
             'x86_64_pair_requires_read_write_before_touching_devpts',
             pty_basic_test,
         )
+        self.assertIn(
+            'x86_64_grantpt_validates_a_non_pty_descriptor',
+            pty_basic_test,
+        )
+        self.assertIn("musl's C grantpt no-op wrapper", pty_basic_test)
         self.assertIn(
             'x86_64_pair_owns_both_descriptors_and_resolves_slave_name',
             pty_basic_test,
@@ -1245,6 +1252,59 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_terminal', facade)
         self.assertIn('--test x86_64_mount', facade)
         self.assertIn('--test x86_64_users_databases', facade)
+        self.assertIn(
+            '  facade-record-owning  run the closed native x86_64 record-owning facade aggregate',
+            source,
+        )
+        self.assertIn(
+            '    facade-record-owning)\n        [ "$#" -eq 0 ] || fail "facade-record-owning takes no arguments"',
+            source,
+        )
+        aggregate = source.split('run_facade_record_owning() {\n', 1)[1].split(
+            '\n}\n\nrun_relative_sleep_reference', 1
+        )[0]
+        self.assertEqual(
+            [
+                line.strip()
+                for line in aggregate.splitlines()
+                if line.strip().startswith('run_')
+                and not line.strip().startswith('run_in_container')
+            ],
+            [
+                'run_root_change_reference',
+                'run_child_ownership_reference',
+                'run_thread_kill_reference',
+                'run_mapping_reference',
+                'run_memory_vm_reference',
+                'run_pty_basic_reference',
+                'run_terminal_reference',
+                'run_interface_device_reference',
+                'run_resolver_transport_reference',
+                'run_resolver_facade_reference',
+                'run_netdb_reference',
+                'run_users_databases_reference',
+                'run_mount_reference',
+                'run_path_core_reference',
+                'run_xattr_reference',
+                'run_directory_reference',
+                'run_temporary_object_reference',
+                'run_statx_reference',
+                'run_cwd_canonicalize_reference',
+                'run_ipc_reference',
+                'run_shm_reference',
+                'run_inotify_reference',
+                'run_calendar_time_reference',
+                'run_advanced_time_reference',
+            ],
+        )
+        self.assertEqual(
+            aggregate.count(
+                'run_in_container cargo check --locked --target x86_64-unknown-linux-musl'
+            ),
+            2,
+        )
+        self.assertIn('-p crabc-rs --no-default-features\n', aggregate)
+        self.assertIn('-p crabc-rs --no-default-features --features alloc', aggregate)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_libc_errno_tls_probe()', source)

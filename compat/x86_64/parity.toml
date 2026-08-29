@@ -514,7 +514,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, resolver, process, thread, time, wider mapping-policy, and runtime-owning families. Native x86 interface/device, private resolver-transport, alloc-backed resolver, owned netdb, selected filesystem.path-core, direct filesystem.xattr, allocation-free filesystem.directory, named/anonymous temporary-file plus temporary-directory, direct filesystem.extended-metadata, physical canonicalization plus process-global CWD-mutation, child-contained process-root change, direct POSIX named-message-queue, direct POSIX named-shared-memory, bounded inotify, civil wall-clock/calendar/timezone/local-calendar, advanced clock/owned-POSIX-timer, prepared child-ownership, exact same-process thread-directed signal-delivery, direct anonymous/file mapping, bounded process-break/whole-process locking/legacy-remap VM control, safe owned PTY-pair/name lifecycle, immutable conventional account snapshots, and checked mount/unmount direct-error vertical slices are evidenced, but this aggregate family remains planned and non-selectable; wider IPC and system facilities and their unrelated closed capabilities remain planned."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, resolver, process, thread, time, wider mapping-policy, and runtime-owning families. The closed native aggregate executes the twenty-four separately evidenced x86 interface/device, private resolver-transport, alloc-backed resolver, owned netdb, selected filesystem.path-core, direct filesystem.xattr, allocation-free filesystem.directory, named/anonymous temporary-file plus temporary-directory, direct filesystem.extended-metadata, physical canonicalization plus process-global CWD-mutation, child-contained process-root change, direct POSIX named-message-queue, direct POSIX named-shared-memory, bounded inotify, civil wall-clock/calendar/timezone/local-calendar, advanced clock/owned-POSIX-timer, prepared child-ownership, exact same-process thread-directed signal-delivery, direct anonymous/file mapping, bounded process-break/whole-process locking/legacy-remap VM control, safe owned PTY-pair/name lifecycle, immutable conventional account snapshots, and checked mount/unmount direct-error vertical slices. Their exact union owns all forty-four closed family capabilities. This remains a private Rust-facade foundation only: wider IPC and system facilities, C ABI/runtime ownership, and public x86 support remain separately planned."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -649,6 +649,9 @@ source_owners = [
   "compat/x86_64/x86_calendar_time_reference_probe.c",
   "compat/x86_64/run_x86_advanced_time_reference.sh",
   "compat/x86_64/x86_advanced_time_reference_probe.c",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
   "scripts/dev-x86_64.sh",
   "scripts/check_structure.py",
 ]
@@ -679,7 +682,7 @@ x86_abi_prerequisites = [
 ]
 x86_header_prerequisites = ["Published Rust types must correspond to x86 Linux ABI records without borrowing AArch64 constants or layouts."]
 native_evidence = [
-  { state = "required", command = "Define closed native x86 facade family runners", scope = "Each remaining record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh facade-record-owning", scope = "Closed native Linux/x86-64 aggregate: target-pinned no-std and alloc facade checks plus the exact twenty-four record-owning component runners. Each component retains its focused direct behavior, ABI, and pinned-musl evidence; the aggregate ratchets their exact forty-four-capability union. It selects neither a C ABI/libc/errno-TLS runtime, loader/CRT/sysroot, pthread/TLS lifecycle, nor public x86 support." },
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]
 capabilities = [
@@ -728,7 +731,7 @@ capabilities = [
   "system.inotify",
   "mount.basic",
 ]
-status = "planned"
+status = "foundation-verified"
 
 [[family.verified_slice]]
 id = "process.root-change"
@@ -882,10 +885,10 @@ x86_abi_prerequisites = [
   "x86 Linux PTY allocation opens `/dev/ptmx` through openat=257 with O_RDWR=0x00000002, O_NOCTTY=0x00000100, and O_CLOEXEC=0x00080000. ioctl=16 receives its descriptor, request word, and argument pointer/word in rdi/rsi/rdx; TIOCGPTN=0x80045430 writes one stable four-byte int, TIOCSPTLCK=0x40045431 reads one stable four-byte zero int, and TIOCGPTPEER=0x5441 returns a newly owned slave descriptor with selected O_* flags encoded in the argument word",
   "PtyPair::open requires RDWR, validates and unlocks the devpts allocation, then makes an explicit O_NOCTTY request on the peer open. Any controlling-terminal or session transition stays outside this safe pair boundary; borrowed master/slave access and consuming into_parts retain ordinary descriptor ownership",
   "ptsname_into derives ASCII `/dev/pts/<number>` plus a trailing NUL from TIOCGPTN into caller-owned MaybeUninit storage; short caller storage reports RANGE without partial-name success, while alloc-enabled ptsname owns the same bytes without a C static buffer",
-  "The paired raw/pinned-musl fixture statically pins x86 LP64 int/long/size_t widths, openat=257, ioctl=16, the selected O_* and TIOC* words, then proves master/slave allocation, byte transfer, direct PTY-number/name agreement, short-name storage failure, ENOTTY for a non-PTY descriptor, and the forced O_NOCTTY peer-open request. It treats posix_openpt/grantpt/unlockpt/ptsname_r as behavior/oracle evidence only, not a selected C API",
+  "The paired raw/pinned-musl fixture statically pins x86 LP64 int/long/size_t widths, openat=257, ioctl=16, the selected O_* and TIOC* words, then proves master/slave allocation, byte transfer, direct PTY-number/name agreement, short-name storage failure, raw ioctl/unlockpt/ptsname_r ENOTTY for a non-PTY descriptor, and the forced O_NOCTTY peer-open request. Musl's C grantpt is a no-op success there because devpts grants on allocation; the private Rust grantpt deliberately validates TIOCGPTN and returns NOTTY. It treats posix_openpt/grantpt/unlockpt/ptsname_r as behavior/oracle evidence only, not a selected C API",
 ]
 x86_header_prerequisites = ["pty::{openpt, grantpt, unlockpt, PtyPair, OpenptFlags, ptsname_into}, and alloc-enabled ptsname are private Rust-owned descriptor and caller-buffer boundaries. Pinned-musl PTY wrappers and ioctl values are oracle evidence only; this selects no x86 C openpty/forkpty/login_tty/posix_openpt/grantpt/unlockpt/ptsname API/header/ABI or errno TLS, no generic ioctl or public ioctl_tiocgptpeer surface, no TIOCSCTTY/setsid/process-session or controlling-terminal transition, no termios/tty API or record ABI, and no public x86 support."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh pty-basic-reference", scope = "Focused no-default-feature Rust regression and no-std pty_basic_direct_probe cover safe openpt/grantpt/unlockpt and PtyPair allocation/ownership, RDWR validation, forced O_NOCTTY peer opening, master/slave byte transfer, caller-buffered and alloc-owned devpts names, short-buffer RANGE, and non-PTY ENOTTY. Paired raw/pinned-musl C evidence pins x86 openat=257/ioctl=16 plus the selected O_* and TIOC* values, compares the allocated PTY number/name lifecycle and byte transfer, and records the forced O_NOCTTY peer-open request; it does not assert session state. It excludes C PTY APIs/errno TLS, generic ioctl/direct TIOCGPTPEER exposure, TIOCSCTTY/setsid/session handoff, all termios/TTY controls, and public x86 support." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh pty-basic-reference", scope = "Focused no-default-feature Rust regression and no-std pty_basic_direct_probe cover safe openpt/grantpt/unlockpt and PtyPair allocation/ownership, RDWR validation, forced O_NOCTTY peer opening, master/slave byte transfer, caller-buffered and alloc-owned devpts names, short-buffer RANGE, and private Rust grantpt's non-PTY NOTTY validation. Paired raw/pinned-musl C evidence pins x86 openat=257/ioctl=16 plus the selected O_* and TIOC* values, compares the allocated PTY number/name lifecycle and byte transfer, records raw ioctl/unlockpt/ptsname_r ENOTTY, and records musl grantpt's no-op success because devpts grants on allocation; it does not assert session state. It excludes C PTY APIs/errno TLS, generic ioctl/direct TIOCGPTPEER exposure, TIOCSCTTY/setsid/session handoff, all termios/TTY controls, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "posix_openpt/grantpt/unlockpt/ptsname_r wrapper and selected PTY behavior oracle only; no C API is selected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Direct openat/ioctl, devpts allocation, descriptor ownership, flag, and caller-buffered PTY-name contract." }]
 capabilities = ["terminal.pty-basic"]
 
@@ -931,7 +934,7 @@ capabilities = [
 
 [[family.verified_slice]]
 id = "network.interface-device"
-description = "Bounded native Rust interface index/name, allocation-free link enumeration, owned deduplicated name collection, and owned two-phase link/address snapshots. This is a completed vertical slice within the still-planned record-owning facade family."
+description = "Bounded native Rust interface index/name, allocation-free link enumeration, owned deduplicated name collection, and owned two-phase link/address snapshots. This is a completed vertical slice within the aggregate-proven, still-private record-owning facade foundation."
 source_owners = [
   "crabc-rs/src/net.rs",
   "crabc-rs/src/netdevice.rs",
@@ -982,7 +985,7 @@ capabilities = ["network.resolver-transport"]
 
 [[family.verified_slice]]
 id = "network.resolver"
-description = "Private native x86 alloc-backed resolver policy with caller-owned resolver configuration and hosts snapshots. This completes the resolver capability within the still-planned record-owning family; the separately evidenced netdb slice supplies all three conventional owned snapshots."
+description = "Private native x86 alloc-backed resolver policy with caller-owned resolver configuration and hosts snapshots. This completes the resolver capability within the aggregate-proven, still-private record-owning facade foundation; the separately evidenced netdb slice supplies all three conventional owned snapshots."
 source_owners = [
   "crabc-rs/src/lib.rs",
   "crabc-rs/src/net.rs",
@@ -1005,7 +1008,7 @@ capabilities = ["network.resolver"]
 
 [[family.verified_slice]]
 id = "network.netdb"
-description = "Private native x86 owned conventional netdb snapshots: strict `/etc/hosts`, `/etc/services`, and `/etc/protocols` parsing, source-order enumeration, cloned lookup records, and bounded direct system loaders. This completes the netdb capability within the still-planned record-owning family."
+description = "Private native x86 owned conventional netdb snapshots: strict `/etc/hosts`, `/etc/services`, and `/etc/protocols` parsing, source-order enumeration, cloned lookup records, and bounded direct system loaders. This completes the netdb capability within the aggregate-proven, still-private record-owning facade foundation."
 source_owners = [
   "crabc-rs/src/lib.rs",
   "crabc-rs/src/netdb.rs",
@@ -1078,7 +1081,7 @@ capabilities = ["mount.basic"]
 
 [[family.verified_slice]]
 id = "filesystem.path-core"
-description = "Private native x86 closure of the selected Rust path/metadata lifecycle plus allocation-backed readlink. It admits the existing descriptor-relative open/stat/mutation, link/rename, timestamp, and caller-buffer path operations together with owned byte-preserving readlink retry. This completes the selected path-core capability within the still-planned record-owning family."
+description = "Private native x86 closure of the selected Rust path/metadata lifecycle plus allocation-backed readlink. It admits the existing descriptor-relative open/stat/mutation, link/rename, timestamp, and caller-buffer path operations together with owned byte-preserving readlink retry. This completes the selected path-core capability within the aggregate-proven, still-private record-owning facade foundation."
 source_owners = [
   "crabc-core/src/fs.rs",
   "crabc-rs/src/fs.rs",
@@ -1257,7 +1260,7 @@ capabilities = ["filesystem.canonicalize", "filesystem.cwd-mutation"]
 
 [[family.verified_slice]]
 id = "ipc.posix-mqueue"
-description = "Private native x86 direct POSIX named-message queues: typed open/create/unlink, owned descriptor lifetime with optional close-on-exec, queue attributes and nonblocking status, bounded priorities, borrowed message buffers, absolute realtime deadlines, and unlink-after-open behavior. This selects only the Rust `ipc` message-queue boundary within the still-planned record-owning facade family."
+description = "Private native x86 direct POSIX named-message queues: typed open/create/unlink, owned descriptor lifetime with optional close-on-exec, queue attributes and nonblocking status, bounded priorities, borrowed message buffers, absolute realtime deadlines, and unlink-after-open behavior. This selects only the Rust `ipc` message-queue boundary within the aggregate-proven, still-private record-owning facade foundation."
 source_owners = [
   "crabc-core/src/ipc.rs",
   "crabc-core/src/syscall_x86_64.rs",

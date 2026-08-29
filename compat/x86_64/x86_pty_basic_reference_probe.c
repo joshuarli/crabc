@@ -281,8 +281,12 @@ static int check_nonpty_rejection(void)
         status = 13;
         goto cleanup;
     }
-    errno = 0;
-    if (grantpt(null_fd) != -1 || errno != ENOTTY) {
+    /* Linux devpts performs granting when ptmx allocates the master. musl's
+       grantpt wrapper is therefore a successful no-op even for this
+       descriptor; the private Rust API deliberately validates with TIOCGPTN
+       instead. Do not incorrectly attribute that stricter Rust contract to
+       the pinned-musl C oracle. */
+    if (grantpt(null_fd) != 0) {
         status = 14;
         goto cleanup;
     }
@@ -312,6 +316,6 @@ int main(void)
     if (run_pty_lifecycle(MUSL_WRAPPER_ARM) != 0)
         return 3;
 
-    puts("syscalls=openat:257,ioctl:16,read:0,write:1,close:3 ioctls=TIOCGPTN:0x80045430,TIOCSPTLCK:0x40045431,TIOCGPTPEER:0x5441 flags=RDWR|NOCTTY|CLOEXEC raw+musl=ptmx-lifecycle name=exact+ERANGE nonpty=ENOTTY peer=owned-noctty-cloexec io=slave-to-master-roundtrip c-api-selection=excluded");
+    puts("syscalls=openat:257,ioctl:16,read:0,write:1,close:3 ioctls=TIOCGPTN:0x80045430,TIOCSPTLCK:0x40045431,TIOCGPTPEER:0x5441 flags=RDWR|NOCTTY|CLOEXEC raw+musl=ptmx-lifecycle name=exact+ERANGE nonpty=raw-ENOTTY+musl-grant-noop peer=owned-noctty-cloexec io=slave-to-master-roundtrip c-api-selection=excluded");
     return 0;
 }

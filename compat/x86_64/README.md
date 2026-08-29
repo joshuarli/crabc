@@ -1042,9 +1042,10 @@ receive buffer with `OVERFLOW`, never as a partial snapshot. The command also
 builds the no-std static probes for the allocation-free and alloc-gated seams.
 This remains a Rust-only native API: generic ioctl, C
 `ifreq`/`ifaddrs`/`if_nameindex`, interface mutation, resolver/netdb state, C
-errno/TLS, and public x86 support remain excluded. `facade.record-owning` is
-still planned and non-selectable: its 24 private slices now cover all 44
-closed capabilities, but aggregate promotion remains an independent gate.
+errno/TLS, and public x86 support remain excluded. The private
+`facade.record-owning` foundation is verified by its closed aggregate runner:
+its 24 slices are the exact union of all 44 closed capabilities, without
+promoting any C-runtime boundary or public x86 support.
 
 `resolver-transport-reference` proves the private no-std
 `crabc-core::resolver` exchange seam only. Its isolated local UDP/TCP fixtures
@@ -1474,8 +1475,11 @@ owns equivalent bytes instead of selecting C's static `ptsname` buffer. The
 focused Rust test, no-std `pty_basic_direct_probe`, and paired raw/pinned-musl
 C fixture pin `openat=257`, `ioctl=16`, the selected `O_*` words, and
 `TIOCGPTN`/`TIOCSPTLCK`/`TIOCGPTPEER`; they exercise pair allocation, byte
-transfer, PTY-number/name agreement, and non-PTY `ENOTTY`; the evidence records
-the forced `O_NOCTTY` peer-open request rather than asserting session state.
+transfer, PTY-number/name agreement, and the forced `O_NOCTTY` peer-open
+request rather than asserting session state. Raw ioctl/unlock/name paths
+return non-PTY `ENOTTY`; pinned musl's C `grantpt` is a no-op success because
+devpts grants during allocation, while the private Rust `grantpt` deliberately
+validates `TIOCGPTN` and returns `NOTTY`.
 
 `terminal-reference` completes the seven terminal capabilities that build on
 this safe pair/name base. `PtyPair::set_controlling_terminal` and
@@ -1496,9 +1500,9 @@ PTY/termios header/API/ABI or errno TLS, generic ioctl, public direct
 process supervision, or public x86 support. The separate static
 `libc-termios-control` artifact forwards the public C record only across its
 closed named C boundary; it does not promote the Rust vertical or a general C
-terminal capability. The aggregate
-`facade.record-owning` family remains planned and non-selectable pending its
-independent promotion chain.
+terminal capability. The aggregate `facade.record-owning` family is a private
+foundation verified by its closed runner, not a general C-terminal or public
+x86 support claim.
 
 `system-reference` records the pinned-musl `uname` and `sysinfo` behavior used
 by bounded typed system name/status/load observations. It does not select

@@ -38,7 +38,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(self.data())
         self.assertEqual(report["schema"], "crabc.x86_64-runtime-parity/v3")
         self.assertEqual(report["family_count"], 26)
-        self.assertEqual(report["status_counts"], {"foundation-verified": 7, "planned": 19})
+        self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
@@ -1413,8 +1413,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh setrlimit-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh umask-reference", direct_commands)
         self.assertIn("./scripts/dev-x86_64.sh times-reference", direct_commands)
+        self.assertEqual(remaining["status"], "foundation-verified")
         self.assertTrue(
-            all(evidence["state"] == "required" for evidence in remaining["native_evidence"])
+            all(evidence["state"] == "verified" for evidence in remaining["native_evidence"])
+        )
+        self.assertEqual(
+            {evidence["command"] for evidence in remaining["native_evidence"]},
+            {"./scripts/dev-x86_64.sh facade-record-owning"},
         )
         verified_slices = remaining["verified_slice"]
         assert isinstance(verified_slices, list)
@@ -1452,6 +1457,14 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "terminal.session-control",
             },
         )
+        family_capabilities = remaining["capabilities"]
+        assert isinstance(family_capabilities, list)
+        slice_capabilities = {
+            capability
+            for slice_entry in verified_slices
+            for capability in slice_entry["capabilities"]
+        }
+        self.assertEqual(slice_capabilities, set(family_capabilities))
         root_change = slices_by_id["process.root-change"]
         self.assertEqual(root_change["capabilities"], ["process.root-change"])
         self.assertEqual(
@@ -1726,6 +1739,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertTrue(
             all(evidence["state"] == "verified" for evidence in pty_basic["native_evidence"])
+        )
+        self.assertIn(
+            "musl grantpt's no-op success",
+            pty_basic["native_evidence"][0]["scope"],
         )
         for source_owner in (
             "crabc-core/src/syscall_x86_64.rs",
@@ -2778,7 +2795,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(remaining["native_evidence"]), 1)
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
-            "Define closed native x86 facade family runners",
+            "./scripts/dev-x86_64.sh facade-record-owning",
+        )
+        self.assertIn(
+            "exact twenty-four record-owning component runners",
+            remaining["native_evidence"][0]["scope"],
         )
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
@@ -2809,7 +2830,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertNotIn(
             "crabc-rs/tests/x86_64_current_dir_name.rs", remaining["source_owners"]
         )
-        self.assertEqual(remaining["status"], "planned")
+        self.assertEqual(remaining["status"], "foundation-verified")
         self.assertIn("thread.scheduler-rr-interval", direct["capabilities"])
         self.assertNotIn("thread.scheduler-rr-interval", remaining["capabilities"])
         self.assertIn("thread.cpu-affinity-observation", direct["capabilities"])
@@ -3101,6 +3122,25 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(capabilities, list)
         capabilities.append("network.interface-index")
         with self.assertRaisesRegex(ledger.LedgerError, "duplicates a capability"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        remaining = self.family(data, "facade.record-owning")
+        slices = remaining["verified_slice"]
+        assert isinstance(slices, list) and len(slices) == 24
+        interface_device = next(
+            slice_entry
+            for slice_entry in slices
+            if isinstance(slice_entry, dict)
+            and slice_entry["id"] == "network.interface-device"
+        )
+        capabilities = interface_device["capabilities"]
+        assert isinstance(capabilities, list)
+        capabilities.remove("network.interface-name")
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "must exactly cover the foundation family capabilities; missing: network.interface-name",
+        ):
             ledger.validate_ledger(data)
 
     def test_rejects_capability_or_duplicate_identity_on_an_artifact_only_slice(self) -> None:
