@@ -184,6 +184,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/headers-layouts-foundation.toml",
             headers_layouts["source_owners"],
         )
+        self.assertIn("compat/upstreams.toml", headers_layouts["source_owners"])
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
 
@@ -218,10 +219,42 @@ class X86ParityLedgerTests(unittest.TestCase):
         inputs = manifest["uapi_input"]
         assert isinstance(inputs, list) and len(inputs) == 1 and isinstance(inputs[0], dict)
         self.assertEqual(inputs[0]["id"], "linux-5.10-uapi")
-        self.assertEqual(inputs[0]["state"], "required-unpinned")
+        self.assertEqual(inputs[0]["state"], "pinned-verified")
+        self.assertEqual(
+            inputs[0]["upstream_pin"], "compat/upstreams.toml#linux_5_10_uapi"
+        )
+        self.assertEqual(inputs[0]["version"], "5.10")
+        self.assertEqual(
+            inputs[0]["source_sha256"],
+            "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43",
+        )
+        self.assertEqual(inputs[0]["exported_header_count"], 935)
+        self.assertEqual(
+            inputs[0]["exported_header_manifest_sha256"],
+            "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e",
+        )
+        self.assertEqual(
+            inputs[0]["provenance_verifier"],
+            "compat/x86_64/run_linux_5_10_uapi.sh",
+        )
         self.assertEqual(
             inputs[0]["paths"], ["linux/kd.h", "linux/soundcard.h", "linux/vt.h"]
         )
+
+        diagnostics = manifest["closure_diagnostic"]
+        assert (
+            isinstance(diagnostics, list)
+            and len(diagnostics) == 1
+            and isinstance(diagnostics[0], dict)
+        )
+        self.assertEqual(diagnostics[0]["id"], "isolated-candidate-header-closure")
+        self.assertEqual(diagnostics[0]["state"], "required-live")
+        self.assertEqual(diagnostics[0]["required_result"], "pass")
+        self.assertEqual(
+            diagnostics[0]["command"],
+            "./scripts/dev-x86_64.sh candidate-header-closure",
+        )
+        self.assertEqual(diagnostics[0]["record_count"], 382)
         self.assertFalse(manifest["completion"]["family_promotion"])
         self.assertFalse(manifest["completion"]["public_support"])
 
@@ -265,6 +298,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(uapi_paths, list) and isinstance(uapi_paths[0], dict)
         uapi_paths[0]["dependency"] = "linux/input.h"
         with self.assertRaisesRegex(ledger.LedgerError, "Linux-UAPI dependency"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        inputs = manifest["uapi_input"]
+        assert isinstance(inputs, list) and isinstance(inputs[0], dict)
+        inputs[0]["upstream_pin"] = "compat/upstreams.toml#musl"
+        with self.assertRaisesRegex(ledger.LedgerError, "upstream pin drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        diagnostics = manifest["closure_diagnostic"]
+        assert isinstance(diagnostics, list) and isinstance(diagnostics[0], dict)
+        diagnostics[0]["required_result"] = "incomplete"
+        with self.assertRaisesRegex(ledger.LedgerError, "require a live pass"):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()
@@ -326,6 +375,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "without declaration, layout, linkage, runtime, or public-support parity",
+            artifact["description"],
+        )
+        self.assertIn(
+            "legacy runner deliberately omits the image's declared `/opt/linux-5.10-uapi/include` root",
             artifact["description"],
         )
 

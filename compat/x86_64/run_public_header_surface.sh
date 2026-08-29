@@ -6,8 +6,9 @@
 # once with the pinned tree and once with the project tree first. This proves
 # only C11+GNU header consumability: it deliberately does not compare
 # declarations, constants, layouts, archives, runtime behavior, or public x86
-# support. The three UAPI-dependent reference headers stay explicit when the
-# native evidence image intentionally lacks those Linux UAPI inputs.
+# support. This legacy runner intentionally does not add the image's declared
+# Linux 5.10 UAPI root to either compiler input, so its three UAPI-dependent
+# reference headers remain explicit report records.
 set -euo pipefail
 export LC_ALL=C
 

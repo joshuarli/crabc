@@ -39,7 +39,12 @@ ssize_t aio_return(struct aiocb *);
 int aio_cancel(int, struct aiocb *);
 int aio_suspend(const struct aiocb *const [], int, const struct timespec *);
 int aio_fsync(int, struct aiocb *);
-int lio_listio(int, struct aiocb *__restrict const [__restrict], int, struct sigevent *__restrict);
+/*
+ * In C, the pointer spelling below is equivalent to the array declaration.
+ * Musl uses it because the C++ parser does not accept a restrict-qualified
+ * array bound.
+ */
+int lio_listio(int, struct aiocb *__restrict const *__restrict, int, struct sigevent *__restrict);
 
 #if defined(_LARGEFILE64_SOURCE)
 #define aiocb64 aiocb

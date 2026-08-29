@@ -3,9 +3,13 @@
 # This is deliberately a planning and accounting manifest, not a promotion.
 # `headers-layouts.toml` remains the v1 inventory of thirty direct probes. This
 # v2 manifest accounts for every pinned public header and every project-only
-# extension, records the missing Linux-UAPI inputs, and makes the remaining
-# language, ABI, and linkage work explicit. It must not be read as a claim that
-# a header's declarations link to, or execute through, a complete crabc libc.
+# extension, pins the one Linux-UAPI input needed by its wrapper paths, and
+# makes the remaining language, ABI, and linkage work explicit. It must not be
+# read as a claim that a header's declarations link to, or execute through, a
+# complete crabc libc.
+# `compat/upstreams.toml#linux_5_10_uapi` owns the source/archive and derived
+# x86 `headers_install` identity; it is repeated here and in the Docker build
+# because those independent consumers cannot load TOML from one another.
 schema = "crabc.x86_64-headers-layouts-foundation/v2"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
@@ -64,11 +68,36 @@ all_rows_resolved = false
 
 [[uapi_input]]
 id = "linux-5.10-uapi"
-state = "required-unpinned"
+state = "pinned-verified"
+upstream_pin = "compat/upstreams.toml#linux_5_10_uapi"
 source = "Linux 5.10 UAPI export tree"
+version = "5.10"
+source_archive = "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.tar.xz"
+source_sha256 = "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
+architecture = "x86_64"
+install_arch = "x86"
+exported_header_count = 935
+exported_header_manifest_sha256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
+provenance_verifier = "compat/x86_64/run_linux_5_10_uapi.sh"
 role = "explicit input for pinned-musl public wrappers that include Linux UAPI paths"
 paths = ["linux/kd.h", "linux/soundcard.h", "linux/vt.h"]
-closure_rule = "future candidate and oracle probes must use the same hash-pinned tree; ambient host headers are forbidden"
+closure_rule = "candidate and oracle probes must use this same hash-pinned tree; ambient host headers are forbidden"
+
+# This is a live, source-derived empty-TU include diagnostic, not a frozen
+# baseline. Its command must pass all 382 rows after any header change; the
+# surrounding family remains planned because include closure is neither ABI
+# comparison, callable linkage, runtime completion, nor public support.
+[[closure_diagnostic]]
+id = "isolated-candidate-header-closure"
+state = "required-live"
+command = "./scripts/dev-x86_64.sh candidate-header-closure"
+required_result = "pass"
+profiles = ["c11-gnu", "cxx17-gnu"]
+pinned_public_header_count = 183
+candidate_public_header_count = 191
+candidate_only_header_count = 8
+record_count = 382
+scope = "Raw-GCC project-header-first and pinned-musl reference empty-TU C11/C++17 GNU include closure with only raw-GCC builtin and pinned Linux 5.10 UAPI roots; no declaration/layout/linkage/runtime/installed-header/public-support claim."
 
 [[language_profile]]
 id = "c11-gnu"
@@ -119,10 +148,13 @@ standard = "c++17"
 macros = []
 state = "planned"
 
-# Each obligation expands across every header in its class. The only current
-# result is the empty C11+GNU pass for the 180 non-UAPI pinned paths. C++ and
-# feature-mode applicability deliberately remain oracle-derived per header;
-# they cannot be inferred from a C include success or a selected C++ fixture.
+# Each obligation expands across every header in its class. The legacy
+# `public-header-surface` C11+GNU consumability artifact deliberately omits
+# the declared UAPI root and therefore covers the 180 non-UAPI pinned paths;
+# the live closure diagnostic checks C11/C++17 GNU empty-TU inclusion with the
+# declared UAPI root. C++ and feature-mode applicability deliberately remain
+# oracle-derived per header; neither empty-TU include success nor a selected
+# C++ fixture resolves them.
 [[profile_obligation]]
 header_class = "pinned-non-uapi"
 profile = "c11-gnu"
@@ -175,51 +207,51 @@ evidence = ["oracle-derived-cxx17-matrix"]
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "c11-gnu"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree"]
+evidence = ["pinned-linux-5.10-uapi-input", "isolated-candidate-header-closure"]
 
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "cxx17-gnu"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree", "oracle-derived-cxx17-matrix"]
+evidence = ["pinned-linux-5.10-uapi-input", "isolated-candidate-header-closure", "oracle-derived-cxx17-matrix"]
 
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "c11-strict"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"]
+evidence = ["pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"]
 
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "c11-posix-2008"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"]
+evidence = ["pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"]
 
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "c11-xopen-700"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"]
+evidence = ["pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"]
 
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "c11-bsd"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"]
+evidence = ["pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"]
 
 [[profile_obligation]]
 header_class = "pinned-uapi-inputs"
 profile = "cxx17-strict"
-applicability = "blocked-missing-input"
+applicability = "oracle-required"
 state = "planned"
-evidence = ["pinned-linux-5.10-uapi-tree", "oracle-derived-cxx17-matrix"]
+evidence = ["pinned-linux-5.10-uapi-input", "oracle-derived-cxx17-matrix"]
 
 [[profile_obligation]]
 header_class = "project-only-extensions"
@@ -303,24 +335,23 @@ future_feature_profiles = ["c11-strict", "c11-posix-2008", "c11-xopen-700", "c11
 abi_facets = ["project-only-extension-policy", "candidate-tree-presence", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
-# These paths are currently blocked in both candidate and pinned-musl C11
-# inventory passes because the native evidence image deliberately has no
-# Linux-UAPI provider. The later closure gate must use a pinned Linux 5.10 UAPI
-# tree; an ambient host include directory is not an acceptable substitute.
+# These wrapper paths are tied to the one declared, fixed Linux 5.10 UAPI
+# export. Their remaining language/profile and ABI work stays planned; an
+# ambient host include directory is never an acceptable substitute.
 [[uapi_path]]
 header = "sys/kd.h"
 dependency = "linux/kd.h"
-state = "blocked-missing-pinned-linux-uapi"
+state = "pinned-input-verified"
 
 [[uapi_path]]
 header = "sys/soundcard.h"
 dependency = "linux/soundcard.h"
-state = "blocked-missing-pinned-linux-uapi"
+state = "pinned-input-verified"
 
 [[uapi_path]]
 header = "sys/vt.h"
 dependency = "linux/vt.h"
-state = "blocked-missing-pinned-linux-uapi"
+state = "pinned-input-verified"
 
 # ABI facets are deliberate proof obligations. A `partial-verified` facet
 # retains its documented narrow evidence and cannot promote this family. The
@@ -349,15 +380,15 @@ state = "partial-verified"
 scope = "pinned-non-uapi"
 owner = "libc.headers-layouts"
 evidence = ["public-header-c-consumability"]
-description = "The current empty C11 GNU consumer succeeds for the 180 non-UAPI pinned paths only."
+description = "The legacy public-header-surface C11 GNU consumer deliberately omits the declared UAPI root and succeeds for the 180 non-UAPI pinned paths only."
 
 [[abi_facet]]
 id = "uapi-input-provenance"
-state = "planned"
+state = "partial-verified"
 scope = "pinned-uapi-inputs"
 owner = "libc.headers-layouts"
-evidence = ["pinned-linux-5.10-uapi-tree"]
-description = "The three Linux-UAPI wrapper paths require an owned hash-pinned Linux 5.10 UAPI input before closure."
+evidence = ["pinned-linux-5.10-uapi-input"]
+description = "The three Linux-UAPI wrapper paths use the owned hash-pinned Linux 5.10 UAPI input; this provenance fact alone is not closure or ABI completion."
 
 [[abi_facet]]
 id = "project-only-extension-policy"
@@ -372,16 +403,16 @@ id = "candidate-transitive-closure"
 state = "planned"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
-evidence = ["isolated-candidate-header-tree"]
-description = "Candidate-header-first probes may not borrow pinned musl private bits headers during the future closure pass."
+evidence = ["isolated-candidate-header-closure"]
+description = "The required live candidate-header diagnostic may not borrow pinned musl private bits headers; its empty-TU closure result cannot complete ABI or linkage work."
 
 [[abi_facet]]
 id = "cxx17-consumability"
 state = "planned"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
-evidence = ["oracle-derived-cxx17-matrix"]
-description = "C++17 applicability must be measured against pinned musl per header; C-only oracle outcomes must remain explicit."
+evidence = ["isolated-candidate-header-closure", "oracle-derived-cxx17-matrix"]
+description = "C++17 applicability must be measured against pinned musl per header; a live empty-TU closure pass leaves declaration/layout and feature-profile work explicit."
 
 [[abi_facet]]
 id = "feature-visibility"

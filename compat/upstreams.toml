@@ -1,7 +1,7 @@
 # Every normal development command uses the versions below; no tool fetches an
-# upstream default branch. Sources not used by docker/Dockerfile are registered
-# here now so their future harnesses can be made reproducible without changing
-# the compatibility baseline.
+# upstream default branch. Docker-resolved pins are mirrored here as the
+# repository's canonical compatibility identity, while other sources are
+# registered before their future harnesses need them.
 
 [environment]
 platform = "linux/arm64"
@@ -17,6 +17,18 @@ sha256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
 # verifies it before the source build can proceed.
 fallback_repository = "https://github.com/ifduyue/musl.git"
 fallback_revision = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+
+[linux_5_10_uapi]
+# Native x86 header evidence treats this as a kernel-header input only.  The
+# derived identity is the deterministic output of `make ARCH=x86
+# headers_install`, not an ambient distribution include tree.
+version = "5.10"
+source = "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.tar.xz"
+sha256 = "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
+architecture = "x86_64"
+headers_install_arch = "x86"
+exported_header_count = 935
+exported_header_manifest_sha256 = "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
 
 [libc_test]
 # Laputa Systems carries the maintained libc-test fork. Pin the commit rather

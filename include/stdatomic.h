@@ -1,6 +1,14 @@
 #ifndef _STDATOMIC_H
 #define _STDATOMIC_H
 
+#ifdef __cplusplus
+
+/* C++17 has no C `<stdatomic.h>` interface, and musl 1.2.6 does not supply
+ * this project-only header.  Do not expose C11 `_Atomic` syntax to C++
+ * consumers; they use the C++ standard atomic interface instead. */
+
+#else
+
 /* Keep the C11 atomic vocabulary self-contained.  Pulling in the compiler's
  * fallback stdatomic.h also imports its private stdint/stddef namespace,
  * which is not part of this header's public contract. */
@@ -165,5 +173,7 @@ void atomic_thread_fence(memory_order);
     __atomic_exchange_n(&(object)->__val, 1, (order))
 #define atomic_signal_fence(order) __atomic_signal_fence(order)
 #define atomic_thread_fence(order) __atomic_thread_fence(order)
+
+#endif
 
 #endif

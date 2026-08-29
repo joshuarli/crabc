@@ -1,6 +1,10 @@
 #ifndef _REGEX_H
 #define _REGEX_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 #define __NEED_size_t
 #define __NEED_regoff_t
@@ -32,7 +36,12 @@ typedef struct { regoff_t rm_so; regoff_t rm_eo; } regmatch_t;
 
 int regcomp(regex_t *__restrict, const char *__restrict, int);
 size_t regerror(int, const regex_t *__restrict, char *__restrict, size_t);
-int regexec(const regex_t *__restrict, const char *__restrict, size_t, regmatch_t [__restrict], int);
+/* The pointer form is C-equivalent and is accepted by C++17. */
+int regexec(const regex_t *__restrict, const char *__restrict, size_t, regmatch_t *__restrict, int);
 void regfree(regex_t *);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

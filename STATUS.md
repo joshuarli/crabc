@@ -64,14 +64,15 @@ sysroot, family/platform parity, or public x86 support.
 v2 accounting contract for eventually closing that header family. It resolves
 the 183 pinned-musl paths and eight project-only headers into exact classes,
 names `sys/kd.h` -> `linux/kd.h`, `sys/soundcard.h` ->
-`linux/soundcard.h`, and `sys/vt.h` -> `linux/vt.h` as required but not yet
-hash-pinned Linux 5.10 UAPI inputs, and expands those classes across the
-C11/C++17 GNU and strict/POSIX/XOPEN/BSD profile obligations. It also assigns
-the existing static export ratchet, every unlisted callable declaration, and
-noncallable header ABI to their eventual owning families. It is inventory and
-ownership accounting only: isolated candidate closure, per-header C++ and
-feature visibility, declaration/layout and linkage matrices, runtime
-completion, family promotion, and public x86 support all remain planned.
+`linux/soundcard.h`, and `sys/vt.h` -> `linux/vt.h` through one fixed Linux
+5.10 x86 UAPI export: the source SHA-256, 935 exported-header count, and
+derived header-manifest SHA-256 are owned by
+`compat/upstreams.toml#linux_5_10_uapi` and independently checked in the image
+and at runtime. Its live 382-record raw-GCC/pinned-musl C11/C++17 include diagnostic
+must pass without a musl fallback, but it remains empty-TU closure evidence
+only. Per-header applicability and feature visibility, declaration/layout and
+linkage matrices, runtime completion, family promotion, and public x86
+support all remain planned.
 
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),

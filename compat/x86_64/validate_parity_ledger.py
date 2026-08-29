@@ -17,12 +17,18 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
+UPSTREAMS_PATH = ROOT / "compat" / "upstreams.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH = (
     ROOT / "compat" / "x86_64" / "headers-layouts-foundation.toml"
 )
 PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
+LINUX_5_10_UAPI_VERIFIER_PATH = ROOT / "compat" / "x86_64" / "run_linux_5_10_uapi.sh"
+CANDIDATE_HEADER_CLOSURE_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_candidate_header_closure.sh"
+)
+X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
@@ -46,6 +52,21 @@ EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "strverscmp.h",
     "sys/module.h",
 }
+EXPECTED_LINUX_5_10_UAPI_ARCHIVE = (
+    "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.tar.xz"
+)
+EXPECTED_LINUX_5_10_UAPI_VERSION = "5.10"
+EXPECTED_LINUX_5_10_UAPI_UPSTREAM_PIN = "compat/upstreams.toml#linux_5_10_uapi"
+EXPECTED_LINUX_5_10_UAPI_SOURCE_SHA256 = (
+    "dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43"
+)
+EXPECTED_LINUX_5_10_UAPI_ARCHITECTURE = "x86_64"
+EXPECTED_LINUX_5_10_UAPI_HEADERS_INSTALL_ARCH = "x86"
+EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT = 935
+EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256 = (
+    "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
+)
+EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT = 382
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
     "c11-gnu": {
@@ -192,39 +213,43 @@ EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS = {
         ("oracle-derived-cxx17-matrix",),
     ),
     ("pinned-uapi-inputs", "c11-gnu"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree",),
+        ("pinned-linux-5.10-uapi-input", "isolated-candidate-header-closure"),
     ),
     ("pinned-uapi-inputs", "cxx17-gnu"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree", "oracle-derived-cxx17-matrix"),
+        (
+            "pinned-linux-5.10-uapi-input",
+            "isolated-candidate-header-closure",
+            "oracle-derived-cxx17-matrix",
+        ),
     ),
     ("pinned-uapi-inputs", "c11-strict"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
     ),
     ("pinned-uapi-inputs", "c11-posix-2008"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
     ),
     ("pinned-uapi-inputs", "c11-xopen-700"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
     ),
     ("pinned-uapi-inputs", "c11-bsd"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
     ),
     ("pinned-uapi-inputs", "cxx17-strict"): (
-        "blocked-missing-input",
+        "oracle-required",
         "planned",
-        ("pinned-linux-5.10-uapi-tree", "oracle-derived-cxx17-matrix"),
+        ("pinned-linux-5.10-uapi-input", "oracle-derived-cxx17-matrix"),
     ),
     ("project-only-extensions", "c11-gnu"): (
         "oracle-required",
@@ -283,10 +308,10 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         ("public-header-c-consumability",),
     ),
     "uapi-input-provenance": (
-        "planned",
+        "partial-verified",
         "pinned-uapi-inputs",
         "libc.headers-layouts",
-        ("pinned-linux-5.10-uapi-tree",),
+        ("pinned-linux-5.10-uapi-input",),
     ),
     "project-only-extension-policy": (
         "planned",
@@ -298,13 +323,13 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "planned",
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
-        ("isolated-candidate-header-tree",),
+        ("isolated-candidate-header-closure",),
     ),
     "cxx17-consumability": (
         "planned",
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
-        ("oracle-derived-cxx17-matrix",),
+        ("isolated-candidate-header-closure", "oracle-derived-cxx17-matrix"),
     ),
     "feature-visibility": (
         "planned",
@@ -1013,9 +1038,10 @@ def validate_header_layout_foundation_manifest(
     """Validate the planned all-header accounting contract without promoting it.
 
     The v2 contract resolves every current pathname into one class and expands
-    every class into explicit language/feature obligations. It deliberately
-    keeps unresolved C++ applicability, Linux-UAPI inputs, declaration/layout
-    comparisons, and declared-callable linkage in planned evidence lanes.
+    every class into explicit language/feature obligations. It pins the one
+    Linux-UAPI input and requires a live C11/C++17 empty-TU closure diagnostic,
+    while keeping aggregate applicability, declaration/layout comparisons, and
+    declared-callable linkage in planned evidence lanes.
     """
     require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
     expected_manifest_keys = {
@@ -1033,6 +1059,7 @@ def validate_header_layout_foundation_manifest(
         "completion",
         "profile_matrix",
         "uapi_input",
+        "closure_diagnostic",
         "language_profile",
         "profile_obligation",
         "header_class",
@@ -1152,10 +1179,17 @@ def validate_header_layout_foundation_manifest(
         family["source_owners"], "family[libc.headers-layouts].source_owners"
     )
     for owner in (
+        "docker/Dockerfile.x86_64",
+        "compat/upstreams.toml",
         "compat/x86_64/headers-layouts-foundation.toml",
         "compat/x86_64/headers-layouts.toml",
         "compat/x86_64/public_headers.txt",
+        "compat/x86_64/run_linux_5_10_uapi.sh",
+        "compat/x86_64/run_candidate_header_closure.sh",
+        "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_candidate_header_closure.py",
+        "scripts/dev-x86_64.sh",
     ):
         require(owner in source_owners, f"libc.headers-layouts must own {owner}")
 
@@ -1175,23 +1209,114 @@ def validate_header_layout_foundation_manifest(
         "header-foundation profile_matrix drifted",
     )
 
+    upstreams = load_toml(UPSTREAMS_PATH)
+    upstream_uapi = upstreams.get("linux_5_10_uapi")
+    require(
+        isinstance(upstream_uapi, Mapping),
+        "compat/upstreams.toml must contain the Linux 5.10 UAPI pin",
+    )
+    require(
+        dict(upstream_uapi)
+        == {
+            "version": EXPECTED_LINUX_5_10_UAPI_VERSION,
+            "source": EXPECTED_LINUX_5_10_UAPI_ARCHIVE,
+            "sha256": EXPECTED_LINUX_5_10_UAPI_SOURCE_SHA256,
+            "architecture": EXPECTED_LINUX_5_10_UAPI_ARCHITECTURE,
+            "headers_install_arch": EXPECTED_LINUX_5_10_UAPI_HEADERS_INSTALL_ARCH,
+            "exported_header_count": EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT,
+            "exported_header_manifest_sha256": EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256,
+        },
+        "compat/upstreams.toml Linux 5.10 UAPI pin drifted",
+    )
+
     uapi_inputs = manifest["uapi_input"]
     require(isinstance(uapi_inputs, list) and len(uapi_inputs) == 1, "header-foundation requires one Linux UAPI input")
     uapi_input = uapi_inputs[0]
     require(isinstance(uapi_input, Mapping), "header-foundation UAPI input must be a table")
     require(
-        set(uapi_input) == {"id", "state", "source", "role", "paths", "closure_rule"},
+        set(uapi_input)
+        == {
+            "id",
+            "state",
+            "upstream_pin",
+            "source",
+            "version",
+            "source_archive",
+            "source_sha256",
+            "architecture",
+            "install_arch",
+            "exported_header_count",
+            "exported_header_manifest_sha256",
+            "provenance_verifier",
+            "role",
+            "paths",
+            "closure_rule",
+        },
         "header-foundation UAPI input keys drifted",
     )
     require(uapi_input["id"] == "linux-5.10-uapi", "header-foundation UAPI input id drifted")
     require(
-        uapi_input["state"] == "required-unpinned",
-        "header-foundation Linux UAPI input must remain explicitly required and unpinned",
+        uapi_input["state"] == "pinned-verified",
+        "header-foundation Linux UAPI input must remain pinned and verified",
+    )
+    require(
+        uapi_input["upstream_pin"] == EXPECTED_LINUX_5_10_UAPI_UPSTREAM_PIN,
+        "header-foundation Linux UAPI upstream pin drifted",
     )
     require(
         uapi_input["source"] == "Linux 5.10 UAPI export tree",
         "header-foundation Linux UAPI source drifted",
     )
+    require(
+        uapi_input["version"] == EXPECTED_LINUX_5_10_UAPI_VERSION,
+        "header-foundation Linux UAPI version drifted",
+    )
+    require(
+        uapi_input["source_archive"] == EXPECTED_LINUX_5_10_UAPI_ARCHIVE,
+        "header-foundation Linux UAPI source archive drifted",
+    )
+    require(
+        uapi_input["source_sha256"] == EXPECTED_LINUX_5_10_UAPI_SOURCE_SHA256,
+        "header-foundation Linux UAPI source checksum drifted",
+    )
+    require(
+        uapi_input["architecture"] == EXPECTED_LINUX_5_10_UAPI_ARCHITECTURE
+        and uapi_input["install_arch"] == EXPECTED_LINUX_5_10_UAPI_HEADERS_INSTALL_ARCH,
+        "header-foundation Linux UAPI architecture contract drifted",
+    )
+    require(
+        uapi_input["exported_header_count"] == EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT,
+        "header-foundation Linux UAPI exported-header count drifted",
+    )
+    require(
+        uapi_input["exported_header_manifest_sha256"]
+        == EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256,
+        "header-foundation Linux UAPI exported-header manifest digest drifted",
+    )
+    require(
+        {
+            "version": uapi_input["version"],
+            "source": uapi_input["source_archive"],
+            "sha256": uapi_input["source_sha256"],
+            "architecture": uapi_input["architecture"],
+            "headers_install_arch": uapi_input["install_arch"],
+            "exported_header_count": uapi_input["exported_header_count"],
+            "exported_header_manifest_sha256": uapi_input[
+                "exported_header_manifest_sha256"
+            ],
+        }
+        == dict(upstream_uapi),
+        "header-foundation Linux UAPI input diverged from compat/upstreams.toml",
+    )
+    uapi_verifier_path = repository_path(
+        str(uapi_input["provenance_verifier"]),
+        "header-foundation Linux UAPI provenance_verifier",
+    )
+    require(
+        uapi_verifier_path == LINUX_5_10_UAPI_VERIFIER_PATH,
+        "header-foundation Linux UAPI provenance verifier drifted",
+    )
+    require(uapi_verifier_path.is_file(), "header-foundation Linux UAPI verifier is missing")
     require(
         isinstance(uapi_input["role"], str) and uapi_input["role"],
         "header-foundation Linux UAPI input needs a role",
@@ -1206,6 +1331,96 @@ def validate_header_layout_foundation_manifest(
     require(
         tuple(uapi_input_paths) == tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS.values()),
         "header-foundation Linux UAPI input paths drifted",
+    )
+
+    uapi_verifier = uapi_verifier_path.read_text(encoding="utf-8")
+    dockerfile = X86_64_EVIDENCE_DOCKERFILE_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        f"readonly LINUX_UAPI_HEADER_COUNT={EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT}",
+        "readonly LINUX_UAPI_HEADER_MANIFEST_SHA256="
+        f"{EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256}",
+        "header_manifest_sha256=${LINUX_UAPI_HEADER_MANIFEST_SHA256}",
+    ):
+        require(phrase in uapi_verifier, f"Linux UAPI verifier omits fixed {phrase}")
+    for phrase in (
+        f"ARG LINUX_UAPI_VERSION={EXPECTED_LINUX_5_10_UAPI_VERSION}",
+        f"ARG LINUX_UAPI_SHA256={EXPECTED_LINUX_5_10_UAPI_SOURCE_SHA256}",
+        f"ARG LINUX_UAPI_HEADER_COUNT={EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT}",
+        "ARG LINUX_UAPI_HEADER_MANIFEST_SHA256="
+        f"{EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256}",
+        "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-${LINUX_UAPI_VERSION}.tar.xz",
+        "sha256sum -c -",
+    ):
+        require(phrase in dockerfile, f"x86 evidence Dockerfile omits fixed UAPI {phrase}")
+
+    closure_diagnostics = manifest["closure_diagnostic"]
+    require(
+        isinstance(closure_diagnostics, list) and len(closure_diagnostics) == 1,
+        "header-foundation requires one live candidate-header closure diagnostic",
+    )
+    closure_diagnostic = closure_diagnostics[0]
+    require(
+        isinstance(closure_diagnostic, Mapping),
+        "header-foundation candidate-header closure diagnostic must be a table",
+    )
+    require(
+        set(closure_diagnostic)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "profiles",
+            "pinned_public_header_count",
+            "candidate_public_header_count",
+            "candidate_only_header_count",
+            "record_count",
+            "scope",
+        },
+        "header-foundation candidate-header closure diagnostic keys drifted",
+    )
+    require(
+        closure_diagnostic["id"] == "isolated-candidate-header-closure",
+        "header-foundation candidate-header closure diagnostic id drifted",
+    )
+    require(
+        closure_diagnostic["state"] == "required-live"
+        and closure_diagnostic["required_result"] == "pass",
+        "header-foundation candidate-header closure diagnostic must require a live pass",
+    )
+    require(
+        closure_diagnostic["command"]
+        == "./scripts/dev-x86_64.sh candidate-header-closure",
+        "header-foundation candidate-header closure command drifted",
+    )
+    require(
+        tuple(string_list(closure_diagnostic["profiles"], "header-foundation closure profiles"))
+        == ("c11-gnu", "cxx17-gnu"),
+        "header-foundation candidate-header closure profiles drifted",
+    )
+    require(
+        closure_diagnostic["pinned_public_header_count"] == EXPECTED_PUBLIC_HEADER_COUNT
+        and closure_diagnostic["candidate_public_header_count"]
+        == EXPECTED_PUBLIC_HEADER_COUNT + len(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY)
+        and closure_diagnostic["candidate_only_header_count"]
+        == len(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY)
+        and closure_diagnostic["record_count"] == EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT,
+        "header-foundation candidate-header closure inventory counts drifted",
+    )
+    require(
+        isinstance(closure_diagnostic["scope"], str)
+        and "no declaration/layout/linkage/runtime/installed-header/public-support claim"
+        in closure_diagnostic["scope"],
+        "header-foundation candidate-header closure scope must retain its non-completion boundary",
+    )
+    require(
+        CANDIDATE_HEADER_CLOSURE_RUNNER_PATH.is_file(),
+        "header-foundation candidate-header closure runner is missing",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "candidate-header-closure)" in dispatch_source,
+        "candidate-header-closure is absent from the native dispatcher",
     )
 
     profiles = manifest["language_profile"]
@@ -1430,8 +1645,8 @@ def validate_header_layout_foundation_manifest(
             f"{location} does not name a required Linux-UAPI dependency",
         )
         require(
-            entry["state"] == "blocked-missing-pinned-linux-uapi",
-            f"{location}.state must retain the missing pinned Linux-UAPI boundary",
+            entry["state"] == "pinned-input-verified",
+            f"{location}.state must retain the verified pinned Linux-UAPI boundary",
         )
         observed_uapi_paths.append((header, dependency))
     require(
@@ -1556,10 +1771,11 @@ def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
 
     This artifact deliberately proves only project-header-first C11+GNU
     consumption against the pinned musl header tree. Its checked-in inventory
-    prevents a future musl/header change from silently shrinking the surface,
-    while the native runner records the three missing-Linux-UAPI reference
-    inputs and candidate-only headers rather than treating either as ABI or
-    runtime parity.
+    prevents a future musl/header change from silently shrinking the surface.
+    The legacy runner deliberately omits the declared Linux 5.10 UAPI root,
+    so its three report records identify that runner boundary rather than a
+    missing input in the current evidence image; neither those records nor
+    candidate-only headers imply ABI or runtime parity.
     """
 
     artifacts = require_verified_artifacts(
@@ -1580,6 +1796,11 @@ def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
     require(
         "without declaration, layout, linkage, runtime, or public-support parity" in description,
         "public-header-c-consumability must retain its non-completion boundary",
+    )
+    require(
+        "legacy runner deliberately omits the image's declared `/opt/linux-5.10-uapi/include` root"
+        in description,
+        "public-header-c-consumability must retain its legacy UAPI-omission boundary",
     )
     owners = nonempty_strings(
         artifact["source_owners"],
@@ -1677,6 +1898,7 @@ def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
         "EXPECTED_COMPILE_OK_COUNT=180",
         "EXPECTED_REFERENCE_UAPI_UNAVAILABLE_COUNT=3",
         "EXPECTED_CANDIDATE_ONLY_COUNT=8",
+        "intentionally does not add the image's declared",
     ):
         require(phrase in runner, f"public-header runner omits {phrase}")
     return len(names)

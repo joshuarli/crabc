@@ -3,6 +3,8 @@
 # Build this only through scripts/dev-x86_64.sh. The launcher requires a
 # native Linux/x86-64 host and always requests linux/amd64, so this image must
 # never become an emulated substitute for the AArch64 development image.
+# The Linux 5.10 UAPI source and derived x86 export identity are mirrored in
+# compat/upstreams.toml, because Docker cannot consume that TOML pin directly.
 FROM alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
 
 ARG RUST_TOOLCHAIN=nightly-2026-07-24
@@ -11,6 +13,13 @@ ARG MUSL_VERSION=1.2.6
 ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
 ARG MUSL_REV=9fa28ece75d8a2191de7c5bb53bed224c5947417
 ARG MUSL_MIRROR=https://github.com/ifduyue/musl.git
+ARG LINUX_UAPI_VERSION=5.10
+ARG LINUX_UAPI_SHA256=dcdf99e43e98330d925016985bfbc7b83c66d367b714b2de0cbbfcbf83d8ca43
+# These pin the deterministic `make headers_install` output as well as its
+# upstream source archive.  The runtime verifier repeats both checks, so an
+# image cannot merely validate a manifest it generated during the same build.
+ARG LINUX_UAPI_HEADER_COUNT=935
+ARG LINUX_UAPI_HEADER_MANIFEST_SHA256=00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e
 
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
@@ -32,6 +41,7 @@ RUN test "$(uname -m)" = "x86_64" \
         git \
         rustup \
         tar \
+        xz \
     # Alpine packages the bootstrap binary as rustup-init rather than rustup.
     && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustup target add "${RUST_TARGET}" \
@@ -89,6 +99,51 @@ RUN set -eu \
 
 COPY docker/x86_64-musl-oracle-gcc /usr/local/bin/crabc-x86_64-musl-gcc
 RUN chmod 0755 /usr/local/bin/crabc-x86_64-musl-gcc
+
+# Public libc headers that include Linux UAPI declarations need a declared
+# target input.  Do not borrow Alpine's ambient /usr/include tree: export the
+# exact Linux 5.10 x86 UAPI tree into its own hashed prefix and let header
+# evidence name that prefix explicitly.  This is a kernel-header input only;
+# it neither supplies a libc implementation nor changes the pinned musl
+# oracle.
+#
+# kernel.org's large release archives occasionally reset an HTTP/2 stream in
+# container builders. Resume the same checksum-pinned object over HTTP/1.1
+# rather than falling back to an ambient distro package.
+RUN set -eu \
+    && linux_uapi_root="/opt/linux-${LINUX_UAPI_VERSION}-uapi" \
+    && curl --fail --location --http1.1 --continue-at - --retry 5 \
+        --retry-all-errors --retry-delay 2 --output /tmp/linux-uapi.tar.xz \
+        "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-${LINUX_UAPI_VERSION}.tar.xz" \
+    && echo "${LINUX_UAPI_SHA256}  /tmp/linux-uapi.tar.xz" | sha256sum -c - \
+    && tar -C /tmp -xJf /tmp/linux-uapi.tar.xz \
+    && make -C "/tmp/linux-${LINUX_UAPI_VERSION}" ARCH=x86 headers_install \
+        INSTALL_HDR_PATH="${linux_uapi_root}" \
+    && test -f "${linux_uapi_root}/include/linux/kd.h" \
+    && test -f "${linux_uapi_root}/include/linux/soundcard.h" \
+    && test -f "${linux_uapi_root}/include/linux/vt.h" \
+    && (cd "${linux_uapi_root}/include" \
+        && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) \
+        > "${linux_uapi_root}/.crabc-linux-uapi.headers.sha256" \
+    && rm -rf /tmp/linux-uapi.tar.xz "/tmp/linux-${LINUX_UAPI_VERSION}"
+
+# Check the fixed derived export identity in a separate ordinary Docker layer.
+# This intentionally needs no BuildKit-only cache mount: scripts/dev-x86_64.sh
+# builds it with ordinary `docker build`.
+RUN set -eu \
+    && linux_uapi_root="/opt/linux-${LINUX_UAPI_VERSION}-uapi" \
+    && observed_header_count="$(wc -l < "${linux_uapi_root}/.crabc-linux-uapi.headers.sha256" | tr -d '[:space:]')" \
+    && test "${observed_header_count}" = "${LINUX_UAPI_HEADER_COUNT}" \
+    && echo "${LINUX_UAPI_HEADER_MANIFEST_SHA256}  ${linux_uapi_root}/.crabc-linux-uapi.headers.sha256" | sha256sum -c - \
+    && printf '%s\n' \
+        'format=crabc-linux-uapi-v1' \
+        "version=${LINUX_UAPI_VERSION}" \
+        "source_sha256=${LINUX_UAPI_SHA256}" \
+        'architecture=x86_64' \
+        'install_arch=x86' \
+        "header_count=${LINUX_UAPI_HEADER_COUNT}" \
+        "header_manifest_sha256=${LINUX_UAPI_HEADER_MANIFEST_SHA256}" \
+        > "${linux_uapi_root}/.crabc-linux-uapi"
 
 WORKDIR /workspace
 CMD ["bash"]

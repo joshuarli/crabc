@@ -1,6 +1,7 @@
 #ifndef _ERR_H
 #define _ERR_H
 
+#include <features.h>
 #include <stdarg.h>
 
 #ifdef __cplusplus

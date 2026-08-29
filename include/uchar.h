@@ -10,8 +10,10 @@ extern "C" {
 #define __NEED_mbstate_t
 #include <bits/alltypes.h>
 
+#if __cplusplus < 201103L
 typedef unsigned short char16_t;
 typedef unsigned int char32_t;
+#endif
 
 size_t c16rtomb(char *, char16_t, mbstate_t *);
 size_t c32rtomb(char *, char32_t, mbstate_t *);
