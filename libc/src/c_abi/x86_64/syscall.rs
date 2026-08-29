@@ -9,6 +9,8 @@
 //! descriptor-entry leaf uses `open`, `openat`, and its private post-open
 //! `fcntl` request; the selected descriptor-I/O leaf uses its named transfer,
 //! lifecycle, and pipe syscalls;
+//! the selected filesystem-access leaf uses direct `access`, legacy
+//! `faccessat`, and flags-bearing `faccessat2` requests;
 //! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
 //! and byte-transfer syscalls; and the selected nanosleep leaf uses its direct
@@ -266,6 +268,7 @@ pub(crate) const SYS_MUNMAP: i64 = 11;
 pub(crate) const SYS_RT_SIGACTION: i64 = 13;
 pub(crate) const SYS_RT_SIGPROCMASK: i64 = 14;
 pub(crate) const SYS_IOCTL: i64 = 16;
+pub(crate) const SYS_ACCESS: i64 = 21;
 pub(crate) const SYS_PIPE: i64 = 22;
 pub(crate) const SYS_SELECT: i64 = 23;
 pub(crate) const SYS_MINCORE: i64 = 27;
@@ -381,3 +384,4 @@ pub(crate) const SYS_CLONE: i64 = 56;
 pub(crate) const SYS_PREAD64: i64 = 17;
 pub(crate) const SYS_PWRITE64: i64 = 18;
 pub(crate) const SYS_PWRITEV2: i64 = 328;
+pub(crate) const SYS_FACCESSAT2: i64 = 439;

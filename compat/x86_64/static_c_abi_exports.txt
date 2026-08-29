@@ -27,6 +27,7 @@ _setjmp
 abs
 accept
 accept4
+access
 atoi
 atol
 atoll
@@ -58,6 +59,9 @@ div
 dup
 dup2
 dup3
+eaccess
+euidaccess
+faccessat
 fcntl
 fdatasync
 feclearexcept

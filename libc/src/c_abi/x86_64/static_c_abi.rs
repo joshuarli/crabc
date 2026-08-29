@@ -9,7 +9,7 @@
 //! create/explicit-exit/join worker with private
 //! initial-TLS `errno`,
 //! termios-control, selected process-context, child-reaping, selected
-//! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
+//! descriptor-entry, selected filesystem-access, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
@@ -96,6 +96,8 @@ mod clock_gettime;
 mod nanosleep;
 #[path = "descriptor_entry.rs"]
 mod descriptor_entry;
+#[path = "filesystem_access.rs"]
+mod filesystem_access;
 #[path = "descriptor_control.rs"]
 mod descriptor_control;
 #[path = "descriptor_io.rs"]

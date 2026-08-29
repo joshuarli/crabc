@@ -834,6 +834,8 @@ IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
+FILESYSTEM_ACCESS_SYMBOLS = ("access", "faccessat", "euidaccess", "eaccess")
+
 FFS_SYMBOLS = ("ffs", "ffsl", "ffsll")
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -4179,6 +4181,81 @@ def require_descriptor_entry_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_filesystem_access_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected C access boundary separate from filesystem parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-filesystem-access"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-filesystem-access artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in FILESYSTEM_ACCESS_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-filesystem-access description omits {symbol}",
+        )
+    for phrase in (
+        "filesystem-access block",
+        "access=21",
+        "faccessat=269",
+        "faccessat2=439",
+        "same-address",
+        "weak",
+        "real versus effective",
+        "fchmodat/lchmod",
+        "does not select",
+    ):
+        require(
+            phrase in description,
+            f"static-c-filesystem-access description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("access=21" in item and "real IDs" in item and "rdi/rsi" in item for item in prerequisites),
+        "static-c-filesystem-access must record its access real-ID register ABI",
+    )
+    require(
+        any(
+            "faccessat=269" in item
+            and "faccessat2=439" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "ENOSYS fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-filesystem-access must record its legacy/faccessat2 register and fallback boundary",
+    )
+    require(
+        any(
+            "AT_EACCESS" in item and "same-address ELF alias" in item
+            for item in prerequisites
+        ),
+        "static-c-filesystem-access must record its euidaccess/eaccess alias contract",
+    )
+    headers = artifact["x86_header_prerequisites"]
+    assert isinstance(headers, list)
+    require(
+        any("eight-profile" in item and "GNU-only" in item for item in headers),
+        "static-c-filesystem-access must retain its access header feature matrix",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-access"},
+        "static-c-filesystem-access must use the closed libc-access command",
+    )
+
+
 def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded variadic C fcntl artifact honest and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -4701,6 +4778,7 @@ def validate_ledger(
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
+    require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])

@@ -8,7 +8,7 @@
 # C11 immediate termination, callback algorithms, direct clock_gettime,
 # system configuration,
 # nanosleep, and clock_nanosleep,
-# selected descriptor entry, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
+# selected descriptor entry, selected filesystem access, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
 # ctype, integer arithmetic, integer parsing, intmax arithmetic, credential
@@ -171,6 +171,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
+  libc-access  run the static x86 crabc-libc access/faccessat slice
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
   libc-mapping-core  run the static x86 crabc-libc caller-owned mapping-core slice
@@ -903,6 +904,15 @@ does not exercise or expand the separately selected bounded C fcntl
 status-control entry, path policy, a filesystem capability,
 cancellation/AIO integration, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
+`libc-access` links that archive into a separate freestanding project-header
+C fixture after an equivalent pinned-musl run. It selects only `access`,
+`faccessat`, `euidaccess`, and musl's weak same-address `eaccess` alias:
+direct `access=21` real-ID checks, zero-flag `faccessat=269`, and nonzero-flag
+`faccessat2=439` with its fourth word in r10. A runner-provisioned root-owned
+record and fixture-local raw child contain the real/effective-ID distinction;
+this does not select path policy, a filesystem capability, `fchmodat`/`lchmod`,
+C credential/process APIs, cancellation, dynamic runtime, or public x86
+support.
 `libc-fcntl-status-control` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 the public `fcntl` status/descriptor-flag commands `F_GETFD`, `F_SETFD`,
@@ -1227,6 +1237,10 @@ run_libc_immediate_termination() {
 
 run_libc_callback_algorithms() {
     run_in_container bash /workspace/compat/x86_64/run_libc_callback_algorithms.sh
+}
+
+run_libc_access() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_access.sh
 }
 
 run_libc_clock_gettime() {
@@ -2132,7 +2146,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2929,6 +2943,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-callback-algorithms takes no arguments"
         ensure_image
         run_libc_callback_algorithms
+        ;;
+    libc-access)
+        [ "$#" -eq 0 ] || fail "libc-access takes no arguments"
+        ensure_image
+        run_libc_access
         ;;
     libc-clock-gettime)
         [ "$#" -eq 0 ] || fail "libc-clock-gettime takes no arguments"

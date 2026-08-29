@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 37)
+        self.assertEqual(report["verified_artifact_count"], 38)
         self.assertEqual(report["header_layout_probe_count"], 34)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1086,7 +1086,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 30
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 31
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -4898,6 +4898,56 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-status-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-descriptor-entry command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_filesystem_access_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-access"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("access=21", "access=999")
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "access real-ID register ABI"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-access"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "same-address", "different-address"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "same-address"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-filesystem-access"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh access-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-access command"
         ):
             ledger.validate_ledger(data)
 

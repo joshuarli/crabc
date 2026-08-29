@@ -66,7 +66,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memory-search-header-abi",
             "string-copy-header-abi",
             "random-entropy-header-abi",
-            "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
         )
         self.assertEqual(actual_groups, expected_groups)
 
@@ -5777,6 +5777,110 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("/workspace/compat/x86_64/run_libc_nanosleep.sh", runner)
         self.assertIn(
             '    libc-nanosleep)\n        [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_filesystem_access_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        filesystem_access = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "filesystem_access.rs"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_access_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_access_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_access.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "filesystem_access.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/access.c",
+            "src/unistd/faccessat.c",
+            "src/legacy/euidaccess.c",
+            "raw_syscall::SYS_ACCESS",
+            "raw_syscall::SYS_FACCESSAT",
+            "raw_syscall::SYS_FACCESSAT2",
+            "raw_syscall::syscall2(",
+            "raw_syscall::syscall3(",
+            "raw_syscall::syscall4(",
+            "AT_FDCWD",
+            "AT_EACCESS",
+            ".weak eaccess",
+            ".set eaccess, euidaccess",
+            "c_status(result)",
+            "__syscall_cp",
+        ):
+            self.assertIn(required, filesystem_access)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn fchmodat(",
+            "fn lchmod(",
+            "__tls_get_addr",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, filesystem_access)
+        for required in (
+            "CRABC_ACCESS_ROOT",
+            "raw_clone_sigchld",
+            "SYS_setresuid",
+            "AT_SYMLINK_NOFOLLOW",
+            "AT_EACCESS",
+            "euidaccess",
+            "eaccess",
+            "CRABC_ACCESS_FREESTANDING",
+            "CRABC_ACCESS_OVERRIDE_EACCESS",
+            "eaccess_override_calls",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_access_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_access_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall access 15",
+            "assert_named_syscall faccessat 10d",
+            "assert_named_syscall faccessat 1b7",
+            "same-address",
+            "strong caller eaccess",
+            "requires root",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("access", "faccessat", "euidaccess", "eaccess"):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-filesystem-access"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-access"', parity_ledger
+        )
+        self.assertIn("run_libc_access()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_access.sh", runner)
+        self.assertIn(
+            '    libc-access)\n        [ "$#" -eq 0 ] || fail "libc-access takes no arguments"',
             runner,
         )
 

@@ -46,6 +46,16 @@ inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
 family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
 shared-memory, and process-wide VM synchronization remain unselected.
 
+`./scripts/dev-x86_64.sh libc-access` is another private
+`static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
+It proves only static C `access`, `faccessat`, `euidaccess`, and weak
+same-address `eaccess` through pinned-musl and freestanding-archive runs:
+real versus effective credentials, zero-flag legacy and flags-bearing Linux
+paths, direct errno behavior, and strong caller alias override. It is not
+filesystem capability or C-runtime parity; pathname policy, `fchmodat`/
+`lchmod`, broader C credential/process behavior, and public x86 support remain
+planned.
+
 `./scripts/dev-x86_64.sh libc-signal-execution` is one further private
 `static-c-process-signal-execution` artifact inside planned
 `libc.posix-runtime`. Its pinned-musl/freestanding-static C proof composes the

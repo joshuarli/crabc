@@ -340,6 +340,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
+./scripts/dev-x86_64.sh libc-access
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-process-resources
@@ -1929,6 +1930,19 @@ behavior, descriptor flags, and direct errno results. It excludes pathname
 policy, a filesystem capability, cancellation, dynamic runtime, and public
 x86 support.
 
+`libc-access` is a separately recorded `static-c-filesystem-access`
+`verified_artifact` gate over that archive, not a filesystem capability. Its
+project-header C body first executes through pinned musl and then through a
+`-nostdlib -static` candidate. It selects exactly `access`, `faccessat`,
+`euidaccess`, and weak same-address `eaccess`: `access=21` performs the
+real-ID check, zero flags use `faccessat=269`, and nonzero flags use
+`faccessat2=439` through `r10`. A runner-provisioned root-owned mode-0400
+record plus fixture-local raw child prove real/effective credential separation,
+descriptor-relative and final-symlink behavior, direct errno results, stale
+errno on success, and a strong caller override of the weak alias. It excludes
+path/permission policy, `fchmodat`/`lchmod`, general C credential/process
+behavior, cancellation, dynamic runtime, and public x86 support.
+
 `libc-fcntl-status-control` is a separately recorded
 `static-c-fcntl-status-control` `verified_artifact` gate over that archive,
 not a descriptor/filesystem capability or generic C `fcntl` implementation.
@@ -2462,6 +2476,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-nanosleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,
+`libc-access`,
 `libc-fcntl-status-control`,
 `libc-descriptor-io`,
 `libc-process-resources`, `libc-readiness-waits`, and

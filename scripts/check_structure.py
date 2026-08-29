@@ -118,7 +118,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, nanosleep, and
-# clock_nanosleep, descriptor entry, bounded fcntl status control, and the
+# clock_nanosleep, descriptor entry, selected filesystem access, bounded fcntl status control, and the
 # basic x87 classification/sign plus complex accessor/conjugation foundation.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
@@ -134,6 +134,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
+    Path("libc/src/c_abi/x86_64/filesystem_access.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
@@ -3485,6 +3486,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
+        '#[path = "filesystem_access.rs"]',
         '#[path = "descriptor_control.rs"]',
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
@@ -4296,6 +4298,60 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/descriptor_entry.rs: selected static "
             "artifact must export only open, openat, and creat"
+        )
+
+    filesystem_access_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "filesystem_access.rs"
+    )
+    filesystem_access_text = filesystem_access_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/unistd/access.c",
+        "src/unistd/faccessat.c",
+        "src/legacy/euidaccess.c",
+        "access=21",
+        "faccessat=269",
+        "faccessat2=439",
+        "Linux 5.10 includes `faccessat2`",
+        "raw_syscall::SYS_ACCESS",
+        "raw_syscall::SYS_FACCESSAT",
+        "raw_syscall::SYS_FACCESSAT2",
+        "raw_syscall::syscall2(",
+        "raw_syscall::syscall3(",
+        "raw_syscall::syscall4(",
+        "AT_FDCWD",
+        "AT_EACCESS",
+        "c_status(result)",
+        "__syscall_cp",
+        ".weak eaccess",
+        ".set eaccess, euidaccess",
+    ):
+        if required not in filesystem_access_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/filesystem_access.rs: selected static "
+                f"filesystem-access boundary is missing {required!r}"
+            )
+    filesystem_access_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            filesystem_access_text,
+        )
+    )
+    if filesystem_access_exports != {"access", "faccessat", "euidaccess"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/filesystem_access.rs: selected static "
+            "artifact must export access, faccessat, and euidaccess only as Rust entries"
+        )
+    filesystem_access_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*euidaccess",\s*$',
+            filesystem_access_text,
+        )
+    )
+    if filesystem_access_aliases != {"eaccess"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/filesystem_access.rs: selected static "
+            "artifact must retain eaccess as the musl same-address assembler alias"
         )
 
     descriptor_control_source = (
@@ -5135,6 +5191,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_mapping_text,
         nanosleep_text,
         descriptor_entry_text,
+        filesystem_access_text,
         descriptor_control_text,
         descriptor_io_text,
         process_resources_text,
@@ -5170,7 +5227,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             for source in (memory_text, fenv_text, setjmp_text, descriptor_control_text)
         )
     )
-    exports = rust_exports | assembly_exports | callback_algorithms_aliases
+    exports = rust_exports | assembly_exports | callback_algorithms_aliases | filesystem_access_aliases
     expected_exports = {
         "__errno_location",
         "stat",
@@ -5281,6 +5338,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "open",
         "openat",
         "creat",
+        "access",
+        "faccessat",
+        "euidaccess",
+        "eaccess",
         "close",
         "read",
         "write",
@@ -5403,7 +5464,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
-            "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "descriptor-entry, selected filesystem-access, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
@@ -5433,6 +5494,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_mapping.rs", memory_mapping_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
+        ("filesystem_access.rs", filesystem_access_text),
         ("descriptor_control.rs", descriptor_control_text),
         ("descriptor_io.rs", descriptor_io_text),
         ("process_resources.rs", process_resources_text),
