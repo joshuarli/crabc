@@ -431,3 +431,15 @@ sources = [
   "compat/x86_64/run_sys_time_direct_header_abi.sh",
 ]
 headers = ["include/stddef.h", "include/sys/time.h"]
+
+[[probe]]
+id = "access-header"
+command = "./scripts/dev-x86_64.sh access-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/access_header_abi_probe.c",
+  "compat/x86_64/access_header_abi_probe.cpp",
+  "compat/x86_64/run_access_header_abi.sh",
+]
+headers = ["include/fcntl.h", "include/unistd.h"]

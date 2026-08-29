@@ -38,13 +38,14 @@ TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH = (
 SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_sys_time_direct_header_abi.sh"
 )
+ACCESS_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_access_header_abi.sh"
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v6"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v7"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -86,6 +87,20 @@ EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_COMMAND = (
 )
 EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/time.h"
 EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
+EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ID = "x86-access-header-profile-matrix"
+EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh access-header-abi"
+EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS = ("fcntl.h", "unistd.h")
+EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES = (
+    "c-default",
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-bsd",
+    "cxx17-strict",
+)
+EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ROW_COUNT = 8
 EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "daemon.h",
     "dn_expand.h",
@@ -179,6 +194,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "epoll-header-profile-matrix",
         "timeval-transitive-header-profile-matrix",
         "sys-time-direct-header-profile-matrix",
+        "access-header-profile-matrix",
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
@@ -370,6 +386,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         (EXPECTED_SYS_TIME_DIRECT_HEADER_PROFILE_MATRIX_ID,),
     ),
+    "access-header-profile-matrix": (
+        "partial-verified",
+        "fcntl.h and unistd.h selected access declaration feature gate and C++ declaration-linkage subset",
+        "libc.headers-layouts",
+        (EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "uapi-input-provenance": (
         "partial-verified",
         "pinned-uapi-inputs",
@@ -487,6 +509,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
     "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
     "sys-time-direct": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
+    "access-header": "./scripts/dev-x86_64.sh access-header-abi",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -652,6 +675,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/sys_time_direct_header_abi_probe.c",
         "compat/x86_64/sys_time_direct_header_abi_probe.cpp",
         "compat/x86_64/run_sys_time_direct_header_abi.sh",
+    ),
+    "access-header": (
+        "compat/x86_64/access_header_abi_probe.c",
+        "compat/x86_64/access_header_abi_probe.cpp",
+        "compat/x86_64/run_access_header_abi.sh",
     ),
 }
 
@@ -1124,10 +1152,10 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v6 contract resolves every current pathname into one class and expands
+    The v7 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
     Linux-UAPI input, resolves selected UAPI-wrapper, epoll-header,
-    timeval-transitive, and direct sys/time ABI matrices, and requires a live C11/C++17 empty-TU
+    timeval-transitive, direct sys/time, and access-header ABI matrices, and requires a live C11/C++17 empty-TU
     closure diagnostic, while keeping aggregate applicability,
     declaration/layout comparisons, and declared-callable linkage in planned
     evidence lanes.
@@ -1152,6 +1180,7 @@ def validate_header_layout_foundation_manifest(
         "epoll_header_profile_matrix",
         "timeval_transitive_header_profile_matrix",
         "sys_time_direct_header_profile_matrix",
+        "access_header_profile_matrix",
         "closure_diagnostic",
         "language_profile",
         "profile_obligation",
@@ -1215,6 +1244,7 @@ def validate_header_layout_foundation_manifest(
             "epoll_header_profile_matrix_slice": True,
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
+            "access_header_profile_matrix_slice": True,
             "candidate_transitive_include_closure": False,
             "c11_consumer_matrix": False,
             "cxx17_consumer_matrix": False,
@@ -1294,6 +1324,9 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_sys_time_direct_header_abi.sh",
         "compat/x86_64/sys_time_direct_header_abi_probe.c",
         "compat/x86_64/sys_time_direct_header_abi_probe.cpp",
+        "compat/x86_64/run_access_header_abi.sh",
+        "compat/x86_64/access_header_abi_probe.c",
+        "compat/x86_64/access_header_abi_probe.cpp",
         "compat/x86_64/run_candidate_header_closure.sh",
         "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
@@ -1302,6 +1335,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/tests/test_epoll_header_abi.py",
         "compat/x86_64/tests/test_timeval_transitive_header_abi.py",
         "compat/x86_64/tests/test_sys_time_direct_header_abi.py",
+        "compat/x86_64/tests/test_access_header_abi.py",
         "compat/x86_64/tests/test_runner.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -2187,6 +2221,149 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts direct sys/time header matrix evidence must retain its non-completion boundary",
     )
 
+    access_header_profile_matrix = manifest["access_header_profile_matrix"]
+    require(
+        isinstance(access_header_profile_matrix, Mapping),
+        "header-foundation access header matrix must be a table",
+    )
+    require(
+        set(access_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_headers",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation access header matrix keys drifted",
+    )
+    require(
+        access_header_profile_matrix["id"] == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation access header matrix id drifted",
+    )
+    require(
+        access_header_profile_matrix["state"] == "partial-verified"
+        and access_header_profile_matrix["required_result"] == "pass",
+        "header-foundation access header matrix must remain partial verified evidence",
+    )
+    require(
+        access_header_profile_matrix["command"] == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation access header matrix command drifted",
+    )
+    require(
+        access_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation access header matrix must remain scoped to pinned non-UAPI headers",
+    )
+    access_header_subject_headers = string_list(
+        access_header_profile_matrix["subject_headers"],
+        "header-foundation access header matrix subject headers",
+    )
+    require(
+        tuple(access_header_subject_headers) == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS,
+        "header-foundation access header matrix subject headers drifted",
+    )
+    access_header_profiles = string_list(
+        access_header_profile_matrix["profiles"],
+        "header-foundation access header matrix profiles",
+    )
+    require(
+        tuple(access_header_profiles) == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation access header matrix profiles drifted",
+    )
+    require(
+        access_header_profile_matrix["row_count"] == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and access_header_profile_matrix["row_count"] == len(access_header_profiles),
+        "header-foundation access header matrix row count drifted",
+    )
+    access_header_scope = access_header_profile_matrix["scope"]
+    require(
+        isinstance(access_header_scope, str)
+        and all(
+            phrase in access_header_scope
+            for phrase in (
+                "GNU-only eaccess/euidaccess feature visibility",
+                "actual callable artifact linkage",
+                "runtime behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation access header matrix scope must retain its non-completion boundary",
+    )
+    access_header_rows = access_header_profile_matrix["row"]
+    require(
+        isinstance(access_header_rows, list)
+        and len(access_header_rows) == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation access header matrix row roster drifted",
+    )
+    observed_access_header_rows: list[str] = []
+    for index, row in enumerate(access_header_rows):
+        location = f"header-foundation access_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(isinstance(profile, str), f"{location} profile is invalid")
+        require(
+            profile in EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES,
+            f"{location} profile is not a declared access-header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_access_header_rows.append(profile)
+    require(
+        tuple(observed_access_header_rows) == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation access header matrix row order or roster drifted",
+    )
+    require(
+        ACCESS_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation access header matrix runner is missing",
+    )
+    require(
+        "access-header-abi)" in dispatch_source,
+        "access-header-abi is absent from the native dispatcher",
+    )
+    access_header_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(access_header_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one access header matrix evidence command",
+    )
+    require(
+        access_header_matrix_evidence[0].get("state") == "required"
+        and isinstance(access_header_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in access_header_matrix_evidence[0]["scope"]
+            for phrase in (
+                "GNU-only eaccess/euidaccess",
+                "actual callable artifact linkage",
+                "runtime behavior",
+                "all-header closure",
+                "runtime",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts access header matrix evidence must retain its non-completion boundary",
+    )
+
     inventory_text = inventory_path.read_text(encoding="utf-8")
     pinned_paths = inventory_text.splitlines()
     require(inventory_text.endswith("\n"), "header-foundation pinned inventory must end with a newline")
@@ -2210,6 +2387,10 @@ def validate_header_layout_foundation_manifest(
     require(
         sys_time_direct_header in pinned_path_set - uapi_header_set,
         "header-foundation direct sys/time subject must remain a pinned non-UAPI header",
+    )
+    require(
+        set(access_header_subject_headers) <= pinned_path_set - uapi_header_set,
+        "header-foundation access header subjects must remain pinned non-UAPI headers",
     )
     project_only_paths = tuple(sorted(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY))
     project_only_set = set(project_only_paths)
@@ -2506,6 +2687,7 @@ def validate_header_layout_foundation_manifest(
         "epoll_header_profile_matrix_row_count": len(observed_epoll_rows),
         "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
+        "access_header_profile_matrix_row_count": len(observed_access_header_rows),
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -4609,6 +4791,9 @@ def validate_ledger(
         ],
         "header_foundation_sys_time_direct_header_profile_matrix_row_count": header_layout_foundation_report[
             "sys_time_direct_header_profile_matrix_row_count"
+        ],
+        "header_foundation_access_header_profile_matrix_row_count": header_layout_foundation_report[
+            "access_header_profile_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"

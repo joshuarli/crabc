@@ -448,7 +448,7 @@ int fchdir(int);
 int fchown(int, uid_t, gid_t);
 int fchownat(int, const char *, uid_t, gid_t, int);
 int fexecve(int, char *const [], char *const []);
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#ifdef _GNU_SOURCE
 int eaccess(const char *, int);
 int euidaccess(const char *, int);
 #endif

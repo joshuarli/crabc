@@ -57,6 +57,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "epoll-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",
+            "access-header-abi",
             "madvise-reference",
             "ctype-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
@@ -118,6 +119,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_timeval_transitive_header_abi.sh', source)
         self.assertIn('run_sys_time_direct_header_abi()', source)
         self.assertIn('compat/x86_64/run_sys_time_direct_header_abi.sh', source)
+        self.assertIn('run_access_header_abi()', source)
+        self.assertIn('compat/x86_64/run_access_header_abi.sh', source)
         self.assertIn('run_header_abi_project()', source)
         self.assertIn('compat/x86_64/run_project_header_abi.sh', source)
         self.assertIn('run_math_complex_header_abi()', source)
