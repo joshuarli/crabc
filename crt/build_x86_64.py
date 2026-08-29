@@ -89,13 +89,17 @@ STATIC_PIE_BOUNDARIES = (
     "__fini_array_end",
 )
 
+STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
+    "__crabc_x86_static_tls_bootstrap",
+)
+
 OBJECTS = (
     ObjectSpec(
         "rcrt1.o",
         "x86_64_rcrt1.rs",
         (".text._start",),
         ("_start",),
-        STATIC_PIE_BOUNDARIES,
+        STATIC_PIE_LIBC_BOUNDARIES,
     ),
     ObjectSpec("crti.o", "x86_64_crti.rs", (".init", ".fini"), ("_init", "_fini"), ()),
     ObjectSpec("crtn.o", "x86_64_crtn.rs", (".init", ".fini"), (), ()),

@@ -1,10 +1,10 @@
 # Native x86-64 static-PIE CRT foundation
 
 This private, target-specific evidence slice proves only the Linux/x86-64
-static-PIE bootstrap objects built by `crt/build_x86_64.py`. It includes one
-owned first-thread static-TLS setup step for a static executable. It does not
-add a supported x86-64 `crabc` platform, dynamic CRT, dynamic linker, libc,
-sysroot, or Rust facade.
+static-PIE bootstrap objects built by `crt/build_x86_64.py`. It proves checked
+relative relocation, GNU RELRO sealing, and the static lifecycle handoff. It
+does not add a supported x86-64 `crabc` platform, dynamic CRT, dynamic linker,
+libc, sysroot, or Rust facade.
 
 The builder emits exactly these Rust-produced objects:
 
@@ -17,26 +17,18 @@ The builder emits exactly these Rust-produced objects:
 - `crti.o` and `crtn.o`: ordered `.init`/`.fini` frame fragments consumed by
   the static lifecycle handoff.
 
-`crt/src/x86_64_startup.rs` is deliberately static-PIE-only. It parses the
-initial process vectors, invokes the executable preinit/init/fini arrays, and
-calls the libc-shaped `__libc_start_main` boundary. Before any lifecycle hook,
-it calls the private `crt/src/x86_64_static_tls.rs` bootstrap. That bootstrap
-rechecks the bounded auxiliary-vector/program-header contract, requires one
-`PT_PHDR`, accepts at most one `PT_TLS`, and validates an initialized TLS image
-against a readable, file-backed `PT_LOAD` range and its full allocation against
-a mapped `PT_LOAD` range. A `PT_TLS` image is copied below an aligned x86
-Variant-II thread pointer, its TBSS tail is zeroed, and the only private TCB
-field is written at `%fs:0` before `arch_prctl(ARCH_SET_FS)`. A program with no
-`PT_TLS` receives only that private self word and remains a valid static-PIE
-case.
+`crt/src/x86_64_startup.rs` is deliberately static-PIE-only. After relocation
+and RELRO it passes the original entry stack to the hidden static-link
+boundary `__crabc_x86_static_tls_bootstrap` through an
+`R_X86_64_RELATIVE` slot before any lifecycle callback or
+libc-shaped startup boundary. The libc owner in
+`libc/src/c_abi/x86_64/static_tls.rs` validates auxv and `PT_TLS`, materializes
+the x86 Variant-II main-thread image, and installs `%fs`. `rcrt1.o` does not
+duplicate that owner or define a general TCB, DTV, module ID,
+`__tls_get_addr`, dynamic-TLS growth, `dlopen` interaction, clone `SETTLS`,
+pthread lifecycle, or allocation reclamation.
 
-The TLS bootstrap owns exactly one initial main-executable image. It does not
-define a general TCB ABI, stack guard, DTV, module ID, `__tls_get_addr`,
-dynamic-TLS growth, `dlopen` interaction, clone `SETTLS`, pthread lifecycle,
-or allocation reclamation. Those remain future libc/ldso contracts. This
-source has no dynamic-loader handoff wire contract.
-
-Run the evidence only on a native Linux/x86-64 host:
+Run the no-TLS CRT foundation evidence only on a native Linux/x86-64 host:
 
 ```bash
 ./crt/run-x86_64.sh static-pie
@@ -44,15 +36,27 @@ Run the evidence only on a native Linux/x86-64 host:
 
 The launcher rejects a non-x86-64 host before Docker, requests an amd64 image,
 and checks the image identity. The checkout is read-only in the container.
-The focused test proves both no-TLS and high-alignment local-exec-TLS RELA and
-packed-RELR static PIE links are ET_DYN with no interpreter, needed library, or
-non-relative dynamic relocation. The TLS form has initialized data plus TBSS,
-checks `%fs:0 == ARCH_GET_FS`, and observes its values through preinit, init,
-main, and fini in order. Both forms receive distinct ASLR bases across
-executions; mutated non-relative RELA and malformed `PT_TLS.p_filesz` records
-fail closed with status 127. A compile-time nonzero-image-phase witness guards
-the Variant-II layout arithmetic that a page-aligned fixture alone cannot
-exercise.
+The focused unit test proves no-`PT_TLS` RELA and packed-RELR static PIE links
+are ET_DYN with no interpreter, needed library, or non-relative dynamic
+relocation. Its fixture supplies a test-local successful TLS-bootstrap stub
+only to prove the call boundary while keeping this no-TLS foundation linkable
+without libc. Both executions preserve lifecycle order, receive distinct ASLR
+bases, and reject a mutated non-relative RELA with status 127. It makes no TLS
+materialization claim.
+
+The separate composed evidence is the only proof of the real first-thread TLS
+handoff:
+
+```bash
+./scripts/dev-x86_64.sh libc-crt-static-tls
+```
+
+It links the real `rcrt1.o`/`crti.o`/`crtn.o` with the selected libc archive,
+requires the hidden libc boundary to resolve from that archive, and verifies a
+real initialized/TBSS/high-alignment `PT_TLS` image before preinit, init, main,
+and fini. It also rejects malformed `PT_TLS.p_filesz` with status 127. This
+remains one private static-PIE composition artifact, not complete CRT,
+pthread/TLS, loader, sysroot, or public x86 support.
 
 Remaining work is intentionally out of this slice: dynamic `crt1.o` and
 `Scrt1.o`, owned-loader startup handoff, x86-64 ldso relocation/TLS support,

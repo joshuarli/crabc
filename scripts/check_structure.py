@@ -3450,6 +3450,49 @@ def check_x86_header_layouts_baseline(errors: list[str]) -> None:
         )
 
 
+def check_x86_crt_libc_static_tls_handoff(errors: list[str]) -> None:
+    """Keep first-thread TLS ownership in libc and the rcrt1 static-link edge."""
+
+    crt_startup_source = ROOT / "crt" / "src" / "x86_64_startup.rs"
+    crt_startup = crt_startup_source.read_text(errors="replace")
+    bootstrap_call = "if unsafe { __crabc_x86_static_tls_bootstrap(initial_stack) } != 0"
+    lifecycle_call = "unsafe {\n        __libc_start_main("
+    for required in (
+        "use core::ffi::{c_int, c_void};",
+        "fn __crabc_x86_static_tls_bootstrap(initial_stack: *const usize) -> c_int;",
+        'core::arch::global_asm!(".hidden __crabc_x86_static_tls_bootstrap");',
+        bootstrap_call,
+        "startup_reject();",
+        lifecycle_call,
+    ):
+        if required not in crt_startup:
+            errors.append(
+                "crt/src/x86_64_startup.rs: rcrt1 must retain the hidden libc "
+                "Static Initial TLS v1 handoff"
+            )
+    if bootstrap_call in crt_startup and lifecycle_call in crt_startup and (
+        crt_startup.index(bootstrap_call) > crt_startup.index(lifecycle_call)
+    ):
+        errors.append(
+            "crt/src/x86_64_startup.rs: libc TLS bootstrap must precede lifecycle startup"
+        )
+    for forbidden in (
+        "x86_64_static_tls",
+        "install_initial_static_tls",
+        "ARCH_SET_FS",
+        "SYS_ARCH_PRCTL",
+    ):
+        if forbidden in crt_startup:
+            errors.append(
+                "crt/src/x86_64_startup.rs: CRT must not retain a first-thread TLS "
+                f"owner ({forbidden!r})"
+            )
+    if (ROOT / "crt" / "src" / "x86_64_static_tls.rs").exists():
+        errors.append(
+            "crt: first-thread x86 TLS must be libc-owned, not an rcrt1 module"
+        )
+
+
 def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     """Keep the selected x86 static C archive to its named vertical slices."""
 
@@ -5969,6 +6012,7 @@ def main() -> int:
     check_x86_memory_vm_boundary(errors)
     check_x86_terminal_boundary(errors)
     check_x86_header_layouts_baseline(errors)
+    check_x86_crt_libc_static_tls_handoff(errors)
     check_x86_libc_static_c_abi_boundary(errors)
     check_x86_rr_interval_boundary(errors)
     check_x86_sched_affinity_boundary(errors)

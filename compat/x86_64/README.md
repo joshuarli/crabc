@@ -327,6 +327,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signal-control
 ./scripts/dev-x86_64.sh libc-signal-execution
 ./scripts/dev-x86_64.sh libc-static-tls-v1
+./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
@@ -1752,8 +1753,25 @@ ambient runtime. It separately corrupts the fallback ELF version and `PT_TLS`
 `p_filesz`, requiring the entry shim's bootstrap-failure status 127 for each
 malformed image. It does not select DTV/module state, a loader handoff, dynamic
 TLS, a general pthread runtime, CRT/sysroot integration, or public x86
-support. The qualified private `rcrt1.o` static-PIE TLS bootstrap remains a
-separate CRT owner until a later explicit CRT-to-libc handoff.
+support. This isolated archive fixture is distinct from the composed
+`libc-crt-static-tls` startup proof below.
+
+`libc-crt-static-tls` is a separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family. It
+links the real Rust `rcrt1.o`/`crti.o`/`crtn.o` objects with the selected libc
+archive and a fixture-owned narrow `__libc_start_main` seam. The no-archive
+link must fail at the hidden, non-preemptible
+`__crabc_x86_static_tls_bootstrap` boundary. The candidate has one real
+initialized/TBSS/4096-byte-aligned `PT_TLS` image from two C translation
+units; after checked relocation and RELRO the real CRT invokes that libc owner
+before preinit, init, main, and fini. One selected normal pthread worker sees
+fresh initial TLS and errno. The gate rejects an interpreter, `DT_NEEDED`,
+PLT, unresolved symbols, and dynamic TLS forms, then corrupts final
+`PT_TLS.p_filesz` and requires status 127. Pinned musl is the selected C
+TLS/pthread oracle; because its ordinary startup does not dispatch the
+fixture's preinit array, the reference fixture explicitly invokes the same
+lifecycle sequence. This does not select a general CRT/startup or libc entry
+ABI, pthread/TLS parity, loader TLS, sysroot, or public x86 support.
 
 `libc-pthread-create-join-tls` is a separately recorded static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
@@ -2499,23 +2517,25 @@ not general `DT_NEEDED` or RUNPATH policy, TLS, symbol versions, `dl*`, a
 dynamic CRT/sysroot, or public x86 support.
 
 The separately launched `./crt/run-x86_64.sh static-pie` gate proves the
-private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` static-PIE foundation. Its
-no-`PT_TLS` form retains generic lifecycle behavior; its high-alignment
-initialized/TBSS local-exec form proves one main-executable x86 Variant-II
-image below a `%fs:0` self pointer before preinit/init/main/fini. It validates
-the program-header/image boundary and fails malformed TLS metadata closed.
-This is not a libc, pthread, dynamic-TLS, dynamic-loader, sysroot, or public
+private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` no-TLS static-PIE foundation.
+Its fixture has a test-local successful TLS-bootstrap stub so it can retain
+generic lifecycle and RELA/RELR relocation evidence without claiming TLS
+materialization. It rejects malformed non-relative RELA data closed. This is
+not a libc, pthread, dynamic-TLS, dynamic-loader, sysroot, or public
 x86-support claim.
 
-`libc-static-tls-v1` does not replace that CRT proof. It is a separate private
-libc-archive artifact that owns the same kind of final-executable TLS template
-only for its freestanding candidate and selected workers. Until an explicit
-CRT-to-libc handoff composes the two owners, neither proves a unified startup
-path, CRT integration, or public x86 support.
+`./scripts/dev-x86_64.sh libc-crt-static-tls` is the separate composed proof:
+real Rust CRT objects require the hidden libc bootstrap archive boundary, then
+run a high-alignment initialized/TBSS `PT_TLS` image through preinit/init/main/
+fini and one selected worker. It rejects malformed final `PT_TLS.p_filesz`
+with status 127. The fixture owns only the narrow `__libc_start_main` seam, so
+this proves neither general CRT or libc startup, loader TLS, sysroot, nor
+public x86 support.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
-`libc-static-tls-v1`, `libc-pthread-create-join-tls`, `libc-termios-control`,
+`libc-static-tls-v1`, `libc-crt-static-tls`,
+`libc-pthread-create-join-tls`, `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,

@@ -1,59 +1,26 @@
 #![no_std]
-#![allow(unexpected_cfgs)]
 
-//! Native x86-64 observable fixture for the bounded `rcrt1.o` bootstrap.
+//! Native x86-64 observable fixture for the bounded `rcrt1.o` foundation.
 //!
-//! The evidence runner builds this once without TLS and once with
-//! `--cfg crabc_static_pie_tls` plus its local-exec assembly companion.  The
-//! first form preserves the no-`PT_TLS` startup policy; the second proves the
-//! owned first-thread TLS bootstrap before executable preinit hooks.
+//! The production CRT now delegates first-thread TLS to the hidden libc
+//! bootstrap. This intentionally libc-free unit fixture supplies only a
+//! test-local successful handoff so it can keep proving relative relocation,
+//! lifecycle order, and static-PIE entry independently. The real
+//! CRT-to-libc TLS composition belongs to the x86 compatibility artifact.
 
 use core::ffi::c_void;
 
 type ApplicationMain = unsafe extern "C" fn(i32, *const *const u8, *const *const u8) -> i32;
 type LifecycleHook = unsafe extern "C" fn();
 
-#[cfg(crabc_static_pie_tls)]
-const INITIAL_TLS_VALUE: u64 = 0x746c_735f_696e_6974;
-#[cfg(crabc_static_pie_tls)]
-const PREINIT_TLS_VALUE: u64 = 0x7072_6569_6e69_745f;
-#[cfg(crabc_static_pie_tls)]
-const INIT_TLS_VALUE: u64 = 0x696e_6974_5f74_6c73;
-#[cfg(crabc_static_pie_tls)]
-const MAIN_TLS_VALUE: u64 = 0x6d61_696e_5f74_6c73;
-#[cfg(crabc_static_pie_tls)]
-const ARCH_GET_FS: usize = 0x1003;
-
-#[cfg(crabc_static_pie_tls)]
-unsafe extern "C" {
-    fn crabc_x86_64_static_tls_read_initialized() -> u64;
-    fn crabc_x86_64_static_tls_write_initialized(value: u64);
-    fn crabc_x86_64_static_tls_read_zero() -> u64;
-    fn crabc_x86_64_static_tls_write_zero(value: u64);
-    fn crabc_x86_64_static_tls_thread_pointer() -> *const u8;
-}
-
-#[cfg(crabc_static_pie_tls)]
-#[inline(never)]
-fn installed_fs_base() -> *const u8 {
-    let mut base = 0usize;
-    let result: isize;
-    unsafe {
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") 158usize => result,
-            in("rdi") ARCH_GET_FS,
-            in("rsi") (&raw mut base),
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack),
-        );
-    }
-    if result == 0 {
-        base as *const u8
-    } else {
-        core::ptr::null()
-    }
+/// Test-only replacement for the hidden libc owner.
+///
+/// The no-TLS CRT foundation must stay linkable without pulling a runtime
+/// archive. It proves the call boundary exists but deliberately does not
+/// claim to materialize TLS; the composed native artifact proves that path.
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_static_tls_bootstrap(_initial_stack: *const usize) -> i32 {
+    0
 }
 
 #[inline(never)]
@@ -73,55 +40,12 @@ fn write_stdout(bytes: &[u8]) {
 }
 
 unsafe extern "C" fn constructor() {
-    #[cfg(crabc_static_pie_tls)]
-    {
-        if unsafe { crabc_x86_64_static_tls_thread_pointer() }.is_null()
-            || unsafe { crabc_x86_64_static_tls_read_initialized() } != PREINIT_TLS_VALUE
-            || unsafe { crabc_x86_64_static_tls_read_zero() } != PREINIT_TLS_VALUE
-        {
-            exit(84);
-        }
-        unsafe {
-            crabc_x86_64_static_tls_write_initialized(INIT_TLS_VALUE);
-            crabc_x86_64_static_tls_write_zero(INIT_TLS_VALUE);
-        }
-    }
     write_stdout(b"I");
 }
 
 unsafe extern "C" fn destructor() {
-    #[cfg(crabc_static_pie_tls)]
-    {
-        if unsafe { crabc_x86_64_static_tls_read_initialized() } != MAIN_TLS_VALUE
-            || unsafe { crabc_x86_64_static_tls_read_zero() } != MAIN_TLS_VALUE
-        {
-            exit(85);
-        }
-    }
     write_stdout(b"F");
 }
-
-#[cfg(crabc_static_pie_tls)]
-unsafe extern "C" fn preinit() {
-    let thread_pointer = unsafe { crabc_x86_64_static_tls_thread_pointer() };
-    if thread_pointer.is_null()
-        || thread_pointer != installed_fs_base()
-        || unsafe { crabc_x86_64_static_tls_read_initialized() } != INITIAL_TLS_VALUE
-        || unsafe { crabc_x86_64_static_tls_read_zero() } != 0
-    {
-        exit(83);
-    }
-    unsafe {
-        crabc_x86_64_static_tls_write_initialized(PREINIT_TLS_VALUE);
-        crabc_x86_64_static_tls_write_zero(PREINIT_TLS_VALUE);
-    }
-    write_stdout(b"P");
-}
-
-#[cfg(crabc_static_pie_tls)]
-#[used]
-#[link_section = ".preinit_array"]
-static PREINIT: unsafe extern "C" fn() = preinit;
 
 #[used]
 #[link_section = ".init_array"]
@@ -139,19 +63,6 @@ pub unsafe extern "C" fn main(
 ) -> i32 {
     if argc <= 0 || argv.is_null() || unsafe { core::ptr::read(argv) }.is_null() {
         return 81;
-    }
-    #[cfg(crabc_static_pie_tls)]
-    {
-        if unsafe { crabc_x86_64_static_tls_thread_pointer() }.is_null()
-            || unsafe { crabc_x86_64_static_tls_read_initialized() } != INIT_TLS_VALUE
-            || unsafe { crabc_x86_64_static_tls_read_zero() } != INIT_TLS_VALUE
-        {
-            return 86;
-        }
-        unsafe {
-            crabc_x86_64_static_tls_write_initialized(MAIN_TLS_VALUE);
-            crabc_x86_64_static_tls_write_zero(MAIN_TLS_VALUE);
-        }
     }
 
     let mut output = [0u8; 16];

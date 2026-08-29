@@ -1,10 +1,11 @@
 //! Linux/x86-64 Static Initial TLS v1 owner.
 //!
 //! This module is the one libc-owned source of truth for the selected static
-//! executable's initial TLS template.  A freestanding entry shim passes the
-//! untouched Linux initial stack to [`__crabc_x86_static_tls_bootstrap`]
-//! before any C ABI entry can access `#[thread_local]` storage.  The bootstrap
-//! validates the final executable's live `AT_PHDR` program-header table,
+//! executable's initial TLS template.  The private x86 `rcrt1.o` startup
+//! passes the untouched Linux initial stack through its hidden static-link
+//! boundary to [`__crabc_x86_static_tls_bootstrap`] before any lifecycle hook or C ABI
+//! entry can access `#[thread_local]` storage.  The bootstrap validates the
+//! final executable's live `AT_PHDR` program-header table,
 //! derives its one optional `PT_TLS` image, materializes that image below an
 //! x86 Variant-II thread pointer, and installs the main thread's `%fs` base.
 //! It retains the immutable template so the bounded pthread worker can
@@ -14,10 +15,9 @@
 //! Static Initial TLS v1 is deliberately narrower than general TLS: it admits
 //! one final executable image with direct local-exec TPOFF accesses and one
 //! self-word TCB at `%fs:0`.  It has no module registry, dynamic image growth,
-//! loader handoff, or general TCB contract.  The existing private x86
-//! `rcrt1.o` static-PIE bootstrap remains a separately qualified prerequisite
-//! until a later CRT composition profile calls this owner rather than keeping
-//! equivalent first-thread arithmetic.
+//! loader handoff, or general TCB contract.  The hidden `rcrt1.o` static-link
+//! handoff is a private static-PIE composition boundary, not general CRT,
+//! loader, or public x86 runtime support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 Static Initial TLS v1 requires little-endian Linux/x86-64");

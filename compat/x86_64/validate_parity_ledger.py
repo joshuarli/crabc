@@ -3481,6 +3481,107 @@ def require_static_initial_tls_v1_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the one real CRT-to-libc TLS composition without promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-crt-initial-tls-handoff"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-crt-initial-tls-handoff artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-crt-initial-tls-handoff must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Static Initial TLS v1",
+        "still-planned `libc.pthread-tls`",
+        "rcrt1.o",
+        "crti.o",
+        "crtn.o",
+        "__crabc_x86_static_tls_bootstrap",
+        "preinit, init, main, and fini",
+        "PT_TLS.p_filesz",
+        "general CRT/startup",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-crt-initial-tls-handoff description omits {phrase}",
+        )
+    for owner in (
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_rcrt1.rs",
+        "crt/src/x86_64_startup.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "compat/x86_64/libc_crt_static_tls_probe.c",
+        "compat/x86_64/libc_crt_static_tls_peer.c",
+        "compat/x86_64/libc_crt_static_tls_startup_seam.c",
+        "compat/x86_64/run_libc_crt_static_tls.sh",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in artifact["source_owners"],
+            f"static-c-crt-initial-tls-handoff source owners omit {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "GLOBAL HIDDEN",
+        "GOTPCREL",
+        "R_X86_64_RELATIVE",
+        "PT_PHDR",
+        "PT_TLS",
+        "Variant-II",
+        "ARCH_SET_FS",
+        "GOTTPOFF/DTPOFF",
+        "__tls_get_addr",
+        "fresh Static Initial TLS v1 image",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-crt-initial-tls-handoff ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-crt-static-tls"},
+        "static-c-crt-initial-tls-handoff must use the closed libc-crt-static-tls command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "pinned-musl",
+        "explicit fixture lifecycle",
+        "no archive link fails",
+        "PT_PHDR ET_DYN static PIE",
+        "PIMF",
+        "PT_TLS p_filesz mutation",
+        "exit 127",
+        "general CRT",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-crt-initial-tls-handoff evidence scope omits {phrase}",
+        )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -5169,6 +5270,7 @@ def validate_ledger(
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
+    require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

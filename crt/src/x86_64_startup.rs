@@ -4,10 +4,9 @@
 //! is only the static-PIE foundation: no dynamic-loader handoff, ordinary
 //! `crt1.o`, or `Scrt1.o` contract is implied by this source.
 
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 
 const MAX_INITIAL_POINTERS: usize = 1 << 20;
-const MAX_AUXV_ENTRIES: usize = 4_096;
 
 type ApplicationMain = unsafe extern "C" fn(i32, *const *const u8, *const *const u8) -> i32;
 type LifecycleHook = unsafe extern "C" fn();
@@ -16,8 +15,6 @@ type LinkerArrayEntry = *const ();
 struct InitialProcess {
     argc: i32,
     argv: *const *const u8,
-    envp: *const *const u8,
-    auxv: *const usize,
 }
 
 unsafe extern "C" {
@@ -38,7 +35,13 @@ unsafe extern "C" {
     fn __crabc_init_array_end_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_start_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_end_address() -> *const LinkerArrayEntry;
+    fn __crabc_x86_static_tls_bootstrap(initial_stack: *const usize) -> c_int;
 }
+
+// The libc definition is deliberately hidden: this static-PIE CRT uses one
+// static-link handoff through an R_X86_64_RELATIVE slot, not a preemptible PLT
+// or dynamic-loader edge.
+core::arch::global_asm!(".hidden __crabc_x86_static_tls_bootstrap");
 
 impl InitialProcess {
     /// # Safety
@@ -71,24 +74,9 @@ impl InitialProcess {
             environment_count += 1;
         }
 
-        let auxv = envp.wrapping_add(environment_count.checked_add(1)?).cast::<usize>();
-        let mut auxiliary_count = 0usize;
-        loop {
-            if auxiliary_count == MAX_AUXV_ENTRIES {
-                return None;
-            }
-            let entry = auxiliary_count.checked_mul(2)?;
-            if unsafe { core::ptr::read(auxv.wrapping_add(entry)) } == 0 {
-                break;
-            }
-            auxiliary_count += 1;
-        }
-
         Some(Self {
             argc: i32::try_from(argc).ok()?,
             argv,
-            envp,
-            auxv,
         })
     }
 }
@@ -101,10 +89,12 @@ pub unsafe extern "C" fn __crabc_x86_64_static_pie_start(initial_stack: *const u
         Some(process) => process,
         None => startup_reject(),
     };
-    // The x86 local-exec model dereferences `%fs` directly.  Install the
-    // executable's one initial static image before any preinit/init hook,
-    // stack guard, allocator, or libc-shaped startup boundary can use TLS.
-    if !unsafe { super::x86_64_static_tls::install_initial_static_tls(process.auxv) } {
+    // The x86 local-exec model dereferences `%fs` directly.  Libc owns the
+    // executable's Static Initial TLS v1 template and must install the main
+    // image before any lifecycle hook or libc-shaped startup boundary can use
+    // TLS.  Pass the original entry stack so libc owns all auxv/PT_TLS
+    // validation as well as materialization.
+    if unsafe { __crabc_x86_static_tls_bootstrap(initial_stack) } != 0 {
         startup_reject();
     }
     unsafe {

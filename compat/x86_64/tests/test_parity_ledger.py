@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 40)
+        self.assertEqual(report["verified_artifact_count"], 41)
         self.assertEqual(report["header_layout_probe_count"], 35)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -2167,12 +2167,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         static_pie = self.family(data, "crt.static-pie")
         self.assertEqual(static_pie["status"], "foundation-verified")
         for owner in (
+            "crt/build_x86_64.py",
             "crt/src/x86_64_startup.rs",
-            "crt/src/x86_64_static_tls.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
             "crt/fixtures/static_pie_fixture_x86_64.rs",
-            "crt/fixtures/static_pie_tls_fixture_x86_64.S",
             "crt/tests/test_x86_64_static_pie.py",
             "crt/x86_64-static-pie.md",
+            "compat/x86_64/run_libc_crt_static_tls.sh",
             "compat/x86_64/README.md",
         ):
             self.assertIn(owner, static_pie["source_owners"])
@@ -2181,10 +2182,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./crt/run-x86_64.sh static-pie"},
         )
         static_pie_abi = " ".join(static_pie["x86_abi_prerequisites"])
-        for detail in ("AT_PHDR", "PT_TLS", "Variant-II", "%fs:0", "ARCH_SET_FS", "No-PT_TLS"):
+        for detail in (
+            "hidden static-link call",
+            "R_X86_64_RELATIVE slot",
+            "__crabc_x86_static_tls_bootstrap",
+            "no-PT_TLS",
+            "static-c-crt-initial-tls-handoff",
+        ):
             self.assertIn(detail, static_pie_abi)
         static_pie_scope = static_pie["native_evidence"][0]["scope"]
-        for detail in ("ARCH_GET_FS", "preinit/init/main/fini", "dynamic TLS", "pthreads"):
+        for detail in ("no-PT_TLS", "test-local", "TLS materialization", "public x86 support"):
             self.assertIn(detail, static_pie_scope)
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
@@ -4259,17 +4266,19 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 3)
+        self.assertEqual(len(artifacts), 4)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
             {
                 "static-c-initial-tls-v1",
+                "static-c-crt-initial-tls-handoff",
                 "static-c-pthread-create-join-tls",
                 "static-c-pthread-explicit-exit-tls",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
+        crt_handoff = by_id["static-c-crt-initial-tls-handoff"]
         normal_return = by_id["static-c-pthread-create-join-tls"]
         explicit_exit = by_id["static-c-pthread-explicit-exit-tls"]
         for artifact in artifacts:
@@ -4329,6 +4338,45 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_libc_static_tls_v1.sh",
         ):
             self.assertIn(owner, static_tls["source_owners"])
+
+        self.assertEqual(
+            crt_handoff["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-crt-static-tls",
+        )
+        for phrase in (
+            "rcrt1.o",
+            "crti.o",
+            "crtn.o",
+            "__crabc_x86_static_tls_bootstrap",
+            "preinit, init, main, and fini",
+            "PT_TLS.p_filesz",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt_handoff["description"])
+        for owner in (
+            "crt/build_x86_64.py",
+            "crt/src/x86_64_rcrt1.rs",
+            "crt/src/x86_64_startup.rs",
+            "crt/src/x86_64_crti.rs",
+            "crt/src/x86_64_crtn.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "compat/x86_64/libc_crt_static_tls_probe.c",
+            "compat/x86_64/libc_crt_static_tls_peer.c",
+            "compat/x86_64/libc_crt_static_tls_startup_seam.c",
+            "compat/x86_64/run_libc_crt_static_tls.sh",
+        ):
+            self.assertIn(owner, crt_handoff["source_owners"])
+        crt_scope = crt_handoff["native_evidence"][0]["scope"]
+        for phrase in (
+            "pinned-musl",
+            "explicit fixture lifecycle",
+            "no archive link fails",
+            "PIMF",
+            "PT_TLS p_filesz mutation",
+            "exit 127",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt_scope)
 
         changed = copy.deepcopy(data)
         changed_artifacts = self.family(changed, "libc.pthread-tls")[
