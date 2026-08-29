@@ -9,6 +9,7 @@
 
 mod x86_64_array_boundaries;
 mod x86_64_startup;
+mod x86_64_static_tls;
 
 pub use x86_64_startup::__crabc_x86_64_static_pie_start;
 

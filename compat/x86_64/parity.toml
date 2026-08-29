@@ -2852,15 +2852,15 @@ status = "planned"
 [[family]]
 id = "crt.static-pie"
 order = 140
-depends_on = ["core.architecture", "ldso.relative-relocation"]
+depends_on = ["oracle.musl-toolchain", "core.architecture", "ldso.relative-relocation"]
 category = "runtime-artifact"
-description = "Bounded static-PIE rcrt1/crti/crtn startup, checked relative relocation, and GNU RELRO foundation."
+description = "Bounded static-PIE rcrt1/crti/crtn startup, checked relative relocation, GNU RELRO, and one private first-thread x86 Variant-II static-TLS image foundation."
 aarch64_gates = ["sysroot", "lto"]
-source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/run-x86_64.sh"]
-x86_abi_prerequisites = ["x86 static PIE entry stack", "R_X86_64_RELATIVE/RELR", "GNU RELRO", ".init/.fini array boundaries"]
+source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_startup.rs", "crt/src/x86_64_static_tls.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/fixtures/static_pie_fixture_x86_64.rs", "crt/fixtures/static_pie_tls_fixture_x86_64.S", "crt/tests/test_x86_64_static_pie.py", "crt/x86_64-static-pie.md", "crt/run-x86_64.sh", "compat/x86_64/README.md"]
+x86_abi_prerequisites = ["x86 static PIE entry stack", "R_X86_64_RELATIVE/RELR", "GNU RELRO", ".init/.fini array boundaries", "Bounded AT_PHDR/AT_PHENT/AT_PHNUM and unique PT_PHDR derive the runtime load bias; an optional unique PT_TLS image has checked p_filesz/p_memsz/p_align and readable file-backed plus mapped PT_LOAD containment", "x86 Variant-II local-exec TLS places the initialized image and TBSS below an aligned TP; the private first-thread record writes only its self word at %fs:0 and installs that TP with arch_prctl(ARCH_SET_FS)", "No-PT_TLS static PIE remains valid through a private self-word-only first-thread mapping; this does not define pthread, dynamic TLS, DTV, __tls_get_addr, clone SETTLS, or loader lifecycle behavior"]
 x86_header_prerequisites = ["No public application header claim until startup objects are installed through an owned x86 sysroot."]
-native_evidence = [{ state = "verified", command = "./crt/run-x86_64.sh static-pie", scope = "Bounded rcrt1/crti/crtn static-PIE proof only." }]
-oracle = [{ kind = "elf-abi", source = "System V AMD64 psABI", role = "Startup and relocation ABI contract." }]
+native_evidence = [{ state = "verified", command = "./crt/run-x86_64.sh static-pie", scope = "Native RELA and packed-RELR ET_DYN static-PIE evidence with no interpreter, DT_NEEDED, or non-relative dynamic relocation. The no-PT_TLS fixture preserves generic lifecycle behavior; the high-alignment initialized/TBSS assembly fixture proves an owned first main-executable x86 local-exec TLS image before preinit/init/main/fini, exact %fs:0/ARCH_GET_FS self equality, zero tail, and value persistence. Mutated non-relative RELA and malformed PT_TLS p_filesz fail closed. This is only a private first-thread static bootstrap: it does not select libc, pthreads, stack guards, dynamic TLS, ldso, dynamic CRT, sysroot, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Initial static-TLS ordering and x86 Variant-II image-below-TP source oracle; no musl pthread or dynamic-TLS behavior is selected." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Startup, local-exec TPOFF, and relocation ABI contract." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "arch_prctl ARCH_SET_FS/ARCH_GET_FS and anonymous mmap contract." }]
 capabilities = []
 status = "foundation-verified"
 

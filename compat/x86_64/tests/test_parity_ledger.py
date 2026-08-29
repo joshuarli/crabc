@@ -928,7 +928,28 @@ class X86ParityLedgerTests(unittest.TestCase):
             posix_runtime["source_owners"],
         )
         self.assertEqual(self.family(data, "ldso.relative-relocation")["status"], "foundation-verified")
-        self.assertEqual(self.family(data, "crt.static-pie")["status"], "foundation-verified")
+        static_pie = self.family(data, "crt.static-pie")
+        self.assertEqual(static_pie["status"], "foundation-verified")
+        for owner in (
+            "crt/src/x86_64_startup.rs",
+            "crt/src/x86_64_static_tls.rs",
+            "crt/fixtures/static_pie_fixture_x86_64.rs",
+            "crt/fixtures/static_pie_tls_fixture_x86_64.S",
+            "crt/tests/test_x86_64_static_pie.py",
+            "crt/x86_64-static-pie.md",
+            "compat/x86_64/README.md",
+        ):
+            self.assertIn(owner, static_pie["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in static_pie["native_evidence"]},
+            {"./crt/run-x86_64.sh static-pie"},
+        )
+        static_pie_abi = " ".join(static_pie["x86_abi_prerequisites"])
+        for detail in ("AT_PHDR", "PT_TLS", "Variant-II", "%fs:0", "ARCH_SET_FS", "No-PT_TLS"):
+            self.assertIn(detail, static_pie_abi)
+        static_pie_scope = static_pie["native_evidence"][0]["scope"]
+        for detail in ("ARCH_GET_FS", "preinit/init/main/fini", "dynamic TLS", "pthreads"):
+            self.assertIn(detail, static_pie_scope)
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]

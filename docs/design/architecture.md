@@ -17,8 +17,9 @@ boundaries.
    conventional executable lifecycle boundary. `builtins` owns the separate
    Rust `no_std` compiler-helper archive. Neither owns libc or loader process
    state. The x86 program currently has only a separately proven static-PIE
-   `rcrt1.o`/`crti.o`/`crtn.o` foundation; it is not an installed x86 sysroot
-   or dynamic-CRT contract.
+   `rcrt1.o`/`crti.o`/`crtn.o` foundation, including one private first-thread
+   Variant-II TLS image bootstrap; it is not an installed x86 sysroot,
+   pthread/TLS lifecycle, or dynamic-CRT contract.
 5. `crabc-mimalloc` is the incomplete pinned, errno-free allocator engine. It
    consumes `crabc-core` and reviewed focused cryptographic primitives, but
    never libc. Before promotion, `libc` has one private Rust-only dependency

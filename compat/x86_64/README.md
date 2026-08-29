@@ -2181,6 +2181,15 @@ parser. It validates file-facing ELF/program-header and RELA/RELR metadata
 before a future mapper or relocation engine can consume it; it neither maps an
 image nor selects `crabc-ldso`.
 
+The separately launched `./crt/run-x86_64.sh static-pie` gate proves the
+private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` static-PIE foundation. Its
+no-`PT_TLS` form retains generic lifecycle behavior; its high-alignment
+initialized/TBSS local-exec form proves one main-executable x86 Variant-II
+image below a `%fs:0` self pointer before preinit/init/main/fini. It validates
+the program-header/image boundary and fails malformed TLS metadata closed.
+This is not a libc, pthread, dynamic-TLS, dynamic-loader, sysroot, or public
+x86-support claim.
+
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, and
 `libc-termios-control`, `libc-process-context`, `libc-child-reaping`, and
@@ -2194,9 +2203,10 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
-and `libc-ffs` static archive harnesses,
+and `libc-ffs` static archive harnesses, and the separately scoped
+`static-pie` CRT gate,
 the lane owns no
 allocator evidence and exposes no generic Cargo, shell, general `crabc-libc`
-artifact, dynamic-loader artifact, CRT, or sysroot command. Those remain
+artifact, dynamic-loader artifact, general CRT, or sysroot command. Those remain
 separate future completion work under `x86-64.md`; passing any command must
 not be reported as x86_64 runtime parity.

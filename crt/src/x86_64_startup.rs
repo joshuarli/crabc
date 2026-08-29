@@ -101,7 +101,12 @@ pub unsafe extern "C" fn __crabc_x86_64_static_pie_start(initial_stack: *const u
         Some(process) => process,
         None => startup_reject(),
     };
-    let _auxv = process.auxv;
+    // The x86 local-exec model dereferences `%fs` directly.  Install the
+    // executable's one initial static image before any preinit/init hook,
+    // stack guard, allocator, or libc-shaped startup boundary can use TLS.
+    if !unsafe { super::x86_64_static_tls::install_initial_static_tls(process.auxv) } {
+        startup_reject();
+    }
     unsafe {
         __libc_start_main(
             main,
