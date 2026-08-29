@@ -44,7 +44,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 27)
+        self.assertEqual(report["verified_slice_count"], 28)
         self.assertEqual(report["verified_artifact_count"], 33)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -259,7 +259,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             if isinstance(slice_entry, dict)
         }
         fnmatch_slice = direct_slices_by_id["pattern.fnmatch"]
+        glob_slice = direct_slices_by_id["pattern.glob"]
         assert isinstance(fnmatch_slice, dict)
+        assert isinstance(glob_slice, dict)
         self.assertEqual(fnmatch_slice["capabilities"], ["pattern.fnmatch"])
         for owner in (
             "crabc-core/src/pattern.rs",
@@ -273,8 +275,27 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in fnmatch_slice["native_evidence"]},
             {"./scripts/dev-x86_64.sh facade"},
         )
-        self.assertIn("glob", fnmatch_slice["description"])
-        self.assertIn("glob", fnmatch_slice["native_evidence"][0]["scope"])
+        self.assertIn("separate alloc-gated", fnmatch_slice["description"])
+
+        self.assertEqual(glob_slice["capabilities"], ["pattern.glob"])
+        for owner in (
+            "crabc-core/src/fs.rs",
+            "crabc-core/src/pattern.rs",
+            "crabc-rs/src/fs_x86_64.rs",
+            "crabc-rs/src/raw_dir.rs",
+            "crabc-rs/src/pattern_x86_64.rs",
+            "crabc-rs/tests/x86_64_glob.rs",
+            "crabc-rs/examples/glob_direct_probe.rs",
+            "compat/x86_64/verify_glob_direct.sh",
+        ):
+            self.assertIn(owner, glob_slice["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in glob_slice["native_evidence"]},
+            {"./scripts/dev-x86_64.sh facade"},
+        )
+        self.assertIn("explicit `PathArg` root", glob_slice["description"])
+        self.assertIn("fixed custom Rust allocator", glob_slice["x86_abi_prerequisites"][0])
+        self.assertIn("glob_t", glob_slice["x86_header_prerequisites"][0])
         self.assertIn("pattern.fnmatch", direct["capabilities"])
         self.assertIn("pattern.glob", direct["capabilities"])
         self.assertNotIn("pattern.glob", fnmatch_slice["capabilities"])

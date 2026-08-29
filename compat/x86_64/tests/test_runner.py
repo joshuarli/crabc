@@ -7082,13 +7082,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 for invocation in capture.read_bytes().split(bytes((0, 0)))
                 if invocation
             ]
-            self.assertEqual(len(invocations), 5)
+            self.assertEqual(len(invocations), 7)
             (
                 arguments,
                 fnmatch_build_arguments,
                 fnmatch_verifier_arguments,
                 chroot_arguments,
                 allocation_arguments,
+                glob_build_arguments,
+                glob_verifier_arguments,
             ) = invocations
             self.assertIn("--platform", arguments)
             self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
@@ -7370,6 +7372,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test",
                     "calendar_local",
                     "--test",
+                    "x86_64_glob",
+                    "--test",
                     "x86_64_child_ownership",
                     "--test",
                     "x86_64_pty_basic",
@@ -7380,6 +7384,42 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--",
                     "--test-threads=1",
                 ],
+            )
+            self.assertIn("--platform", glob_build_arguments)
+            self.assertNotIn("--cap-add=SYS_CHROOT", glob_build_arguments)
+            glob_build_platform_index = glob_build_arguments.index("--platform")
+            self.assertEqual(
+                glob_build_arguments[glob_build_platform_index + 1], "linux/amd64"
+            )
+            glob_build_cargo_index = glob_build_arguments.index("cargo")
+            self.assertEqual(
+                glob_build_arguments[glob_build_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--features",
+                    "alloc",
+                    "--release",
+                    "--example",
+                    "glob_direct_probe",
+                ],
+            )
+            self.assertIn("--platform", glob_verifier_arguments)
+            self.assertNotIn("--cap-add=SYS_CHROOT", glob_verifier_arguments)
+            glob_verifier_platform_index = glob_verifier_arguments.index("--platform")
+            self.assertEqual(
+                glob_verifier_arguments[glob_verifier_platform_index + 1], "linux/amd64"
+            )
+            glob_verifier_bash_index = glob_verifier_arguments.index("bash")
+            self.assertEqual(
+                glob_verifier_arguments[glob_verifier_bash_index:],
+                ["bash", "/workspace/compat/x86_64/verify_glob_direct.sh"],
             )
 
     def test_ldso_relocation_uses_the_native_amd64_container_and_fixed_source_scope(self) -> None:
@@ -7458,17 +7498,23 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn('"$test_binary" --test-threads=1', source_test_command)
             self.assertNotIn("cargo", source_test_command)
 
-    def test_facade_keeps_fnmatch_direct_and_archive_checked(self) -> None:
+    def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
-        verifier = (
+        fnmatch_verifier = (
             ROOT / "compat" / "x86_64" / "verify_fnmatch_direct.sh"
+        ).read_text(encoding="utf-8")
+        glob_verifier = (
+            ROOT / "compat" / "x86_64" / "verify_glob_direct.sh"
         ).read_text(encoding="utf-8")
 
         self.assertIn("--test x86_64_fnmatch", source)
         self.assertIn("--release --example fnmatch_direct_probe", source)
         self.assertIn("compat/x86_64/verify_fnmatch_direct.sh", source)
         self.assertIn("allocation-free matcher", source)
-        self.assertIn("glob API", source)
+        self.assertIn("--test x86_64_glob", source)
+        self.assertIn("--features alloc --release --example glob_direct_probe", source)
+        self.assertIn("compat/x86_64/verify_glob_direct.sh", source)
+        self.assertIn("fixed Rust allocator", source)
         for required in (
             "Advanced Micro Devices X86-64",
             "crabc_rs_fnmatch_direct_probe",
@@ -7476,7 +7522,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "readelf",
             "nm",
         ):
-            self.assertIn(required, verifier)
+            self.assertIn(required, fnmatch_verifier)
+        for required in (
+            "Advanced Micro Devices X86-64",
+            "crabc_rs_glob_direct_probe",
+            "glob globfree fnmatch",
+            "opendir readdir readdir64 closedir scandir",
+            "__errno_location",
+            "malloc calloc realloc reallocarray free",
+            "readelf",
+            "nm",
+        ):
+            self.assertIn(required, glob_verifier)
 
 
 if __name__ == "__main__":

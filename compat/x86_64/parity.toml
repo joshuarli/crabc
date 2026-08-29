@@ -99,7 +99,7 @@ id = "facade.direct"
 order = 20
 depends_on = ["oracle.musl-toolchain", "core.architecture"]
 category = "rust-facade"
-description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, select/pselect, and packed epoll readiness including temporary signal masks, read-only process identity/session plus supplementary-group query/fill and pidfd_open, typed calling-process resource-limit query/mutation plus read-only targeted resource-limit query and the process-global umask exchange, unsafe calling-task filesystem-credential query/current-effective-ID requests, typed read-only resource usage copied from Linux's initialized kernel prefix without musl's reserved tail, typed read-only process accounting in opaque clock ticks, getpriority plus typed scheduling-priority mutation and scheduler-priority bounds, fcntl(F_GETLK) lock observation plus typed F_GETFL/F_SETFL status-flag observation/mutation, typed fs::flock advisory whole-file locking, typed fs::sendfile descriptor transfer, typed fs::copy_file_range descriptor-range copying, typed fs::posix_fallocate mode-zero range allocation, typed fs::fallocate closed-mode range allocation, and the bounded descriptor, directory-relative, current-directory, symlink, and whole-second timestamp-mutation family, gettid/getcpu/sched_yield plus read-only round-robin interval and direct bounded CPU-affinity observation/mutation, direct calling-thread setresuid/setresgid, and borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus direct anonymous memory-file creation and bounded seal observation/mutation, direct typed access/accessat real/effective-credential observations whose separate filesystem.path-core capability is admitted only through the record-owning aggregate evidence, caller-buffer plus alloc-gated physical current-working-directory observations and validated logical-current-directory names from explicit `&CStr` snapshots, typed fadvise64/readahead, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family plus typed fs::sync system-wide filesystem synchronization, typed fs::syncfs descriptor-associated filesystem synchronization, and typed sync_file_range range-writeback requests, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation, typed nanosleep and clock_nanosleep with mode-specific EINTR results, complete typed process interval-timer control plus bounded aliases, complete typed timer descriptors, the allocation-free native `pattern::fnmatch` matcher, and the proved signal-action boundary. The alloc-backed `pattern.glob` traversal remains an unexposed, unverified x86 parity obligation."
+description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, select/pselect, and packed epoll readiness including temporary signal masks, read-only process identity/session plus supplementary-group query/fill and pidfd_open, typed calling-process resource-limit query/mutation plus read-only targeted resource-limit query and the process-global umask exchange, unsafe calling-task filesystem-credential query/current-effective-ID requests, typed read-only resource usage copied from Linux's initialized kernel prefix without musl's reserved tail, typed read-only process accounting in opaque clock ticks, getpriority plus typed scheduling-priority mutation and scheduler-priority bounds, fcntl(F_GETLK) lock observation plus typed F_GETFL/F_SETFL status-flag observation/mutation, typed fs::flock advisory whole-file locking, typed fs::sendfile descriptor transfer, typed fs::copy_file_range descriptor-range copying, typed fs::posix_fallocate mode-zero range allocation, typed fs::fallocate closed-mode range allocation, and the bounded descriptor, directory-relative, current-directory, symlink, and whole-second timestamp-mutation family, gettid/getcpu/sched_yield plus read-only round-robin interval and direct bounded CPU-affinity observation/mutation, direct calling-thread setresuid/setresgid, and borrowed-atomic futex wait/wake, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice plus direct anonymous memory-file creation and bounded seal observation/mutation, direct typed access/accessat real/effective-credential observations whose separate filesystem.path-core capability is admitted only through the record-owning aggregate evidence, caller-buffer plus alloc-gated physical current-working-directory observations and validated logical-current-directory names from explicit `&CStr` snapshots, typed fadvise64/readahead, the complete typed seek/tell/ftruncate/fsync/fdatasync file-position family plus typed fs::sync system-wide filesystem synchronization, typed fs::syncfs descriptor-associated filesystem synchronization, and typed sync_file_range range-writeback requests, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, mapping synchronization, Linux/POSIX advice, and page residency, clock_gettime/clock_getres plus a bounded whole-second `time` observation, typed nanosleep and clock_nanosleep with mode-specific EINTR results, complete typed process interval-timer control plus bounded aliases, complete typed timer descriptors, the allocation-free native `pattern::fnmatch` matcher, alloc-gated explicit-root `pattern::{GlobPath, glob, glob_at}` traversal, and the proved signal-action boundary. Both pattern slices remain Rust-only native evidence, not public C pattern APIs or public x86 support."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -195,10 +195,13 @@ source_owners = [
   "crabc-rs/tests/x86_64_time.rs",
   "crabc-rs/tests/x86_64_times.rs",
   "crabc-rs/tests/x86_64_fnmatch.rs",
+  "crabc-rs/tests/x86_64_glob.rs",
   "crabc-rs/examples/fnmatch_direct_probe.rs",
+  "crabc-rs/examples/glob_direct_probe.rs",
   "compat/crabc-rs/verify_fnmatch.py",
   "compat/crabc-rs/tests/test_verify_fnmatch.py",
   "compat/x86_64/verify_fnmatch_direct.sh",
+  "compat/x86_64/verify_glob_direct.sh",
   "compat/x86_64/run_x86_fcntl_getlk_reference.sh",
   "compat/x86_64/run_x86_fcntl_status_reference.sh",
   "compat/x86_64/run_x86_flock_reference.sh",
@@ -518,7 +521,7 @@ status = "foundation-verified"
 
 [[family.verified_slice]]
 id = "pattern.fnmatch"
-description = "Private native x86 direct filename matching: `pattern::{fnmatch, FnmatchFlags}` accepts borrowed `CStr` byte sequences and delegates to the target-neutral allocation-free `crabc-core` matcher. It preserves the selected POSIX wildcard, bracket-class, pathname, leading-period, escaping, leading-directory, ASCII casefold, and non-UTF-8-byte behavior as a Rust-owned boolean. This admits neither a C `fnmatch`/errno boundary nor the allocation-backed AArch64 `glob`/`glob_at` traversal API, and does not make x86 public support."
+description = "Private native x86 direct filename matching: `pattern::{fnmatch, FnmatchFlags}` accepts borrowed `CStr` byte sequences and delegates to the target-neutral allocation-free `crabc-core` matcher. It preserves the selected POSIX wildcard, bracket-class, pathname, leading-period, escaping, leading-directory, ASCII casefold, and non-UTF-8-byte behavior as a Rust-owned boolean. This admits neither a C `fnmatch`/errno boundary nor an allocation boundary; the separate alloc-gated Rust `glob`/`glob_at` slice is independently evidenced below. Neither slice makes x86 public support."
 source_owners = [
   "crabc-core/src/pattern.rs",
   "crabc-rs/src/lib.rs",
@@ -531,10 +534,31 @@ source_owners = [
   "scripts/dev-x86_64.sh",
 ]
 x86_abi_prerequisites = ["The selected matcher has no x86 syscall or kernel-record ABI: typed `CStr` inputs exclude interior NUL and repr-transparent `FnmatchFlags` carries the five selected u32 bits into the shared byte matcher. The release no-std archive is checked as x86-64 ELF, defines its direct probe entry point, and has no undefined public C fnmatch, errno-TLS, or allocation symbol."]
-x86_header_prerequisites = ["This is a Rust-only `CStr`/bitflags interface. It selects no x86 fnmatch header/API/ABI, C errno TLS, locale state, allocator, glob_t, glob/globfree, filesystem traversal, process CWD policy, or public x86 support."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Focused no-default-feature x86 Rust regressions cover wildcard, bracket-class, non-UTF-8, PATHNAME, PERIOD, escape/NOESCAPE, CASEFOLD, and LEADING_DIR semantics. The same gate builds the release no-std static probe and uses native readelf/nm to require x86-64 ELF and the direct entry point while rejecting undefined public C fnmatch, errno-TLS, and allocation references. Alloc-backed glob traversal remains unexposed and unverified on x86." }]
+x86_header_prerequisites = ["This is a Rust-only `CStr`/bitflags interface. It selects no x86 fnmatch header/API/ABI, C errno TLS, locale state, allocator, glob_t, glob/globfree, filesystem traversal, or public x86 support. The separately verified glob slice retains its own Rust-only boundary."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Focused no-default-feature x86 Rust regressions cover wildcard, bracket-class, non-UTF-8, PATHNAME, PERIOD, escape/NOESCAPE, CASEFOLD, and LEADING_DIR semantics. The same gate builds the release no-std static probe and uses native readelf/nm to require x86-64 ELF and the direct entry point while rejecting undefined public C fnmatch, errno-TLS, and allocation references. The alloc-gated glob slice has separate archive and regression evidence." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "POSIX filename-pattern semantic oracle for the shared native matcher only; no C fnmatch API or errno boundary is selected." }]
 capabilities = ["pattern.fnmatch"]
+
+[[family.verified_slice]]
+id = "pattern.glob"
+description = "Private native x86 allocation-gated filename expansion: `pattern::{GlobPath, glob, glob_at}` accepts an explicit `PathArg` root or borrowed directory descriptor plus a relative byte pattern, expands each component through direct x86 `openat` and `RawDir` `getdents64` records, and returns sorted owned raw-byte paths. It rejects empty, absolute, empty-component, parent-escaping, and interior-NUL patterns; wildcard traversal never yields `.` or `..`; missing intermediate directories are no matches while root/read failures remain direct errors. Intermediate symlinks retain Linux openat semantics, so this is not a filesystem-confinement boundary. It selects no C `glob_t`, `glob`, `globfree`, `DIR`, errno, hidden CWD policy, or public x86 support."
+source_owners = [
+  "crabc-core/src/fs.rs",
+  "crabc-core/src/pattern.rs",
+  "crabc-rs/src/lib.rs",
+  "crabc-rs/src/fs_x86_64.rs",
+  "crabc-rs/src/raw_dir.rs",
+  "crabc-rs/src/pattern_x86_64.rs",
+  "crabc-rs/tests/x86_64_glob.rs",
+  "crabc-rs/examples/glob_direct_probe.rs",
+  "compat/x86_64/verify_glob_direct.sh",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = ["The traversal uses the already selected Linux/x86-64 openat and getdents64 syscall boundary through typed PathArg, BorrowedFd, OwnedFd, and RawDir records; no C pathname, DIR, glob_t, errno, or allocator ABI crosses it. The release no-std archive is checked as x86-64 ELF and defines its direct probe entry point. Its fixed custom Rust allocator is intentional, while undefined public C glob, directory-stream, fnmatch, errno-TLS, and allocation symbols are rejected."]
+x86_header_prerequisites = ["This is a Rust-only alloc-gated pathname/descriptor interface. It selects no x86 glob.h, dirent.h, fnmatch header/API/ABI, C errno TLS, glob_t, public C allocator, hidden CWD policy, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Focused alloc-gated x86 Rust regressions create byte-oriented fixtures and prove sorted root-prefixed matches, descriptor-relative nested traversal, non-UTF-8 preservation, wildcard dot-entry exclusion, no-match/root-error policy, and empty/absolute/parent/NUL rejection. The same gate builds the release no-std glob probe with its fixed Rust allocator and uses native readelf/nm to require x86-64 ELF plus the direct entry point while rejecting undefined public C glob/globfree/fnmatch, directory-stream, errno-TLS, and allocation symbols." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "POSIX filename-component matching oracle for the shared native matcher only; explicit-root traversal and owned result policy are intentionally Rust-owned and do not select C glob APIs." }]
+capabilities = ["pattern.glob"]
 
 [[family]]
 id = "facade.record-owning"

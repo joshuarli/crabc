@@ -86,7 +86,8 @@ pub mod collections;
 // `mm::remap_file_pages`, query/replay-only `process::kernel_brk`, `memory`,
 // direct checked `mount::{mount, unmount}` requests with no proven
 // successful namespace mutation, `numeric`, `param`, allocation-free native
-// `pattern::fnmatch` (not alloc-backed glob traversal), `pipe`, bounded
+// `pattern::fnmatch` plus alloc-gated explicit-root
+// `pattern::{GlobPath, glob, glob_at}` traversal, `pipe`, bounded
 // `process` identity/session
 // and supplementary-group query/fill plus pidfd creation and resource-limit
 // query/mutation, strict alloc-gated owned `/etc/passwd` and `/etc/group`

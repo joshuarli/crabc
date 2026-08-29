@@ -8,8 +8,10 @@ whole-file advisory locking, `fs::sendfile` descriptor transfer,
 `fs::copy_file_range` descriptor-range copying,
 `fs::posix_fallocate` fixed-mode descriptor-range allocation,
 `fs::fallocate` closed-mode descriptor-range allocation,
-allocation-free `pattern::{fnmatch, FnmatchFlags}` byte matching with no C
-`fnmatch`, errno, or allocator reference,
+allocation-free `pattern::{fnmatch, FnmatchFlags}` byte matching and
+alloc-gated explicit-root `pattern::{GlobPath, glob, glob_at}` traversal with
+no C `fnmatch`/`glob`/`globfree`, C `DIR`, errno, or public C allocator
+boundary,
 `fs::{StatFs, StatVfs, StatVfsMountFlags, statfs, fstatfs, statvfs, fstatvfs}`
 filesystem-capacity observation,
 the bounded timestamp-mutation family headed by
@@ -187,12 +189,16 @@ authority nor performs successful mount-namespace mutation. Null source/type for
 propagation policy, filesystem-descriptor mount APIs, C ABI/errno TLS, and
 public x86 support remain excluded.
 
-The `facade` gate also proves the direct matcher as a release no-std archive:
-native `readelf` requires x86-64 members and native `nm` requires the probe
-entry point while rejecting public C `fnmatch`, errno-TLS, and allocator
-references. This selects no allocation-backed `pattern::{glob, glob_at}`
-traversal API; that AArch64 capability remains unexposed and unverified on
-x86.
+The `facade` gate proves both native pattern slices as release no-std archives.
+For `fnmatch`, native `readelf` requires x86-64 members and native `nm`
+requires the probe entry point while rejecting public C `fnmatch`, errno-TLS,
+and allocator references. For alloc-gated `glob`/`glob_at`, the fixed probe
+allocator is intentionally Rust-owned; native `nm` instead rejects public C
+`glob`/`globfree`/`fnmatch`, C directory-stream, errno-TLS, and public C
+allocator references. The traversal accepts only an explicit pathname or
+borrowed directory root, returns sorted owned raw-byte paths, and never selects
+the C `glob_t` ABI or hidden CWD policy. Neither slice makes x86 public runtime
+support.
 
 Run it only on a native Linux x86_64 host:
 
