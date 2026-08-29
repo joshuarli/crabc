@@ -1,0 +1,195 @@
+/*
+ * Linux/x86-64 C++17 pthread/C11-thread public-header ABI probe.
+ *
+ * The companion runner builds this source without linking under pinned musl
+ * and project-header-first inputs.  Its object-level undefined-symbol check
+ * additionally proves that the public pthread declarations request C, not
+ * C++, linkage.  No crabc runtime artifact is selected.
+ */
+
+#if !defined(__x86_64__) || !defined(__LP64__) || \
+	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
+	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "this probe requires native Linux/x86-64 little-endian LP64"
+#endif
+
+#if defined(CRABC_PTHREAD_C11_SCHED_FIRST)
+#include <sched.h>
+#include <pthread.h>
+#else
+#include <pthread.h>
+#include <sched.h>
+#endif
+#include <signal.h>
+#include <threads.h>
+#include <time.h>
+
+#ifndef PTHREAD_CANCEL_MASKED
+#error "musl pthread.h exposes PTHREAD_CANCEL_MASKED"
+#endif
+
+#if PTHREAD_CANCEL_MASKED != 2
+#error "musl PTHREAD_CANCEL_MASKED is 2"
+#endif
+
+#if PTHREAD_CREATE_JOINABLE != 0 || PTHREAD_CREATE_DETACHED != 1
+#error "unexpected musl pthread detach-state constants"
+#endif
+
+#if PTHREAD_MUTEX_NORMAL != 0 || PTHREAD_MUTEX_RECURSIVE != 1 || \
+	PTHREAD_MUTEX_ERRORCHECK != 2
+#error "unexpected musl pthread mutex-type constants"
+#endif
+
+#if PTHREAD_MUTEX_STALLED != 0 || PTHREAD_MUTEX_ROBUST != 1
+#error "unexpected musl pthread robust-mutex constants"
+#endif
+
+#if PTHREAD_PROCESS_PRIVATE != 0 || PTHREAD_PROCESS_SHARED != 1
+#error "unexpected musl pthread process-sharing constants"
+#endif
+
+#if PTHREAD_INHERIT_SCHED != 0 || PTHREAD_EXPLICIT_SCHED != 1
+#error "unexpected musl pthread scheduling-inheritance constants"
+#endif
+
+#if PTHREAD_BARRIER_SERIAL_THREAD != -1
+#error "unexpected musl pthread barrier result"
+#endif
+
+#if TSS_DTOR_ITERATIONS != 4
+#error "unexpected musl C11 TSS destructor iteration count"
+#endif
+
+static_assert(__is_same(pthread_t, unsigned long),
+	"musl C++ pthread_t is unsigned long");
+static_assert(__is_same(thrd_t, pthread_t),
+	"musl C++ thrd_t has pthread_t identity");
+static_assert(__is_same(once_flag, pthread_once_t),
+	"musl C++ once_flag has pthread_once_t identity");
+static_assert(__is_same(tss_t, pthread_key_t),
+	"musl C++ tss_t has pthread_key_t identity");
+static_assert(!__is_same(mtx_t, pthread_mutex_t),
+	"musl C++ mtx_t remains distinct from pthread_mutex_t");
+static_assert(!__is_same(cnd_t, pthread_cond_t),
+	"musl C++ cnd_t remains distinct from pthread_cond_t");
+
+static_assert(sizeof(pthread_mutexattr_t) == 4 && alignof(pthread_mutexattr_t) == 4,
+	"musl x86-64 pthread_mutexattr_t ABI");
+static_assert(sizeof(pthread_condattr_t) == 4 && alignof(pthread_condattr_t) == 4,
+	"musl x86-64 pthread_condattr_t ABI");
+static_assert(sizeof(pthread_rwlockattr_t) == 8 && alignof(pthread_rwlockattr_t) == 4,
+	"musl x86-64 pthread_rwlockattr_t ABI");
+static_assert(sizeof(pthread_barrierattr_t) == 4 && alignof(pthread_barrierattr_t) == 4,
+	"musl x86-64 pthread_barrierattr_t ABI");
+static_assert(sizeof(pthread_mutex_t) == 40 && alignof(pthread_mutex_t) == 8,
+	"musl x86-64 pthread_mutex_t ABI");
+static_assert(sizeof(pthread_cond_t) == 48 && alignof(pthread_cond_t) == 8,
+	"musl x86-64 pthread_cond_t ABI");
+static_assert(sizeof(pthread_rwlock_t) == 56 && alignof(pthread_rwlock_t) == 8,
+	"musl x86-64 pthread_rwlock_t ABI");
+static_assert(sizeof(pthread_barrier_t) == 32 && alignof(pthread_barrier_t) == 8,
+	"musl x86-64 pthread_barrier_t ABI");
+static_assert(sizeof(pthread_attr_t) == 56 && alignof(pthread_attr_t) == 8,
+	"musl x86-64 pthread_attr_t ABI");
+static_assert(sizeof(mtx_t) == 40 && alignof(mtx_t) == 8,
+	"musl x86-64 mtx_t ABI");
+static_assert(sizeof(cnd_t) == 48 && alignof(cnd_t) == 8,
+	"musl x86-64 cnd_t ABI");
+static_assert(sizeof(once_flag) == 4 && alignof(once_flag) == 4,
+	"musl x86-64 once_flag ABI");
+static_assert(sizeof(tss_t) == 4 && alignof(tss_t) == 4,
+	"musl x86-64 tss_t ABI");
+static_assert(sizeof(timespec) == 16 && alignof(timespec) == 8,
+	"musl x86-64 timespec ABI used by pthread/C11 timed calls");
+static_assert(sizeof(sigset_t) == 128 && alignof(sigset_t) == 8,
+	"musl x86-64 sigset_t ABI used by pthread_sigmask");
+static_assert(sizeof(sched_param) == 48 && alignof(sched_param) == 8,
+	"musl x86-64 sched_param ABI used by pthread scheduling calls");
+static_assert(thrd_success == 0 && thrd_busy == 1 && thrd_error == 2
+	&& thrd_nomem == 3 && thrd_timedout == 4,
+	"musl C11 thread result vocabulary");
+static_assert(mtx_plain == 0 && mtx_recursive == 1 && mtx_timed == 2,
+	"musl C11 mutex-kind vocabulary");
+
+using crabc_pthread_create_signature = int (*)(
+	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
+using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
+using crabc_thrd_create_signature = int (*)(thrd_t *, thrd_start_t, void *);
+using crabc_thrd_join_signature = int (*)(thrd_t, int *);
+using crabc_mtx_timedlock_signature = int (*)(mtx_t *, const timespec *);
+using crabc_cnd_timedwait_signature = int (*)(cnd_t *, mtx_t *, const timespec *);
+using crabc_tss_create_signature = int (*)(tss_t *, tss_dtor_t);
+
+static_assert(__is_same(decltype(&pthread_create), crabc_pthread_create_signature),
+	"pthread_create signature");
+static_assert(__is_same(decltype(&pthread_getcpuclockid),
+	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+#if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
+static_assert(__is_same(decltype(&pthread_sigmask),
+	crabc_pthread_sigmask_signature), "pthread_sigmask signature");
+#endif
+static_assert(__is_same(decltype(&thrd_create), crabc_thrd_create_signature),
+	"thrd_create signature");
+static_assert(__is_same(decltype(&thrd_join), crabc_thrd_join_signature),
+	"thrd_join signature");
+static_assert(__is_same(decltype(&mtx_timedlock), crabc_mtx_timedlock_signature),
+	"mtx_timedlock signature");
+static_assert(__is_same(decltype(&cnd_timedwait), crabc_cnd_timedwait_signature),
+	"cnd_timedwait signature");
+static_assert(__is_same(decltype(&tss_create), crabc_tss_create_signature),
+	"tss_create signature");
+
+static pthread_mutex_t crabc_pthread_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t crabc_pthread_condition = PTHREAD_COND_INITIALIZER;
+static pthread_rwlock_t crabc_pthread_rwlock = PTHREAD_RWLOCK_INITIALIZER;
+static pthread_once_t crabc_pthread_once = PTHREAD_ONCE_INIT;
+static once_flag crabc_c11_once = ONCE_FLAG_INIT;
+
+/* `used` keeps the declaration-linkage evidence in the otherwise unlinked object. */
+static crabc_pthread_create_signature const crabc_force_pthread_create
+	__attribute__((used)) = &pthread_create;
+static crabc_thrd_create_signature const crabc_force_thrd_create
+	__attribute__((used)) = &thrd_create;
+#if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
+static crabc_pthread_sigmask_signature const crabc_force_pthread_sigmask
+	__attribute__((used)) = &pthread_sigmask;
+#endif
+
+#if defined(CRABC_EXPECT_GNU_PTHREAD_EXTENSIONS)
+using crabc_pthread_timedjoin_signature = int (*)(
+	pthread_t, void **, const timespec *);
+using crabc_pthread_getaffinity_np_signature = int (*)(
+	pthread_t, size_t, struct cpu_set_t *);
+using crabc_pthread_setaffinity_np_signature = int (*)(
+	pthread_t, size_t, const struct cpu_set_t *);
+using crabc_pthread_getattr_np_signature = int (*)(pthread_t, pthread_attr_t *);
+using crabc_pthread_setname_np_signature = int (*)(pthread_t, const char *);
+using crabc_pthread_getname_np_signature = int (*)(pthread_t, char *, size_t);
+
+static_assert(__is_same(decltype(&pthread_getaffinity_np),
+	crabc_pthread_getaffinity_np_signature), "pthread_getaffinity_np signature");
+static_assert(__is_same(decltype(&pthread_setaffinity_np),
+	crabc_pthread_setaffinity_np_signature), "pthread_setaffinity_np signature");
+static_assert(__is_same(decltype(&pthread_getattr_np),
+	crabc_pthread_getattr_np_signature), "pthread_getattr_np signature");
+static_assert(__is_same(decltype(&pthread_setname_np),
+	crabc_pthread_setname_np_signature), "pthread_setname_np signature");
+static_assert(__is_same(decltype(&pthread_getname_np),
+	crabc_pthread_getname_np_signature), "pthread_getname_np signature");
+static_assert(__is_same(decltype(&pthread_timedjoin_np),
+	crabc_pthread_timedjoin_signature), "pthread_timedjoin_np signature");
+
+static crabc_pthread_getaffinity_np_signature const crabc_force_pthread_getaffinity_np
+	__attribute__((used)) = &pthread_getaffinity_np;
+#endif
+
+int crabc_x86_64_pthread_c11_header_abi_probe()
+{
+	return static_cast<int>(sizeof(crabc_pthread_mutex)
+		+ sizeof(crabc_pthread_condition)
+		+ sizeof(crabc_pthread_rwlock)
+		+ crabc_pthread_once
+		+ crabc_c11_once);
+}

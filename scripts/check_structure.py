@@ -113,7 +113,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # join initial-TLS worker, named termios control, selected
 # process context, child reaping, C11 immediate termination, bounded static
 # startup/ordinary exit, callback algorithms,
-# selected descriptor entry, fcntl status control, and bounded generic ioctl,
+# selected descriptor entry, fcntl status control, bounded generic ioctl, and
+# selected timestamp updates,
 # selected descriptor I/O,
 # selected process resources,
 # selected readiness/signal waits, selected system observation, selected
@@ -165,6 +166,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/static_startup.rs"),
     Path("libc/src/c_abi/x86_64/static_tls.rs"),
     Path("libc/src/c_abi/x86_64/stat_compat.rs"),
+    Path("libc/src/c_abi/x86_64/timestamp_updates.rs"),
     Path("libc/src/c_abi/x86_64/string_copy.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
@@ -3521,6 +3523,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "static_tls.rs"]',
         '#[path = "static_startup.rs"]',
         '#[path = "stat_compat.rs"]',
+        '#[path = "timestamp_updates.rs"]',
         '#[path = "credentials.rs"]',
         '#[path = "credential_observation.rs"]',
         '#[path = "memory.rs"]',
@@ -4774,6 +4777,54 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "assembly-dispatched rather than a fixed Rust C entry"
         )
 
+    timestamp_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timestamp_updates.rs"
+    )
+    timestamp_text = timestamp_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/stat/utimensat.c",
+        "src/stat/futimens.c",
+        "src/stat/futimesat.c",
+        "src/legacy/futimes.c",
+        "src/legacy/lutimes.c",
+        "src/linux/utimes.c",
+        "src/time/utime.c",
+        "UTIME_NOW",
+        "AT_SYMLINK_NOFOLLOW",
+        "raw_syscall::SYS_UTIMENSAT",
+        "raw_syscall::syscall4(",
+        "futimesat_timeval_pair",
+        ".weak futimesat",
+        ".set futimesat, __futimesat",
+    ):
+        if required not in timestamp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timestamp_updates.rs: selected static "
+                f"timestamp boundary is missing {required!r}"
+            )
+    timestamp_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timestamp_text,
+        )
+    )
+    expected_timestamp_exports = {
+        "utimensat",
+        "futimens",
+        "__futimesat",
+        "futimes",
+        "lutimes",
+        "utimes",
+        "utime",
+    }
+    if timestamp_exports != expected_timestamp_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/timestamp_updates.rs: selected static artifact "
+            "must export only the seven Rust timestamp entries; futimesat remains "
+            "the musl same-address assembler alias"
+        )
+
     descriptor_io_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_io.rs"
     )
@@ -5585,6 +5636,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ffs_text,
         system_observation_text,
         uts_identity_text,
+        timestamp_text,
     )
     rust_exports = set().union(
         *(
@@ -5603,7 +5655,24 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             for source in (memory_text, fenv_text, setjmp_text, descriptor_control_text)
         )
     )
-    exports = rust_exports | assembly_exports | callback_algorithms_aliases | filesystem_access_aliases
+    timestamp_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__futimesat",\s*$',
+            timestamp_text,
+        )
+    )
+    if timestamp_aliases != {"futimesat"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timestamp_updates.rs: selected static artifact "
+            "must retain futimesat as the musl same-address assembler alias"
+        )
+    exports = (
+        rust_exports
+        | assembly_exports
+        | callback_algorithms_aliases
+        | filesystem_access_aliases
+        | timestamp_aliases
+    )
     expected_exports = {
         "__errno_location",
         "__crabc_x86_static_tls_bootstrap",
@@ -5611,6 +5680,14 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "lstat",
         "fstat",
         "fstatat",
+        "utimensat",
+        "futimens",
+        "__futimesat",
+        "futimes",
+        "futimesat",
+        "lutimes",
+        "utimes",
+        "utime",
         "__xstat",
         "__lxstat",
         "__fxstat",
@@ -5848,7 +5925,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
-            "descriptor-entry, selected filesystem-access, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
@@ -5881,6 +5958,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),
         ("descriptor_control.rs", descriptor_control_text),
+        ("timestamp_updates.rs", timestamp_text),
         ("descriptor_io.rs", descriptor_io_text),
         ("process_resources.rs", process_resources_text),
         ("readiness_waits.rs", readiness_waits_text),

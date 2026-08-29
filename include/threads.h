@@ -1,16 +1,23 @@
 #ifndef _THREADS_H
 #define _THREADS_H
 
+#include <features.h>
 #include <sys/types.h>
 #include <time.h>
+
+/* C11 synchronization objects intentionally have their own record types.
+ * They share musl's storage layout with the pthread objects but must not be
+ * C type aliases: generic C code may use that distinction for overloads and
+ * compile-time interface checks. */
+#define __NEED_cnd_t
+#define __NEED_mtx_t
+#include <bits/alltypes.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef pthread_t thrd_t;
-typedef pthread_mutex_t mtx_t;
-typedef pthread_cond_t cnd_t;
 typedef pthread_once_t once_flag;
 typedef pthread_key_t tss_t;
 typedef int (*thrd_start_t)(void *);
@@ -46,6 +53,9 @@ int thrd_sleep(const struct timespec *, struct timespec *);
 void thrd_yield(void);
 thrd_t thrd_current(void);
 int thrd_equal(thrd_t, thrd_t);
+#ifndef __cplusplus
+#define thrd_equal(A, B) ((A) == (B))
+#endif
 void call_once(once_flag *, void (*)(void));
 
 int mtx_init(mtx_t *, int);

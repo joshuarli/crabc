@@ -8,12 +8,15 @@ remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
 The x86 lane has one private `ldso-initial-graph` ET_DYN interpreter artifact
 inside still-planned `ldso.dynamic-runtime`. Its native evidence is limited to
-one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT,
+one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64
+RELA plus one bounded packed leaf `DT_RELR` direct-and-bitmap stream with
+independent 512-record/512-target caps; the pre-Rust interpreter bootstrap
+remains `DT_RELA`-only. It also covers
 dependency-only leaf-before-mid init arrays, final interpreter-and-graph RELRO
 sealing, and main/leaf RELRO-fault plus fail-closed malformed-file-range/TLS/
-unsupported-relocation inputs. It deliberately
-rejects main-image constructors pending CRT handoff and is not a general loader,
-CRT/sysroot, or public x86 support claim.
+unsupported-relocation/RELR inputs. It deliberately rejects main-image
+constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
+public x86 support claim.
 
 The x86 lane now has four private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
@@ -82,6 +85,16 @@ PID-isolated relative-directory lifecycle. Raw syscalls only make and remove
 the test directory. It proves no descriptor/filesystem capability, general
 C runtime, cancellation behavior, family completion, AArch64 parity, or
 public x86 support.
+
+`./scripts/dev-x86_64.sh libc-timestamp-updates` is a separate private
+`static-c-timestamp-updates` artifact inside planned `libc.posix-runtime`.
+It runs one project-header C body through pinned musl and then through the
+archive-owned `rcrt1`/`crti`/`crtn` static-PIE startup route. It proves only
+`utimensat`, `futimens`, strong `__futimesat` with its weak same-address
+`futimesat` alias, `futimes`, `lutimes`, `utimes`, and `utime`, including the
+selected `UTIME_NOW`/`UTIME_OMIT` and legacy conversion boundaries. It does
+not establish filesystem policy, a general C runtime, dynamic libc, loader,
+CRT/sysroot, family completion, AArch64 parity, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-signal-execution` is one further private
 `static-c-process-signal-execution` artifact inside planned

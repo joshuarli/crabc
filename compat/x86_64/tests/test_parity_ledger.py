@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 42)
-        self.assertEqual(report["header_layout_probe_count"], 35)
+        self.assertEqual(report["verified_artifact_count"], 43)
+        self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -91,6 +91,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(artifact, dict)
         self.assertNotIn("capabilities", artifact)
         self.assertIn("main PIE -> mid.so -> leaf.so", artifact["description"])
+        self.assertIn("bounded packed `DT_RELR`", artifact["description"])
+        self.assertIn("direct-address and bitmap", artifact["description"])
+        self.assertIn("512-record/512-target caps per object", artifact["description"])
+        self.assertIn("zero-bit bitmap runs", artifact["description"])
+        self.assertIn("`DT_RELA`-only", artifact["description"])
         self.assertIn("main-image DT_INIT/DT_INIT_ARRAY dispatch", artifact["description"])
         self.assertEqual(
             {entry["command"] for entry in artifact["native_evidence"]},
@@ -113,7 +118,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 35)
+        self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -1149,7 +1154,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 33
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 34
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -5149,6 +5154,140 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-descriptor-io"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-descriptor-lifecycle command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timestamp_updates_artifact_keeps_its_bounded_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timestamp-updates"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/timestamp_updates.rs",
+            "crt/src/x86_64_rcrt1.rs",
+            "include/utime.h",
+            "compat/x86_64/utime_header_abi_probe.c",
+            "compat/x86_64/run_utime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timestamp_updates_probe.c",
+            "compat/x86_64/run_libc_timestamp_updates.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timestamp-updates"},
+        )
+        for phrase in (
+            "timestamp-update block",
+            "strong `__futimesat`",
+            "weak same-address `futimesat`",
+            "`UTIME_NOW`",
+            "`UTIME_OMIT`",
+            "real Rust `rcrt1.o`/`crti.o`/`crtn.o`",
+            "does not establish general filesystem policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "utimensat=280" in prerequisite
+                and "rdi/rsi/rdx/r10" in prerequisite
+                and "rcx" in prerequisite
+                and "16-byte align-8" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "all-UTIME_NOW" in prerequisite
+                and "weak same-address" in prerequisite
+                and "ENOSYS fallback" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "utime header gate" in prerequisite
+                and "unmangled C++ linkage" in prerequisite
+                and "does not close any installed header family" in prerequisite
+                for prerequisite in artifact["x86_header_prerequisites"]
+            )
+        )
+        self.assertIn(
+            "weak same-address futimesat",
+            artifact["native_evidence"][0]["scope"],
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timestamp-updates"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("utimensat=280", "utimensat=281")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall and record ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timestamp-updates"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "weak same-address `futimesat`", "weak different-address `futimesat`"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "weak same-address `futimesat`"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timestamp-updates"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh timestamp-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timestamp-updates command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timestamp-updates"
+        )
+        artifact["capabilities"] = ["filesystem.fd-timestamps"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities; use verified_slice instead"
         ):
             ledger.validate_ledger(data)
 

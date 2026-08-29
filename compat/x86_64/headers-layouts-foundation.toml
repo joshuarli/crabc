@@ -1,7 +1,7 @@
 # Forward-looking native x86-64 header/layout foundation contract.
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
-# `headers-layouts.toml` remains the v1 inventory of thirty-five direct probes.
+# `headers-layouts.toml` remains the v1 inventory of thirty-seven direct probes.
 # This v7 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, epoll, timeval-transitive, direct
@@ -1182,8 +1182,8 @@ state = "partial-verified"
 scope = "v1-direct-probe-union"
 owner = "libc.headers-layouts"
 evidence = ["headers-layouts.toml"]
-legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "ctype", "integer-arithmetic", "integer-parse", "intmax-arithmetic", "credential-observation", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "epoll", "timeval-transitive", "sys-time-direct", "access-header"]
-description = "The existing thirty-five direct gates remain required inputs and retain their bounded declaration/layout scopes."
+legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "ctype", "integer-arithmetic", "integer-parse", "intmax-arithmetic", "credential-observation", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "epoll", "timeval-transitive", "sys-time-direct", "access-header"]
+description = "The existing thirty-seven direct gates remain required inputs and retain their bounded declaration/layout scopes."
 
 [[abi_facet]]
 id = "static-c-cxx-composition"

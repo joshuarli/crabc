@@ -212,6 +212,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
 ./scripts/dev-x86_64.sh stat-header-abi
+./scripts/dev-x86_64.sh utime-header-abi
+./scripts/dev-x86_64.sh pthread-c11-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
@@ -346,6 +348,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
+./scripts/dev-x86_64.sh libc-timestamp-updates
 ./scripts/dev-x86_64.sh libc-process-resources
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
@@ -394,12 +397,20 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the thirty-five selected
+`headers-layouts.toml` is the checked-in contract for the thirty-seven selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
 archive linkage, runtime completion, or public x86 support; the ledger
 validator rejects a missing, renamed, or reclassified gate.
+
+The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
+`utime` declaration, and C++ C linkage. The `pthread-c11-header-abi` gate is a
+28-context C11/C++17 feature-profile matrix for selected `pthread.h`,
+`threads.h`, and `sched.h` layouts, macros, type identities, include orders,
+GNU declarations, and unmangled C linkage. Both are compile-only partial
+evidence: they do not select archive linkage, pthread behavior, header-family
+completion, or public x86 support.
 
 `public-header-surface` adds the separate all-public-header inventory needed
 before that bounded gate set can grow into a completion contract. It derives
@@ -2047,6 +2058,16 @@ syscalls only create and remove that directory. It does not establish general
 C runtime, cancellation, CRT, loader, sysroot, family completion, AArch64
 parity, or public x86 support.
 
+`libc-timestamp-updates` is a separately recorded private static
+`verified_artifact` over that archive, not a filesystem or C-runtime
+capability. One project-header C body runs through pinned musl and then a real
+archive-owned `rcrt1`/`crti`/`crtn` static PIE. It selects exactly
+`utimensat`, `futimens`, strong `__futimesat` with weak same-address
+`futimesat`, `futimes`, `lutimes`, `utimes`, and `utime`, including
+`UTIME_NOW`, `UTIME_OMIT`, no-follow, timeval, and whole-second behavior. It
+does not establish filesystem policy, dynamic libc, loader, CRT/sysroot,
+family completion, AArch64 parity, or public x86 support.
+
 `libc-process-resources` is a separately recorded static
 `verified_artifact` gate over that archive, not a process-resource capability.
 Its project-header C body first executes through pinned musl and then through
@@ -2519,15 +2540,21 @@ image nor selects `crabc-ldso`.
 artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso`
 target. Its native runner first verifies the pinned musl 1.2.6 oracle, then
 proves one fixed main PIE -> `mid.so` -> `leaf.so` graph with one absolute
-fixture RUNPATH lookup, x86-64 RELATIVE/GLOB_DAT/JUMP_SLOT RELA relocation,
-leaf-before-mid dependency `DT_INIT_ARRAY` dispatch, and final interpreter-and-
+fixture RUNPATH lookup, x86-64 RELATIVE/GLOB_DAT/JUMP_SLOT ELF64 RELA
+relocation plus the leaf's one bounded packed `DT_RELR` direct-and-bitmap
+stream with independent 512-record/512-target caps. The pre-Rust interpreter
+bootstrap remains `DT_RELA`-only. It proves
+leaf-before-mid dependency `DT_INIT_ARRAY` dispatch and final interpreter-and-
 graph `PT_GNU_RELRO` sealing including child faults on main and leaf
 `.data.rel.ro` writes. Mutated fixtures fail closed for an out-of-file
 `PT_LOAD` range, `PT_TLS`, unsupported RELA, out-of-range relocation target/
-table, `DT_RELR`, `DT_TEXTREL`/static-TLS flags, and main-image `DT_INIT`. Main-image constructor
-dispatch is explicitly rejected and remains future CRT handoff work. This is
-not general `DT_NEEDED` or RUNPATH policy, TLS, symbol versions, `dl*`, a
-dynamic CRT/sysroot, or public x86 support.
+table, incomplete or malformed `DT_RELR`, bitmap-without-direct-address,
+nonwritable or duplicate RELR targets, over-cap RELR streams (including
+zero-bit bitmap runs), `DT_TEXTREL`/static-TLS flags, and main-image `DT_INIT`.
+Main-image constructor dispatch is explicitly rejected and remains future CRT
+handoff work. This is not general `DT_NEEDED` or RUNPATH policy,
+general or interpreter `DT_RELR`, TLS, symbol versions, `dl*`, a dynamic
+CRT/sysroot, or public x86 support.
 
 The separately launched `./crt/run-x86_64.sh static-pie` gate proves the
 private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` no-TLS static-PIE foundation.
@@ -2563,6 +2590,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-ioctl`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
+`libc-timestamp-updates`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,

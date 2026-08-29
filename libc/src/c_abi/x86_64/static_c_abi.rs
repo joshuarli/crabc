@@ -9,7 +9,8 @@
 //! create/explicit-exit/join worker backed by the private Static Initial TLS
 //! v1 final-executable template,
 //! termios-control, selected process-context, child-reaping, selected
-//! descriptor-entry, selected filesystem-access, bounded fcntl status-control, descriptor-I/O, and
+//! descriptor-entry, selected filesystem-access, bounded fcntl status-control,
+//! timestamp updates, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
@@ -46,6 +47,8 @@ mod raw_syscall;
 mod static_tls;
 #[path = "stat_compat.rs"]
 mod stat_compat;
+#[path = "timestamp_updates.rs"]
+mod timestamp_updates;
 #[path = "credentials.rs"]
 mod credentials;
 #[path = "credential_observation.rs"]

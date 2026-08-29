@@ -9,17 +9,19 @@
 //! DSO, and that DSO's direct DSO.  `_start` performs *this interpreter's*
 //! `R_X86_64_RELATIVE` relocations in assembly before entering Rust.  Rust
 //! then discovers the two `DT_NEEDED` edges through absolute `DT_RUNPATH`
-//! directories, maps the two ET_DYN images, and processes only RELATIVE,
-//! GLOB_DAT, and JUMP_SLOT ELF64 RELA records.  Once all mappings are
-//! relocated, it seals every present `PT_GNU_RELRO` range and runs the two
-//! dependency `DT_INIT_ARRAY` lists in leaf-before-mid order.
+//! directories, maps the two ET_DYN images, and processes RELATIVE,
+//! GLOB_DAT, and JUMP_SLOT ELF64 RELA records plus one bounded packed
+//! `DT_RELR` stream in the leaf dependency. Once all mappings are relocated,
+//! it seals every present `PT_GNU_RELRO` range and runs the two dependency
+//! `DT_INIT_ARRAY` lists in leaf-before-mid order.
 //!
 //! Musl 1.2.6 oracle: `ldso/dynlink.c:do_relocs` and
 //! `arch/x86_64/reloc.h`.  The narrow relocation set and all exclusions are
-//! deliberate evidence boundaries: no `DT_RELR`, TLS, `DT_INIT`, main-image
-//! constructor dispatch (that remains CRT-owned), preload/environment search,
-//! `dl*`, audit, secure-exec filtering, symbolic versioning, or general
-//! dependency graph are claimed here.
+//! deliberate evidence boundaries: the interpreter's own pre-Rust bootstrap
+//! remains `DT_RELA`-only; TLS, `DT_INIT`, main-image constructor dispatch
+//! (that remains CRT-owned), preload/environment search, `dl*`, audit,
+//! secure-exec filtering, symbolic versioning, or a general dependency graph
+//! are not claimed here.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -116,6 +118,17 @@ const MAX_OBJECTS: usize = 3;
 const MAX_PHDRS: usize = 32;
 const MAX_NEEDED: usize = 2;
 const MAX_PATH: usize = 512;
+// This private fixed graph has no allocation owner. Bound both packed-RELR
+// records and relocation destinations before reads or writes: an otherwise
+// empty bitmap record has no destination, so a destination-only cap would let
+// a malformed table consume unbounded loader time. The valid main -> mid ->
+// leaf graph is intentionally far below both ceilings.
+const MAX_RELOCATION_TARGETS: usize = 512;
+const ELF64_RELA_SIZE: usize = 24;
+const ELF64_RELR_SIZE: usize = 8;
+const ELF64_RELR_BITMAP_BITS: u64 = 63;
+const MAX_RELR_ENTRIES: usize = 512;
+const MAX_RELR_BYTE_LEN: usize = MAX_RELR_ENTRIES * ELF64_RELR_SIZE;
 
 #[derive(Copy, Clone)]
 struct Object {
@@ -130,6 +143,8 @@ struct Object {
     relasz: usize,
     jmprel: *const u8,
     pltrelsz: usize,
+    relr: *const u8,
+    relrsz: usize,
     init_array: *const usize,
     init_count: usize,
     relro_virtual_address: u64,
@@ -153,6 +168,8 @@ const EMPTY_OBJECT: Object = Object {
     relasz: 0,
     jmprel: core::ptr::null(),
     pltrelsz: 0,
+    relr: core::ptr::null(),
+    relrsz: 0,
     init_array: core::ptr::null(),
     init_count: 0,
     relro_virtual_address: 0,
@@ -268,17 +285,21 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         let (main_phdr, main_phnum, main_entry) = auxv_main(sp).unwrap_or_else(|| fail(b"auxv\n"));
         let main_base = main_load_bias(main_phdr, main_phnum).unwrap_or_else(|| fail(b"mainbase\n"));
         let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        // Keep packed RELR ownership at exactly one mapped dependency.  The
+        // main and mid images remain RELA-only, while the fixed leaf carries
+        // the one required packed table; accepting the same tags elsewhere
+        // would silently widen this private graph's ABI.
         objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false)
             .unwrap_or_else(|| fail(b"mainelf\n"));
-        if objects[0].needed_count != 1 || objects[0].runpath.is_null() {
+        if objects[0].needed_count != 1 || objects[0].runpath.is_null() || objects[0].relrsz != 0 {
             fail(b"mainshape\n");
         }
         objects[1] = load_needed(&objects[0], 0).unwrap_or_else(|| fail(b"midmap\n"));
-        if objects[1].needed_count != 1 || objects[1].runpath.is_null() {
+        if objects[1].needed_count != 1 || objects[1].runpath.is_null() || objects[1].relrsz != 0 {
             fail(b"midshape\n");
         }
         objects[2] = load_needed(&objects[1], 0).unwrap_or_else(|| fail(b"leafmap\n"));
-        if objects[2].needed_count != 0 {
+        if objects[2].needed_count != 0 || objects[2].relrsz == 0 {
             fail(b"leafshape\n");
         }
         for object in &objects {
@@ -377,6 +398,9 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     let mut rela_virtual_address = None;
     let mut rela_byte_len = None;
     let mut rela_entry_len = None;
+    let mut relr_virtual_address = None;
+    let mut relr_byte_len = None;
+    let mut relr_entry_len = None;
     let mut jmprel_virtual_address = None;
     let mut pltrel_byte_len = None;
     let mut plt_is_rela = None;
@@ -400,6 +424,9 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             DT_RELA => { if rela_virtual_address.replace(value).is_some() { return None; } }
             DT_RELASZ => { if rela_byte_len.replace(value).is_some() { return None; } }
             DT_RELAENT => { if rela_entry_len.replace(value).is_some() { return None; } }
+            DT_RELR => { if relr_virtual_address.replace(value).is_some() { return None; } }
+            DT_RELRSZ => { if relr_byte_len.replace(value).is_some() { return None; } }
+            DT_RELRENT => { if relr_entry_len.replace(value).is_some() { return None; } }
             DT_JMPREL => { if jmprel_virtual_address.replace(value).is_some() { return None; } }
             DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
@@ -415,7 +442,7 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             // semantics outside the closed fixture ABI.  Reject before any
             // corresponding pointer can be used.
             DT_INIT | DT_FINI | DT_RPATH | DT_SYMBOLIC | DT_REL | DT_RELSZ | DT_RELENT | DT_FINI_ARRAY | DT_FINI_ARRAYSZ
-            | DT_PREINIT_ARRAY | DT_PREINIT_ARRAYSZ | DT_RELR | DT_RELRSZ | DT_RELRENT | DT_GNU_HASH
+            | DT_PREINIT_ARRAY | DT_PREINIT_ARRAYSZ | DT_GNU_HASH
             | DT_VERSYM | DT_VERDEF | DT_VERDEFNUM | DT_VERNEED | DT_VERNEEDNUM | DT_TEXTREL => return None,
             _ => {}
         }
@@ -437,7 +464,11 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     object.symtab = runtime_address(base, symtab_address)? as *const u8;
     match (rela_virtual_address, rela_byte_len, rela_entry_len) {
         (None, None, None) => {}
-        (Some(address), Some(byte_len), Some(24)) if byte_len % 24 == 0 && virtual_range_in_load(phdr, phnum, address, byte_len) => {
+        (Some(address), Some(byte_len), Some(entry_len))
+            if entry_len == ELF64_RELA_SIZE as u64
+                && byte_len % ELF64_RELA_SIZE as u64 == 0
+                && virtual_range_in_load(phdr, phnum, address, byte_len) =>
+        {
             object.rela = runtime_address(base, address)? as *const u8;
             object.relasz = usize::try_from(byte_len).ok()?;
         }
@@ -445,9 +476,27 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     }
     match (jmprel_virtual_address, pltrel_byte_len, plt_is_rela) {
         (None, None, None) => {}
-        (Some(address), Some(byte_len), Some(true)) if byte_len % 24 == 0 && virtual_range_in_load(phdr, phnum, address, byte_len) => {
+        (Some(address), Some(byte_len), Some(true))
+            if byte_len % ELF64_RELA_SIZE as u64 == 0
+                && virtual_range_in_load(phdr, phnum, address, byte_len) =>
+        {
             object.jmprel = runtime_address(base, address)? as *const u8;
             object.pltrelsz = usize::try_from(byte_len).ok()?;
+        }
+        _ => return None,
+    }
+    match (relr_virtual_address, relr_byte_len, relr_entry_len) {
+        (None, None, None) => {}
+        (Some(address), Some(byte_len), Some(entry_len))
+            if entry_len == ELF64_RELR_SIZE as u64
+                && byte_len != 0
+                && byte_len % ELF64_RELR_SIZE as u64 == 0
+                && byte_len <= MAX_RELR_BYTE_LEN as u64
+                && address & (ELF64_RELR_SIZE as u64 - 1) == 0
+                && virtual_range_in_load(phdr, phnum, address, byte_len) =>
+        {
+            object.relr = runtime_address(base, address)? as *const u8;
+            object.relrsz = usize::try_from(byte_len).ok()?;
         }
         _ => return None,
     }
@@ -608,20 +657,208 @@ unsafe fn map_elf(fd: i64) -> Option<Object> {
 }
 
 unsafe fn relocate(object: &Object, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
-    relocate_table(object, objects, object.rela, object.relasz)?;
-    relocate_table(object, objects, object.jmprel, object.pltrelsz)
+    // Do not let a malformed table change an earlier target before the graph
+    // discovers that another table or packed bitmap is invalid. The fixed
+    // stack block records every target in this bounded fixture, rejects table
+    // writes and duplicate destinations, then permits the actual RELA-before-
+    // RELR transaction.
+    preflight_relocation_table_layout(object)?;
+    let mut targets = [0u64; MAX_RELOCATION_TARGETS];
+    let mut target_count = 0usize;
+    target_count = preflight_rela_table(
+        object,
+        objects,
+        object.rela,
+        object.relasz,
+        &mut targets,
+        target_count,
+    )?;
+    target_count = preflight_rela_table(
+        object,
+        objects,
+        object.jmprel,
+        object.pltrelsz,
+        &mut targets,
+        target_count,
+    )?;
+    target_count = preflight_relr_table(object, &mut targets, target_count)?;
+    let used_targets = &mut targets[..target_count];
+    used_targets.sort_unstable();
+    if used_targets.windows(2).any(|pair| pair[0] == pair[1]) {
+        return None;
+    }
+
+    apply_rela_table(object, objects, object.rela, object.relasz)?;
+    apply_rela_table(object, objects, object.jmprel, object.pltrelsz)?;
+    apply_relr_table(object)
 }
 
-unsafe fn relocate_table(object: &Object, objects: &[Object; MAX_OBJECTS], table: *const u8, length: usize) -> Option<()> {
-    if length == 0 { return Some(()); }
-    if table.is_null() || length % 24 != 0 { return None; }
-    for index in 0..(length / 24) {
-        let rela = table.add(index * 24);
+fn preflight_relocation_table_layout(object: &Object) -> Option<()> {
+    let tables = [
+        (object.rela, object.relasz),
+        (object.jmprel, object.pltrelsz),
+        (object.relr, object.relrsz),
+    ];
+    for (index, (table, byte_len)) in tables.iter().copied().enumerate() {
+        if byte_len == 0 {
+            continue;
+        }
+        if table.is_null() {
+            return None;
+        }
+        let byte_len = u64::try_from(byte_len).ok()?;
+        for (other_table, other_byte_len) in tables[index + 1..].iter().copied() {
+            if other_byte_len == 0 {
+                continue;
+            }
+            if other_table.is_null()
+                || ranges_overlap(
+                    table as u64,
+                    byte_len,
+                    other_table as u64,
+                    u64::try_from(other_byte_len).ok()?,
+                )?
+            {
+                return None;
+            }
+        }
+    }
+    Some(())
+}
+
+unsafe fn preflight_rela_table(
+    object: &Object,
+    objects: &[Object; MAX_OBJECTS],
+    table: *const u8,
+    length: usize,
+    targets: &mut [u64; MAX_RELOCATION_TARGETS],
+    mut target_count: usize,
+) -> Option<usize> {
+    if length == 0 {
+        return Some(target_count);
+    }
+    if table.is_null() || length % ELF64_RELA_SIZE != 0 {
+        return None;
+    }
+    for index in 0..(length / ELF64_RELA_SIZE) {
+        let rela = table.add(index * ELF64_RELA_SIZE);
         let relocation_offset = read_u64(rela);
-        // A relocation table is validated on parse, but each target is an
-        // untrusted virtual address too.  Never turn it into a write until it
-        // is wholly inside a writable PT_LOAD range of its own object.
-        if !virtual_range_in_writable_load(object.phdr, object.phnum, relocation_offset, 8) { return None; }
+        preflight_relocation_target(object, relocation_offset)?;
+        let info = read_u64(rela.add(8));
+        let kind = info as u32;
+        let symbol = (info >> 32) as usize;
+        let addend = read_i64(rela.add(16));
+        match kind {
+            R_X86_64_RELATIVE if symbol == 0 => {
+                let _ = add_signed(object.base, addend)?;
+            }
+            R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
+                let _ = add_signed(resolve_symbol(object, objects, symbol)?, addend)?;
+            }
+            _ => return None,
+        }
+        target_count = record_relocation_target(targets, target_count, relocation_offset)?;
+    }
+    Some(target_count)
+}
+
+unsafe fn preflight_relr_table(
+    object: &Object,
+    targets: &mut [u64; MAX_RELOCATION_TARGETS],
+    mut target_count: usize,
+) -> Option<usize> {
+    if object.relrsz == 0 {
+        return Some(target_count);
+    }
+    if object.relr.is_null()
+        || object.relrsz % ELF64_RELR_SIZE != 0
+        || object.relrsz > MAX_RELR_BYTE_LEN
+    {
+        return None;
+    }
+    let mut next_virtual_address = None;
+    for index in 0..(object.relrsz / ELF64_RELR_SIZE) {
+        let encoded = read_u64(object.relr.add(index * ELF64_RELR_SIZE));
+        if encoded & 1 == 0 {
+            preflight_relr_target(object, encoded)?;
+            target_count = record_relocation_target(targets, target_count, encoded)?;
+            next_virtual_address = Some(encoded.checked_add(ELF64_RELR_SIZE as u64)?);
+            continue;
+        }
+
+        let start = next_virtual_address?;
+        let bitmap = encoded >> 1;
+        for bit in 0..ELF64_RELR_BITMAP_BITS {
+            if bitmap & (1u64 << bit) == 0 {
+                continue;
+            }
+            let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
+            preflight_relr_target(object, target)?;
+            target_count = record_relocation_target(targets, target_count, target)?;
+        }
+        next_virtual_address = Some(
+            start.checked_add(ELF64_RELR_BITMAP_BITS.checked_mul(ELF64_RELR_SIZE as u64)?)?,
+        );
+    }
+    Some(target_count)
+}
+
+unsafe fn preflight_relr_target(object: &Object, virtual_address: u64) -> Option<()> {
+    preflight_relocation_target(object, virtual_address)?;
+    let address = runtime_address(object.base, virtual_address)?;
+    // Packed RELR uses the preexisting pointer word as its addend. Check this
+    // arithmetic before any table changes, matching musl's add-the-load-bias
+    // operation while failing closed on an overflowing malformed input.
+    let addend = read_u64(address as *const u8);
+    let _ = addend.checked_add(object.base)?;
+    Some(())
+}
+
+unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> Option<()> {
+    if virtual_address & (ELF64_RELR_SIZE as u64 - 1) != 0
+        || !virtual_range_in_writable_load(object.phdr, object.phnum, virtual_address, ELF64_RELR_SIZE as u64)
+    {
+        return None;
+    }
+    let address = runtime_address(object.base, virtual_address)?;
+    for (table, byte_len) in [
+        (object.rela, object.relasz),
+        (object.jmprel, object.pltrelsz),
+        (object.relr, object.relrsz),
+    ] {
+        if byte_len == 0 {
+            continue;
+        }
+        if table.is_null()
+            || ranges_overlap(address, ELF64_RELR_SIZE as u64, table as u64, byte_len as u64)?
+        {
+            return None;
+        }
+    }
+    Some(())
+}
+
+fn record_relocation_target(
+    targets: &mut [u64; MAX_RELOCATION_TARGETS],
+    count: usize,
+    virtual_address: u64,
+) -> Option<usize> {
+    let slot = targets.get_mut(count)?;
+    *slot = virtual_address;
+    count.checked_add(1)
+}
+
+unsafe fn apply_rela_table(
+    object: &Object,
+    objects: &[Object; MAX_OBJECTS],
+    table: *const u8,
+    length: usize,
+) -> Option<()> {
+    if length == 0 { return Some(()); }
+    if table.is_null() || length % ELF64_RELA_SIZE != 0 { return None; }
+    for index in 0..(length / ELF64_RELA_SIZE) {
+        let rela = table.add(index * ELF64_RELA_SIZE);
+        let relocation_offset = read_u64(rela);
         let slot = runtime_address(object.base, relocation_offset)? as *mut u64;
         let info = read_u64(rela.add(8));
         let kind = info as u32;
@@ -634,6 +871,46 @@ unsafe fn relocate_table(object: &Object, objects: &[Object; MAX_OBJECTS], table
         };
         *slot = value;
     }
+    Some(())
+}
+
+unsafe fn apply_relr_table(object: &Object) -> Option<()> {
+    if object.relrsz == 0 {
+        return Some(());
+    }
+    if object.relr.is_null()
+        || object.relrsz % ELF64_RELR_SIZE != 0
+        || object.relrsz > MAX_RELR_BYTE_LEN
+    {
+        return None;
+    }
+    let mut next_virtual_address = None;
+    for index in 0..(object.relrsz / ELF64_RELR_SIZE) {
+        let encoded = read_u64(object.relr.add(index * ELF64_RELR_SIZE));
+        if encoded & 1 == 0 {
+            apply_relr_target(object, encoded)?;
+            next_virtual_address = Some(encoded.checked_add(ELF64_RELR_SIZE as u64)?);
+            continue;
+        }
+
+        let start = next_virtual_address?;
+        let bitmap = encoded >> 1;
+        for bit in 0..ELF64_RELR_BITMAP_BITS {
+            if bitmap & (1u64 << bit) != 0 {
+                let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
+                apply_relr_target(object, target)?;
+            }
+        }
+        next_virtual_address = Some(
+            start.checked_add(ELF64_RELR_BITMAP_BITS.checked_mul(ELF64_RELR_SIZE as u64)?)?,
+        );
+    }
+    Some(())
+}
+
+unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()> {
+    let slot = runtime_address(object.base, virtual_address)? as *mut u64;
+    *slot = (*slot).checked_add(object.base)?;
     Some(())
 }
 
@@ -779,6 +1056,17 @@ unsafe fn virtual_range_in_executable_load(phdr: *const u8, phnum: usize, addres
 }
 
 fn runtime_address(base: u64, virtual_address: u64) -> Option<u64> { base.checked_add(virtual_address) }
+
+fn ranges_overlap(
+    first_address: u64,
+    first_byte_len: u64,
+    second_address: u64,
+    second_byte_len: u64,
+) -> Option<bool> {
+    let first_end = first_address.checked_add(first_byte_len)?;
+    let second_end = second_address.checked_add(second_byte_len)?;
+    Some(first_address < second_end && second_address < first_end)
+}
 
 unsafe fn bounded_nul(pointer: *const u8, maximum: usize) -> Option<usize> { for index in 0..maximum { if *pointer.add(index) == 0 { return Some(index); } } None }
 unsafe fn bytes_eq(left: *const u8, right: *const u8, length: usize) -> bool { for index in 0..length { if *left.add(index) != *right.add(index) { return false; } } true }

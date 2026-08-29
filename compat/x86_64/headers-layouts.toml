@@ -80,6 +80,36 @@ sources = [
 headers = ["include/stddef.h", "include/sys/stat.h"]
 
 [[probe]]
+id = "utime"
+command = "./scripts/dev-x86_64.sh utime-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/utime_header_abi_probe.c",
+  "compat/x86_64/utime_header_abi_probe.cpp",
+  "compat/x86_64/run_utime_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/utime.h"]
+
+[[probe]]
+id = "pthread-c11"
+command = "./scripts/dev-x86_64.sh pthread-c11-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/pthread_c11_header_abi_probe.c",
+  "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+  "compat/x86_64/run_pthread_c11_header_abi.sh",
+]
+headers = [
+  "include/pthread.h",
+  "include/sched.h",
+  "include/signal.h",
+  "include/threads.h",
+  "include/time.h",
+]
+
+[[probe]]
 id = "ctype"
 command = "./scripts/dev-x86_64.sh ctype-header-abi"
 state = "required"

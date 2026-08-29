@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -99,6 +99,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
         self.assertIn("libc-descriptor-lifecycle", source)
+        self.assertIn("libc-timestamp-updates", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -134,6 +135,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
         self.assertIn('run_stat_header_abi()', source)
         self.assertIn('compat/x86_64/run_stat_header_abi.sh', source)
+        self.assertIn('run_utime_header_abi()', source)
+        self.assertIn('compat/x86_64/run_utime_header_abi.sh', source)
+        self.assertIn('run_pthread_c11_header_abi()', source)
+        self.assertIn('compat/x86_64/run_pthread_c11_header_abi.sh', source)
         self.assertIn('run_ctype_header_abi()', source)
         self.assertIn('compat/x86_64/run_ctype_header_abi.sh', source)
         self.assertIn('run_integer_arithmetic_header_abi()', source)
@@ -8645,6 +8650,40 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             )
             self.assertIn('"$test_binary" --test-threads=1', source_test_command)
             self.assertNotIn("cargo", source_test_command)
+
+    def test_ldso_initial_graph_relr_stays_bounded_to_the_private_leaf_fixture(self) -> None:
+        runner = (ROOT / "compat" / "x86_64" / "run_ldso_initial_graph.sh").read_text(
+            encoding="utf-8"
+        )
+        graph = (ROOT / "ldso" / "src" / "x86_64_initial_graph.rs").read_text(
+            encoding="utf-8"
+        )
+        leaf = (ROOT / "compat" / "x86_64" / "ldso_initial_graph_leaf.c").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("-Wl,-z,pack-relative-relocs", runner)
+        self.assertIn(".relr.dyn", runner)
+        self.assertIn("relr_direct_count", runner)
+        self.assertIn("relr_bitmap_count", runner)
+        self.assertIn("overlapping relocation-table mutation", runner)
+        self.assertIn("bitmap-without-address mutation", runner)
+        self.assertIn("must name one aligned writable word", runner)
+        self.assertIn("duplicate RELR target mutation", runner)
+        self.assertIn("libleaf-target-overcap.so", runner)
+        self.assertIn("libleaf-record-overcap.so", runner)
+        self.assertIn("zero-bit over-cap RELR mutation", runner)
+        self.assertIn("MAX_RELR_ENTRIES=512", runner)
+        self.assertIn("const MAX_RELOCATION_TARGETS: usize = 512;", graph)
+        self.assertIn("const MAX_RELR_ENTRIES: usize = 512;", graph)
+        self.assertIn("const MAX_RELR_BYTE_LEN: usize", graph)
+        self.assertIn("preflight_relocation_table_layout", graph)
+        self.assertIn("preflight_relr_table", graph)
+        self.assertIn("apply_relr_table", graph)
+        self.assertIn("objects[0].relrsz != 0", graph)
+        self.assertIn("objects[1].relrsz != 0", graph)
+        self.assertIn("objects[2].relrsz == 0", graph)
+        self.assertIn("leaf_relative_slots", leaf)
 
     def test_facade_keeps_native_pattern_archives_checked(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

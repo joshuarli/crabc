@@ -46,6 +46,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
+  utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
+  pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
   ctype-header-abi  compile the staged x86 C/C++ ctype declarations
   integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
   integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
@@ -183,6 +185,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
   libc-descriptor-lifecycle  run the static x86 crabc-libc descriptor lifecycle composition
+  libc-timestamp-updates  run the static x86 rcrt1/libc timestamp-update block
   libc-fcntl-status-control  run the static x86 crabc-libc fcntl status-control slice
   libc-ioctl  run the static x86 crabc-libc generic ioctl slice
   libc-descriptor-io  run the static x86 crabc-libc selected descriptor-I/O slice
@@ -1224,6 +1227,14 @@ run_stat_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stat_header_abi.sh
 }
 
+run_utime_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_utime_header_abi.sh
+}
+
+run_pthread_c11_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_pthread_c11_header_abi.sh
+}
+
 run_ctype_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ctype_header_abi.sh
 }
@@ -2105,6 +2116,10 @@ run_libc_descriptor_lifecycle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_lifecycle.sh
 }
 
+run_libc_timestamp_updates_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_timestamp_updates.sh
+}
+
 run_libc_process_resources_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_process_resources.sh
 }
@@ -2183,7 +2198,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     uapi-wrapper-matrix) ;;
@@ -2292,6 +2307,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stat-header-abi takes no arguments"
         ensure_image
         run_stat_header_abi
+        ;;
+    utime-header-abi)
+        [ "$#" -eq 0 ] || fail "utime-header-abi takes no arguments"
+        ensure_image
+        run_utime_header_abi
+        ;;
+    pthread-c11-header-abi)
+        [ "$#" -eq 0 ] || fail "pthread-c11-header-abi takes no arguments"
+        ensure_image
+        run_pthread_c11_header_abi
         ;;
     ctype-header-abi)
         [ "$#" -eq 0 ] || fail "ctype-header-abi takes no arguments"
@@ -2956,6 +2981,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-descriptor-lifecycle takes no arguments"
         ensure_image
         run_libc_descriptor_lifecycle_probe
+        ;;
+    libc-timestamp-updates)
+        [ "$#" -eq 0 ] || fail "libc-timestamp-updates takes no arguments"
+        ensure_image
+        run_libc_timestamp_updates_probe
         ;;
     libc-socket-transport)
         [ "$#" -eq 0 ] || fail "libc-socket-transport takes no arguments"

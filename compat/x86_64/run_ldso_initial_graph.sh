@@ -10,6 +10,7 @@ readonly MID="$ROOT_DIR/compat/x86_64/ldso_initial_graph_mid.c"
 readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_initial_graph_main.c"
 readonly ORACLE_MAIN="$ROOT_DIR/compat/x86_64/ldso_initial_graph_oracle_main.c"
 readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
+readonly MAX_RELR_ENTRIES=512
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     printf '%s\n' 'ERROR: initial-graph evidence requires native Linux/x86-64' >&2
@@ -81,8 +82,15 @@ if ! readelf -rW "$work_dir/ld-crabc-x86_64-initial-graph.so" | awk '
     exit 1
 fi
 
-cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libleaf.so \
+cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-z,pack-relative-relocs -Wl,-soname,libleaf.so \
     "$LEAF" -o "$work_dir/libleaf.so"
+# Build two deliberately over-cap siblings only for negative evidence. The
+# dense one exceeds the target cap while retaining a compact table; the sparse
+# one exceeds the record cap. Neither is the ordinary valid graph dependency.
+cc -DCRABC_RELR_TARGET_OVER_CAP=1 -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-z,pack-relative-relocs -Wl,-soname,libleaf.so \
+    "$LEAF" -o "$work_dir/libleaf-target-overcap.so"
+cc -DCRABC_RELR_RECORD_OVER_CAP=1 -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-z,pack-relative-relocs -Wl,-soname,libleaf.so \
+    "$LEAF" -o "$work_dir/libleaf-record-overcap.so"
 cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libmid.so \
     -Wl,-rpath,"$work_dir" "$MID" -L"$work_dir" -Wl,--no-as-needed -l:libleaf.so \
     -o "$work_dir/libmid.so"
@@ -118,6 +126,18 @@ for binary in "$work_dir/main-musl" "$work_dir/main-crabc" "$work_dir/libmid.so"
         exit 1
     fi
 done
+if ! readelf -dW "$work_dir/libleaf.so" | grep -q '(RELR)'; then
+    printf '%s\n' 'ERROR: packed leaf fixture has no DT_RELR' >&2
+    exit 1
+fi
+if ! readelf -dW "$work_dir/libleaf.so" | grep -Eq '\(RELRSZ\)[[:space:]]+[1-9][0-9]* \(bytes\)'; then
+    printf '%s\n' 'ERROR: packed leaf fixture has no nonempty DT_RELRSZ' >&2
+    exit 1
+fi
+if ! readelf -dW "$work_dir/libleaf.so" | grep -Eq '\(RELRENT\)[[:space:]]+8 \(bytes\)'; then
+    printf '%s\n' 'ERROR: packed leaf fixture DT_RELRENT drifted' >&2
+    exit 1
+fi
 for binary in "$work_dir/main-musl" "$work_dir/main-crabc" "$work_dir/libmid.so" "$work_dir/libleaf.so"; do
     if ! readelf -lW "$binary" | grep -q 'GNU_RELRO'; then
         printf '%s\n' "ERROR: fixture did not emit PT_GNU_RELRO: $binary" >&2
@@ -203,6 +223,205 @@ dynamic_entry_offset() {
     return 1
 }
 
+relr_section_offset() {
+    objdump -h "$1" | awk '$2 == ".relr.dyn" { print "0x" $6; exit }'
+}
+
+relr_section_size() {
+    objdump -h "$1" | awk '$2 == ".relr.dyn" { print "0x" $3; exit }'
+}
+
+relr_entry_kind() {
+    local binary="$1"
+    local offset="$2"
+    local word
+    word="$(od -An -tx8 -j"$offset" -N8 "$binary" | tr -d '[:space:]')"
+    case "${word: -1}" in
+        1|3|5|7|9|b|d|f) printf '%s\n' bitmap ;;
+        0|2|4|6|8|a|c|e) printf '%s\n' direct ;;
+        *) return 1 ;;
+    esac
+}
+
+relr_offset="$(relr_section_offset "$work_dir/libleaf.so")"
+relr_size="$(relr_section_size "$work_dir/libleaf.so")"
+if [ -z "$relr_offset" ] || [ -z "$relr_size" ] || (( relr_size == 0 || relr_size % 8 != 0 )); then
+    printf '%s\n' 'ERROR: packed leaf fixture has no integral .relr.dyn payload' >&2
+    exit 1
+fi
+relr_direct_count=0
+relr_bitmap_count=0
+for ((entry = 0; entry < relr_size / 8; entry++)); do
+    case "$(relr_entry_kind "$work_dir/libleaf.so" $((relr_offset + entry * 8)))" in
+        direct) relr_direct_count=$((relr_direct_count + 1)) ;;
+        bitmap) relr_bitmap_count=$((relr_bitmap_count + 1)) ;;
+        *)
+            printf '%s\n' 'ERROR: packed leaf fixture has an unreadable .relr.dyn word' >&2
+            exit 1
+            ;;
+    esac
+done
+if (( relr_direct_count == 0 || relr_bitmap_count == 0 )); then
+    printf '%s\n' 'ERROR: packed leaf fixture did not exercise both direct and bitmap RELR records' >&2
+    exit 1
+fi
+if [ "$(relr_entry_kind "$work_dir/libleaf.so" "$relr_offset")" != direct ]; then
+    printf '%s\n' 'ERROR: packed leaf fixture does not begin its RELR stream with a direct address' >&2
+    exit 1
+fi
+relr_dynamic_entry="$(dynamic_entry_offset "$work_dir/libleaf.so" 0000000000000024 || true)"
+relrent_dynamic_entry="$(dynamic_entry_offset "$work_dir/libleaf.so" 0000000000000025 || true)"
+rela_dynamic_entry="$(dynamic_entry_offset "$work_dir/libleaf.so" 0000000000000007 || true)"
+if [ -z "$relr_dynamic_entry" ] || [ -z "$relrent_dynamic_entry" ] || [ -z "$rela_dynamic_entry" ]; then
+    printf '%s\n' 'ERROR: packed leaf fixture lacks required relocation dynamic entries' >&2
+    exit 1
+fi
+
+# A packed RELR stream is accepted only with its complete dynamic-tag triple.
+# Retag DT_RELRENT to an unknown processor-specific value: the ordinary table
+# bytes remain unchanged, so the parser must fail solely because the triple is
+# incomplete rather than treating the existing stream as an unscoped tag.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+printf '\000\000\000\160\000\000\000\000' | dd of="$work_dir/libleaf.so" bs=1 seek="$relrent_dynamic_entry" conv=notrunc status=none
+if readelf -dW "$work_dir/libleaf.so" | grep -q '(RELRENT)'; then
+    printf '%s\n' 'ERROR: incomplete DT_RELR mutation retained DT_RELRENT' >&2
+    exit 1
+fi
+expect_candidate_rejection 'leafmap'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# RELRENT has an exact ELF64 word size. A valid table with a wrong entry size
+# must be rejected at parse time before the loader looks at any payload word.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+printf '\020\000\000\000\000\000\000\000' | dd of="$work_dir/libleaf.so" bs=1 seek=$((relrent_dynamic_entry + 8)) conv=notrunc status=none
+if ! readelf -dW "$work_dir/libleaf.so" | grep -Eq '\(RELRENT\)[[:space:]]+16 \(bytes\)'; then
+    printf '%s\n' 'ERROR: malformed DT_RELRENT mutation did not take effect' >&2
+    exit 1
+fi
+expect_candidate_rejection 'leafmap'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# The table address itself is an object-relative checked-load-range value.
+# Keep every tag present while moving only DT_RELR outside every PT_LOAD.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+printf '\377\377\377\377\377\377\377\177' | dd of="$work_dir/libleaf.so" bs=1 seek=$((relr_dynamic_entry + 8)) conv=notrunc status=none
+expect_candidate_rejection 'leafmap'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# The packed table cannot alias a RELA table. Copy the existing DT_RELA
+# address into DT_RELR while preserving an in-range table pointer and every
+# other RELR tag; preflight must reject the overlapping table windows before
+# it decodes a relocation or changes a target.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+dd if="$work_dir/libleaf-valid.so" of="$work_dir/libleaf.so" bs=1 skip=$((rela_dynamic_entry + 8)) seek=$((relr_dynamic_entry + 8)) count=8 conv=notrunc status=none
+if [ "$(od -An -tx8 -j$((relr_dynamic_entry + 8)) -N8 "$work_dir/libleaf.so" | tr -d '[:space:]')" != "$(od -An -tx8 -j$((rela_dynamic_entry + 8)) -N8 "$work_dir/libleaf-valid.so" | tr -d '[:space:]')" ]; then
+    printf '%s\n' 'ERROR: overlapping relocation-table mutation did not take effect' >&2
+    exit 1
+fi
+expect_candidate_rejection 'reloc'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# RELR's first bitmap needs a preceding direct address cursor. Corrupt only
+# the first packed word's low byte after the checked dynamic table has pointed
+# at it; the candidate must reject during relocation before control reaches
+# the mapped main entry.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+printf '\001' | dd of="$work_dir/libleaf.so" bs=1 seek=$((relr_offset)) conv=notrunc status=none
+if [ "$(relr_entry_kind "$work_dir/libleaf.so" "$relr_offset")" != bitmap ]; then
+    printf '%s\n' 'ERROR: bitmap-without-address mutation did not take effect' >&2
+    exit 1
+fi
+expect_candidate_rejection 'reloc'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# A direct RELR address must name one aligned writable word in this object.
+# ELF virtual address zero is the fixture's non-writable first PT_LOAD, so it
+# isolates writable-target validation without changing the table range.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+printf '\000\000\000\000\000\000\000\000' | dd of="$work_dir/libleaf.so" bs=1 seek=$((relr_offset)) conv=notrunc status=none
+expect_candidate_rejection 'reloc'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# Copy the first direct record over the final record. The preceding stream is
+# unchanged and the replacement is itself a valid direct address, so the only
+# new condition is that two RELR records target the same writable word.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+last_relr_entry_offset=$((relr_offset + relr_size - 8))
+dd if="$work_dir/libleaf-valid.so" of="$work_dir/libleaf.so" bs=1 skip=$((relr_offset)) seek="$last_relr_entry_offset" count=8 conv=notrunc status=none
+if [ "$(od -An -tx8 -j"$last_relr_entry_offset" -N8 "$work_dir/libleaf.so" | tr -d '[:space:]')" != "$(od -An -tx8 -j"$relr_offset" -N8 "$work_dir/libleaf-valid.so" | tr -d '[:space:]')" ]; then
+    printf '%s\n' 'ERROR: duplicate RELR target mutation did not take effect' >&2
+    exit 1
+fi
+expect_candidate_rejection 'reloc'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# The dense runner-only leaf keeps its packed RELR table below the record cap
+# while its 513 adjacent pointer slots exceed the target cap. Pinned musl
+# proves the object itself is valid and reaches every pointer; this private
+# candidate deliberately rejects its over-cap relocation transaction.
+target_overcap_relr_offset="$(relr_section_offset "$work_dir/libleaf-target-overcap.so")"
+target_overcap_relr_size="$(relr_section_size "$work_dir/libleaf-target-overcap.so")"
+if [ -z "$target_overcap_relr_offset" ] || [ -z "$target_overcap_relr_size" ] \
+    || (( target_overcap_relr_size == 0 || target_overcap_relr_size % 8 != 0 || target_overcap_relr_size / 8 > MAX_RELR_ENTRIES )); then
+    printf '%s\n' 'ERROR: target-over-cap leaf fixture did not retain a compact RELR table' >&2
+    exit 1
+fi
+target_overcap_direct_count=0
+target_overcap_bitmap_count=0
+for ((entry = 0; entry < target_overcap_relr_size / 8; entry++)); do
+    case "$(relr_entry_kind "$work_dir/libleaf-target-overcap.so" $((target_overcap_relr_offset + entry * 8)))" in
+        direct) target_overcap_direct_count=$((target_overcap_direct_count + 1)) ;;
+        bitmap) target_overcap_bitmap_count=$((target_overcap_bitmap_count + 1)) ;;
+        *)
+            printf '%s\n' 'ERROR: target-over-cap leaf fixture has an unreadable RELR word' >&2
+            exit 1
+            ;;
+    esac
+done
+if (( target_overcap_direct_count == 0 || target_overcap_bitmap_count == 0 )); then
+    printf '%s\n' 'ERROR: target-over-cap leaf fixture did not retain direct-and-bitmap RELR encoding' >&2
+    exit 1
+fi
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+cp "$work_dir/libleaf-target-overcap.so" "$work_dir/libleaf.so"
+(cd "$work_dir" && CRABC_EXECUTION_MODE=native "$work_dir/main-musl")
+expect_candidate_rejection 'reloc'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# The sparse runner-only leaf has more than 512 direct RELR records. The
+# candidate must reject this table before iterating it, independently of how
+# many destination words it would contain.
+record_overcap_relr_offset="$(relr_section_offset "$work_dir/libleaf-record-overcap.so")"
+record_overcap_relr_size="$(relr_section_size "$work_dir/libleaf-record-overcap.so")"
+if [ -z "$record_overcap_relr_offset" ] || [ -z "$record_overcap_relr_size" ] \
+    || (( record_overcap_relr_size % 8 != 0 || record_overcap_relr_size / 8 <= MAX_RELR_ENTRIES )); then
+    printf '%s\n' 'ERROR: record-over-cap leaf fixture did not emit more than 512 RELR records' >&2
+    exit 1
+fi
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+cp "$work_dir/libleaf-record-overcap.so" "$work_dir/libleaf.so"
+expect_candidate_rejection 'leafmap'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
+# Turn every record after the first valid direct address into an empty bitmap.
+# This preserves one real relocation target while retaining the over-cap table
+# length, proving that zero-bit runs cannot bypass the separate record bound.
+cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
+cp "$work_dir/libleaf-record-overcap.so" "$work_dir/libleaf.so"
+{
+    for ((entry = 1; entry < record_overcap_relr_size / 8; entry++)); do
+        printf '\001\000\000\000\000\000\000\000'
+    done
+} | dd of="$work_dir/libleaf.so" bs=1 seek=$((record_overcap_relr_offset + 8)) conv=notrunc status=none
+if [ "$(relr_entry_kind "$work_dir/libleaf.so" "$record_overcap_relr_offset")" != direct ] \
+    || [ "$(od -An -tx8 -j$((record_overcap_relr_offset + 8)) -N8 "$work_dir/libleaf.so" | tr -d '[:space:]')" != 0000000000000001 ] \
+    || [ "$(od -An -tx8 -j$((record_overcap_relr_offset + record_overcap_relr_size - 8)) -N8 "$work_dir/libleaf.so" | tr -d '[:space:]')" != 0000000000000001 ]; then
+    printf '%s\n' 'ERROR: zero-bit over-cap RELR mutation did not take effect' >&2
+    exit 1
+fi
+expect_candidate_rejection 'leafmap'
+mv "$work_dir/libleaf-valid.so" "$work_dir/libleaf.so"
+
 # Change only the unused PT_GNU_STACK header in a disposable leaf copy. The
 # parser must reject PT_TLS before it can select a TLS-less graph artifact.
 cp "$work_dir/libleaf.so" "$work_dir/libleaf-valid.so"
@@ -265,9 +484,10 @@ printf '\377\377\377\377\377\377\377\177' | dd of="$work_dir/libmid.so" bs=1 see
 expect_candidate_rejection 'midmap'
 mv "$work_dir/libmid-valid.so" "$work_dir/libmid.so"
 
-# DT_RELR is loader-affecting but absent from this deliberately RELA-only
-# artifact.  Re-tag a benign DT_FLAGS entry so the malformed image reaches
-# the parser without adding a new table or changing the fixed graph shape.
+# A lone DT_RELR remains malformed: this private graph accepts only the
+# complete DT_RELR/DT_RELRSZ/DT_RELRENT triple. Re-tag a benign DT_FLAGS entry
+# so the malformed image reaches the parser without adding a table or changing
+# the fixed graph shape.
 cp "$work_dir/libmid.so" "$work_dir/libmid-valid.so"
 flags_dynamic_entry="$(dynamic_entry_offset "$work_dir/libmid.so" 000000000000001e || true)"
 if [ -z "$flags_dynamic_entry" ]; then
@@ -329,5 +549,5 @@ fi
 expect_candidate_rejection 'mainelf'
 mv "$work_dir/main-crabc-valid" "$work_dir/main-crabc"
 
-printf '%s\n' 'x86 ET_DYN initial graph negative file-range/PT_TLS/RELA/tag/flags/table/main-init: PASS'
+printf '%s\n' 'x86 ET_DYN initial graph negative file-range/PT_TLS/RELA/RELR-cap/tag/flags/table/main-init: PASS'
 printf '%s\n' 'x86 ET_DYN initial interpreter graph: PASS'

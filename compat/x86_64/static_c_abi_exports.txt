@@ -17,6 +17,7 @@ __fpclassify
 __fpclassifyf
 __fpclassifyl
 __funcs_on_exit
+__futimesat
 __fxstat
 __fxstatat
 __libc_current_sigrtmax
@@ -94,6 +95,9 @@ fstat
 fstatat
 fsync
 ftruncate
+futimens
+futimes
+futimesat
 getdomainname
 getdtablesize
 getegid
@@ -144,6 +148,7 @@ lldiv
 longjmp
 lseek
 lstat
+lutimes
 madvise
 memchr
 memcmp
@@ -261,6 +266,9 @@ tolower
 toupper
 umask
 uname
+utime
+utimensat
+utimes
 wait
 waitid
 waitpid

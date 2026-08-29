@@ -1,6 +1,10 @@
 #ifndef _PTHREAD_H
 #define _PTHREAD_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 #define __NEED_size_t
 #define __NEED_sigset_t
@@ -85,6 +89,7 @@ typedef struct {
 
 #define PTHREAD_CANCEL_ENABLE 0
 #define PTHREAD_CANCEL_DISABLE 1
+#define PTHREAD_CANCEL_MASKED 2
 #define PTHREAD_CANCEL_DEFERRED 0
 #define PTHREAD_CANCEL_ASYNCHRONOUS 1
 
@@ -114,6 +119,9 @@ int pthread_join(pthread_t, void **);
 void pthread_exit(void *) __attribute__((__noreturn__));
 pthread_t pthread_self(void);
 int pthread_equal(pthread_t, pthread_t);
+#ifndef __cplusplus
+#define pthread_equal(x,y) ((x)==(y))
+#endif
 int pthread_atfork(void (*)(void), void (*)(void), void (*)(void));
 int pthread_setschedprio(pthread_t, int);
 int pthread_getschedparam(pthread_t, int *, struct sched_param *);
@@ -226,6 +234,9 @@ int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
 int pthread_kill(pthread_t, int);
 
 #ifdef _GNU_SOURCE
+struct cpu_set_t;
+int pthread_getaffinity_np(pthread_t, size_t, struct cpu_set_t *);
+int pthread_setaffinity_np(pthread_t, size_t, const struct cpu_set_t *);
 int pthread_getattr_np(pthread_t, pthread_attr_t *);
 int pthread_setname_np(pthread_t, const char *);
 int pthread_getname_np(pthread_t, char *, size_t);
@@ -246,5 +257,9 @@ void _pthread_cleanup_pop(struct __ptcb *, int);
 
 #define pthread_cleanup_push(f, x) do { struct __ptcb __cb; _pthread_cleanup_push(&__cb, f, x);
 #define pthread_cleanup_pop(r) _pthread_cleanup_pop(&__cb, (r)); } while(0)
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -1,14 +1,38 @@
 #ifndef _SCHED_H
 #define _SCHED_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <sys/types.h>
 #include <time.h>
 
-struct sched_param { int sched_priority; };
+/* This reserve is public ABI, even though the currently implemented
+ * scheduling calls consume only sched_priority.  Keep the musl 1.2.6
+ * LP64 layout so a struct sched_param crosses pthread and sched boundaries
+ * with the same size and alignment as the C/POSIX oracle. */
+struct sched_param {
+    int sched_priority;
+    int __reserved1;
+#if defined(_REDIR_TIME64) && _REDIR_TIME64
+    long __reserved2[4];
+#else
+    struct {
+        time_t __reserved1;
+        long __reserved2;
+    } __reserved2[2];
+#endif
+    int __reserved3;
+};
 
 #define SCHED_OTHER 0
 #define SCHED_FIFO 1
 #define SCHED_RR 2
+#define SCHED_BATCH 3
+#define SCHED_IDLE 5
+#define SCHED_DEADLINE 6
+#define SCHED_RESET_ON_FORK 0x40000000
 
 #ifdef _GNU_SOURCE
 #define CSIGNAL             0x000000ff
@@ -49,5 +73,9 @@ int sched_setparam(pid_t, const struct sched_param *);
 int sched_setscheduler(pid_t, int, const struct sched_param *);
 int sched_rr_get_interval(pid_t, struct timespec *);
 int sched_yield(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

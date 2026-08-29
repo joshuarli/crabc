@@ -493,6 +493,8 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "sys-reg": "./scripts/dev-x86_64.sh sys-reg-header-abi",
     "types": "./scripts/dev-x86_64.sh types-header-abi",
     "stat": "./scripts/dev-x86_64.sh stat-header-abi",
+    "utime": "./scripts/dev-x86_64.sh utime-header-abi",
+    "pthread-c11": "./scripts/dev-x86_64.sh pthread-c11-header-abi",
     "ctype": "./scripts/dev-x86_64.sh ctype-header-abi",
     "integer-arithmetic": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
     "integer-parse": "./scripts/dev-x86_64.sh integer-parse-header-abi",
@@ -548,6 +550,16 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/stat_header_abi_probe.c",
         "compat/x86_64/stat_header_abi_probe.cpp",
         "compat/x86_64/run_stat_header_abi.sh",
+    ),
+    "utime": (
+        "compat/x86_64/utime_header_abi_probe.c",
+        "compat/x86_64/utime_header_abi_probe.cpp",
+        "compat/x86_64/run_utime_header_abi.sh",
+    ),
+    "pthread-c11": (
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
     ),
     "ctype": (
         "compat/x86_64/ctype_header_abi_probe.c",
@@ -3350,7 +3362,14 @@ def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
         "PT_GNU_RELRO",
         "leaf-before-mid",
         "main-image DT_INIT/DT_INIT_ARRAY dispatch",
-        "DT_RELR",
+        "bounded packed `DT_RELR`",
+        "direct-address and bitmap",
+        "512-record/512-target caps per object",
+        "zero-bit bitmap runs",
+        "duplicate RELR target",
+        "over-cap RELR stream",
+        "`DT_RELA`-only",
+        "general or interpreter `DT_RELR`",
         "TLS/DTV/__tls_get_addr",
         "public x86 support",
     ):
@@ -5052,6 +5071,174 @@ def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_timestamp_updates_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected timestamp C ABI real, bounded, and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-timestamp-updates"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-timestamp-updates artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-timestamp-updates must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "timestamp-update block",
+        "`utimensat`",
+        "`futimens`",
+        "strong `__futimesat`",
+        "weak same-address `futimesat`",
+        "`futimes`",
+        "`lutimes`",
+        "`utimes`",
+        "`utime`",
+        "`UTIME_NOW`",
+        "`UTIME_OMIT`",
+        "real Rust `rcrt1.o`/`crti.o`/`crtn.o`",
+        "does not establish general filesystem policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-timestamp-updates description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-timestamp-updates.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/timestamp_updates.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "crt/src/x86_64_rcrt1.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "include/sys/stat.h",
+        "include/sys/time.h",
+        "include/utime.h",
+        "compat/x86_64/utime_header_abi_probe.c",
+        "compat/x86_64/utime_header_abi_probe.cpp",
+        "compat/x86_64/run_utime_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_timestamp_updates_probe.c",
+        "compat/x86_64/run_libc_timestamp_updates.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-timestamp-updates source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-timestamp-updates.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "utimensat=280" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "rcx" in item
+            and "16-byte align-8" in item
+            for item in prerequisites
+        ),
+        "static-c-timestamp-updates must record its x86 syscall and record ABI",
+    )
+    require(
+        any(
+            "src/stat/utimensat.c" in item
+            and "src/stat/futimesat.c" in item
+            and "all-UTIME_NOW" in item
+            and "weak same-address" in item
+            and "ENOSYS fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-timestamp-updates must record the selected musl conversion/alias boundary",
+    )
+    require(
+        any(
+            "archive-owned initial-TLS errno PT_TLS" in item
+            and "Real rcrt1" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-timestamp-updates must record its archive-owned TLS/startup boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-timestamp-updates.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "utime header gate" in item
+            and "unmangled C++ linkage" in item
+            and "does not close any installed header family" in item
+            for item in headers
+        ),
+        "static-c-timestamp-updates must retain its direct header boundary",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "utimensat",
+        "futimens",
+        "__futimesat",
+        "futimesat",
+        "futimes",
+        "lutimes",
+        "utimes",
+        "utime",
+    ):
+        require(
+            symbol in static_exports,
+            f"static-c-timestamp-updates must retain selected export {symbol}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-timestamp-updates"},
+        "static-c-timestamp-updates must use the closed libc-timestamp-updates command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "rcrt1/crti/crtn static-PIE candidate",
+                "weak same-address futimesat",
+                "flags in r10",
+                "UTIME_NOW/UTIME_OMIT",
+                "dynamic TLS",
+                "public x86 support",
+            )
+        ),
+        "static-c-timestamp-updates evidence must retain its bounded runtime boundary",
+    )
+
+
 def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     """Keep the stateless find-first-set artifact identity and scope durable."""
     artifacts = require_verified_artifacts(
@@ -5495,6 +5682,7 @@ def validate_ledger(
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
+    require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
 
