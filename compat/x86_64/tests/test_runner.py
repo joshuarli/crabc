@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -40,35 +41,47 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    math-complex-header-abi)", source)
         self.assertIn("    libc-math-complex)", source)
-        source = source.replace(
-            "msync-reference|mincore-reference",
-            "msync-reference|madvise-reference|mincore-reference",
-            1,
+        preflight = source.split('case "$command" in\n', 1)[1].split(
+            '\nesac\n\nrequire_native_linux_x86_64_host\n\ncase "$command" in\n', 1
+        )[0]
+        actual_groups = tuple(
+            line.strip()[:-4]
+            for line in preflight.splitlines()
+            if line.strip().endswith(") ;;")
         )
-        source = source.replace("resource-header-abi|socket-header-abi|", "resource-header-abi|", 1)
-        source = source.replace("libc-readiness-waits|", "", 1)
-        source = source.replace("libc-socket-transport|", "", 1)
-        source = source.replace("libc-system-observation|", "", 1)
-        source = source.replace("libc-uts-identity|", "", 1)
-        source = source.replace("libc-pthread-create-join-tls|", "", 1)
-        source = source.replace("resource-header-abi|random-entropy-header-abi|mm-abi-reference|", "resource-header-abi|mm-abi-reference|", 1)
-        self.assertIn("public-header-surface", source)
-        self.assertIn("math-complex-header-abi", source)
-        source = source.replace(
-            "header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi",
-            "header-abi-reference|header-abi-project",
-            1,
+        expected_groups = (
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "linux-5-10-uapi",
+            "candidate-header-closure",
+            "madvise-reference",
+            "ctype-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
+            "ffs-header-abi",
+            "byte-strings-header-abi",
+            "memory-search-header-abi",
+            "string-copy-header-abi",
+            "random-entropy-header-abi",
+            "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
         )
-        self.assertIn("libc-math-complex", source)
-        source = source.replace(
-            "libc-fenv|libc-math-complex|libc-memory",
-            "libc-fenv|libc-memory",
-            1,
+        self.assertEqual(actual_groups, expected_groups)
+
+        expected_commands = {
+            command
+            for group in expected_groups
+            for command in group.split("|")
+        }
+        handlers = source.split(
+            'require_native_linux_x86_64_host\n\ncase "$command" in\n', 1
+        )[1]
+        handler_groups = re.findall(
+            r"^    ([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)$", handlers, re.MULTILINE
         )
-        self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
-            source,
-        )
+        handled_commands = {
+            command
+            for group in handler_groups
+            for command in group.split("|")
+        }
+        self.assertSetEqual(handled_commands, expected_commands)
         self.assertIn("libc-stat-compat", source)
         self.assertIn("libc-credentials", source)
         self.assertIn("libc-bootstrap-primitives", source)
@@ -1533,6 +1546,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('rustup run nightly-2026-07-24 rustc --edition=2021 --test', source)
         self.assertIn('run_ldso_image_tests()', source)
         self.assertIn('/workspace/ldso/run-x86_64-image.sh test', source)
+        self.assertIn('run_ldso_initial_graph_tests()', source)
+        self.assertIn('/workspace/compat/x86_64/run_ldso_initial_graph.sh', source)
         self.assertNotIn('"$ROOT_DIR/compat/allocator/run-x86_64.sh"', source)
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn('-p crabc-ldso', source)

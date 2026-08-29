@@ -6,6 +6,15 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+The x86 lane has one private `ldso-initial-graph` ET_DYN interpreter artifact
+inside still-planned `ldso.dynamic-runtime`. Its native evidence is limited to
+one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT,
+dependency-only leaf-before-mid init arrays, final interpreter-and-graph RELRO
+sealing, and main/leaf RELRO-fault plus fail-closed malformed-file-range/TLS/
+unsupported-relocation inputs. It deliberately
+rejects main-image constructors pending CRT handoff and is not a general loader,
+CRT/sysroot, or public x86 support claim.
+
 The x86 lane now also has private static `pthread_create`/`pthread_exit`/
 `pthread_join` initial-TLS artifacts: they prove a null-attribute worker that
 returns normally or uses the selected worker-only explicit-exit path, with

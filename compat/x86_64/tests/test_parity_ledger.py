@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 36)
+        self.assertEqual(report["verified_artifact_count"], 37)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -65,6 +65,32 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
+
+    def test_ldso_initial_graph_is_a_planned_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(entry for entry in artifacts if entry["id"] == "ldso-initial-graph")
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("main PIE -> mid.so -> leaf.so", artifact["description"])
+        self.assertIn("main-image DT_INIT/DT_INIT_ARRAY dispatch", artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh ldso-initial-graph"},
+        )
+        self.assertIn("ldso/src/x86_64_initial_graph.rs", artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(entry for entry in changed_artifacts if entry["id"] == "ldso-initial-graph")
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private graph"
+        with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-graph description omits"):
+            ledger.validate_ledger(changed)
 
     def test_header_layout_manifest_is_a_closed_direct_probe_inventory(self) -> None:
         data = self.data()

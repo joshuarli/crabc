@@ -2223,6 +2223,59 @@ def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the one private ET_DYN graph without promoting the loader family."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "ldso-initial-graph"]
+    require(len(matching) == 1, "ldso.dynamic-runtime needs exactly one ldso-initial-graph artifact")
+    artifact = matching[0]
+    require(family.get("status") == "planned", "ldso-initial-graph must not promote ldso.dynamic-runtime")
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "main PIE -> mid.so -> leaf.so",
+        "R_X86_64_RELATIVE",
+        "R_X86_64_GLOB_DAT",
+        "R_X86_64_JUMP_SLOT",
+        "PT_GNU_RELRO",
+        "leaf-before-mid",
+        "main-image DT_INIT/DT_INIT_ARRAY dispatch",
+        "DT_RELR",
+        "TLS/DTV/__tls_get_addr",
+        "public x86 support",
+    ):
+        require(phrase in description, f"ldso-initial-graph description omits {phrase}")
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_initial_graph_leaf.c",
+        "compat/x86_64/ldso_initial_graph_mid.c",
+        "compat/x86_64/ldso_initial_graph_main.c",
+        "compat/x86_64/ldso_initial_graph_oracle_main.c",
+        "compat/x86_64/run_ldso_initial_graph.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "ldso-initial-graph source owners")) == expected_sources,
+        "ldso-initial-graph source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh ldso-initial-graph"},
+        "ldso-initial-graph must use the dedicated native command",
+    )
+    require(
+        "run_ldso_initial_graph.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-initial-graph dispatcher binding is missing",
+    )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -3697,6 +3750,7 @@ def validate_ledger(
     )
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
 
+    require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

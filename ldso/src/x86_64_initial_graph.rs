@@ -1,0 +1,829 @@
+#![no_std]
+#![no_main]
+
+//! A bounded Linux/x86-64 initial-interpreter graph.
+//!
+//! This is intentionally a separately-built bootstrap artifact, not the
+//! `crabc-ldso` public target.  It proves the earliest x86-64 dynamic-loader
+//! transaction against one ordinary shape: a kernel-mapped PIE, one direct
+//! DSO, and that DSO's direct DSO.  `_start` performs *this interpreter's*
+//! `R_X86_64_RELATIVE` relocations in assembly before entering Rust.  Rust
+//! then discovers the two `DT_NEEDED` edges through absolute `DT_RUNPATH`
+//! directories, maps the two ET_DYN images, and processes only RELATIVE,
+//! GLOB_DAT, and JUMP_SLOT ELF64 RELA records.  Once all mappings are
+//! relocated, it seals every present `PT_GNU_RELRO` range and runs the two
+//! dependency `DT_INIT_ARRAY` lists in leaf-before-mid order.
+//!
+//! Musl 1.2.6 oracle: `ldso/dynlink.c:do_relocs` and
+//! `arch/x86_64/reloc.h`.  The narrow relocation set and all exclusions are
+//! deliberate evidence boundaries: no `DT_RELR`, TLS, `DT_INIT`, main-image
+//! constructor dispatch (that remains CRT-owned), preload/environment search,
+//! `dl*`, audit, secure-exec filtering, symbolic versioning, or general
+//! dependency graph are claimed here.
+
+#![allow(clippy::missing_safety_doc)]
+
+use core::arch::global_asm;
+use core::ffi::c_void;
+
+const AT_PHDR: u64 = 3;
+const AT_PHNUM: u64 = 5;
+const AT_ENTRY: u64 = 9;
+const AT_NULL: u64 = 0;
+
+const PT_LOAD: u32 = 1;
+const PT_DYNAMIC: u32 = 2;
+const PT_PHDR: u32 = 6;
+const PT_TLS: u32 = 7;
+const PT_GNU_RELRO: u32 = 0x6474_e552;
+const PF_X: u32 = 1;
+const PF_W: u32 = 2;
+const PF_R: u32 = 4;
+
+const DT_NULL: i64 = 0;
+const DT_NEEDED: i64 = 1;
+const DT_PLTRELSZ: i64 = 2;
+const DT_HASH: i64 = 4;
+const DT_STRTAB: i64 = 5;
+const DT_SYMTAB: i64 = 6;
+const DT_RELA: i64 = 7;
+const DT_RELASZ: i64 = 8;
+const DT_RELAENT: i64 = 9;
+const DT_STRSZ: i64 = 10;
+const DT_SYMENT: i64 = 11;
+const DT_INIT: i64 = 12;
+const DT_FINI: i64 = 13;
+const DT_RPATH: i64 = 15;
+const DT_SYMBOLIC: i64 = 16;
+const DT_REL: i64 = 17;
+const DT_RELSZ: i64 = 18;
+const DT_RELENT: i64 = 19;
+const DT_PLTREL: i64 = 20;
+const DT_TEXTREL: i64 = 22;
+const DT_JMPREL: i64 = 23;
+const DT_INIT_ARRAY: i64 = 25;
+const DT_FINI_ARRAY: i64 = 26;
+const DT_INIT_ARRAYSZ: i64 = 27;
+const DT_FINI_ARRAYSZ: i64 = 28;
+const DT_RUNPATH: i64 = 29;
+const DT_FLAGS: i64 = 30;
+const DT_PREINIT_ARRAY: i64 = 32;
+const DT_PREINIT_ARRAYSZ: i64 = 33;
+const DT_RELR: i64 = 36;
+const DT_RELRSZ: i64 = 35;
+const DT_RELRENT: i64 = 37;
+const DT_GNU_HASH: i64 = 0x6fff_fef5;
+const DT_VERSYM: i64 = 0x6fff_fff0;
+const DT_VERDEF: i64 = 0x6fff_fffc;
+const DT_VERDEFNUM: i64 = 0x6fff_fffd;
+const DT_VERNEED: i64 = 0x6fff_fffe;
+const DT_VERNEEDNUM: i64 = 0x6fff_ffff;
+const DT_FLAGS_1: i64 = 0x6fff_fffb;
+
+const DF_BIND_NOW: u64 = 0x8;
+const DF_1_NOW: u64 = 0x1;
+const DF_1_PIE: u64 = 0x0800_0000;
+
+const ELF64_RELA: u64 = 7;
+const R_X86_64_GLOB_DAT: u32 = 6;
+const R_X86_64_JUMP_SLOT: u32 = 7;
+const R_X86_64_RELATIVE: u32 = 8;
+
+const SYS_WRITE: i64 = 1;
+const SYS_CLOSE: i64 = 3;
+const SYS_FSTAT: i64 = 5;
+const SYS_MMAP: i64 = 9;
+const SYS_MPROTECT: i64 = 10;
+const SYS_MUNMAP: i64 = 11;
+const SYS_OPENAT: i64 = 257;
+const SYS_EXIT: i64 = 60;
+const AT_FDCWD: i64 = -100;
+const PROT_READ: i64 = 1;
+const PROT_WRITE: i64 = 2;
+const PROT_EXEC: i64 = 4;
+const MAP_PRIVATE: i64 = 2;
+const MAP_FIXED: i64 = 0x10;
+const MAP_ANONYMOUS: i64 = 0x20;
+const PAGE: u64 = 4096;
+// Linux 5.10 x86-64 `fstat=5` fills the same 144-byte LP64 `struct stat`
+// whose signed `st_size` lives at byte offset 48 in the selected x86 C ABI.
+// Keep this private byte storage here: this isolated bootstrap must validate
+// a DSO file range before mapping it, without selecting the C ABI leaf.
+const X86_64_STAT_BYTE_LEN: usize = 144;
+const X86_64_STAT_SIZE_OFFSET: usize = 48;
+
+const MAX_OBJECTS: usize = 3;
+const MAX_PHDRS: usize = 32;
+const MAX_NEEDED: usize = 2;
+const MAX_PATH: usize = 512;
+
+#[derive(Copy, Clone)]
+struct Object {
+    base: u64,
+    phdr: *const u8,
+    phnum: usize,
+    strtab: *const u8,
+    strsz: usize,
+    symtab: *const u8,
+    symcount: usize,
+    rela: *const u8,
+    relasz: usize,
+    jmprel: *const u8,
+    pltrelsz: usize,
+    init_array: *const usize,
+    init_count: usize,
+    relro_virtual_address: u64,
+    relro_byte_len: u64,
+    runpath: *const u8,
+    runpath_len: usize,
+    needed: [usize; MAX_NEEDED],
+    needed_count: usize,
+    mapped: bool,
+}
+
+const EMPTY_OBJECT: Object = Object {
+    base: 0,
+    phdr: core::ptr::null(),
+    phnum: 0,
+    strtab: core::ptr::null(),
+    strsz: 0,
+    symtab: core::ptr::null(),
+    symcount: 0,
+    rela: core::ptr::null(),
+    relasz: 0,
+    jmprel: core::ptr::null(),
+    pltrelsz: 0,
+    init_array: core::ptr::null(),
+    init_count: 0,
+    relro_virtual_address: 0,
+    relro_byte_len: 0,
+    runpath: core::ptr::null(),
+    runpath_len: 0,
+    needed: [0; MAX_NEEDED],
+    needed_count: 0,
+    mapped: false,
+};
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    unsafe { die(b"panic\n") }
+}
+
+// The interpreter cannot rely on any relocated Rust address before this
+// sequence.  Linux supplies AT_BASE for PT_INTERP; the loop finds this
+// object's PT_DYNAMIC and applies only the linker's self-relative records.
+global_asm!(
+    ".global _start",
+    ".type _start,@function",
+    "_start:",
+    "mov %rsp, %r12",
+    "mov (%rsp), %rax",
+    "lea 8(%rsp,%rax,8), %rdi",
+    "add $8, %rdi",
+    ".Lx86_argv:",
+    "cmpq $0, (%rdi)",
+    "lea 8(%rdi), %rdi",
+    "jne .Lx86_argv",
+    "xor %r13, %r13",
+    ".Lx86_auxv:",
+    "mov (%rdi), %rax",
+    "test %rax, %rax",
+    "je .Lx86_have_base",
+    "cmp $7, %rax",
+    "jne .Lx86_next_auxv",
+    "mov 8(%rdi), %r13",
+    ".Lx86_next_auxv:",
+    "add $16, %rdi",
+    "jmp .Lx86_auxv",
+    ".Lx86_have_base:",
+    "mov 32(%r13), %rax",
+    "movzwl 56(%r13), %ecx",
+    "lea (%r13,%rax), %rdi",
+    ".Lx86_find_dynamic:",
+    "test %ecx, %ecx",
+    "je .Lx86_call_rust",
+    "cmpl $2, (%rdi)",
+    "je .Lx86_dynamic_found",
+    "add $56, %rdi",
+    "dec %ecx",
+    "jmp .Lx86_find_dynamic",
+    ".Lx86_dynamic_found:",
+    "mov 16(%rdi), %rax",
+    "mov 40(%rdi), %rcx",
+    "lea (%r13,%rax), %rdi",
+    "add %rdi, %rcx",
+    "xor %r8, %r8",
+    "xor %r9, %r9",
+    ".Lx86_dynamic_scan:",
+    "cmp %rcx, %rdi",
+    "jae .Lx86_apply_self",
+    "mov (%rdi), %rax",
+    "test %rax, %rax",
+    "je .Lx86_apply_self",
+    "cmp $7, %rax",
+    "jne .Lx86_check_relasz",
+    "mov 8(%rdi), %r8",
+    "add %r13, %r8",
+    ".Lx86_check_relasz:",
+    "cmp $8, %rax",
+    "jne .Lx86_next_dynamic",
+    "mov 8(%rdi), %r9",
+    ".Lx86_next_dynamic:",
+    "add $16, %rdi",
+    "jmp .Lx86_dynamic_scan",
+    ".Lx86_apply_self:",
+    "test %r8, %r8",
+    "je .Lx86_call_rust",
+    "lea (%r8,%r9), %rcx",
+    ".Lx86_rela_loop:",
+    "cmp %rcx, %r8",
+    "jae .Lx86_call_rust",
+    "mov 8(%r8), %rax",
+    "cmp $8, %rax",
+    "jne .Lx86_next_rela",
+    "mov (%r8), %rdx",
+    "add %r13, %rdx",
+    "mov 16(%r8), %rax",
+    "add %r13, %rax",
+    "mov %rax, (%rdx)",
+    ".Lx86_next_rela:",
+    "add $24, %r8",
+    "jmp .Lx86_rela_loop",
+    ".Lx86_call_rust:",
+    ".hidden x86_64_initial_graph_run",
+    "mov %r12, %rdi",
+    "mov %r13, %rsi",
+    "call x86_64_initial_graph_run",
+    "ud2",
+    options(att_syntax),
+);
+
+#[no_mangle]
+pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -> ! {
+    // SAFETY: `_start` preserves the kernel's initial stack and supplies the
+    // AT_BASE it decoded. All later raw accesses remain bounded by validated
+    // program-header, file-range, and dynamic-table sizes in this deliberately
+    // small fixture ABI.
+    unsafe {
+        let (main_phdr, main_phnum, main_entry) = auxv_main(sp).unwrap_or_else(|| fail(b"auxv\n"));
+        let main_base = main_load_bias(main_phdr, main_phnum).unwrap_or_else(|| fail(b"mainbase\n"));
+        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false)
+            .unwrap_or_else(|| fail(b"mainelf\n"));
+        if objects[0].needed_count != 1 || objects[0].runpath.is_null() {
+            fail(b"mainshape\n");
+        }
+        objects[1] = load_needed(&objects[0], 0).unwrap_or_else(|| fail(b"midmap\n"));
+        if objects[1].needed_count != 1 || objects[1].runpath.is_null() {
+            fail(b"midshape\n");
+        }
+        objects[2] = load_needed(&objects[1], 0).unwrap_or_else(|| fail(b"leafmap\n"));
+        if objects[2].needed_count != 0 {
+            fail(b"leafshape\n");
+        }
+        for object in &objects {
+            relocate(object, &objects).unwrap_or_else(|| fail(b"reloc\n"));
+        }
+        for object in &objects[1..] {
+            protect_segments(object).unwrap_or_else(|| fail(b"protect\n"));
+        }
+        for object in &objects {
+            apply_relro(object).unwrap_or_else(|| fail(b"relro\n"));
+        }
+        run_initializers(&objects[1..]).unwrap_or_else(|| fail(b"init\n"));
+        // The interpreter's bootstrap RELA table was applied in `_start`, so
+        // its own PT_GNU_RELRO is the final protection transition before
+        // handing the original stack to the already-relocated main image.
+        apply_self_relro(ldso_base as u64).unwrap_or_else(|| fail(b"selfrelro\n"));
+        jump(main_entry as usize, sp)
+    }
+}
+
+unsafe fn auxv_main(sp: usize) -> Option<(*const u8, usize, u64)> {
+    let argc = *(sp as *const usize);
+    let mut cursor = (sp + 8 + (argc + 1) * 8) as *const usize;
+    while !(*cursor).eq(&0) { cursor = cursor.add(1); }
+    cursor = cursor.add(1);
+    let mut phdr = 0usize;
+    let mut phnum = 0usize;
+    let mut entry = 0u64;
+    loop {
+        let tag = *cursor as u64;
+        let value = *cursor.add(1) as u64;
+        if tag == AT_NULL { break; }
+        if tag == AT_PHDR { phdr = value as usize; }
+        if tag == AT_PHNUM { phnum = value as usize; }
+        if tag == AT_ENTRY { entry = value; }
+        cursor = cursor.add(2);
+    }
+    if phdr == 0 || phnum == 0 || phnum > MAX_PHDRS || entry == 0 { None } else { Some((phdr as *const u8, phnum, entry)) }
+}
+
+unsafe fn main_load_bias(phdr: *const u8, phnum: usize) -> Option<u64> {
+    let mut phdr_virtual_address = None;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) == PT_PHDR {
+            if phdr_virtual_address.replace(read_u64(header.add(16))).is_some() { return None; }
+        }
+    }
+    let virtual_address = phdr_virtual_address?;
+    let byte_len = u64::try_from(phnum).ok()?.checked_mul(56)?;
+    if !virtual_range_in_load(phdr, phnum, virtual_address, byte_len) { return None; }
+    (phdr as u64).checked_sub(virtual_address)
+}
+
+unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -> Option<Object> {
+    let mut dynamic_virtual_address = None;
+    let mut dynamic_byte_len = None;
+    let mut relro = None;
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        match read_u32(header) {
+            PT_DYNAMIC => {
+                if dynamic_virtual_address.is_some() { return None; }
+                let address = read_u64(header.add(16));
+                let byte_len = read_u64(header.add(40));
+                if byte_len == 0 || byte_len % 16 != 0 || !virtual_range_in_load(phdr, phnum, address, byte_len) { return None; }
+                dynamic_virtual_address = Some(address);
+                dynamic_byte_len = Some(byte_len);
+            }
+            PT_GNU_RELRO => {
+                if relro.is_some() { return None; }
+                let address = read_u64(header.add(16));
+                let byte_len = read_u64(header.add(40));
+                if byte_len == 0 || !virtual_range_in_load(phdr, phnum, address, byte_len) { return None; }
+                relro = Some((address, byte_len));
+            }
+            PT_TLS => return None,
+            _ => {}
+        }
+    }
+    let dynamic_address = dynamic_virtual_address?;
+    let dynamic_byte_len = dynamic_byte_len?;
+    let dynamic = runtime_address(base, dynamic_address)? as *const u8;
+    let dynamic_count = usize::try_from(dynamic_byte_len / 16).ok()?;
+    let (relro_virtual_address, relro_byte_len) = relro.unwrap_or((0, 0));
+    let mut object = Object { base, phdr, phnum, mapped, relro_virtual_address, relro_byte_len, ..EMPTY_OBJECT };
+    let mut needed_offsets = [0usize; MAX_NEEDED];
+    let mut runpath_offset = None;
+    let mut init_array_virtual_address = None;
+    let mut init_array_byte_len = None;
+    let mut strtab_virtual_address = None;
+    let mut strtab_byte_len = None;
+    let mut symtab_virtual_address = None;
+    let mut symtab_entry_len = None;
+    let mut hash_virtual_address = None;
+    let mut rela_virtual_address = None;
+    let mut rela_byte_len = None;
+    let mut rela_entry_len = None;
+    let mut jmprel_virtual_address = None;
+    let mut pltrel_byte_len = None;
+    let mut plt_is_rela = None;
+    let mut terminated = false;
+    for index in 0..dynamic_count {
+        let entry = dynamic.add(index * 16);
+        let tag = read_i64(entry);
+        let value = read_u64(entry.add(8));
+        match tag {
+            DT_NULL => { terminated = true; break; }
+            DT_NEEDED => {
+                if object.needed_count == MAX_NEEDED { return None; }
+                needed_offsets[object.needed_count] = usize::try_from(value).ok()?;
+                object.needed_count += 1;
+            }
+            DT_STRTAB => { if strtab_virtual_address.replace(value).is_some() { return None; } }
+            DT_STRSZ => { if strtab_byte_len.replace(value).is_some() { return None; } }
+            DT_SYMTAB => { if symtab_virtual_address.replace(value).is_some() { return None; } }
+            DT_SYMENT => { if symtab_entry_len.replace(value).is_some() { return None; } }
+            DT_HASH => { if hash_virtual_address.replace(value).is_some() { return None; } }
+            DT_RELA => { if rela_virtual_address.replace(value).is_some() { return None; } }
+            DT_RELASZ => { if rela_byte_len.replace(value).is_some() { return None; } }
+            DT_RELAENT => { if rela_entry_len.replace(value).is_some() { return None; } }
+            DT_JMPREL => { if jmprel_virtual_address.replace(value).is_some() { return None; } }
+            DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
+            DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
+            DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
+            DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
+            DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
+            // The fixtures use eager relocation; only its corresponding flag
+            // bits are inert here.  Symbolic lookup, text relocations, and
+            // static TLS would alter unsupported resolution/write/TLS modes.
+            DT_FLAGS if value & !DF_BIND_NOW != 0 => return None,
+            DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE) != 0 => return None,
+            // These imply relocation, finalization, hash, or initialization
+            // semantics outside the closed fixture ABI.  Reject before any
+            // corresponding pointer can be used.
+            DT_INIT | DT_FINI | DT_RPATH | DT_SYMBOLIC | DT_REL | DT_RELSZ | DT_RELENT | DT_FINI_ARRAY | DT_FINI_ARRAYSZ
+            | DT_PREINIT_ARRAY | DT_PREINIT_ARRAYSZ | DT_RELR | DT_RELRSZ | DT_RELRENT | DT_GNU_HASH
+            | DT_VERSYM | DT_VERDEF | DT_VERDEFNUM | DT_VERNEED | DT_VERNEEDNUM | DT_TEXTREL => return None,
+            _ => {}
+        }
+    }
+    object.strsz = usize::try_from(strtab_byte_len?).ok()?;
+    if !terminated || object.strsz == 0 { return None; }
+    let strtab_address = strtab_virtual_address?;
+    if !virtual_range_in_load(phdr, phnum, strtab_address, object.strsz as u64) { return None; }
+    object.strtab = runtime_address(base, strtab_address)? as *const u8;
+    let hash_address = hash_virtual_address?;
+    if !virtual_range_in_load(phdr, phnum, hash_address, 8) { return None; }
+    let hash = runtime_address(base, hash_address)? as *const u8;
+    object.symcount = usize::try_from(read_u32(hash.add(4))).ok()?;
+    if object.symcount == 0 { return None; }
+    let symtab_address = symtab_virtual_address?;
+    if symtab_entry_len? != 24 { return None; }
+    let symtab_len = u64::try_from(object.symcount).ok()?.checked_mul(24)?;
+    if !virtual_range_in_load(phdr, phnum, symtab_address, symtab_len) { return None; }
+    object.symtab = runtime_address(base, symtab_address)? as *const u8;
+    match (rela_virtual_address, rela_byte_len, rela_entry_len) {
+        (None, None, None) => {}
+        (Some(address), Some(byte_len), Some(24)) if byte_len % 24 == 0 && virtual_range_in_load(phdr, phnum, address, byte_len) => {
+            object.rela = runtime_address(base, address)? as *const u8;
+            object.relasz = usize::try_from(byte_len).ok()?;
+        }
+        _ => return None,
+    }
+    match (jmprel_virtual_address, pltrel_byte_len, plt_is_rela) {
+        (None, None, None) => {}
+        (Some(address), Some(byte_len), Some(true)) if byte_len % 24 == 0 && virtual_range_in_load(phdr, phnum, address, byte_len) => {
+            object.jmprel = runtime_address(base, address)? as *const u8;
+            object.pltrelsz = usize::try_from(byte_len).ok()?;
+        }
+        _ => return None,
+    }
+    match (init_array_virtual_address, init_array_byte_len) {
+        (None, None) => {}
+        // The executable's constructors are deliberately CRT-owned.  A
+        // main-image init tag is a malformed request for this handoff.
+        (Some(_), Some(_)) if !mapped => return None,
+        (Some(address), Some(byte_len)) if byte_len % 8 == 0 && virtual_range_in_load(phdr, phnum, address, byte_len) => {
+            object.init_array = runtime_address(base, address)? as *const usize;
+            object.init_count = usize::try_from(byte_len / 8).ok()?;
+        }
+        _ => return None,
+    }
+    if let Some(offset) = runpath_offset {
+        if offset >= object.strsz { return None; }
+        object.runpath = object.strtab.add(offset);
+        object.runpath_len = bounded_nul(object.runpath, object.strsz - offset)?;
+        if !is_fixture_absolute_runpath(object.runpath, object.runpath_len) { return None; }
+    }
+    for slot in 0..object.needed_count {
+        if needed_offsets[slot] >= object.strsz { return None; }
+        let name = object.strtab.add(needed_offsets[slot]);
+        if bounded_nul(name, object.strsz - needed_offsets[slot]).is_none() { return None; }
+        object.needed[slot] = needed_offsets[slot];
+    }
+    Some(object)
+}
+
+unsafe fn load_needed(parent: &Object, needed_index: usize) -> Option<Object> {
+    if needed_index >= parent.needed_count || parent.runpath.is_null() { return None; }
+    let name = parent.strtab.add(parent.needed[needed_index]);
+    let name_len = bounded_nul(name, parent.strsz - parent.needed[needed_index])?;
+    let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
+    let result = map_elf(fd);
+    let _ = syscall1(SYS_CLOSE, fd);
+    result
+}
+
+unsafe fn open_from_runpath(runpath: *const u8, runpath_len: usize, name: *const u8, name_len: usize) -> Option<i64> {
+    let mut start = 0;
+    while start < runpath_len {
+        let mut end = start;
+        while end < runpath_len && *runpath.add(end) != b':' { end += 1; }
+        let directory_len = end - start;
+        if directory_len != 0 && directory_len + 1 + name_len + 1 <= MAX_PATH {
+            let mut path = [0u8; MAX_PATH];
+            core::ptr::copy_nonoverlapping(runpath.add(start), path.as_mut_ptr(), directory_len);
+            path[directory_len] = b'/';
+            core::ptr::copy_nonoverlapping(name, path.as_mut_ptr().add(directory_len + 1), name_len);
+            let fd = syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0, 0);
+            if fd >= 0 { return Some(fd); }
+        }
+        start = end + 1;
+    }
+    None
+}
+
+/// This artifact owns only fixture-style absolute directories.  In
+/// particular, an empty component, a relative directory, and `$ORIGIN` are
+/// search-policy features rather than safe inputs for this bounded proof.
+unsafe fn is_fixture_absolute_runpath(runpath: *const u8, runpath_len: usize) -> bool {
+    if runpath_len == 0 || *runpath != b'/' { return false; }
+    for index in 0..runpath_len {
+        let byte = *runpath.add(index);
+        // A second component and `$ORIGIN`/variable expansion are search
+        // policy, not part of this one-directory fixture ABI.
+        if byte == b':' || byte == b'$' { return false; }
+    }
+    true
+}
+
+unsafe fn file_size_from_fd(fd: i64) -> Option<u64> {
+    let mut stat = [0u8; X86_64_STAT_BYTE_LEN];
+    if syscall2(SYS_FSTAT, fd, stat.as_mut_ptr() as i64) < 0 { return None; }
+    u64::try_from(read_i64(stat.as_ptr().add(X86_64_STAT_SIZE_OFFSET))).ok()
+}
+
+unsafe fn map_elf(fd: i64) -> Option<Object> {
+    let file_byte_len = file_size_from_fd(fd)?;
+    if file_byte_len < 64 { return None; }
+    let header_map_len = file_byte_len.min(PAGE);
+    let first = syscall6(SYS_MMAP, 0, header_map_len as i64, PROT_READ, MAP_PRIVATE, fd, 0);
+    if first < 0 { return None; }
+    let header = first as *const u8;
+    let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
+        && *header.add(4) == 2 && *header.add(5) == 1 && read_u16(header.add(16)) == 3 && read_u16(header.add(18)) == 62
+        && read_u16(header.add(54)) == 56;
+    let phoff = usize::try_from(read_u64(header.add(32))).ok()?;
+    let phnum = read_u16(header.add(56)) as usize;
+    let ph_table_len = phnum.checked_mul(56)?;
+    let ph_file_end = phoff.checked_add(ph_table_len)?;
+    if !valid || phnum == 0 || phnum > MAX_PHDRS || ph_file_end > header_map_len as usize {
+        syscall2(SYS_MUNMAP, first, header_map_len as i64);
+        return None;
+    }
+    let mut min = u64::MAX;
+    let mut max = 0u64;
+    for index in 0..phnum {
+        let p = header.add(phoff + index * 56);
+        if read_u32(p) == PT_LOAD {
+            min = min.min(align_down(read_u64(p.add(16))));
+            max = max.max(align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40)))?));
+        }
+    }
+    if min == u64::MAX || max <= min { syscall2(SYS_MUNMAP, first, header_map_len as i64); return None; }
+    let reserve = syscall6(SYS_MMAP, 0, (max - min) as i64, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if reserve < 0 { syscall2(SYS_MUNMAP, first, header_map_len as i64); return None; }
+    let base = (reserve as u64).checked_sub(min)?;
+    for index in 0..phnum {
+        let p = header.add(phoff + index * 56);
+        if read_u32(p) != PT_LOAD { continue; }
+        let vaddr = read_u64(p.add(16));
+        let offset = read_u64(p.add(8));
+        let filesz = read_u64(p.add(32));
+        let memsz = read_u64(p.add(40));
+        let Some(file_end) = offset.checked_add(filesz) else {
+            syscall2(SYS_MUNMAP, reserve, (max - min) as i64);
+            syscall2(SYS_MUNMAP, first, header_map_len as i64);
+            return None;
+        };
+        if filesz > memsz || file_end > file_byte_len || vaddr % PAGE != offset % PAGE {
+            syscall2(SYS_MUNMAP, reserve, (max - min) as i64);
+            syscall2(SYS_MUNMAP, first, header_map_len as i64);
+            return None;
+        }
+        let page_vaddr = align_down(vaddr);
+        let page_offset = align_down(offset);
+        let delta = vaddr - page_vaddr;
+        let map_len = align_up(filesz.checked_add(delta)?);
+        if map_len != 0 && syscall6(SYS_MMAP, (base + page_vaddr) as i64, map_len as i64, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, page_offset as i64) < 0 { syscall2(SYS_MUNMAP, reserve, (max - min) as i64); syscall2(SYS_MUNMAP, first, header_map_len as i64); return None; }
+        let zero_start = base.checked_add(vaddr)?.checked_add(filesz)?;
+        let zero_end = base.checked_add(vaddr)?.checked_add(memsz)?;
+        if zero_end > zero_start { core::ptr::write_bytes(zero_start as *mut u8, 0, (zero_end - zero_start) as usize); }
+    }
+    // The ELF header mapping is only provisional.  Retained PHDR metadata
+    // must instead be reached through the PT_LOAD that owns the on-disk PHDR
+    // bytes; `base + e_phoff` is not generally a valid ELF load-bias rule.
+    let phoff_u64 = u64::try_from(phoff).ok()?;
+    let ph_file_end_u64 = u64::try_from(ph_file_end).ok()?;
+    let mut runtime_phdr = None;
+    for index in 0..phnum {
+        let p = header.add(phoff + index * 56);
+        if read_u32(p) != PT_LOAD { continue; }
+        let file_offset = read_u64(p.add(8));
+        let file_end = file_offset.checked_add(read_u64(p.add(32)))?;
+        if phoff_u64 < file_offset || ph_file_end_u64 > file_end { continue; }
+        let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset)?;
+        if !virtual_range_in_load(header.add(phoff), phnum, virtual_address, ph_table_len as u64) { return None; }
+        runtime_phdr = Some(runtime_address(base, virtual_address)? as *const u8);
+        break;
+    }
+    let runtime_phdr = runtime_phdr?;
+    syscall2(SYS_MUNMAP, first, header_map_len as i64);
+    // The provisional header mapping is gone; the final PT_LOAD mapping owns
+    // every object metadata pointer retained by the returned `Object`.
+    parse_mapped(base, runtime_phdr, phnum, true)
+}
+
+unsafe fn relocate(object: &Object, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+    relocate_table(object, objects, object.rela, object.relasz)?;
+    relocate_table(object, objects, object.jmprel, object.pltrelsz)
+}
+
+unsafe fn relocate_table(object: &Object, objects: &[Object; MAX_OBJECTS], table: *const u8, length: usize) -> Option<()> {
+    if length == 0 { return Some(()); }
+    if table.is_null() || length % 24 != 0 { return None; }
+    for index in 0..(length / 24) {
+        let rela = table.add(index * 24);
+        let relocation_offset = read_u64(rela);
+        // A relocation table is validated on parse, but each target is an
+        // untrusted virtual address too.  Never turn it into a write until it
+        // is wholly inside a writable PT_LOAD range of its own object.
+        if !virtual_range_in_writable_load(object.phdr, object.phnum, relocation_offset, 8) { return None; }
+        let slot = runtime_address(object.base, relocation_offset)? as *mut u64;
+        let info = read_u64(rela.add(8));
+        let kind = info as u32;
+        let symbol = (info >> 32) as usize;
+        let addend = read_i64(rela.add(16));
+        let value = match kind {
+            R_X86_64_RELATIVE if symbol == 0 => add_signed(object.base, addend)?,
+            R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => add_signed(resolve_symbol(object, objects, symbol)?, addend)?,
+            _ => return None,
+        };
+        *slot = value;
+    }
+    Some(())
+}
+
+unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], index: usize) -> Option<u64> {
+    if index >= requestor.symcount { return None; }
+    let symbol = requestor.symtab.add(index * 24);
+    let name_offset = read_u32(symbol) as usize;
+    if name_offset >= requestor.strsz { return None; }
+    let name = requestor.strtab.add(name_offset);
+    let len = bounded_nul(name, requestor.strsz - name_offset)?;
+    for object in objects {
+        for candidate in 1..object.symcount {
+            let symbol = object.symtab.add(candidate * 24);
+            if read_u16(symbol.add(6)) == 0 { continue; }
+            let candidate_offset = read_u32(symbol) as usize;
+            if candidate_offset >= object.strsz { continue; }
+            let candidate_name = object.strtab.add(candidate_offset);
+            let Some(candidate_len) = bounded_nul(candidate_name, object.strsz - candidate_offset) else { continue; };
+            if candidate_len == len && bytes_eq(name, candidate_name, len) {
+                let address = read_u64(symbol.add(8));
+                if !virtual_range_in_load(object.phdr, object.phnum, address, 1) { return None; }
+                return runtime_address(object.base, address);
+            }
+        }
+    }
+    None
+}
+
+unsafe fn protect_segments(object: &Object) -> Option<()> {
+    if !object.mapped { return Some(()); }
+    for index in 0..object.phnum {
+        let p = object.phdr.add(index * 56);
+        if read_u32(p) != PT_LOAD { continue; }
+        let flags = read_u32(p.add(4));
+        let start = object.base + align_down(read_u64(p.add(16)));
+        let end = object.base + align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40)))?);
+        let mut protection = 0;
+        if flags & PF_R != 0 { protection |= PROT_READ; }
+        if flags & PF_W != 0 { protection |= PROT_WRITE; }
+        if flags & PF_X != 0 { protection |= PROT_EXEC; }
+        if end > start && syscall3(SYS_MPROTECT, start as i64, (end - start) as i64, protection) < 0 { return None; }
+    }
+    Some(())
+}
+
+unsafe fn apply_relro(object: &Object) -> Option<()> {
+    apply_relro_span(
+        object.base,
+        object.relro_virtual_address,
+        object.relro_byte_len,
+    )
+}
+
+unsafe fn apply_self_relro(base: u64) -> Option<()> {
+    let header = base as *const u8;
+    if *header != 0x7f || *header.add(1) != b'E' || *header.add(2) != b'L' || *header.add(3) != b'F'
+        || *header.add(4) != 2 || *header.add(5) != 1 || read_u16(header.add(16)) != 3
+        || read_u16(header.add(18)) != 62 || read_u16(header.add(54)) != 56
+    {
+        return None;
+    }
+    let phoff = usize::try_from(read_u64(header.add(32))).ok()?;
+    let phnum = read_u16(header.add(56)) as usize;
+    if phnum == 0 || phnum > MAX_PHDRS || phoff.checked_add(phnum.checked_mul(56)?)? < phoff {
+        return None;
+    }
+    let phdr = header.add(phoff);
+    let mut relro = None;
+    for index in 0..phnum {
+        let program_header = phdr.add(index * 56);
+        if read_u32(program_header) != PT_GNU_RELRO { continue; }
+        let address = read_u64(program_header.add(16));
+        let byte_len = read_u64(program_header.add(40));
+        if relro.replace((address, byte_len)).is_some() || byte_len == 0
+            || !virtual_range_in_load(phdr, phnum, address, byte_len)
+        {
+            return None;
+        }
+    }
+    let (address, byte_len) = relro?;
+    apply_relro_span(base, address, byte_len)
+}
+
+unsafe fn apply_relro_span(base: u64, virtual_address: u64, byte_len: u64) -> Option<()> {
+    if byte_len == 0 { return Some(()); }
+    let start = align_down(base.checked_add(virtual_address)?);
+    let end = align_up(base.checked_add(virtual_address)?.checked_add(byte_len)?);
+    if end <= start || syscall3(SYS_MPROTECT, start as i64, (end - start) as i64, PROT_READ) < 0 { return None; }
+    Some(())
+}
+
+unsafe fn run_initializers(objects: &[Object]) -> Option<()> {
+    // The closed dependency graph has already been mapped and relocated.
+    // Walking this suffix in reverse produces leaf then mid. Main-image
+    // constructor dispatch remains a future CRT handoff boundary.
+    for object in objects.iter().rev() {
+        for index in 0..object.init_count {
+            let initializer = *object.init_array.add(index);
+            if initializer == 0 { return None; }
+            let initializer_virtual_address = initializer.checked_sub(object.base as usize)? as u64;
+            if !virtual_range_in_executable_load(object.phdr, object.phnum, initializer_virtual_address, 1) { return None; }
+            let initializer: unsafe extern "C" fn() = core::mem::transmute(initializer);
+            initializer();
+        }
+    }
+    Some(())
+}
+
+unsafe fn virtual_range_in_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
+    let Some(end) = address.checked_add(byte_len) else { return false; };
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD { continue; }
+        let start = read_u64(header.add(16));
+        let Some(load_end) = start.checked_add(read_u64(header.add(40))) else { return false; };
+        if address >= start && end <= load_end { return true; }
+    }
+    false
+}
+
+unsafe fn virtual_range_in_writable_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
+    let Some(end) = address.checked_add(byte_len) else { return false; };
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD || read_u32(header.add(4)) & PF_W == 0 { continue; }
+        let start = read_u64(header.add(16));
+        let Some(load_end) = start.checked_add(read_u64(header.add(40))) else { return false; };
+        if address >= start && end <= load_end { return true; }
+    }
+    false
+}
+
+unsafe fn virtual_range_in_executable_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
+    let Some(end) = address.checked_add(byte_len) else { return false; };
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD || read_u32(header.add(4)) & PF_X == 0 { continue; }
+        let start = read_u64(header.add(16));
+        let Some(load_end) = start.checked_add(read_u64(header.add(40))) else { return false; };
+        if address >= start && end <= load_end { return true; }
+    }
+    false
+}
+
+fn runtime_address(base: u64, virtual_address: u64) -> Option<u64> { base.checked_add(virtual_address) }
+
+unsafe fn bounded_nul(pointer: *const u8, maximum: usize) -> Option<usize> { for index in 0..maximum { if *pointer.add(index) == 0 { return Some(index); } } None }
+unsafe fn bytes_eq(left: *const u8, right: *const u8, length: usize) -> bool { for index in 0..length { if *left.add(index) != *right.add(index) { return false; } } true }
+unsafe fn read_u16(pointer: *const u8) -> u16 { core::ptr::read_unaligned(pointer as *const u16) }
+unsafe fn read_u32(pointer: *const u8) -> u32 { core::ptr::read_unaligned(pointer as *const u32) }
+unsafe fn read_u64(pointer: *const u8) -> u64 { core::ptr::read_unaligned(pointer as *const u64) }
+unsafe fn read_i64(pointer: *const u8) -> i64 { core::ptr::read_unaligned(pointer as *const i64) }
+fn align_down(value: u64) -> u64 { value & !(PAGE - 1) }
+fn align_up(value: u64) -> u64 { value.checked_add(PAGE - 1).unwrap_or(u64::MAX) & !(PAGE - 1) }
+fn add_signed(value: u64, addend: i64) -> Option<u64> { if addend >= 0 { value.checked_add(addend as u64) } else { value.checked_sub(addend.unsigned_abs()) } }
+
+unsafe fn syscall1(number: i64, one: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+unsafe fn syscall2(number: i64, one: i64, two: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+unsafe fn syscall3(number: i64, one: i64, two: i64, three: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+unsafe fn syscall4(number: i64, one: i64, two: i64, three: i64, four: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+unsafe fn syscall6(number: i64, one: i64, two: i64, three: i64, four: i64, five: i64, six: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, in("rdx") three, in("r10") four, in("r8") five, in("r9") six, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
+
+unsafe fn jump(entry: usize, sp: usize) -> ! { core::arch::asm!("mov rsp, {stack}", "jmp {target}", stack = in(reg) sp, target = in(reg) entry, options(noreturn)); }
+fn fail(message: &[u8]) -> ! { unsafe { die(message) } }
+unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_ptr() as i64, message.len() as i64); let _ = syscall1(SYS_EXIT, 127); core::hint::unreachable_unchecked() }
+
+#[no_mangle]
+pub unsafe extern "C" fn memset(destination: *mut c_void, byte: i32, length: usize) -> *mut c_void {
+    let destination = destination as *mut u8;
+    for index in 0..length { *destination.add(index) = byte as u8; }
+    destination.cast()
+}
+#[no_mangle]
+pub unsafe extern "C" fn memcpy(destination: *mut c_void, source: *const c_void, length: usize) -> *mut c_void {
+    let destination = destination as *mut u8;
+    let source = source as *const u8;
+    for index in 0..length { *destination.add(index) = *source.add(index); }
+    destination.cast()
+}
+#[no_mangle]
+pub unsafe extern "C" fn memmove(destination: *mut c_void, source: *const c_void, length: usize) -> *mut c_void {
+    let destination = destination as *mut u8;
+    let source = source as *const u8;
+    if (destination as usize) <= (source as usize) { for index in 0..length { *destination.add(index) = *source.add(index); } }
+    else { for index in (0..length).rev() { *destination.add(index) = *source.add(index); } }
+    destination.cast()
+}
+#[no_mangle]
+pub unsafe extern "C" fn bcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { memcmp(left, right, length) }
+#[no_mangle]
+pub unsafe extern "C" fn memcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { let left = left as *const u8; let right = right as *const u8; for index in 0..length { let delta = *left.add(index) as i32 - *right.add(index) as i32; if delta != 0 { return delta; } } 0 }
+#[no_mangle]
+pub extern "C" fn rust_eh_personality() {}

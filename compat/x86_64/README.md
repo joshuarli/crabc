@@ -368,6 +368,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signal-foundation
 ./scripts/dev-x86_64.sh ldso-relocation
 ./scripts/dev-x86_64.sh ldso-image
+./scripts/dev-x86_64.sh ldso-initial-graph
 ```
 
 The runner rejects non-Linux and non-x86_64 hosts before Docker, requests
@@ -2393,6 +2394,20 @@ entry point.
 parser. It validates file-facing ELF/program-header and RELA/RELR metadata
 before a future mapper or relocation engine can consume it; it neither maps an
 image nor selects `crabc-ldso`.
+
+`ldso-initial-graph` is one separately built private ET_DYN interpreter
+artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso`
+target. Its native runner first verifies the pinned musl 1.2.6 oracle, then
+proves one fixed main PIE -> `mid.so` -> `leaf.so` graph with one absolute
+fixture RUNPATH lookup, x86-64 RELATIVE/GLOB_DAT/JUMP_SLOT RELA relocation,
+leaf-before-mid dependency `DT_INIT_ARRAY` dispatch, and final interpreter-and-
+graph `PT_GNU_RELRO` sealing including child faults on main and leaf
+`.data.rel.ro` writes. Mutated fixtures fail closed for an out-of-file
+`PT_LOAD` range, `PT_TLS`, unsupported RELA, out-of-range relocation target/
+table, `DT_RELR`, `DT_TEXTREL`/static-TLS flags, and main-image `DT_INIT`. Main-image constructor
+dispatch is explicitly rejected and remains future CRT handoff work. This is
+not general `DT_NEEDED` or RUNPATH policy, TLS, symbol versions, `dl*`, a
+dynamic CRT/sysroot, or public x86 support.
 
 The separately launched `./crt/run-x86_64.sh static-pie` gate proves the
 private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` static-PIE foundation. Its
