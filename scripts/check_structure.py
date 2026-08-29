@@ -210,6 +210,7 @@ MUSL_ORACLE_C_TESTS = frozenset(
     {
         "aarch64_abi_layout.rs",
         "aarch64_network_headers.rs",
+        "path_configuration_exports.rs",
         "header_surface.rs",
         "cxa_finalize.rs",
         "dynamic_tls_dependency.rs",

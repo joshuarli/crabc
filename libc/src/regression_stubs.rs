@@ -112,25 +112,6 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> c_long {
 // POSIX path/configuration interfaces
 // ============================================================
 
-// Linux exposes the filesystem-dependent pathconf values through statfs(2).
-// Keep this private layout local instead of depending on a public statfs
-// header: the kernel ABI is 64-bit on all targets supported by this crate.
-#[repr(C)]
-struct CabiPathStatfs {
-    f_type: c_ulong,
-    f_bsize: c_ulong,
-    f_blocks: u64,
-    f_bfree: u64,
-    f_bavail: u64,
-    f_files: u64,
-    f_ffree: u64,
-    f_fsid: [c_int; 2],
-    f_namelen: c_ulong,
-    f_frsize: c_ulong,
-    f_flags: c_ulong,
-    f_spare: [c_ulong; 4],
-}
-
 const CABI_PC_LINK_MAX: c_int = 0;
 const CABI_PC_MAX_CANON: c_int = 1;
 const CABI_PC_MAX_INPUT: c_int = 2;
@@ -153,75 +134,49 @@ const CABI_PC_ALLOC_SIZE_MIN: c_int = 18;
 const CABI_PC_SYMLINK_MAX: c_int = 19;
 const CABI_PC_2_SYMLINKS: c_int = 20;
 
+// This is a direct, deliberately narrow translation of pinned musl 1.2.6
+// release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 under musl's MIT
+// license. `src/conf/pathconf.c` forwards to `fpathconf(-1, name)`, and
+// `src/conf/fpathconf.c` selects this fixed table without consuming its fd.
+// Consequently, a valid selector neither dereferences the path nor consumes a
+// descriptor. A negative result denotes an indeterminate value; in that case
+// errno intentionally remains untouched, as required by POSIX and musl.
 #[inline]
-fn cabi_pathconf_name_valid(name: c_int) -> bool {
-    name >= CABI_PC_LINK_MAX && name <= CABI_PC_2_SYMLINKS
-}
-
-#[inline]
-unsafe fn cabi_pathconf_statfs(path: *const c_char, buf: *mut CabiPathStatfs) -> c_int {
-    let result = aarch64::syscall::syscall2(SYS_STATFS, path as i64, buf as i64);
-    if result < 0 {
-        syscall_result(result) as c_int
-    } else {
-        0
-    }
-}
-
-#[inline]
-unsafe fn cabi_fpathconf_statfs(fd: c_int, buf: *mut CabiPathStatfs) -> c_int {
-    let result = aarch64::syscall::syscall2(SYS_FSTATFS, fd as i64, buf as i64);
-    if result < 0 {
-        syscall_result(result) as c_int
-    } else {
-        0
-    }
-}
-
-// Return the fixed POSIX value for a selector whose value does not vary by
-// Linux filesystem.  A negative result denotes an indeterminate value; in
-// that case errno intentionally remains untouched, as required by POSIX.
-#[inline]
-unsafe fn cabi_pathconf_value(name: c_int, fs: &CabiPathStatfs) -> c_long {
+fn cabi_musl_pathconf_value(name: c_int) -> Option<c_long> {
     match name {
-        CABI_PC_LINK_MAX => 8,
-        CABI_PC_MAX_CANON => 255,
-        CABI_PC_MAX_INPUT => 255,
-        // statfs.f_namelen is the filesystem's actual component limit.  This
-        // is the key distinction from a universal NAME_MAX constant.
-        CABI_PC_NAME_MAX => fs.f_namelen as c_long,
-        CABI_PC_PATH_MAX => 4096,
-        CABI_PC_PIPE_BUF => 4096,
-        CABI_PC_CHOWN_RESTRICTED => 1,
-        CABI_PC_NO_TRUNC => 1,
-        CABI_PC_VDISABLE => 0,
-        CABI_PC_SYNC_IO => 1,
-        CABI_PC_ASYNC_IO => -1,
-        CABI_PC_PRIO_IO => -1,
-        CABI_PC_SOCK_MAXBUF => -1,
-        CABI_PC_FILESIZEBITS => 64,
-        // Linux filesystems expose their preferred block size through statfs;
-        // use it for transfer/allocation granularity where it is available.
+        CABI_PC_LINK_MAX => Some(8),
+        CABI_PC_MAX_CANON => Some(255),
+        CABI_PC_MAX_INPUT => Some(255),
+        CABI_PC_NAME_MAX => Some(255),
+        CABI_PC_PATH_MAX => Some(4096),
+        CABI_PC_PIPE_BUF => Some(4096),
+        CABI_PC_CHOWN_RESTRICTED => Some(1),
+        CABI_PC_NO_TRUNC => Some(1),
+        CABI_PC_VDISABLE => Some(0),
+        CABI_PC_SYNC_IO => Some(1),
+        CABI_PC_ASYNC_IO => Some(-1),
+        CABI_PC_PRIO_IO => Some(-1),
+        CABI_PC_SOCK_MAXBUF => Some(-1),
+        CABI_PC_FILESIZEBITS => Some(64),
         CABI_PC_REC_INCR_XFER_SIZE
         | CABI_PC_REC_MAX_XFER_SIZE
         | CABI_PC_REC_MIN_XFER_SIZE
         | CABI_PC_REC_XFER_ALIGN
-        | CABI_PC_ALLOC_SIZE_MIN => {
-            if fs.f_bsize == 0 {
-                4096
-            } else if fs.f_bsize > c_long::MAX as c_ulong {
-                c_long::MAX
-            } else {
-                fs.f_bsize as c_long
-            }
-        }
-        CABI_PC_SYMLINK_MAX => -1,
-        CABI_PC_2_SYMLINKS => 1,
-        _ => {
-            // Callers validate the selector before reaching this helper.
+        | CABI_PC_ALLOC_SIZE_MIN => Some(4096),
+        CABI_PC_SYMLINK_MAX => Some(-1),
+        CABI_PC_2_SYMLINKS => Some(1),
+        _ => None,
+    }
+}
+
+#[inline]
+fn cabi_musl_pathconf(name: c_int) -> c_long {
+    match cabi_musl_pathconf_value(name) {
+        Some(value) => value,
+        None => unsafe {
             ERRNO = EINVAL;
             -1
-        }
+        },
     }
 }
 
@@ -252,31 +207,13 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> c_long {
-    if !cabi_pathconf_name_valid(name) {
-        ERRNO = EINVAL;
-        return -1;
-    }
-
-    let mut fs: CabiPathStatfs = core::mem::zeroed();
-    if cabi_fpathconf_statfs(fd, &mut fs) < 0 {
-        return -1;
-    }
-    cabi_pathconf_value(name, &fs)
+pub extern "C" fn fpathconf(_fd: c_int, name: c_int) -> c_long {
+    cabi_musl_pathconf(name)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> c_long {
-    if !cabi_pathconf_name_valid(name) {
-        ERRNO = EINVAL;
-        return -1;
-    }
-
-    let mut fs: CabiPathStatfs = core::mem::zeroed();
-    if cabi_pathconf_statfs(path, &mut fs) < 0 {
-        return -1;
-    }
-    cabi_pathconf_value(name, &fs)
+pub extern "C" fn pathconf(_path: *const c_char, name: c_int) -> c_long {
+    fpathconf(-1, name)
 }
 
 const CABI_UL_GETFSIZE: c_int = 1;

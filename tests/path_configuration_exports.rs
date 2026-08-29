@@ -1,53 +1,75 @@
 #[path = "common/mod.rs"]
 mod test_support;
 
-use std::process::Command;
+use std::process::{Command, Output};
 
-#[test]
-fn path_configuration_exports_under_libc_so() {
+fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/path_configuration_exports_test.c");
-    let binary = test_support::TempArtifact::new("crabc-c-abi-path-configuration");
+    let mut command = if candidate {
+        Command::new(test_support::crabc_cc())
+    } else {
+        Command::new("musl-gcc")
+    };
 
-    let status = Command::new(test_support::crabc_cc())
-        .args([
-            "-fPIE",
-            "-pie",
-            "-fno-builtin",
+    command.args(["-fPIE", "-pie", "-fno-builtin"]);
+    if candidate {
+        command.args([
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
-            source.to_str().unwrap(),
-            "-Wl,--allow-shlib-undefined",
-            "-lc",
-            "-o",
-            binary.to_str().unwrap(),
-        ])
+        ]);
+    }
+    command
+        .arg(&source)
+        .args(["-Wl,--allow-shlib-undefined", "-lc", "-o"])
+        .arg(binary);
+    let status = command
         .status()
-        .expect("failed to run crabc-cc for path_configuration_exports_test");
+        .expect("failed to compile the path-configuration fixture");
     assert!(
         status.success(),
-        "crabc-cc path_configuration_exports_test compilation failed"
+        "path-configuration fixture compilation failed"
     );
+}
 
-    let output = Command::new(&binary)
-        .env("LD_LIBRARY_PATH", &target)
+fn run(binary: &std::path::Path, candidate: bool) -> Output {
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
+    let mut command = Command::new(binary);
+    if candidate {
+        command.env("LD_LIBRARY_PATH", root.join("target/debug"));
+    }
+    command
         .output()
-        .expect("failed to run path_configuration_exports_test");
-    let _ = std::fs::remove_file(&binary);
+        .expect("failed to run the path-configuration fixture")
+}
 
+#[test]
+fn path_configuration_matches_pinned_musl_table_without_filesystem_access() {
+    let reference = test_support::TempArtifact::new("path-configuration-reference");
+    let candidate = test_support::TempArtifact::new("path-configuration-candidate");
+    compile_fixture(&reference, false);
+    compile_fixture(&candidate, true);
+
+    let reference_output = run(&reference, false);
     assert!(
-        output.status.success(),
-        "path_configuration_exports_test exited with {:?}, stdout: {}, stderr: {}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        reference_output.status.success(),
+        "pinned musl fixture failed with {:?}: {}",
+        reference_output.status.code(),
+        String::from_utf8_lossy(&reference_output.stderr),
     );
+    assert_eq!(reference_output.stdout, b"c-abi path configuration exports ok\n");
+
+    let candidate_output = run(&candidate, true);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "c-abi path configuration exports ok\n"
+        candidate_output.status,
+        reference_output.status,
+        "crabc exit status differs; stderr: {}",
+        String::from_utf8_lossy(&candidate_output.stderr),
     );
+    assert_eq!(candidate_output.stdout, reference_output.stdout);
+    assert_eq!(candidate_output.stderr, reference_output.stderr);
 }

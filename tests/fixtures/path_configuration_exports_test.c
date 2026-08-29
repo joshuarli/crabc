@@ -1,8 +1,6 @@
 #define _GNU_SOURCE 1
 
 #include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
 #include <stdio.h>
 #include <sys/resource.h>
 #include <ulimit.h>
@@ -21,11 +19,35 @@ int main(void)
     char path_value[32];
     char truncated[4];
     struct rlimit limit;
+    static const struct {
+        int selector;
+        long value;
+    } expected_pathconf_values[] = {
+        { _PC_LINK_MAX, 8 },
+        { _PC_MAX_CANON, 255 },
+        { _PC_MAX_INPUT, 255 },
+        { _PC_NAME_MAX, 255 },
+        { _PC_PATH_MAX, 4096 },
+        { _PC_PIPE_BUF, 4096 },
+        { _PC_CHOWN_RESTRICTED, 1 },
+        { _PC_NO_TRUNC, 1 },
+        { _PC_VDISABLE, 0 },
+        { _PC_SYNC_IO, 1 },
+        { _PC_ASYNC_IO, -1 },
+        { _PC_PRIO_IO, -1 },
+        { _PC_SOCK_MAXBUF, -1 },
+        { _PC_FILESIZEBITS, 64 },
+        { _PC_REC_INCR_XFER_SIZE, 4096 },
+        { _PC_REC_MAX_XFER_SIZE, 4096 },
+        { _PC_REC_MIN_XFER_SIZE, 4096 },
+        { _PC_REC_XFER_ALIGN, 4096 },
+        { _PC_ALLOC_SIZE_MIN, 4096 },
+        { _PC_SYMLINK_MAX, -1 },
+        { _PC_2_SYMLINKS, 1 },
+    };
     size_t path_len;
-    long name_limit;
-    long block_size;
     long current_blocks;
-    int file;
+    size_t index;
 
     path_len = confstr(_CS_PATH, NULL, 0);
     CHECK(path_len == sizeof "/bin:/usr/bin", "confstr query");
@@ -42,31 +64,26 @@ int main(void)
               errno == EINVAL,
           "confstr invalid selector");
 
-    errno = 0;
-    name_limit = pathconf("/tmp", _PC_NAME_MAX);
-    CHECK(name_limit > 0 && name_limit <= NAME_MAX, "pathconf name limit");
-    block_size = pathconf("/tmp", _PC_REC_INCR_XFER_SIZE);
-    CHECK(block_size > 0, "pathconf filesystem block size");
-    file = open("/tmp", O_RDONLY, 0);
-    CHECK(file >= 0, "open pathconf directory");
-    CHECK(fpathconf(file, _PC_NAME_MAX) == name_limit, "fpathconf name limit");
-    CHECK(fpathconf(file, _PC_REC_INCR_XFER_SIZE) == block_size,
-          "fpathconf filesystem block size");
-    close(file);
+    for (index = 0; index < sizeof expected_pathconf_values /
+            sizeof expected_pathconf_values[0]; ++index) {
+        errno = E2BIG;
+        CHECK(pathconf(NULL, expected_pathconf_values[index].selector) ==
+                  expected_pathconf_values[index].value &&
+                  errno == E2BIG,
+              "pathconf musl table");
+        errno = E2BIG;
+        CHECK(fpathconf(-1, expected_pathconf_values[index].selector) ==
+                  expected_pathconf_values[index].value &&
+                  errno == E2BIG,
+              "fpathconf musl table");
+    }
 
     errno = 0;
-    CHECK(pathconf("/tmp/crabc-c-abi-pathconf-missing", _PC_NAME_MAX) == -1 &&
-              errno == ENOENT,
-          "pathconf missing path errno");
-    errno = 0;
-    CHECK(fpathconf(-1, _PC_NAME_MAX) == -1 && errno == EBADF,
-          "fpathconf invalid descriptor errno");
-    errno = 0;
-    CHECK(pathconf("/tmp", -1) == -1 && errno == EINVAL,
+    CHECK(pathconf(NULL, -1) == -1 && errno == EINVAL,
           "pathconf invalid selector errno");
-    errno = 123;
-    CHECK(pathconf("/tmp", _PC_ASYNC_IO) == -1 && errno == 123,
-          "pathconf indeterminate errno");
+    errno = 0;
+    CHECK(fpathconf(-1, _PC_2_SYMLINKS + 1) == -1 && errno == EINVAL,
+          "fpathconf invalid selector errno");
 
     CHECK(getrlimit(RLIMIT_FSIZE, &limit) == 0, "getrlimit file size");
     current_blocks = (long)(limit.rlim_cur / 512);
