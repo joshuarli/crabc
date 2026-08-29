@@ -7082,8 +7082,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 for invocation in capture.read_bytes().split(bytes((0, 0)))
                 if invocation
             ]
-            self.assertEqual(len(invocations), 3)
-            arguments, chroot_arguments, allocation_arguments = invocations
+            self.assertEqual(len(invocations), 5)
+            (
+                arguments,
+                fnmatch_build_arguments,
+                fnmatch_verifier_arguments,
+                chroot_arguments,
+                allocation_arguments,
+            ) = invocations
             self.assertIn("--platform", arguments)
             self.assertNotIn("--cap-add=SYS_CHROOT", arguments)
             platform_index = arguments.index("--platform")
@@ -7107,6 +7113,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "futex",
                     "--test",
                     "x86_64_foundation",
+                    "--test",
+                    "x86_64_fnmatch",
                     "--test",
                     "x86_64_memory_mapping",
                     "--test",
@@ -7275,6 +7283,42 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test-threads=1",
                 ],
             )
+            self.assertIn("--platform", fnmatch_build_arguments)
+            self.assertNotIn("--cap-add=SYS_CHROOT", fnmatch_build_arguments)
+            fnmatch_build_platform_index = fnmatch_build_arguments.index("--platform")
+            self.assertEqual(
+                fnmatch_build_arguments[fnmatch_build_platform_index + 1],
+                "linux/amd64",
+            )
+            fnmatch_build_cargo_index = fnmatch_build_arguments.index("cargo")
+            self.assertEqual(
+                fnmatch_build_arguments[fnmatch_build_cargo_index:],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target",
+                    "x86_64-unknown-linux-musl",
+                    "-p",
+                    "crabc-rs",
+                    "--no-default-features",
+                    "--release",
+                    "--example",
+                    "fnmatch_direct_probe",
+                ],
+            )
+            self.assertIn("--platform", fnmatch_verifier_arguments)
+            self.assertNotIn("--cap-add=SYS_CHROOT", fnmatch_verifier_arguments)
+            fnmatch_verifier_platform_index = fnmatch_verifier_arguments.index("--platform")
+            self.assertEqual(
+                fnmatch_verifier_arguments[fnmatch_verifier_platform_index + 1],
+                "linux/amd64",
+            )
+            fnmatch_verifier_bash_index = fnmatch_verifier_arguments.index("bash")
+            self.assertEqual(
+                fnmatch_verifier_arguments[fnmatch_verifier_bash_index:],
+                ["bash", "/workspace/compat/x86_64/verify_fnmatch_direct.sh"],
+            )
             self.assertIn('--cap-add=SYS_CHROOT', chroot_arguments)
             self.assertIn("--platform", chroot_arguments)
             chroot_platform_index = chroot_arguments.index("--platform")
@@ -7413,6 +7457,26 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             )
             self.assertIn('"$test_binary" --test-threads=1', source_test_command)
             self.assertNotIn("cargo", source_test_command)
+
+    def test_facade_keeps_fnmatch_direct_and_archive_checked(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        verifier = (
+            ROOT / "compat" / "x86_64" / "verify_fnmatch_direct.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("--test x86_64_fnmatch", source)
+        self.assertIn("--release --example fnmatch_direct_probe", source)
+        self.assertIn("compat/x86_64/verify_fnmatch_direct.sh", source)
+        self.assertIn("allocation-free matcher", source)
+        self.assertIn("glob API", source)
+        for required in (
+            "Advanced Micro Devices X86-64",
+            "crabc_rs_fnmatch_direct_probe",
+            "fnmatch __errno_location malloc calloc realloc free",
+            "readelf",
+            "nm",
+        ):
+            self.assertIn(required, verifier)
 
 
 if __name__ == "__main__":

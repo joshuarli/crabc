@@ -17,6 +17,12 @@ candidate-only cap check exhausts all slots and proves reuse after joining.
 `libc.pthread-tls` remains planned; this is not general pthread/TLS parity,
 dynamic TLS, CRT/sysroot support, or public x86 support.
 
+The x86 direct Rust facade also has one verified allocation-free
+`pattern::{fnmatch, FnmatchFlags}` slice with an x86 no-std archive proof that
+does not call C `fnmatch`, errno TLS, or an allocator. The AArch64
+allocation-backed `pattern::{glob, glob_at}` traversal surface remains absent
+on x86, so this is not facade or platform parity.
+
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
 [`docs/design/allocator.md`](docs/design/allocator.md), and

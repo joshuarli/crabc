@@ -27,12 +27,25 @@ class VerifyFnmatchTests(unittest.TestCase):
         self.assertTrue(report["direct_native"])
         self.assertEqual(report["forbidden_symbols"], [])
 
-    def test_rejects_non_aarch64_or_missing_native_entrypoint(self) -> None:
-        with self.assertRaisesRegex(VERIFY.VerificationError, "AArch64"):
+    def test_accepts_x86_64_native_entrypoint_without_undefined_symbols(self) -> None:
+        machine = "Advanced Micro Devices X86-64"
+        report = VERIFY.inspect(
+            f"Machine: {machine}",
+            "",
+            "0000000000000000 T crabc_rs_fnmatch_direct_probe\n",
+            machine,
+        )
+        self.assertEqual(report["machine"], machine)
+        self.assertTrue(report["direct_native"])
+        self.assertEqual(report["forbidden_symbols"], [])
+
+    def test_rejects_wrong_machine_or_missing_native_entrypoint(self) -> None:
+        with self.assertRaisesRegex(VERIFY.VerificationError, "Advanced Micro Devices"):
             VERIFY.inspect(
-                "Machine: x86-64",
+                "Machine: AArch64",
                 "",
                 "0000000000000000 T crabc_rs_fnmatch_direct_probe\n",
+                "Advanced Micro Devices X86-64",
             )
         with self.assertRaisesRegex(VERIFY.VerificationError, "entry point"):
             VERIFY.inspect("Machine: AArch64", "", "")

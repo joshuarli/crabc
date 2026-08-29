@@ -44,7 +44,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 26)
+        self.assertEqual(report["verified_slice_count"], 27)
         self.assertEqual(report["verified_artifact_count"], 33)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -251,6 +251,33 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         direct = self.family(data, "facade.direct")
         remaining = self.family(data, "facade.record-owning")
+        direct_slices = direct["verified_slice"]
+        assert isinstance(direct_slices, list)
+        direct_slices_by_id = {
+            slice_entry["id"]: slice_entry
+            for slice_entry in direct_slices
+            if isinstance(slice_entry, dict)
+        }
+        fnmatch_slice = direct_slices_by_id["pattern.fnmatch"]
+        assert isinstance(fnmatch_slice, dict)
+        self.assertEqual(fnmatch_slice["capabilities"], ["pattern.fnmatch"])
+        for owner in (
+            "crabc-core/src/pattern.rs",
+            "crabc-rs/src/pattern_x86_64.rs",
+            "crabc-rs/tests/x86_64_fnmatch.rs",
+            "crabc-rs/examples/fnmatch_direct_probe.rs",
+            "compat/x86_64/verify_fnmatch_direct.sh",
+        ):
+            self.assertIn(owner, fnmatch_slice["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in fnmatch_slice["native_evidence"]},
+            {"./scripts/dev-x86_64.sh facade"},
+        )
+        self.assertIn("glob", fnmatch_slice["description"])
+        self.assertIn("glob", fnmatch_slice["native_evidence"][0]["scope"])
+        self.assertIn("pattern.fnmatch", direct["capabilities"])
+        self.assertIn("pattern.glob", direct["capabilities"])
+        self.assertNotIn("pattern.glob", fnmatch_slice["capabilities"])
         self.assertEqual(self.family(data, "libc.raw-syscall")["status"], "foundation-verified")
         errno_tls = self.family(data, "libc.errno-tls")
         self.assertEqual(errno_tls["status"], "foundation-verified")

@@ -85,7 +85,8 @@ pub mod collections;
 // process-wide `mm::{MlockAllFlags, mlockall, munlockall}`, unsafe legacy
 // `mm::remap_file_pages`, query/replay-only `process::kernel_brk`, `memory`,
 // direct checked `mount::{mount, unmount}` requests with no proven
-// successful namespace mutation, `numeric`, `param`, `pipe`, bounded
+// successful namespace mutation, `numeric`, `param`, allocation-free native
+// `pattern::fnmatch` (not alloc-backed glob traversal), `pipe`, bounded
 // `process` identity/session
 // and supplementary-group query/fill plus pidfd creation and resource-limit
 // query/mutation, strict alloc-gated owned `/etc/passwd` and `/etc/group`
@@ -160,6 +161,9 @@ pub mod param;
 #[cfg(target_arch = "aarch64")]
 pub mod path;
 #[cfg(target_arch = "aarch64")]
+pub mod pattern;
+#[cfg(target_arch = "x86_64")]
+#[path = "pattern_x86_64.rs"]
 pub mod pattern;
 pub mod pipe;
 #[cfg(target_arch = "aarch64")]

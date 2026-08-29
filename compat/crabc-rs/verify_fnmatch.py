@@ -48,8 +48,16 @@ def has_symbol(symbols: str, name: str) -> bool:
     return bool(re.search(rf"\b{re.escape(name)}(?:@[^\s]+)?\b", symbols))
 
 
-def inspect(readelf: str, undefined_symbols: str, defined_symbols: str) -> dict[str, object]:
-    require("AArch64" in readelf, "fixture is not an AArch64 ELF archive member")
+def inspect(
+    readelf: str,
+    undefined_symbols: str,
+    defined_symbols: str,
+    expected_machine: str = "AArch64",
+) -> dict[str, object]:
+    require(
+        expected_machine in readelf,
+        f"fixture is not an {expected_machine} ELF archive member",
+    )
     require(
         "crabc_rs_fnmatch_direct_probe" in defined_symbols,
         "fixture does not define the fnmatch probe entry point",
@@ -60,7 +68,7 @@ def inspect(readelf: str, undefined_symbols: str, defined_symbols: str) -> dict[
         "fixture references forbidden public C ABI/allocation symbol(s): " + ", ".join(forbidden),
     )
     return {
-        "machine": "AArch64",
+        "machine": expected_machine,
         "direct_native": True,
         "forbidden_symbols": [],
     }
@@ -71,6 +79,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-dir", type=Path, default=Path("target"))
     parser.add_argument("--readelf", default="llvm-readelf")
     parser.add_argument("--nm", default="llvm-nm")
+    parser.add_argument("--machine", default="AArch64")
     return parser.parse_args(argv)
 
 
@@ -82,6 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             tool_output((args.readelf, "--file-header", str(archive))),
             tool_output((args.nm, "--undefined-only", str(archive))),
             tool_output((args.nm, "--defined-only", str(archive))),
+            args.machine,
         )
         print(f"native fnmatch proof: PASS ({archive}) {report}")
     except VerificationError as error:
