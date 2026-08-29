@@ -7,7 +7,7 @@
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
-//! system-observation, UTS-namespace identity, basic socket-transport,
+//! system-configuration, system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, callback-algorithms, and POSIX
 //! `nanosleep` and `clock_nanosleep`
@@ -89,6 +89,8 @@ mod descriptor_control;
 mod descriptor_io;
 #[path = "process_resources.rs"]
 mod process_resources;
+#[path = "system_configuration.rs"]
+mod system_configuration;
 #[path = "readiness_waits.rs"]
 mod readiness_waits;
 #[path = "system_observation.rs"]

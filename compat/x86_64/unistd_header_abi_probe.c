@@ -54,6 +54,10 @@ _Static_assert(_SC_UIO_MAXIOV == 60 && _SC_PHYS_PAGES == 85 &&
 _Static_assert(_SC_V6_LP64_OFF64 == 178 && _SC_V7_LP64_OFF64 == 239 &&
     _SC_MINSIGSTKSZ == 249 && _SC_SIGSTKSZ == 250,
     "x86 versioned sysconf selectors");
+_Static_assert(_SC_CLK_TCK == 2 && _SC_PAGE_SIZE == _SC_PAGESIZE &&
+    _SC_PAGE_SIZE == 30, "selected system-configuration selectors");
+_Static_assert(_PC_LINK_MAX == 0 && _PC_2_SYMLINKS == 20 &&
+    _PC_REC_INCR_XFER_SIZE == 14, "selected pathconf selector range");
 
 #define CRABC_TYPE_IS(expression, type) \
     __builtin_types_compatible_p(__typeof__(expression), type)
@@ -82,6 +86,14 @@ _Static_assert(CRABC_TYPE_IS(&getcwd, char *(*)(char *, size_t)),
 _Static_assert(CRABC_TYPE_IS(&sysconf, long (*)(int)), "sysconf declaration");
 _Static_assert(CRABC_TYPE_IS(&confstr, size_t (*)(int, char *, size_t)),
     "confstr declaration");
+_Static_assert(CRABC_TYPE_IS(&fpathconf, long (*)(int, int)),
+    "fpathconf declaration");
+_Static_assert(CRABC_TYPE_IS(&pathconf, long (*)(const char *, int)),
+    "pathconf declaration");
+_Static_assert(CRABC_TYPE_IS(&getpagesize, int (*)(void)),
+    "GNU getpagesize declaration");
+_Static_assert(CRABC_TYPE_IS(&getdtablesize, int (*)(void)),
+    "GNU getdtablesize declaration");
 _Static_assert(CRABC_TYPE_IS(&copy_file_range,
     ssize_t (*)(int, off_t *, int, off_t *, size_t, unsigned)),
     "copy_file_range declaration");

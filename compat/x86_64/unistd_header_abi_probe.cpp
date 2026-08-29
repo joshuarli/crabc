@@ -26,6 +26,9 @@ static_assert(SEEK_DATA == 3 && SEEK_HOLE == 4,
     "C++ Linux seek extensions");
 static_assert(_SC_UIO_MAXIOV == 60 && _SC_V6_LP64_OFF64 == 178,
     "C++ x86 sysconf selectors");
+static_assert(_SC_CLK_TCK == 2 && _SC_PAGE_SIZE == _SC_PAGESIZE &&
+    _SC_PAGE_SIZE == 30 && _PC_2_SYMLINKS == 20,
+    "C++ selected system-configuration selectors");
 static_assert(__is_same(decltype(NULL), decltype(nullptr)),
     "C++11 NULL is nullptr-compatible");
 
@@ -39,6 +42,12 @@ using gethostname_function = int (*)(char *, size_t);
 using sethostname_function = int (*)(const char *, size_t);
 using getdomainname_function = int (*)(char *, size_t);
 using setdomainname_function = int (*)(const char *, size_t);
+using sysconf_function = long (*)(int);
+using confstr_function = size_t (*)(int, char *, size_t);
+using fpathconf_function = long (*)(int, int);
+using pathconf_function = long (*)(const char *, int);
+using getpagesize_function = int (*)(void);
+using getdtablesize_function = int (*)(void);
 
 static_assert(__is_same(decltype(&read), read_function), "C++ read declaration");
 static_assert(__is_same(decltype(&pread), pread_function),
@@ -57,6 +66,18 @@ static_assert(__is_same(decltype(&getdomainname), getdomainname_function),
     "C++ GNU getdomainname declaration");
 static_assert(__is_same(decltype(&setdomainname), setdomainname_function),
     "C++ GNU setdomainname declaration");
+static_assert(__is_same(decltype(&sysconf), sysconf_function),
+    "C++ sysconf declaration");
+static_assert(__is_same(decltype(&confstr), confstr_function),
+    "C++ confstr declaration");
+static_assert(__is_same(decltype(&fpathconf), fpathconf_function),
+    "C++ fpathconf declaration");
+static_assert(__is_same(decltype(&pathconf), pathconf_function),
+    "C++ pathconf declaration");
+static_assert(__is_same(decltype(&getpagesize), getpagesize_function),
+    "C++ GNU getpagesize declaration");
+static_assert(__is_same(decltype(&getdtablesize), getdtablesize_function),
+    "C++ GNU getdtablesize declaration");
 
 int crabc_x86_64_unistd_header_abi_probe_cpp()
 {

@@ -2,10 +2,11 @@
 # Native Linux/x86-64 staged foundation evidence entry point.
 #
 # This is a deliberately closed foundation lane. It proves explicitly named
-# native core, direct-facade, raw-C-syscall, source-only relocation, and thirty
+# native core, direct-facade, raw-C-syscall, source-only relocation, and thirty-one
 # static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_gettime,
+# system configuration,
 # nanosleep, and clock_nanosleep,
 # selected descriptor entry, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
@@ -160,6 +161,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
+  libc-system-configuration  run the static x86 crabc-libc system-configuration slice
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
@@ -809,6 +811,14 @@ dynamic process state. It does not
 select clock resolution or mutation, `time`, calendar/timer state, pthread
 cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
 support.
+`libc-system-configuration` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+the bounded page/tick `sysconf`, `confstr`, table-based `pathconf`/`fpathconf`,
+`getpagesize`, and `getdtablesize` boundary. It deliberately follows musl's
+path- and fd-independent table instead of the current AArch64
+filesystem-dependent path-configuration divergence, and it does not select a
+full `sysconf` table, startup/auxv ownership, filesystem capacity APIs,
+dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-nanosleep` links that archive into a separate freestanding project-header
 C fixture after an equivalent pinned-musl run. It selects only the normal
 `nanosleep` result/errno and relative remaining-pointer boundary: zero
@@ -1117,6 +1127,10 @@ run_libc_callback_algorithms() {
 
 run_libc_clock_gettime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_clock_gettime.sh
+}
+
+run_libc_system_configuration() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_system_configuration.sh
 }
 
 run_libc_nanosleep() {
@@ -1983,7 +1997,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2718,6 +2732,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-clock-gettime takes no arguments"
         ensure_image
         run_libc_clock_gettime
+        ;;
+    libc-system-configuration)
+        [ "$#" -eq 0 ] || fail "libc-system-configuration takes no arguments"
+        ensure_image
+        run_libc_system_configuration
         ;;
     libc-nanosleep)
         [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"

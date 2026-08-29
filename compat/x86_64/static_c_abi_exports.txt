@@ -36,6 +36,7 @@ cfsetspeed
 clock_gettime
 clock_nanosleep
 close
+confstr
 connect
 creat
 div
@@ -58,17 +59,20 @@ feupdateenv
 ffs
 ffsl
 ffsll
+fpathconf
 fstat
 fstatat
 fsync
 ftruncate
 getdomainname
+getdtablesize
 getegid
 getentropy
 geteuid
 getgid
 getgroups
 gethostname
+getpagesize
 getpeername
 getpgid
 getpgrp
@@ -118,6 +122,7 @@ nanosleep
 nice
 open
 openat
+pathconf
 pause
 pipe
 pipe2
@@ -195,6 +200,7 @@ strtoll
 strtoul
 strtoull
 strtoumax
+sysconf
 sysinfo
 tcflow
 tcflush

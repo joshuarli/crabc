@@ -45,7 +45,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 28)
+        self.assertEqual(report["verified_artifact_count"], 29)
         self.assertEqual(report["header_layout_probe_count"], 29)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
@@ -199,7 +199,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 27
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 28
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -814,6 +814,55 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/clock_gettime.rs",
+            posix_runtime["source_owners"],
+        )
+        system_configuration = artifacts_by_id["static-c-system-configuration"]
+        assert isinstance(system_configuration, dict)
+        self.assertNotIn("capabilities", system_configuration)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/process_resources.rs",
+            "libc/src/c_abi/x86_64/system_configuration.rs",
+            "include/unistd.h",
+            "include/sys/resource.h",
+            "compat/x86_64/unistd_header_abi_probe.c",
+            "compat/x86_64/unistd_header_abi_probe.cpp",
+            "compat/x86_64/run_unistd_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_system_configuration_probe.c",
+            "compat/x86_64/libc_system_configuration_start.S",
+            "compat/x86_64/run_libc_system_configuration.sh",
+        ):
+            self.assertIn(owner, system_configuration["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in system_configuration["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-system-configuration"},
+        )
+        for phrase in (
+            "system-configuration block",
+            "path- and fd-independent",
+            "current AArch64",
+            "full musl sysconf table",
+            "startup-owned auxv/getauxval",
+        ):
+            self.assertIn(phrase, system_configuration["description"])
+        self.assertIn(
+            "src/conf/sysconf.c", system_configuration["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "src/conf/fpathconf.c", system_configuration["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "prlimit64=302", system_configuration["x86_abi_prerequisites"][3]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/system_configuration.rs",
             posix_runtime["source_owners"],
         )
         clock_nanosleep = artifacts_by_id["static-c-clock-nanosleep"]
@@ -3568,6 +3617,54 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh time-abi-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-clock-gettime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_system_configuration_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-system-configuration"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[3], str)
+        prerequisites[3] = prerequisites[3].replace("prlimit64=302", "prlimit64=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "prlimit64 four-register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-system-configuration"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "path- and fd-independent", "filesystem-dependent"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "path- and fd-independent"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-system-configuration"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh system-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-system-configuration command"
         ):
             ledger.validate_ledger(data)
 

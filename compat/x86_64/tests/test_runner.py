@@ -4772,6 +4772,133 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_system_configuration_artifact_stays_narrow(
+        self,
+    ) -> None:
+        """A configuration block must be one closed static artifact, not leaves."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        system_configuration_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_system_configuration_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_system_configuration_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_system_configuration.sh"
+        )
+
+        for path in (
+            system_configuration_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing system-configuration artifact input: {path}")
+
+        system_configuration = system_configuration_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_configuration.rs"]', static_root)
+        for required in (
+            'fn sysconf(',
+            'fn confstr(',
+            'fn fpathconf(',
+            'fn pathconf(',
+            'fn getpagesize()',
+            'fn getdtablesize()',
+            '#[inline(always)]\nfn pathconf_value',
+            '#[inline(always)]\nunsafe fn selected_pathconf',
+            'raw_syscall::SYS_PRLIMIT64',
+            'initial-TLS errno',
+            'musl 1.2.6 release commit',
+        ):
+            self.assertIn(required, system_configuration)
+        pathconf_helpers = system_configuration[
+            system_configuration.index('#[inline(always)]\nfn pathconf_value') :
+            system_configuration.index(
+                '/// Return a selected path configuration value for an open descriptor.'
+            )
+        ]
+        self.assertNotIn('raw_syscall', pathconf_helpers)
+        for forbidden in (
+            'crabc_core',
+            'crabc_mimalloc',
+            '__tls_get_addr',
+            'pthread_',
+            'getauxval',
+            'raw_syscall::SYS_STATFS',
+            'raw_syscall::SYS_FSTATFS',
+        ):
+            self.assertNotIn(forbidden, system_configuration)
+        for required in (
+            '#include <errno.h>',
+            '#include <limits.h>',
+            '#include <sys/resource.h>',
+            '#include <sys/syscall.h>',
+            '#include <unistd.h>',
+            'SYS_statfs == 137',
+            'SYS_fstatfs == 138',
+            'SYS_prlimit64 == 302',
+            'check_common_contract',
+            'check_musl_configuration_contract',
+            'CRABC_SYSTEM_CONFIGURATION_FREESTANDING',
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            'ARCH_SET_FS',
+            'mov %rsi, %fs:0',
+            'crabc_x86_64_system_configuration_probe',
+        ):
+            self.assertIn(required, start)
+        for required in (
+            'static_c_abi_exports.txt',
+            'run_unistd_header_abi.sh',
+            'run_resource_header_abi.sh',
+            '-nostdlib -static',
+            '-Wl,-e,_start',
+            'R_X86_64_TPOFF',
+            'assert_getdtablesize_syscall',
+            'path configuration unexpectedly issues a syscall',
+            'getdtablesize lacks syscall 302',
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('--whole-archive', artifact_runner)
+        for symbol in (
+            'confstr',
+            'fpathconf',
+            'getdtablesize',
+            'getpagesize',
+            'pathconf',
+            'sysconf',
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-system-configuration"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-system-configuration"',
+            parity_ledger,
+        )
+        self.assertIn('run_libc_system_configuration()', runner)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_system_configuration.sh', runner
+        )
+        self.assertIn(
+            '    libc-system-configuration)\n        [ "$#" -eq 0 ] || fail "libc-system-configuration takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_clock_nanosleep_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

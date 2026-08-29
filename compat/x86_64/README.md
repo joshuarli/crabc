@@ -315,6 +315,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-clock-gettime
+./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
@@ -1695,6 +1696,26 @@ this direct leaf intentionally owns no vDSO resolver or dynamic runtime state.
 It excludes `clock_getres`/`clock_settime`, `time`, calendar/timer state,
 pthread cancellation, dynamic runtime, and public x86 support.
 
+`libc-system-configuration` is a separately recorded
+`static-c-system-configuration` `verified_artifact` gate over that archive,
+not a general system-information, filesystem, or runtime capability. Its
+project-header C body first executes through pinned musl and then through a
+`-nostdlib -static` candidate. It selects only the `_SC_CLK_TCK` and
+`_SC_PAGE_SIZE`/`_SC_PAGESIZE` `sysconf` queries, musl's bounded
+`confstr` copy/truncation behavior, all twenty-one table-based
+`pathconf`/`fpathconf` selectors, the fixed x86 Linux `getpagesize`, and the
+`RLIMIT_NOFILE`-clamped `getdtablesize` query. Valid path-configuration
+selectors deliberately neither read a pathname nor consume a file descriptor,
+including valid indeterminate `-1` values that preserve stale `errno`;
+invalid selectors return `EINVAL`. The candidate emits only
+`prlimit64=302` for `getdtablesize` and rejects accidental path-configuration
+syscalls. Current AArch64 `pathconf`/`fpathconf` instead uses `statfs`, which
+is a recorded pre-existing divergence from the pinned musl oracle. This x86
+artifact follows musl and therefore is not evidence that the two platforms are
+yet behaviorally identical at this cluster. It excludes the rest of musl's
+`sysconf` table, `statfs`/`statvfs`, filesystem policy, `/proc`, startup-owned
+auxv/`getauxval`, dynamic runtime, and public x86 support.
+
 `libc-nanosleep` is the eleventh, separately recorded `static-c-nanosleep`
 `verified_artifact` gate over that archive, not a C time or runtime capability.
 Its project-header C body first executes through pinned musl and then through
@@ -2241,6 +2262,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`, `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
+`libc-system-configuration`,
 `libc-nanosleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,

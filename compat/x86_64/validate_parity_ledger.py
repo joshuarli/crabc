@@ -1326,6 +1326,75 @@ def require_clock_gettime_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the musl-oracle configuration boundary closed and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-system-configuration"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-system-configuration artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "system-configuration block",
+        "`sysconf`",
+        "`confstr`",
+        "`pathconf`",
+        "`fpathconf`",
+        "`getpagesize`",
+        "`getdtablesize`",
+        "path- and fd-independent",
+        "current AArch64",
+        "full musl sysconf table",
+        "startup-owned auxv/getauxval",
+    ):
+        require(
+            phrase in description,
+            f"static-c-system-configuration description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "compat/x86_64/libc_system_configuration_probe.c",
+        "compat/x86_64/libc_system_configuration_start.S",
+        "compat/x86_64/run_libc_system_configuration.sh",
+        "compat/x86_64/unistd_header_abi_probe.c",
+        "compat/x86_64/unistd_header_abi_probe.cpp",
+        "compat/x86_64/run_unistd_header_abi.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-system-configuration must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("prlimit64=302" in item and "rdi/rsi/rdx/r10" in item for item in prerequisites),
+        "static-c-system-configuration must record the prlimit64 four-register ABI",
+    )
+    require(
+        any("path- and fd-independent" in item and "statfs" in item for item in prerequisites),
+        "static-c-system-configuration must record the musl pathconf divergence",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-system-configuration"},
+        "static-c-system-configuration must use the closed libc-system-configuration command",
+    )
+
+
 def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct-positive-error clock sleep boundary durable."""
     artifacts = require_verified_artifacts(
@@ -1809,6 +1878,7 @@ def validate_ledger(
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
+    require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
