@@ -176,8 +176,10 @@ pread
 prlimit
 pselect
 pthread_create
+pthread_equal
 pthread_exit
 pthread_join
+pthread_self
 pwrite
 qsort
 qsort_r
@@ -261,6 +263,8 @@ tcgetwinsize
 tcsendbreak
 tcsetattr
 tcsetwinsize
+thrd_current
+thrd_equal
 toascii
 tolower
 toupper

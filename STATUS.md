@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has four private static artifacts inside still-planned
+The x86 lane now has five private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -34,7 +34,15 @@ clear-child-tid join reclamation. A fixed private 64-worker registry
 serializes explicit-exit publication with join withdrawal and validates
 `%fs:0`, the child kernel TID, and its still-live clear-child-tid word; the
 candidate-only cap check exhausts all slots and proves reuse after joining.
-The fourth artifact, `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
+The separate `./scripts/dev-x86_64.sh libc-pthread-identity` artifact proves
+the bounded opaque x86 identity contract: weak same-address
+`pthread_self`/`thrd_current` and `pthread_equal`/`thrd_equal` pairs, direct
+Variant-II `%fs:0` identity, and canonical one-or-zero macro/function
+equality for the main thread plus two live normal workers and one selected
+explicit-exit worker. `pthread_create` returns that child TP and
+`pthread_join` resolves it under the existing private registry lock; no
+dereferenceable TCB or C11 thread lifecycle is selected. The fifth artifact,
+`./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls
 `__crabc_x86_static_tls_bootstrap(original_entry_stack)` before libc's bounded
@@ -43,8 +51,8 @@ static `__libc_start_main`. It proves one initialized/TBSS/high-alignment
 no-allocation LIFO callback block, one fresh selected worker, and malformed
 `PT_TLS.p_filesz` rejection. `libc.pthread-tls` remains planned: this is not
 general pthread/TLS parity, dynamic or loader TLS, a general CRT/libc startup
-ABI, stdio/C++/DSO or concurrent-exit lifecycle, sysroot support, or public
-x86 support.
+ABI, C11 thread creation or synchronization, stdio/C++/DSO or concurrent-exit
+lifecycle, sysroot support, or public x86 support.
 
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root

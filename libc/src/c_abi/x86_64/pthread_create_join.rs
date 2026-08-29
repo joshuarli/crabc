@@ -25,7 +25,9 @@
 //! `pthread_exit`, and one `pthread_join`. The child gets a distinct copy of
 //! the libc-owned Static Initial TLS v1 final-executable image, including its
 //! initialized prefix, zeroed TBSS tail, high-alignment layout, and `errno`,
-//! and returns one opaque pointer. The private registry serializes identity scan/result
+//! and returns its Variant-II thread pointer as the opaque `pthread_t`, exactly
+//! matching its selected `pthread_self` identity. The private registry maps
+//! that public TP back to the private control record and serializes identity scan/result
 //! publication with join withdrawal, and validates `%fs:0`, Linux `gettid`,
 //! and the still-live child-TID word so a foreign thread cannot turn a copied
 //! TLS base into a control-record write after task-ID reuse. It is intentionally
@@ -42,12 +44,11 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x86-64");
 
-use core::arch::asm;
 use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{raw_syscall, static_tls};
+use super::{pthread_identity, raw_syscall, static_tls};
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -241,25 +242,6 @@ fn positive_linux_error(result: i64) -> c_int {
     result.wrapping_neg() as c_int
 }
 
-/// Read the current x86 Variant-II thread pointer from its `%fs:0` self word.
-///
-/// The selected fixture and child mapping explicitly establish this self word;
-/// this is not a general dynamic-TLS lookup facility.
-fn current_thread_pointer() -> *mut u8 {
-    let thread_pointer: *mut u8;
-    // SAFETY: this selected static artifact requires an established x86
-    // initial TLS base whose self word is readable at %fs:0. Its test-only
-    // entry shim establishes that precondition before calling C code.
-    unsafe {
-        asm!(
-            "mov {thread_pointer}, fs:[0]",
-            thread_pointer = out(reg) thread_pointer,
-            options(readonly, nostack, preserves_flags),
-        );
-    }
-    thread_pointer
-}
-
 /// Read this task's Linux TID for selected-worker identity validation.
 ///
 /// Linux 5.10 `gettid` has no arguments and returns a positive `pid_t` for a
@@ -360,6 +342,49 @@ fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) ->
     released
 }
 
+/// Claim the one selected worker named by its public x86 `pthread_t` value.
+///
+/// The selected static identity leaf exposes the child Variant-II TP as the
+/// opaque handle, matching musl x86's `__pthread_self()` value and C's raw
+/// `pthread_equal` macro. This lookup remains under the same registry lock
+/// that withdraws entries before `munmap`, so the returned control pointer
+/// cannot name a reclaimed mapping. Claiming `join_claimed` while still
+/// locked then gives this joiner exclusive ownership until it either releases
+/// the claim on an error or completes reclamation.
+fn claim_selected_worker_by_thread_pointer(thread: *mut c_void) -> Option<*mut ThreadControl> {
+    if thread.is_null() {
+        return None;
+    }
+
+    let thread_pointer = thread as usize;
+    lock_selected_worker_registry();
+    let mut claimed = None;
+    for slot in &SELECTED_WORKER_REGISTRY {
+        if slot.thread_pointer.load(Ordering::Acquire) != thread_pointer {
+            continue;
+        }
+        let control = slot.control.load(Ordering::Acquire);
+        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
+            continue;
+        }
+        let control = control as *mut ThreadControl;
+        // SAFETY: registry withdrawal uses this lock before it may unmap the
+        // control record. The record is therefore live for the atomic claim.
+        if unsafe {
+            (*control)
+                .join_claimed
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+        }
+        .is_ok()
+        {
+            claimed = Some(control);
+        }
+        break;
+    }
+    unlock_selected_worker_registry();
+    claimed
+}
+
 /// Publish one result only for the current admitted selected worker.
 ///
 /// This reads only the universally established `%fs:0` self word before it
@@ -368,7 +393,7 @@ fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) ->
 /// publish, never returning a raw control pointer that a joiner could unmap
 /// concurrently.
 fn publish_current_selected_worker_result(result: *mut c_void) {
-    let thread_pointer = current_thread_pointer() as usize;
+    let thread_pointer = pthread_identity::current_thread_pointer() as usize;
     let Some(thread_id) = current_linux_thread_id() else {
         return;
     };
@@ -592,9 +617,12 @@ pub unsafe extern "C" fn pthread_create(
         return EAGAIN;
     }
 
-    // SAFETY: clone succeeded, so its opaque record stays live until the one
-    // admitted join reclaims the mapping. Publish only after full setup.
-    unsafe { core::ptr::write(thread, control.cast()) };
+    // SAFETY: clone succeeded, so the selected child's complete Static Initial
+    // TLS v1 TP stays live until the one admitted join reclaims it. On x86
+    // musl this TP is the opaque pthread_t returned by pthread_self, and the
+    // C header's pthread_equal macro therefore requires it to be the same
+    // creator-visible handle rather than this private control-record address.
+    unsafe { core::ptr::write(thread, tls_block.thread_pointer().cast()) };
     0
 }
 
@@ -621,10 +649,10 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 
 /// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].
 ///
-/// `thread` must be the still-live opaque result of this leaf's
+/// `thread` must be the still-live opaque TP result of this leaf's
 /// `pthread_create`; `result` may be null or writable pointer-result storage.
-/// No caller may use `thread` after a successful return because its backing
-/// mapping has been released.
+/// No caller may use `thread` after a successful return because its full TLS
+/// and private control mappings have been released.
 ///
 /// # Safety
 ///
@@ -633,20 +661,9 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 /// handle; such broader pthread behavior is deliberately outside this slice.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_void) -> c_int {
-    if thread.is_null() {
+    let Some(control) = claim_selected_worker_by_thread_pointer(thread) else {
         return EINVAL;
-    }
-    let control = thread.cast::<ThreadControl>();
-    // SAFETY: the caller promises a live handle. This claim keeps a second
-    // joiner from racing the only unmap in the admitted lifecycle.
-    let claim = unsafe {
-        (*control)
-            .join_claimed
-            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
     };
-    if claim.is_err() {
-        return EINVAL;
-    }
 
     loop {
         // SAFETY: the handle remains mapped until this joining caller either

@@ -7,7 +7,8 @@
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask
 //! and bounded process-signal execution, one default-attribute
 //! create/explicit-exit/join worker backed by the private Static Initial TLS
-//! v1 final-executable template,
+//! v1 final-executable template plus bounded weak `pthread_self`/
+//! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control,
 //! timestamp updates, descriptor-I/O, and
@@ -27,8 +28,8 @@
 //! only bounded no-allocation `atexit` callbacks; it is not stdio flushing,
 //! C++/DSO destruction, or a concurrent process-exit protocol. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
-//! use their selected explicit-exit path; it is not a claim for the broader
-//! pthread header surface.
+//! use their selected explicit-exit path, plus opaque current/equality
+//! identity; it is not a claim for the broader pthread header surface.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
 //! artifact evidence. The shared result translator is intentionally smaller
@@ -85,6 +86,8 @@ mod signal_foundation;
 mod signal_control;
 #[path = "signal_execution.rs"]
 mod signal_execution;
+#[path = "pthread_identity.rs"]
+mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
 #[path = "termios_control.rs"]

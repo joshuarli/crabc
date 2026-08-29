@@ -171,6 +171,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
+  libc-pthread-identity  run the static x86 crabc-libc pthread/C11 identity alias slice
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
@@ -251,9 +252,17 @@ still-live clear-child-tid word, and serializes its publication with join
 withdrawal before reclamation. The
 candidate-only capacity route exhausts all 64 slots and proves reuse after
 joining. It is not a general pthread runtime: attributes, detach, pthread-exit
-cleanup/TSD/main-thread/signal-handler behavior, self/equal, cancellation,
-synchronization, dynamic TLS/DTV, loader/CRT integration, and public x86
-support remain outside this artifact.
+cleanup/TSD/main-thread/signal-handler behavior, cancellation, synchronization,
+dynamic TLS/DTV, loader/CRT integration, and public x86 support remain outside
+this artifact. Its handle identity and self/equal behavior are selected only
+by the separate identity artifact below.
+`libc-pthread-identity` is a separate static project-header fixture that first
+runs through pinned musl, then links only the selected archive. It selects
+stable nonzero main identity, macro and function equality, weak same-address
+`pthread_self`/`thrd_current` and `pthread_equal`/`thrd_equal` pairs, and
+creator-handle identity for normal and selected explicit-exit workers. It does
+not establish a general pthread runtime, synchronization, dynamic TLS, CRT,
+loader, sysroot, or public x86 support.
 `libc-termios-control` exercises the same archive through a
 freestanding project-header C fixture after an equivalent pinned-musl run. It
 selects only fixed baud/raw helpers, named attribute/queue/flow/break requests,
@@ -2092,6 +2101,10 @@ run_libc_pthread_create_join_tls_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_create_join_tls.sh
 }
 
+run_libc_pthread_identity_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_identity.sh
+}
+
 run_libc_static_tls_v1_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_static_tls_v1.sh
 }
@@ -2214,6 +2227,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
+    libc-pthread-identity) ;;
     libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
@@ -2951,6 +2965,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-create-join-tls takes no arguments"
         ensure_image
         run_libc_pthread_create_join_tls_probe
+        ;;
+    libc-pthread-identity)
+        [ "$#" -eq 0 ] || fail "libc-pthread-identity takes no arguments"
+        ensure_image
+        run_libc_pthread_identity_probe
         ;;
     libc-static-tls-v1)
         [ "$#" -eq 0 ] || fail "libc-static-tls-v1 takes no arguments"

@@ -3611,6 +3611,154 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         )
 
 
+def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet static pthread/C11 identity without promoting pthread parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-pthread-identity"]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-identity artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-identity must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "weak same-address",
+        "`pthread_self`/`thrd_current`",
+        "`pthread_equal`/`thrd_equal`",
+        "Variant-II `%fs:0`",
+        "canonical one or zero",
+        "pthread_t",
+        "registry lock",
+        "true/false equality",
+        "general pthread runtime",
+        "`thread.pthread-c11`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-identity description omits {phrase}",
+        )
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pthread_identity.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "include/threads.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_identity_probe.c",
+        "compat/x86_64/libc_pthread_identity_start.S",
+        "compat/x86_64/run_libc_pthread_identity.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "static-c-pthread-identity source owners"))
+        == expected_sources,
+        "static-c-pthread-identity source owners drifted",
+    )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "arch/x86_64/pthread_arch.h::__get_tp",
+        "src/internal/pthread_impl.h::__pthread_self",
+        "struct pthread TCB",
+        "src/thread/pthread_self.c",
+        "src/thread/pthread_equal.c",
+        "weak function symbols",
+        "canonical 0 or 1",
+        "CLONE_SETTLS",
+        "registry lock",
+        "futex=202",
+        "munmap=11",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-identity ABI prerequisites omit {phrase}",
+        )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "pthread_self",
+        "thrd_current/thrd_equal",
+        "28-context C/C++",
+        "unmangled C linkage",
+        "no broad header or pthread implementation claim",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-pthread-identity header prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-identity"},
+        "static-c-pthread-identity must use the closed libc-pthread-identity command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "weak",
+        "one address",
+        "`%fs:0`",
+        "exactly one for equal and zero for distinct",
+        "two concurrently live normal workers",
+        "selected explicit-exit worker",
+        "parent errno preservation",
+        "general pthread/C11-thread behavior",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-identity evidence scope omits {phrase}",
+        )
+    static_exports = {
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt").read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    require(
+        {"pthread_self", "pthread_equal", "thrd_current", "thrd_equal"} <= static_exports,
+        "static-c-pthread-identity static export contract omits an identity symbol",
+    )
+    require(
+        "run_libc_pthread_identity.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-pthread-identity dispatcher binding is missing",
+    )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -5659,6 +5807,7 @@ def validate_ledger(
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

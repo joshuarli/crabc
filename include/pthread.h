@@ -117,6 +117,9 @@ int pthread_create(pthread_t *__restrict, const pthread_attr_t *__restrict,
 int pthread_detach(pthread_t);
 int pthread_join(pthread_t, void **);
 void pthread_exit(void *) __attribute__((__noreturn__));
+#ifdef __GNUC__
+__attribute__((const))
+#endif
 pthread_t pthread_self(void);
 int pthread_equal(pthread_t, pthread_t);
 #ifndef __cplusplus

@@ -133,10 +133,13 @@ _Static_assert(mtx_plain == 0 && mtx_recursive == 1 && mtx_timed == 2,
 
 typedef int (*crabc_pthread_create_signature)(
 	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+typedef int (*crabc_pthread_equal_signature)(pthread_t, pthread_t);
 typedef int (*crabc_pthread_getcpuclockid_signature)(pthread_t, clockid_t *);
 typedef int (*crabc_pthread_sigmask_signature)(int, const sigset_t *, sigset_t *);
 typedef int (*crabc_thrd_create_signature)(thrd_t *, thrd_start_t, void *);
 typedef int (*crabc_thrd_join_signature)(thrd_t, int *);
+typedef thrd_t (*crabc_thrd_current_signature)(void);
+typedef int (*crabc_thrd_equal_signature)(thrd_t, thrd_t);
 typedef int (*crabc_mtx_timedlock_signature)(mtx_t *, const struct timespec *);
 typedef int (*crabc_cnd_timedwait_signature)(
 	cnd_t *, mtx_t *, const struct timespec *);
@@ -144,6 +147,8 @@ typedef int (*crabc_tss_create_signature)(tss_t *, tss_dtor_t);
 
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_create), crabc_pthread_create_signature),
 	"pthread_create signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_equal), crabc_pthread_equal_signature),
+	"pthread_equal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
@@ -154,6 +159,10 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_create), crabc_thrd_create_signatu
 	"thrd_create signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_join), crabc_thrd_join_signature),
 	"thrd_join signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_current), crabc_thrd_current_signature),
+	"thrd_current signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_equal), crabc_thrd_equal_signature),
+	"thrd_equal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_timedlock), crabc_mtx_timedlock_signature),
 	"mtx_timedlock signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_timedwait), crabc_cnd_timedwait_signature),

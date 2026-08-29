@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 43)
+        self.assertEqual(report["verified_artifact_count"], 44)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4316,7 +4316,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 4)
+        self.assertEqual(len(artifacts), 5)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4325,12 +4325,14 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-crt-initial-tls-handoff",
                 "static-c-pthread-create-join-tls",
                 "static-c-pthread-explicit-exit-tls",
+                "static-c-pthread-identity",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
         crt_handoff = by_id["static-c-crt-initial-tls-handoff"]
         normal_return = by_id["static-c-pthread-create-join-tls"]
         explicit_exit = by_id["static-c-pthread-explicit-exit-tls"]
+        identity = by_id["static-c-pthread-identity"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4359,6 +4361,58 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("65th pthread_create", explicit_exit["native_evidence"][0]["scope"])
         self.assertIn("thread.pthread-c11", explicit_exit["description"])
         self.assertIn("public x86 support", explicit_exit["description"])
+        self.assertEqual(
+            identity["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-identity",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "weak same-address",
+            "`pthread_self`/`thrd_current`",
+            "`pthread_equal`/`thrd_equal`",
+            "Variant-II `%fs:0`",
+            "canonical one or zero",
+            "true/false equality",
+            "general pthread runtime",
+            "thread.pthread-c11",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, identity["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/pthread_identity.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "include/pthread.h",
+            "include/threads.h",
+            "compat/x86_64/libc_pthread_identity_probe.c",
+            "compat/x86_64/libc_pthread_identity_start.S",
+            "compat/x86_64/run_libc_pthread_identity.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, identity["source_owners"])
+        identity_abi = " ".join(identity["x86_abi_prerequisites"])
+        for phrase in (
+            "__get_tp",
+            "__pthread_self",
+            "weak function symbols",
+            "canonical 0 or 1",
+            "CLONE_SETTLS",
+            "registry lock",
+        ):
+            self.assertIn(phrase, identity_abi)
+        identity_scope = identity["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "weak",
+            "one address",
+            "exactly one for equal and zero for distinct",
+            "two concurrently live normal workers",
+            "selected explicit-exit worker",
+            "parent errno preservation",
+            "general pthread/C11-thread behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, identity_scope)
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -4448,6 +4502,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-initial-tls-v1 must use the closed libc-static-tls-v1 command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_identity = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-identity"
+        )
+        changed_identity["native_evidence"][0]["command"] = "./scripts/dev-x86_64.sh core"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-identity must use the closed libc-pthread-identity command",
         ):
             ledger.validate_ledger(changed)
 

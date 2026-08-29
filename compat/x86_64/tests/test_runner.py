@@ -66,6 +66,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memory-search-header-abi",
             "string-copy-header-abi",
             "random-entropy-header-abi",
+            "libc-pthread-identity",
             "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
         )
         self.assertEqual(actual_groups, expected_groups)
@@ -2790,8 +2791,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "SELECTED_WORKER_REGISTRY",
             "SELECTED_WORKER_REGISTRY_LOCK",
             "reserve_selected_worker",
+            "claim_selected_worker_by_thread_pointer",
             "publish_current_selected_worker_result",
             "release_selected_worker",
+            "pthread_identity::current_thread_pointer",
             "current_linux_thread_id",
             "raw_syscall::SYS_GETTID",
             "registry_retired",
@@ -2800,6 +2803,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn pthread_create(",
             "fn pthread_exit(",
             "fn pthread_join(",
+            "tls_block.thread_pointer().cast()",
         ):
             self.assertIn(required, pthread_create_join)
         for forbidden in (
@@ -2880,6 +2884,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         pthread_join_body = pthread_create_join.split(
             'pub unsafe extern "C" fn pthread_join', 1
         )[1]
+        self.assertIn(
+            "let Some(control) = claim_selected_worker_by_thread_pointer(thread)",
+            pthread_join_body,
+        )
+        self.assertLess(
+            pthread_join_body.index(
+                "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
+            ),
+            pthread_join_body.index("(*control)"),
+        )
         self.assertLess(
             pthread_join_body.index("release_selected_worker"),
             pthread_join_body.index("unmap_worker"),
@@ -2924,6 +2938,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             pthread_create_body.index("start_ready.store(1, Ordering::Release)"),
             pthread_create_body.index("__crabc_x86_pthread_clone("),
         )
+        self.assertIn(
+            "core::ptr::write(thread, tls_block.thread_pointer().cast())",
+            pthread_create_body,
+        )
         clone_failure = pthread_create_body.split("if is_linux_error(clone_result)", 1)[
             1
         ].split("// SAFETY: clone succeeded", 1)[0]
@@ -2937,12 +2955,141 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, static_export_names)
         for forbidden in (
             "pthread_detach",
-            "pthread_self",
             "pthread_cancel",
             "pthread_mutex_init",
         ):
             self.assertNotIn(forbidden, static_export_names)
         self.assertIn("libc-pthread-create-join-tls", runner)
+
+    def test_libc_static_c_abi_pthread_identity_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pthread_identity = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_identity.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        pthread_header = (ROOT / "include" / "pthread.h").read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_identity_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_identity_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_identity.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_identity.rs"]', static_root)
+        self.assertIn("weak `pthread_self`/", static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "arch/x86_64/pthread_arch.h::__get_tp()",
+            "src/internal/pthread_impl.h::__pthread_self()",
+            "src/thread/pthread_self.c",
+            "src/thread/pthread_equal.c",
+            "pub(super) fn current_thread_pointer()",
+            "mov {thread_pointer}, fs:[0]",
+            "options(readonly, nostack, preserves_flags)",
+            ".weak pthread_self",
+            ".set thrd_current, pthread_self",
+            ".weak pthread_equal",
+            ".set thrd_equal, pthread_equal",
+            "mov rax, qword ptr fs:[0]",
+            "cmp rdi, rsi",
+            "sete al",
+        ):
+            self.assertIn(required, pthread_identity)
+        self.assertNotIn("#[no_mangle]", pthread_identity)
+        for forbidden in (
+            "pthread_detach",
+            "pthread_cancel",
+            "pthread_key_create",
+            "pthread_mutex",
+            "thrd_create",
+            "thrd_join",
+            "__tls_get_addr",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, pthread_identity)
+
+        self.assertIn("pthread_identity::current_thread_pointer()", pthread_create_join)
+        self.assertIn("fn claim_selected_worker_by_thread_pointer", pthread_create_join)
+        self.assertIn(
+            "core::ptr::write(thread, tls_block.thread_pointer().cast())",
+            pthread_create_join,
+        )
+        pthread_join_body = pthread_create_join.split(
+            'pub unsafe extern "C" fn pthread_join', 1
+        )[1]
+        self.assertLess(
+            pthread_join_body.index(
+                "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
+            ),
+            pthread_join_body.index("(*control)"),
+        )
+
+        self.assertIn(
+            "#ifdef __GNUC__\n__attribute__((const))\n#endif\npthread_t pthread_self(void);",
+            pthread_header,
+        )
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "#include <threads.h>",
+            "pthread_equal_macro",
+            "thrd_equal_macro",
+            "#undef pthread_equal",
+            "#undef thrd_equal",
+            "run_two_live_workers",
+            "run_explicit_exit_worker",
+            "pthread_exit",
+            "thrd_current",
+            "thrd_equal",
+            "errno = E2BIG",
+            "pthread_equal_macro(handle, observation->pthread_identity) != 1",
+            "pthread_equal_macro(handle, main_identity) != 0",
+            "thrd_equal((thrd_t)handle, (thrd_t)main_identity) != 0",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertIn("crabc_x86_64_pthread_identity_probe", start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "MUSL_LIBC=/opt/musl-1.2.6/lib/libc.a",
+            "readelf --symbols --wide \"$MUSL_LIBC\"",
+            "assert_weak_same_address_pair",
+            "pthread_self thrd_current",
+            "pthread_equal thrd_equal",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate pthread_self does not read the Variant-II fs self word",
+            "candidate pthread_equal does not return canonical pointer equality",
+            "candidate relocations retain a dynamic TLS model",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {"pthread_self", "pthread_equal", "thrd_current", "thrd_equal"}
+            <= static_export_names
+        )
+        self.assertIn("libc-pthread-identity", runner)
 
     def test_libc_static_initial_tls_v1_artifact_stays_narrow(self) -> None:
         """Keep the isolated x86 initial-TLS template distinct from composition.

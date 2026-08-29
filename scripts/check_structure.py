@@ -157,6 +157,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
     Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
@@ -3532,6 +3533,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
         '#[path = "signal_execution.rs"]',
+        '#[path = "pthread_identity.rs"]',
         '#[path = "pthread_create_join.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
@@ -3924,6 +3926,62 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only simple action/set/mask/pending symbols"
         )
 
+    pthread_identity_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_identity.rs"
+    )
+    pthread_identity_text = pthread_identity_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "arch/x86_64/pthread_arch.h::__get_tp()",
+        "src/internal/pthread_impl.h::__pthread_self()",
+        "src/thread/pthread_self.c",
+        "src/thread/pthread_equal.c",
+        "pub(super) fn current_thread_pointer()",
+        "mov {thread_pointer}, fs:[0]",
+        "options(readonly, nostack, preserves_flags)",
+        ".weak pthread_self",
+        ".set thrd_current, pthread_self",
+        ".weak pthread_equal",
+        ".set thrd_equal, pthread_equal",
+        "mov rax, qword ptr fs:[0]",
+        "cmp rdi, rsi",
+        "sete al",
+    ):
+        if required not in pthread_identity_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_identity.rs: bounded static "
+                f"pthread identity leaf is missing {required!r}"
+            )
+    pthread_identity_exports = set(
+        re.findall(r"(?m)^\s*\.weak\s+(\w+)\s*$", pthread_identity_text)
+    )
+    if pthread_identity_exports != {
+        "pthread_self",
+        "thrd_current",
+        "pthread_equal",
+        "thrd_equal",
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_identity.rs: selected static identity "
+            "leaf must emit exactly the four weak pthread/C11 identity symbols"
+        )
+    pthread_identity_aliases = dict(
+        re.findall(r"(?m)^\s*\.set\s+(\w+)\s*,\s*(\w+)\s*$", pthread_identity_text)
+    )
+    if pthread_identity_aliases != {
+        "thrd_current": "pthread_self",
+        "thrd_equal": "pthread_equal",
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_identity.rs: selected static identity "
+            "leaf must retain musl's weak same-address C11 aliases"
+        )
+    if "#[no_mangle]" in pthread_identity_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_identity.rs: public identity symbols "
+            "must remain weak assembler definitions rather than strong Rust exports"
+        )
+
     pthread_create_join_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
     )
@@ -3953,8 +4011,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "SELECTED_WORKER_REGISTRY",
         "SELECTED_WORKER_REGISTRY_LOCK",
         "reserve_selected_worker",
+        "claim_selected_worker_by_thread_pointer",
         "publish_current_selected_worker_result",
         "release_selected_worker",
+        "pthread_identity::current_thread_pointer",
         "current_linux_thread_id",
         "raw_syscall::SYS_GETTID",
         "registry_retired",
@@ -3963,6 +4023,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_create",
         "pthread_exit",
         "pthread_join",
+        "tls_block.thread_pointer().cast()",
         "ENOTSUP",
     ):
         if required not in pthread_create_join_text:
@@ -4002,6 +4063,18 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         )
     else:
         pthread_join_text = pthread_create_join_text.split(pthread_join_marker, 1)[1]
+        join_claim_marker = "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
+        if (
+            join_claim_marker not in pthread_join_text
+            or "(*control)" not in pthread_join_text
+            or pthread_join_text.index(join_claim_marker)
+            > pthread_join_text.index("(*control)")
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: join must resolve "
+                "the public TP handle under its registry lock before dereferencing "
+                "the private control record"
+            )
         if (
             "release_selected_worker" not in pthread_join_text
             or "static_tls::release_thread(tls_block)" not in pthread_join_text
@@ -5607,6 +5680,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         fenv_text,
         signal_control_text,
         signal_execution_text,
+        pthread_identity_text,
         pthread_create_join_text,
         termios_control_text,
         process_context_text,
@@ -5672,6 +5746,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | callback_algorithms_aliases
         | filesystem_access_aliases
         | timestamp_aliases
+        | pthread_identity_exports
     )
     expected_exports = {
         "__errno_location",
@@ -5751,6 +5826,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_create",
         "pthread_exit",
         "pthread_join",
+        "pthread_self",
+        "pthread_equal",
+        "thrd_current",
+        "thrd_equal",
         "cfgetispeed",
         "cfgetospeed",
         "cfsetispeed",
@@ -5924,7 +6003,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -5945,6 +6024,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
         ("signal_execution.rs", signal_execution_text),
+        ("pthread_identity.rs", pthread_identity_text),
         ("pthread_create_join.rs", pthread_create_join_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),
