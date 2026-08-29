@@ -70,6 +70,10 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&munmap),
     int (*)(void *, size_t)), "munmap declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&mprotect),
     int (*)(void *, size_t, int)), "mprotect declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&madvise),
+    int (*)(void *, size_t, int)), "madvise declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&posix_madvise),
+    int (*)(void *, size_t, int)), "posix_madvise declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&mincore),
     int (*)(void *, size_t, unsigned char *)), "mincore declaration");
 

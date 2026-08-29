@@ -126,6 +126,7 @@ lldiv
 longjmp
 lseek
 lstat
+madvise
 memchr
 memcmp
 memcpy
@@ -133,6 +134,10 @@ memmem
 memmove
 memrchr
 memset
+mincore
+mmap
+mprotect
+munmap
 nanosleep
 nice
 open
@@ -142,6 +147,7 @@ pause
 pipe
 pipe2
 poll
+posix_madvise
 ppoll
 pread
 prlimit

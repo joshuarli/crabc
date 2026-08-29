@@ -3327,6 +3327,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "descriptor_control.rs"]',
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
+        '#[path = "memory_mapping.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
         '#[path = "byte_strings.rs"]',
@@ -3341,6 +3342,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "system_observation.rs"]',
         '#[path = "uts_identity.rs"]',
         "fn c_status",
+        "fn c_pointer_status",
         "fn c_ssize_status",
         "fn c_off_status",
         "fn rust_eh_personality",
@@ -3932,6 +3934,70 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/syscall.rs: selected static clock_gettime "
             "boundary requires SYS_CLOCK_GETTIME=228"
         )
+
+    memory_mapping_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_mapping.rs"
+    )
+    memory_mapping_text = memory_mapping_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/mman/mmap.c",
+        "src/mman/munmap.c",
+        "src/mman/mprotect.c",
+        "src/mman/madvise.c",
+        "src/mman/posix_madvise.c",
+        "src/mman/mincore.c",
+        "MMAP_OFFSET_MASK",
+        "isize::MAX",
+        "MAP_FIXED",
+        "MAP_ANONYMOUS",
+        "selected_static_vm_wait",
+        "__vm_wait",
+        "wrapping_add",
+        "POSIX_MADV_DONTNEED",
+        "c_pointer_status(result)",
+        "c_status(result)",
+        "wrapping_neg",
+        "msync",
+        "mremap",
+        "mlock*",
+    ):
+        if required not in memory_mapping_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memory_mapping.rs: selected static "
+                f"mapping-core boundary is missing {required!r}"
+            )
+    memory_mapping_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            memory_mapping_text,
+        )
+    )
+    expected_memory_mapping_exports = {
+        "mmap",
+        "munmap",
+        "mprotect",
+        "madvise",
+        "posix_madvise",
+        "mincore",
+    }
+    if memory_mapping_exports != expected_memory_mapping_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/memory_mapping.rs: selected static "
+            "artifact must export only the named mapping-core symbols"
+        )
+    for required in (
+        "pub(crate) const SYS_MMAP: i64 = 9;",
+        "pub(crate) const SYS_MPROTECT: i64 = 10;",
+        "pub(crate) const SYS_MUNMAP: i64 = 11;",
+        "pub(crate) const SYS_MINCORE: i64 = 27;",
+        "pub(crate) const SYS_MADVISE: i64 = 28;",
+    ):
+        if required not in raw_syscall_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/syscall.rs: selected static mapping-core "
+                f"boundary is missing {required!r}"
+            )
 
     nanosleep_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "nanosleep.rs"
     nanosleep_text = nanosleep_source.read_text(errors="replace")
@@ -4837,6 +4903,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         callback_algorithms_text,
         clock_gettime_text,
         clock_nanosleep_text,
+        memory_mapping_text,
         nanosleep_text,
         descriptor_entry_text,
         descriptor_control_text,
@@ -4968,6 +5035,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitid",
         "clock_gettime",
         "clock_nanosleep",
+        "mmap",
+        "munmap",
+        "mprotect",
+        "madvise",
+        "posix_madvise",
+        "mincore",
         "nanosleep",
         "open",
         "openat",
@@ -5093,7 +5166,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, nanosleep, and clock_nanosleep, selected "
+            "signal-control, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -5120,6 +5193,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("callback_algorithms.rs", callback_algorithms_text),
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
+        ("memory_mapping.rs", memory_mapping_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("descriptor_control.rs", descriptor_control_text),

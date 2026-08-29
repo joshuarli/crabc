@@ -1583,6 +1583,99 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected C mapping lifecycle concrete and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-mman-mapping-core"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-mman-mapping-core artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "mapping-core block",
+        "`mmap`",
+        "`munmap`",
+        "`mprotect`",
+        "`madvise`",
+        "`posix_madvise`",
+        "`mincore`",
+        "PTRDIFF_MAX",
+        "page-rounded",
+        "__vm_wait",
+        "`msync`",
+        "`mremap`",
+        "`mlock*`",
+        "planned `libc.posix-runtime`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-mman-mapping-core description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/memory_mapping.rs",
+        "compat/x86_64/mman_header_abi_probe.c",
+        "compat/x86_64/mman_header_abi_probe.cpp",
+        "compat/x86_64/run_mman_header_abi.sh",
+        "compat/x86_64/libc_mapping_core_probe.c",
+        "compat/x86_64/libc_mapping_core_start.S",
+        "compat/x86_64/run_libc_mapping_core.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(
+            owner in owners,
+            f"static-c-mman-mapping-core must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "mmap=9" in item
+            and "mprotect=10" in item
+            and "munmap=11" in item
+            and "mincore=27" in item
+            and "madvise=28" in item
+            and "rdi/rsi/rdx/r10/r8/r9" in item
+            for item in prerequisites
+        ),
+        "static-c-mman-mapping-core must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "PTRDIFF_MAX" in item
+            and "EPERM" in item
+            for item in prerequisites
+        ),
+        "static-c-mman-mapping-core must record its mmap precheck/fallback mapping",
+    )
+    require(
+        any("mprotect.c" in item for item in prerequisites)
+        and any("posix_madvise.c" in item for item in prerequisites),
+        "static-c-mman-mapping-core must record its mprotect and POSIX-advice mapping",
+    )
+    require(
+        any("local no-op" in item and "__vm_wait" in item for item in prerequisites),
+        "static-c-mman-mapping-core must record its VM-wait limitation",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-mapping-core"},
+        "static-c-mman-mapping-core must use the closed libc-mapping-core command",
+    )
+
+
 def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct-positive-error clock sleep boundary durable."""
     artifacts = require_verified_artifacts(
@@ -2250,6 +2343,7 @@ def validate_ledger(
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
+    require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

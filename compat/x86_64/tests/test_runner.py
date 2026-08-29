@@ -5079,6 +5079,153 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_mapping_core_artifact_stays_narrow(self) -> None:
+        """The mapping lifecycle is one closed C/header/archive artifact."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        mapping_core_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_mapping.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_mapping_core_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_mapping_core_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_mapping_core.sh"
+        )
+        header_c_path = ROOT / "compat" / "x86_64" / "mman_header_abi_probe.c"
+        header_cxx_path = ROOT / "compat" / "x86_64" / "mman_header_abi_probe.cpp"
+
+        for path in (
+            mapping_core_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            header_c_path,
+            header_cxx_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing mapping-core artifact input: {path}")
+
+        mapping_core = mapping_core_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "memory_mapping.rs"]', static_root)
+        self.assertIn("fn c_pointer_status", static_root)
+        for required in (
+            "src/mman/mmap.c",
+            "src/mman/munmap.c",
+            "src/mman/mprotect.c",
+            "src/mman/madvise.c",
+            "src/mman/posix_madvise.c",
+            "src/mman/mincore.c",
+            "MMAP_OFFSET_MASK",
+            "isize::MAX",
+            "MAP_FIXED",
+            "MAP_ANONYMOUS",
+            "selected_static_vm_wait",
+            "__vm_wait",
+            "wrapping_add",
+            "POSIX_MADV_DONTNEED",
+            "c_pointer_status(result)",
+            "wrapping_neg",
+            "msync",
+            "mremap",
+            "mlock*",
+        ):
+            self.assertIn(required, mapping_core)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn msync(",
+            "fn mremap(",
+            "fn mlock(",
+            "fn shm_open(",
+            "fn memfd_create(",
+            "extern \"C\" fn __vm_wait",
+        ):
+            self.assertNotIn(forbidden, mapping_core)
+        for required in (
+            "#include <errno.h>",
+            "#include <stdint.h>",
+            "#include <sys/mman.h>",
+            "#include <sys/syscall.h>",
+            "SYS_mmap == 9",
+            "SYS_mprotect == 10",
+            "SYS_munmap == 11",
+            "SYS_mincore == 27",
+            "SYS_madvise == 28",
+            "PTRDIFF_MAX",
+            "POSIX_MADV_DONTNEED",
+            "CRABC_MAPPING_CORE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "madvise declaration",
+            "posix_madvise declaration",
+            "mincore declaration",
+        ):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_mapping_core_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_mman_header_abi.sh",
+            "run_x86_mapping_reference.sh",
+            "run_x86_madvise_reference.sh",
+            "run_x86_mincore_reference.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "__vm_wait",
+            "assert_named_syscall mmap 9",
+            "assert_named_syscall mprotect a",
+            "assert_named_syscall munmap b",
+            "assert_named_syscall madvise 1c",
+            "assert_named_syscall posix_madvise 1c",
+            "assert_named_syscall mincore 1b",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "mmap",
+            "munmap",
+            "mprotect",
+            "madvise",
+            "posix_madvise",
+            "mincore",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-mman-mapping-core"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-mapping-core"', parity_ledger
+        )
+        self.assertIn("run_libc_mapping_core()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_mapping_core.sh", runner
+        )
+        self.assertIn(
+            '    libc-mapping-core)\n        [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_clock_nanosleep_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

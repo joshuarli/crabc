@@ -165,6 +165,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
+  libc-mapping-core  run the static x86 crabc-libc caller-owned mapping-core slice
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
@@ -840,6 +841,16 @@ fd-independent table; the corresponding AArch64 focused dynamic fixture now
 proves the same selected behavior. It does not select a full `sysconf` table,
 startup/auxv ownership, filesystem capacity APIs, dynamic libc, CRT/TLS
 lifecycle, loader, sysroot, or public x86 support.
+`libc-mapping-core` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+the caller-owned `mmap`/`munmap`/`mprotect`/`madvise`/`posix_madvise`/`mincore`
+block: musl's mapping offset and `PTRDIFF_MAX` prechecks, page-rounded
+`mprotect`, anonymous `EPERM` to `ENOMEM` fallback, POSIX `DONTNEED` no-op and
+direct-positive-error convention, and Linux residency vectors. Its local
+no-op VM-wait site is explicitly not musl's process-wide `__vm_wait` contract.
+It does not select `msync` cancellation, `mremap`, `mlock*`, shared memory,
+allocator, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
+support.
 `libc-nanosleep` links that archive into a separate freestanding project-header
 C fixture after an equivalent pinned-musl run. It selects only the normal
 `nanosleep` result/errno and relative remaining-pointer boundary: zero
@@ -1166,6 +1177,10 @@ run_libc_clock_gettime() {
 
 run_libc_system_configuration() {
     run_in_container bash /workspace/compat/x86_64/run_libc_system_configuration.sh
+}
+
+run_libc_mapping_core() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_mapping_core.sh
 }
 
 run_libc_nanosleep() {
@@ -2040,7 +2055,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2807,6 +2822,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-system-configuration takes no arguments"
         ensure_image
         run_libc_system_configuration
+        ;;
+    libc-mapping-core)
+        [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"
+        ensure_image
+        run_libc_mapping_core
         ;;
     libc-nanosleep)
         [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"

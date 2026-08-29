@@ -22,6 +22,12 @@ static_assert(__is_same(decltype(&munmap), int (*)(void *, size_t)),
     "C++ munmap declaration");
 static_assert(__is_same(decltype(&mprotect), int (*)(void *, size_t, int)),
     "C++ mprotect declaration");
+static_assert(__is_same(decltype(&madvise), int (*)(void *, size_t, int)),
+    "C++ madvise declaration");
+static_assert(__is_same(decltype(&posix_madvise), int (*)(void *, size_t, int)),
+    "C++ posix_madvise declaration");
+static_assert(__is_same(decltype(&mincore), int (*)(void *, size_t, unsigned char *)),
+    "C++ mincore declaration");
 static_assert(MAP_32BIT == 0x40 && MAP_FIXED_NOREPLACE == 0x100000,
     "C++ x86 mapping values");
 static_assert(MAP_HUGE_16GB == (34U << 26), "C++ huge-page encoding");

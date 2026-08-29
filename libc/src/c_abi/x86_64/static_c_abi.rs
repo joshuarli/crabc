@@ -10,7 +10,7 @@
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
-//! system-configuration, system-observation, UTS-namespace identity, basic socket-transport,
+//! system-configuration, caller-owned mapping-core, system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, callback-algorithms, and POSIX
 //! `nanosleep` and `clock_nanosleep`
@@ -101,6 +101,8 @@ mod descriptor_io;
 mod process_resources;
 #[path = "system_configuration.rs"]
 mod system_configuration;
+#[path = "memory_mapping.rs"]
+mod memory_mapping;
 #[path = "readiness_waits.rs"]
 mod readiness_waits;
 #[path = "system_observation.rs"]
@@ -110,7 +112,7 @@ mod uts_identity;
 #[path = "socket_transport.rs"]
 mod socket_transport;
 
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
 
 const LINUX_ERRNO_MAX: i64 = 4_095;
 
@@ -136,6 +138,17 @@ fn c_result(result: i64) -> i64 {
 #[inline]
 pub(super) fn c_status(result: i64) -> c_int {
     c_result(result) as c_int
+}
+
+/// Translate one raw Linux mapping result into C's pointer/`errno` convention.
+///
+/// A successful Linux mapping address may have its sign bit set, so pointer
+/// callers must pass through the shared raw-result boundary before narrowing
+/// it to an address. Only Linux's reserved `-4095..=-1` range represents an
+/// error and therefore becomes `MAP_FAILED` after the C ABI cast.
+#[inline]
+pub(super) fn c_pointer_status(result: i64) -> *mut c_void {
+    c_result(result) as usize as *mut c_void
 }
 
 /// Translate one raw Linux byte-count result into C's signed `ssize_t` ABI.

@@ -334,6 +334,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-clock-gettime
 ./scripts/dev-x86_64.sh libc-system-configuration
+./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
@@ -1775,6 +1776,22 @@ excludes the rest of musl's
 `sysconf` table, `statfs`/`statvfs`, filesystem policy, `/proc`, startup-owned
 auxv/`getauxval`, dynamic runtime, and public x86 support.
 
+`libc-mapping-core` is a separately recorded `static-c-mman-mapping-core`
+`verified_artifact` gate over that archive, not a general C mapping or runtime
+capability. Its project-header C body first executes through pinned musl and
+then through a `-nostdlib -static` candidate, while the paired C/C++
+`sys/mman.h` gate checks the named declarations. It selects exactly `mmap`,
+`munmap`, `mprotect`, `madvise`, `posix_madvise`, and `mincore`: musl's
+4096-byte mapping-offset and `PTRDIFF_MAX` rejections, anonymous non-fixed
+`EPERM` to `ENOMEM` fallback, page-rounded `mprotect`, ordinary advice/errno,
+POSIX `DONTNEED` no-op/direct-positive-error behavior, and full/partial
+residency vectors. The archive's explicit local no-op `__vm_wait` site records
+that it has no musl loader/allocator process-wide VM synchronization contract.
+It excludes `msync` cancellation, `mremap`, `mlock*`, remap/shared-memory and
+memfd paths, mapping policy, allocator, libc.so, CRT, loader, sysroot, and
+public x86 support. This is one artifact within planned `libc.posix-runtime`,
+not full `<sys/mman.h>`, family, C-runtime, or platform completion.
+
 `libc-nanosleep` is a separately recorded `static-c-nanosleep`
 `verified_artifact` gate over that archive, not a C time or runtime capability.
 Its project-header C body first executes through pinned musl and then through
@@ -2337,6 +2354,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
 `libc-system-configuration`,
+`libc-mapping-core`,
 `libc-nanosleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,

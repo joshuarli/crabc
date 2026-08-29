@@ -45,7 +45,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 33)
+        self.assertEqual(report["verified_artifact_count"], 34)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertFalse(report["promotion_ready"])
@@ -367,7 +367,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 28
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 29
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -1035,6 +1035,74 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/system_configuration.rs",
+            posix_runtime["source_owners"],
+        )
+        mapping_core = artifacts_by_id["static-c-mman-mapping-core"]
+        assert isinstance(mapping_core, dict)
+        self.assertNotIn("capabilities", mapping_core)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/memory_mapping.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sys/mman.h",
+            "include/bits/mman.h",
+            "compat/x86_64/mman_header_abi_probe.c",
+            "compat/x86_64/mman_header_abi_probe.cpp",
+            "compat/x86_64/run_mman_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_mapping_core_probe.c",
+            "compat/x86_64/libc_mapping_core_start.S",
+            "compat/x86_64/run_libc_mapping_core.sh",
+        ):
+            self.assertIn(owner, mapping_core["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in mapping_core["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-mapping-core"},
+        )
+        for phrase in (
+            "mapping-core block",
+            "`mmap`",
+            "`munmap`",
+            "`mprotect`",
+            "`madvise`",
+            "`posix_madvise`",
+            "`mincore`",
+            "PTRDIFF_MAX",
+            "page-rounded",
+            "__vm_wait",
+            "`msync`",
+            "`mremap`",
+            "`mlock*`",
+            "planned `libc.posix-runtime`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, mapping_core["description"])
+        self.assertTrue(
+            any(
+                "mmap=9" in prerequisite
+                and "mprotect=10" in prerequisite
+                and "munmap=11" in prerequisite
+                and "mincore=27" in prerequisite
+                and "madvise=28" in prerequisite
+                for prerequisite in mapping_core["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "PTRDIFF_MAX" in prerequisite and "EPERM" in prerequisite
+                for prerequisite in mapping_core["x86_abi_prerequisites"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "local no-op" in prerequisite and "__vm_wait" in prerequisite
+                for prerequisite in mapping_core["x86_abi_prerequisites"]
+            )
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/memory_mapping.rs",
             posix_runtime["source_owners"],
         )
         clock_nanosleep = artifacts_by_id["static-c-clock-nanosleep"]
@@ -3888,6 +3956,54 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh system-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-system-configuration command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_mapping_core_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-mman-mapping-core"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("mmap=9", "mmap=8")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-mman-mapping-core"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "planned `libc.posix-runtime`", "completed runtime"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "planned `libc.posix-runtime`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-mman-mapping-core"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh mapping-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-mapping-core command"
         ):
             ledger.validate_ledger(data)
 

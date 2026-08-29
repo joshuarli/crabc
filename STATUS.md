@@ -25,6 +25,18 @@ boundaries; the glob probe intentionally supplies a fixed Rust allocator.
 They remain private Rust-facade evidence, not C `fnmatch`/`glob`/`globfree` ABI
 support, complete facade/platform parity, or public x86 support.
 
+The x86 static C archive also has one private caller-owned mapping-core
+artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header
+C/C++ `sys/mman.h` gate and then one pinned-musl/freestanding-static proof for
+exactly `mmap`, `munmap`, `mprotect`, `madvise`, `posix_madvise`, and `mincore`.
+It preserves the selected musl mapping prechecks/fallback, page-rounded
+`mprotect`, POSIX advice convention, and residency behavior. Its `__vm_wait`
+site is deliberately local/no-op because the archive does not own loader or
+allocator VM state. This is a bounded `static-c-mman-mapping-core` artifact
+inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
+family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
+shared-memory, and process-wide VM synchronization remain unselected.
+
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
 [`docs/design/allocator.md`](docs/design/allocator.md), and
