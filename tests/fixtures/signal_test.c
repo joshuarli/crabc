@@ -100,6 +100,13 @@ int main(void) {
     if (sigwait(&set, &sig) != 0) return 16;
     if (sig != SIGUSR1) return 17;
 
+    /* Pinned musl's sigwait returns -1 and publishes errno when its
+     * sigtimedwait delegation rejects an invalid mask pointer.  This keeps
+     * the C wrapper's error convention distinct from POSIX APIs that return
+     * a positive error number directly. */
+    errno = 0;
+    if (sigwait(NULL, &sig) != -1 || errno != EFAULT) return 22;
+
     sigprocmask(SIG_SETMASK, &oldmask, NULL);
 
     {

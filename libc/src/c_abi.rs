@@ -2531,7 +2531,9 @@ pub unsafe extern "C" fn sigwaitinfo(mask: *const SigSetT, info: *mut siginfo_t)
 pub unsafe extern "C" fn sigwait(mask: *const SigSetT, sig: *mut c_int) -> c_int {
     let mut info: siginfo_t = core::mem::zeroed();
     if sigtimedwait(mask, &mut info, core::ptr::null()) < 0 {
-        return ERRNO;
+        // Match musl's wrapper convention: `sigtimedwait` has already
+        // published errno, while `sigwait` itself returns C's `-1` failure.
+        return -1;
     }
     *sig = info.si_signo;
     0
