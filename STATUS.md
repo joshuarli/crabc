@@ -15,16 +15,27 @@ unsupported-relocation inputs. It deliberately
 rejects main-image constructors pending CRT handoff and is not a general loader,
 CRT/sysroot, or public x86 support claim.
 
-The x86 lane now also has private static `pthread_create`/`pthread_exit`/
-`pthread_join` initial-TLS artifacts: they prove a null-attribute worker that
-returns normally or uses the selected worker-only explicit-exit path, with
-isolated child `errno`, result handoff, and clear-child-tid join reclamation.
-A fixed private 64-worker registry serializes explicit-exit publication with
-join withdrawal and validates `%fs:0`, the child kernel TID, and its still-live
-clear-child-tid word; the
+The x86 lane now has three private static artifacts inside still-planned
+`libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
+freestanding final-static-executable fixture's untouched Linux entry stack to
+a hidden libc hook. That hook validates the final executable's program-header
+view and optional `PT_TLS` image, materializes one x86 Variant-II main-thread
+image, and retains its immutable template. Its fixture links initialized,
+TBSS, and high-alignment TLS definitions from two C translation units plus
+libc `errno`; after mutating the main image, two sequential workers prove they
+each receive fresh template values. The existing private static
+`pthread_create`/`pthread_exit`/`pthread_join` artifacts consume independent
+copies of that template for a null-attribute worker that returns normally or
+uses the selected worker-only explicit-exit path, with result handoff and
+clear-child-tid join reclamation. A fixed private 64-worker registry
+serializes explicit-exit publication with join withdrawal and validates
+`%fs:0`, the child kernel TID, and its still-live clear-child-tid word; the
 candidate-only cap check exhausts all slots and proves reuse after joining.
-`libc.pthread-tls` remains planned; this is not general pthread/TLS parity,
-dynamic TLS, CRT/sysroot support, or public x86 support.
+The separately qualified private `rcrt1.o` static-PIE first-thread bootstrap
+remains a CRT owner until a later explicit CRT-to-libc handoff; this libc
+artifact does not replace it or establish CRT integration. `libc.pthread-tls`
+remains planned: this is not general pthread/TLS parity, dynamic TLS, loader
+TLS, CRT/sysroot support, or public x86 support.
 
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root

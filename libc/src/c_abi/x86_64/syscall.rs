@@ -16,7 +16,9 @@
 //! and byte-transfer syscalls; and the selected nanosleep leaf uses its direct
 //! two-pointer relative sleep syscall. The separately selected bounded
 //! pthread create/explicit-exit/join leaf uses mmap, munmap, futex, gettid
-//! identity validation, and the selected raw thread exit here; its distinct
+//! identity validation, and the selected raw thread exit here. Static Initial
+//! TLS v1 additionally uses arch_prctl(ARCH_SET_FS) while it validates and
+//! installs one final-executable TLS image before C TLS exists; its distinct
 //! private musl-shaped assembly boundary owns clone and normal-return child
 //! exit so this generic register module does not become a public clone API.
 //! All other public C wrappers remain unintegrated until their own ABI
@@ -336,6 +338,7 @@ pub(crate) const SYS_SIGALTSTACK: i64 = 131;
 pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
+pub(crate) const SYS_ARCH_PRCTL: i64 = 158;
 pub(crate) const SYS_SETHOSTNAME: i64 = 170;
 pub(crate) const SYS_SETDOMAINNAME: i64 = 171;
 pub(crate) const SYS_TKILL: i64 = 200;

@@ -1,18 +1,11 @@
 /* Test-only static x86-64 entry shim for the bounded pthread worker slice.
  *
- * The selected archive owns one initial-TLS errno datum. The full x86 CRT and
- * loader remain unselected, so this fixture establishes only the main
- * thread's Variant-II %fs:0 self word before it invokes the C body. Workers
- * receive their own equivalent private TLS images through CLONE_SETTLS in the
- * selected artifact; this file is not a CRT or pthread lifecycle.
+ * Keep the kernel entry stack intact long enough for the libc-owned Static
+ * Initial TLS v1 hook to validate and materialize this final executable's
+ * PT_TLS image. The hook, rather than fixture-local arithmetic, establishes
+ * the main Variant-II %fs base and retains the template that workers receive
+ * through CLONE_SETTLS. This remains a fixture, not a general CRT or loader.
  */
-
-    .section .bss
-    .balign 64
-crabc_x86_64_pthread_create_join_tls_initial_tls:
-    .zero 4096
-crabc_x86_64_pthread_create_join_tls_thread_pointer:
-    .zero 64
 
     .text
     .globl _start
@@ -20,18 +13,13 @@ crabc_x86_64_pthread_create_join_tls_thread_pointer:
 _start:
     xor %ebp, %ebp
 
-    /* arch_prctl(ARCH_SET_FS, thread_pointer) = syscall 158. */
-    lea crabc_x86_64_pthread_create_join_tls_thread_pointer(%rip), %rsi
-    mov $0x1002, %edi
-    mov $158, %eax
-    syscall
-    test %rax, %rax
+    /* Pass the untouched Linux initial stack to the hidden libc TLS hook. */
+    mov %rsp, %rdi
+    and $-16, %rsp
+    call __crabc_x86_static_tls_bootstrap
+    test %eax, %eax
     js .Ltls_failure
 
-    /* x86 initial-exec errno code reads its thread pointer from %fs:0. */
-    mov %rsi, %fs:0
-
-    and $-16, %rsp
     call crabc_x86_64_pthread_create_join_tls_probe
     mov %eax, %edi
     mov $60, %eax

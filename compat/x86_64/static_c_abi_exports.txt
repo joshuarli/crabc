@@ -1,9 +1,13 @@
-# Closed crate-owned C ABI symbols in the selected static x86 archive.
+# Closed crate-owned C ABI and private static-link symbols in the selected x86
+# archive.
 #
 # Artifact runners inspect only `c.*.rcgu.o` members, so compiler-builtins
 # archive support does not appear here. Keep this ASCII-sorted and update it
-# with every deliberate selected C ABI addition; the runners fail on drift.
+# with every deliberate selected boundary; the runners fail on drift. The
+# hidden `__crabc_x86_static_tls_bootstrap` name is private fixture/runtime
+# glue, uninstalled and not a stable public C API.
 _Exit
+__crabc_x86_static_tls_bootstrap
 __errno_location
 __fesetround
 __flt_rounds

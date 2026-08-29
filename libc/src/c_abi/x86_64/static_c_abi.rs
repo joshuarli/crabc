@@ -6,8 +6,8 @@
 //! classification/sign, and basic complex accessor/conjugation primitives as a
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask
 //! and bounded process-signal execution, one default-attribute
-//! create/explicit-exit/join worker with private
-//! initial-TLS `errno`,
+//! create/explicit-exit/join worker backed by the private Static Initial TLS
+//! v1 final-executable template,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
@@ -17,7 +17,8 @@
 //! `nanosleep` and `clock_nanosleep`
 //! artifacts.
 //! It deliberately shares only the raw
-//! Linux syscall register boundary and one initial-TLS C `errno` slot. The
+//! Linux syscall register boundary, one initial-TLS C `errno` slot, and the
+//! private Static Initial TLS v1 owner. The
 //! archive is not `libc.so`,
 //! a general C runtime, a CRT, a general pthread/TLS lifecycle, a dynamic-TLS
 //! implementation, a loader, or a sysroot. The pthread artifacts are
@@ -38,6 +39,8 @@ mod errno;
 #[allow(dead_code)]
 #[path = "syscall.rs"]
 mod raw_syscall;
+#[path = "static_tls.rs"]
+mod static_tls;
 #[path = "stat_compat.rs"]
 mod stat_compat;
 #[path = "credentials.rs"]

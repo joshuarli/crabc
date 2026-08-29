@@ -158,6 +158,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
     Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
+    Path("libc/src/c_abi/x86_64/static_tls.rs"),
     Path("libc/src/c_abi/x86_64/stat_compat.rs"),
     Path("libc/src/c_abi/x86_64/string_copy.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
@@ -3467,6 +3468,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     for required in (
         '#[path = "errno.rs"]',
         '#[path = "syscall.rs"]',
+        '#[path = "static_tls.rs"]',
         '#[path = "stat_compat.rs"]',
         '#[path = "credentials.rs"]',
         '#[path = "credential_observation.rs"]',
@@ -3569,6 +3571,125 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/errno.rs: selected static C ABI must retain its "
             "initial-TLS errno slot"
         )
+
+    static_tls_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_tls.rs"
+    static_tls_text = static_tls_source.read_text(errors="replace")
+    for required in (
+        "StaticInitialTlsPlan",
+        "StaticInitialTlsBlock",
+        "pub(super) struct StaticInitialTlsBlock",
+        "AT_PHDR",
+        "AT_PHENT",
+        "AT_PHNUM",
+        "PT_PHDR",
+        "PT_TLS",
+        "ET_EXEC",
+        "ELF64_HEADER_SIZE",
+        "from_initial_stack",
+        "variant_ii_image_offset",
+        "ARCH_SET_FS",
+        "raw_syscall::SYS_ARCH_PRCTL",
+        "raw_syscall::SYS_MMAP",
+        "raw_syscall::SYS_MUNMAP",
+        "bootstrap_initial_thread",
+        "allocate_thread",
+        "release_thread",
+        "STATIC_INITIAL_TLS_STATE",
+        "STATIC_INITIAL_TLS_PLAN",
+        "TLS_STATE_READY",
+        "__crabc_x86_static_tls_bootstrap",
+        ".hidden __crabc_x86_static_tls_bootstrap",
+    ):
+        if required not in static_tls_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+                f"owner is missing {required!r}"
+            )
+    load_bias_marker = "let load_bias = match program_header_virtual_address"
+    load_bias_end = "let (image, filesz, memsz, tls_alignment)"
+    if load_bias_marker not in static_tls_text or load_bias_end not in static_tls_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+            "must select a validated PT_PHDR or ET_EXEC load-bias path"
+        )
+    else:
+        load_bias_text = static_tls_text.split(load_bias_marker, 1)[1].split(
+            load_bias_end, 1
+        )[0]
+        if (
+            "Some(program_header_virtual_address)" not in load_bias_text
+            or "static_executable_load_bias_without_pt_phdr" not in load_bias_text
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+                "must retain both its PT_PHDR and controlled ET_EXEC load-bias branches"
+            )
+    et_exec_fallback_marker = "unsafe fn static_executable_load_bias_without_pt_phdr"
+    et_exec_fallback_end = "/// Locate the auxiliary vector"
+    if (
+        et_exec_fallback_marker not in static_tls_text
+        or et_exec_fallback_end not in static_tls_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+            "is missing its controlled no-PT_PHDR ET_EXEC fallback"
+        )
+    else:
+        et_exec_fallback_text = static_tls_text.split(et_exec_fallback_marker, 1)[1].split(
+            et_exec_fallback_end, 1
+        )[0]
+        for required in (
+            "ET_EXEC",
+            "ELF64_HEADER_SIZE",
+            "ELF64_CLASS",
+            "ELFDATA2LSB",
+            "EV_CURRENT",
+            "EM_X86_64",
+            "virtual_range_within_readable_file_load",
+            "Some(0)",
+            "!= ET_EXEC",
+        ):
+            if required not in et_exec_fallback_text:
+                errors.append(
+                    "libc/src/c_abi/x86_64/static_tls.rs: controlled no-PT_PHDR "
+                    f"ET_EXEC fallback is missing {required!r}"
+                )
+    static_tls_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            static_tls_text,
+        )
+    )
+    if static_tls_exports != {"__crabc_x86_static_tls_bootstrap"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+            "must expose only its hidden freestanding bootstrap hook"
+        )
+    if not re.search(
+        r'(?s)#\[no_mangle\]\s*pub\s+unsafe\s+extern\s+"C"\s+fn\s+'
+        r"__crabc_x86_static_tls_bootstrap\s*\(",
+        static_tls_text,
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+            "bootstrap hook must retain its unmangled C link name"
+        )
+    for forbidden in (
+        "__tls_get_addr",
+        "TLSGD",
+        "TLSLD",
+        "TLSDESC",
+        "dlopen",
+        "initial_errno_offset",
+        "INITIAL_TLS_REGION_SIZE",
+        "child_errno",
+        "child_thread_pointer",
+    ):
+        if forbidden in static_tls_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
+                f"must not select {forbidden!r}"
+            )
 
     memory_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory.rs"
     memory_text = memory_source.read_text(errors="replace")
@@ -3724,7 +3845,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "raw_syscall::SYS_MMAP",
         "raw_syscall::SYS_MUNMAP",
         "raw_syscall::SYS_FUTEX",
-        "initial_errno_offset",
+        "static_tls::is_ready()",
+        "static_tls::allocate_thread()",
+        "static_tls::release_thread(tls_block)",
+        "static_tls::StaticInitialTlsBlock",
+        "start_ready",
+        "tls_released",
+        "tls_block.thread_pointer()",
         "SELECTED_WORKER_REGISTRY_SIZE",
         "SELECTED_WORKER_REGISTRY",
         "SELECTED_WORKER_REGISTRY_LOCK",
@@ -3745,6 +3872,19 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
                 f"pthread worker is missing {required!r}"
+            )
+    for forbidden in (
+        "initial_errno_offset",
+        "INITIAL_TLS_REGION_SIZE",
+        "child_errno",
+        "child_thread_pointer",
+        "SYS_ARCH_PRCTL",
+        "ARCH_SET_FS",
+    ):
+        if forbidden in pthread_create_join_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
+                f"pthread worker must not retain fixed errno-only TLS machinery {forbidden!r}"
             )
     pthread_create_join_exports = set(
         re.findall(
@@ -3767,16 +3907,34 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_join_text = pthread_create_join_text.split(pthread_join_marker, 1)[1]
         if (
             "release_selected_worker" not in pthread_join_text
+            or "static_tls::release_thread(tls_block)" not in pthread_join_text
             or "unmap_worker" not in pthread_join_text
             or pthread_join_text.index("release_selected_worker")
+            > pthread_join_text.index("unmap_worker")
+            or pthread_join_text.index("static_tls::release_thread(tls_block)")
             > pthread_join_text.index("unmap_worker")
         ):
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_create_join.rs: join must withdraw "
-                "the selected worker registry before unmapping its control record"
+                "the selected worker registry and release its full TLS block before "
+                "unmapping its control record"
             )
+        else:
+            tls_reclamation = pthread_join_text.split("let tls_block", 1)[1].split(
+                "let mapping", 1
+            )[0]
+            if (
+                "tls_released.load(Ordering::Acquire)" not in tls_reclamation
+                or "tls_released.store(1, Ordering::Release)" not in tls_reclamation
+                or tls_reclamation.index("static_tls::release_thread(tls_block)")
+                > tls_reclamation.index("tls_released.store(1, Ordering::Release)")
+            ):
+                errors.append(
+                    "libc/src/c_abi/x86_64/pthread_create_join.rs: join must guard "
+                    "full TLS reclamation against a retry double release"
+                )
     explicit_exit_publish_marker = "fn publish_current_selected_worker_result"
-    explicit_exit_publish_end = "/// Map one control/TLS/stack backing range"
+    explicit_exit_publish_end = "/// Map one control/stack backing range"
     if (
         explicit_exit_publish_marker not in pthread_create_join_text
         or explicit_exit_publish_end not in pthread_create_join_text
@@ -3799,6 +3957,90 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread exit "
                 "must hold its registry lock through matching worker/gettid/child-TID publication"
             )
+
+    worker_entry_marker = 'unsafe extern "C" fn worker_entry'
+    worker_entry_end = "/// Create one default-attribute"
+    if (
+        worker_entry_marker not in pthread_create_join_text
+        or worker_entry_end not in pthread_create_join_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+            "is missing its start readiness boundary"
+        )
+    else:
+        worker_entry_text = pthread_create_join_text.split(worker_entry_marker, 1)[1].split(
+            worker_entry_end, 1
+        )[0]
+        if (
+            "start_ready.load(Ordering::Acquire)" not in worker_entry_text
+            or "current_linux_thread_id()" not in worker_entry_text
+            or worker_entry_text.index("start_ready.load(Ordering::Acquire)")
+            > worker_entry_text.index("current_linux_thread_id()")
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+                "must acquire its initialized control record before reading worker state"
+            )
+
+    pthread_create_marker = 'pub unsafe extern "C" fn pthread_create'
+    pthread_create_end = "/// Exit a selected worker"
+    if (
+        pthread_create_marker not in pthread_create_join_text
+        or pthread_create_end not in pthread_create_join_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+            "is missing its Static Initial TLS v1 create boundary"
+        )
+    else:
+        pthread_create_text = pthread_create_join_text.split(pthread_create_marker, 1)[1].split(
+            pthread_create_end, 1
+        )[0]
+        required_order = (
+            "static_tls::is_ready()",
+            "static_tls::allocate_thread()",
+            "start_ready.store(1, Ordering::Release)",
+            "__crabc_x86_pthread_clone(",
+        )
+        if any(marker not in pthread_create_text for marker in required_order):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+                "must materialize and publish Static Initial TLS v1 before clone"
+            )
+        elif any(
+            pthread_create_text.index(left) > pthread_create_text.index(right)
+            for left, right in zip(required_order, required_order[1:])
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+                "must validate, allocate, release-publish, then clone in that order"
+            )
+        clone_failure_marker = "if is_linux_error(clone_result)"
+        clone_failure_end = "// SAFETY: clone succeeded"
+        if (
+            clone_failure_marker not in pthread_create_text
+            or clone_failure_end not in pthread_create_text
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+                "is missing its clone-failure cleanup boundary"
+            )
+        else:
+            clone_failure_text = pthread_create_text.split(clone_failure_marker, 1)[1].split(
+                clone_failure_end, 1
+            )[0]
+            if (
+                "if !release_selected_worker" not in clone_failure_text
+                or "return EAGAIN" not in clone_failure_text
+                or "unmap_worker" not in clone_failure_text
+                or clone_failure_text.index("if !release_selected_worker")
+                > clone_failure_text.index("unmap_worker")
+            ):
+                errors.append(
+                    "libc/src/c_abi/x86_64/pthread_create_join.rs: failed clone must "
+                    "retain mappings when registry withdrawal cannot prove no dangling pointer"
+                )
 
     termios_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
@@ -5177,6 +5419,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         stat_text,
         credentials_text,
         errno_text,
+        static_tls_text,
         fenv_text,
         signal_control_text,
         signal_execution_text,
@@ -5230,6 +5473,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     exports = rust_exports | assembly_exports | callback_algorithms_aliases | filesystem_access_aliases
     expected_exports = {
         "__errno_location",
+        "__crabc_x86_static_tls_bootstrap",
         "stat",
         "lstat",
         "fstat",

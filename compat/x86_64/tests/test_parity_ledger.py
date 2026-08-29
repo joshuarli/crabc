@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 38)
+        self.assertEqual(report["verified_artifact_count"], 39)
         self.assertEqual(report["header_layout_probe_count"], 34)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4196,18 +4196,29 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 2)
-        normal_return, explicit_exit = artifacts
-        self.assertEqual(normal_return["id"], "static-c-pthread-create-join-tls")
-        self.assertEqual(explicit_exit["id"], "static-c-pthread-explicit-exit-tls")
+        self.assertEqual(len(artifacts), 3)
+        by_id = {artifact["id"]: artifact for artifact in artifacts}
+        self.assertEqual(
+            set(by_id),
+            {
+                "static-c-initial-tls-v1",
+                "static-c-pthread-create-join-tls",
+                "static-c-pthread-explicit-exit-tls",
+            },
+        )
+        static_tls = by_id["static-c-initial-tls-v1"]
+        normal_return = by_id["static-c-pthread-create-join-tls"]
+        explicit_exit = by_id["static-c-pthread-explicit-exit-tls"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
+        for artifact in (normal_return, explicit_exit):
             self.assertEqual(
                 artifact["native_evidence"][0]["command"],
                 "./scripts/dev-x86_64.sh libc-pthread-create-join-tls",
             )
         for owner in (
             "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
             "compat/x86_64/libc_pthread_create_join_tls_probe.c",
             "compat/x86_64/libc_pthread_create_join_tls_start.S",
             "compat/x86_64/run_libc_pthread_create_join_tls.sh",
@@ -4227,6 +4238,50 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("thread.pthread-c11", explicit_exit["description"])
         self.assertIn("public x86 support", explicit_exit["description"])
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
+        self.assertIn("Static Initial TLS v1", static_tls["description"])
+        self.assertIn("AT_PHDR", static_tls["description"])
+        self.assertIn("PT_TLS", static_tls["description"])
+        self.assertIn("initialized/TBSS/high-alignment", static_tls["description"])
+        static_tls_abi = " ".join(static_tls["x86_abi_prerequisites"])
+        self.assertIn("ET_EXEC", static_tls_abi)
+        self.assertIn("no-PT_PHDR", static_tls_abi)
+        self.assertIn(
+            "ET_EXEC no-PT_PHDR", static_tls["native_evidence"][0]["scope"]
+        )
+        self.assertIn(
+            "fallback ELF version", static_tls["native_evidence"][0]["scope"]
+        )
+        self.assertIn(
+            "PT_TLS p_filesz", static_tls["native_evidence"][0]["scope"]
+        )
+        self.assertEqual(
+            static_tls["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-static-tls-v1",
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "compat/x86_64/libc_static_tls_v1_probe.c",
+            "compat/x86_64/libc_static_tls_v1_peer.c",
+            "compat/x86_64/libc_static_tls_v1_start.S",
+            "compat/x86_64/run_libc_static_tls_v1.sh",
+        ):
+            self.assertIn(owner, static_tls["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_static_tls = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-initial-tls-v1"
+        )
+        changed_static_tls["native_evidence"][0]["command"] = "./scripts/dev-x86_64.sh core"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-initial-tls-v1 must use the closed libc-static-tls-v1 command",
+        ):
+            ledger.validate_ledger(changed)
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()

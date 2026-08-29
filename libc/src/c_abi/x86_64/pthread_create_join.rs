@@ -22,9 +22,10 @@
 //!
 //! The admitted contract is exactly one default-attribute, joinable worker:
 //! `pthread_create(NULL)`, a normal returning start routine or selected-worker
-//! `pthread_exit`, and one `pthread_join`. The child gets a distinct zeroed
-//! instance of this target's sole initial-TLS datum, `errno`, and returns one
-//! opaque pointer. The private registry serializes identity scan/result
+//! `pthread_exit`, and one `pthread_join`. The child gets a distinct copy of
+//! the libc-owned Static Initial TLS v1 final-executable image, including its
+//! initialized prefix, zeroed TBSS tail, high-alignment layout, and `errno`,
+//! and returns one opaque pointer. The private registry serializes identity scan/result
 //! publication with join withdrawal, and validates `%fs:0`, Linux `gettid`,
 //! and the still-live child-TID word so a foreign thread cannot turn a copied
 //! TLS base into a control-record write after task-ID reuse. It is intentionally
@@ -46,7 +47,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{errno, raw_syscall};
+use super::{raw_syscall, static_tls};
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -79,15 +80,13 @@ const PTHREAD_CLONE_FLAGS: i32 = CLONE_VM
     | CLONE_CHILD_CLEARTID
     | CLONE_DETACHED;
 
-// Keep control, the one admitted initial-TLS image, and worker stack in one
-// private page-aligned anonymous mapping. The stack grows down from its top;
-// its low address remains above the TLS image and cannot overwrite it during
-// the selected normal worker path.
+// Keep the control record and worker stack in one private page-aligned
+// anonymous mapping. Static Initial TLS v1 owns a separate exact PT_TLS
+// materialization, so this worker mapping never guesses an errno offset or
+// overlays user TLS. The stack grows down from its top.
 const CONTROL_REGION_SIZE: usize = 4_096;
-const INITIAL_TLS_REGION_SIZE: usize = 4_096;
 const WORKER_STACK_SIZE: usize = 1_024 * 1_024;
-const WORKER_MAPPING_SIZE: usize =
-    CONTROL_REGION_SIZE + INITIAL_TLS_REGION_SIZE + WORKER_STACK_SIZE;
+const WORKER_MAPPING_SIZE: usize = CONTROL_REGION_SIZE + WORKER_STACK_SIZE;
 // This is deliberately a fixed private admission registry, not a general
 // pthread thread list. It validates the one selected explicit-exit route
 // before it dereferences any control record and bounds concurrently live
@@ -108,6 +107,10 @@ struct ThreadControl {
     // child exit through CLONE_CHILD_CLEARTID. It therefore must retain the
     // exact four-byte futex representation for the mapping's full lifetime.
     child_tid: AtomicI32,
+    // Parent initializes every non-atomic callback/control field, then makes
+    // the record visible with this release flag before clone. The child first
+    // acquires it, rather than treating clone as a Rust memory-ordering edge.
+    start_ready: AtomicU8,
     // One joiner claims a still-live handle before waiting. It is private
     // coordination only; repeated/concurrent joining is outside this slice.
     join_claimed: AtomicU8,
@@ -126,8 +129,13 @@ struct ThreadControl {
     // unexpected munmap failure must not republish it. The retired mapping is
     // still safe to reclaim because pthread_exit can no longer find it.
     registry_retired: AtomicU8,
+    // Static Initial TLS v1 maps the complete final-executable image
+    // separately from this control/stack allocation.  A failed control-map
+    // reclamation retry must not unmap the TLS image twice.
+    tls_released: AtomicU8,
     mapping: *mut u8,
     mapping_size: usize,
+    tls_block: static_tls::StaticInitialTlsBlock,
     registry_slot: usize,
     start: StartRoutine,
     argument: *mut c_void,
@@ -250,23 +258,6 @@ fn current_thread_pointer() -> *mut u8 {
         );
     }
     thread_pointer
-}
-
-/// Return the current initial-TLS `errno` offset below the x86 thread pointer.
-///
-/// Refusing an unexpected main-image layout avoids guessing at a dynamic TLS
-/// template or silently materializing a general TLS image.
-fn initial_errno_offset() -> Option<usize> {
-    let thread_pointer = current_thread_pointer() as usize;
-    let errno_location = unsafe { errno::__errno_location() as usize };
-    let offset = thread_pointer.checked_sub(errno_location)?;
-    if offset < size_of::<c_int>()
-        || offset % align_of::<c_int>() != 0
-        || offset > INITIAL_TLS_REGION_SIZE - size_of::<c_int>()
-    {
-        return None;
-    }
-    Some(offset)
 }
 
 /// Read this task's Linux TID for selected-worker identity validation.
@@ -407,7 +398,7 @@ fn publish_current_selected_worker_result(result: *mut c_void) {
     unlock_selected_worker_registry();
 }
 
-/// Map one control/TLS/stack backing range without translating `errno`.
+/// Map one control/stack backing range without translating `errno`.
 unsafe fn map_worker() -> *mut u8 {
     // SAFETY: this fixed anonymous mapping has no caller pointers. The raw
     // syscall result stays private so pthread_create can return EAGAIN without
@@ -460,6 +451,11 @@ unsafe fn publish_worker_result(control: *mut ThreadControl, result: *mut c_void
 /// Run the one selected C callback, then publish its result before exit.
 unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     let control = opaque.cast::<ThreadControl>();
+    // SAFETY: pthread_create performed the matching release after every
+    // non-atomic record field was initialized and before this child exists.
+    while unsafe { (*control).start_ready.load(Ordering::Acquire) } == 0 {
+        core::hint::spin_loop();
+    }
     let Some(worker_tid) = current_linux_thread_id() else {
         // This cannot occur for Linux 5.10 SYS_gettid, but completing the
         // admitted result handoff avoids leaving a joiner to spin forever if
@@ -479,12 +475,13 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     0
 }
 
-/// Create one default-attribute, joinable x86 worker with a private errno TLS image.
+/// Create one default-attribute, joinable x86 worker with Static Initial TLS v1.
 ///
 /// `thread` must designate writable `pthread_t` storage; `start` must be a
 /// valid C function pointer and `argument` must remain valid until that
 /// function stops reading it. Only a null `attributes` pointer is admitted.
-/// The caller must execute under the selected static initial-TLS setup. At
+/// The caller must execute after the private first-thread Static Initial TLS
+/// v1 bootstrap has retained the final executable's validated template. At
 /// most 64 workers from this bounded artifact may be live at once.
 ///
 /// # Safety
@@ -510,62 +507,64 @@ pub unsafe extern "C" fn pthread_create(
         Some(start) => start,
         None => return EINVAL,
     };
-    let errno_offset = match initial_errno_offset() {
-        Some(offset) => offset,
-        None => return ENOTSUP,
+    if !static_tls::is_ready() {
+        return ENOTSUP;
+    }
+    let tls_block = match unsafe { static_tls::allocate_thread() } {
+        Some(block) => block,
+        // The retained template stays immutable after `is_ready`; a later
+        // failure therefore means allocation pressure, not an unselected TLS
+        // fallback or an attempt to derive an errno-only image.
+        None => return EAGAIN,
     };
     let mapping = unsafe { map_worker() };
     if mapping.is_null() {
+        let _ = unsafe { static_tls::release_thread(tls_block) };
         return EAGAIN;
     }
 
     let control = mapping.cast::<ThreadControl>();
-    let child_thread_pointer = unsafe { mapping.add(CONTROL_REGION_SIZE + INITIAL_TLS_REGION_SIZE) };
-    let child_errno = match (child_thread_pointer as usize).checked_sub(errno_offset) {
-        Some(address) => address as *mut c_int,
-        None => {
-            let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
-            return ENOTSUP;
-        }
-    };
     let stack_top = unsafe { mapping.add(WORKER_MAPPING_SIZE) };
     let registry_slot = match reserve_selected_worker() {
         Some(registry_slot) => registry_slot,
         None => {
             let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
+            let _ = unsafe { static_tls::release_thread(tls_block) };
             return EAGAIN;
         }
     };
 
     // SAFETY: mmap returned a private page-aligned zeroed allocation of the
-    // exact fixed size. These two values establish the minimal Variant-II
-    // image needed by the sole `ERRNO` initial-TLS datum and opaque %fs:0
-    // identity; no general TLS template or DTV is implied.
+    // exact fixed control/stack size. Static Initial TLS v1 already copied
+    // the final executable's exact initialized and TBSS TLS image and wrote
+    // its minimal Variant-II self word before this record becomes visible.
     unsafe {
-        core::ptr::write(child_errno, 0);
-        core::ptr::write(child_thread_pointer.cast::<usize>(), child_thread_pointer as usize);
         core::ptr::write(
             control,
             ThreadControl {
                 child_tid: AtomicI32::new(0),
+                start_ready: AtomicU8::new(0),
                 join_claimed: AtomicU8::new(0),
                 result: AtomicUsize::new(0),
                 finished: AtomicU8::new(0),
                 worker_tid: AtomicI32::new(0),
                 registry_retired: AtomicU8::new(0),
+                tls_released: AtomicU8::new(0),
                 mapping,
                 mapping_size: WORKER_MAPPING_SIZE,
+                tls_block,
                 registry_slot,
                 start,
                 argument,
             },
         );
+        (*control).start_ready.store(1, Ordering::Release);
     }
-    publish_selected_worker(registry_slot, control, child_thread_pointer);
+    publish_selected_worker(registry_slot, control, tls_block.thread_pointer());
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
-    // The mapping supplies a writable child stack, live control record, and
-    // zeroed initial TLS image through the child's normal-return exit.
+    // The worker mapping supplies a writable child stack/live control record,
+    // while the separate v1 block supplies a full fresh final-image TLS copy.
     let clone_result = unsafe {
         __crabc_x86_pthread_clone(
             worker_entry,
@@ -573,13 +572,22 @@ pub unsafe extern "C" fn pthread_create(
             PTHREAD_CLONE_FLAGS,
             control.cast(),
             child_tid,
-            child_thread_pointer.cast(),
+            tls_block.thread_pointer().cast(),
             child_tid,
         )
     };
     if is_linux_error(clone_result) {
-        release_selected_worker(registry_slot, control);
+        if !release_selected_worker(registry_slot, control) {
+            // The private registry can still expose `control` to the selected
+            // pthread_exit scanner.  Fail closed by retaining both mappings
+            // rather than unmapping a pointer that a failed withdrawal left
+            // published. This impossible-under-contract corruption path leaks
+            // one bounded admission slot but cannot manufacture a dangling
+            // registry pointer.
+            return EAGAIN;
+        }
         let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
+        let _ = unsafe { static_tls::release_thread(tls_block) };
         // Musl intentionally translates every clone failure to EAGAIN.
         return EAGAIN;
     }
@@ -695,6 +703,20 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
     }
 
     let worker_result = unsafe { (*control).result.load(Ordering::Relaxed) as *mut c_void };
+    let tls_block = unsafe { (*control).tls_block };
+    if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
+        // The clear-child-tid observation plus registry withdrawal above prove
+        // that neither a running worker nor the selected pthread_exit scan can
+        // retain this full Static Initial TLS v1 mapping. Release it before
+        // the control record so an unexpected control-map failure leaves a
+        // retryable handle with an explicit no-double-release state.
+        let tls_unmap_result = unsafe { static_tls::release_thread(tls_block) };
+        if is_linux_error(tls_unmap_result) {
+            unsafe { (*control).join_claimed.store(0, Ordering::Release) };
+            return positive_linux_error(tls_unmap_result);
+        }
+        unsafe { (*control).tls_released.store(1, Ordering::Release) };
+    }
     let mapping = unsafe { (*control).mapping };
     let mapping_size = unsafe { (*control).mapping_size };
     let unmap_result = unsafe { unmap_worker(mapping, mapping_size) };

@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -92,6 +92,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-bootstrap-primitives", source)
         self.assertIn("libc-signal-control", source)
         self.assertIn("libc-signal-execution", source)
+        self.assertIn("libc-static-tls-v1", source)
         self.assertIn("libc-pthread-create-join-tls", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
@@ -1395,6 +1396,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-signal-execution)\n        [ "$#" -eq 0 ] || fail "libc-signal-execution takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_static_tls_v1_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_static_tls_v1.sh', source
+        )
+        self.assertIn(
+            '    libc-static-tls-v1)\n        [ "$#" -eq 0 ] || fail "libc-static-tls-v1 takes no arguments"',
             source,
         )
         self.assertIn('run_libc_pthread_create_join_tls_probe()', source)
@@ -2745,7 +2754,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "raw_syscall::SYS_MMAP",
             "raw_syscall::SYS_MUNMAP",
             "raw_syscall::SYS_FUTEX",
-            "initial_errno_offset",
+            "static_tls::is_ready()",
+            "static_tls::allocate_thread()",
+            "static_tls::release_thread(tls_block)",
+            "static_tls::StaticInitialTlsBlock",
+            "start_ready",
+            "tls_released",
+            "tls_block.thread_pointer()",
             "SELECTED_WORKER_REGISTRY_SIZE",
             "SELECTED_WORKER_REGISTRY",
             "SELECTED_WORKER_REGISTRY_LOCK",
@@ -2769,6 +2784,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn pthread_key_create(",
             "fn pthread_mutex_",
             "WORKER_CONTROL_TPOFF",
+            "INITIAL_TLS_REGION_SIZE",
+            "initial_errno_offset",
+            "child_errno",
+            "child_thread_pointer",
+            "SYS_ARCH_PRCTL",
+            "ARCH_SET_FS",
             "__tls_get_addr",
             "crabc_core",
             "crabc_mimalloc",
@@ -2793,12 +2814,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, probe)
         for required in (
-            "ARCH_SET_FS",
-            "mov %rsi, %fs:0",
+            "__crabc_x86_static_tls_bootstrap",
             "crabc_x86_64_pthread_create_join_tls_probe",
-            "CLONE_SETTLS",
         ):
             self.assertIn(required, start)
+        for forbidden in (
+            "arch_prctl",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_pthread_create_join_tls_initial_tls",
+            "crabc_x86_64_pthread_create_join_tls_thread_pointer",
+        ):
+            self.assertNotIn(forbidden, start.lower())
         for required in (
             "run_musl_oracle.sh",
             "run_types_header_abi.sh",
@@ -2808,7 +2834,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "__crabc_x86_pthread_clone",
+            "__crabc_x86_static_tls_bootstrap",
             "GLOBAL +HIDDEN",
+            "GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$",
             "R_X86_64_TPOFF",
             "candidate relocations retain a dynamic TLS model",
             "pthread clone boundary lacks clone syscall number 56",
@@ -2831,14 +2859,54 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             pthread_join_body.index("release_selected_worker"),
             pthread_join_body.index("unmap_worker"),
         )
+        self.assertLess(
+            pthread_join_body.index("static_tls::release_thread(tls_block)"),
+            pthread_join_body.index("unmap_worker"),
+        )
+        tls_reclamation = pthread_join_body.split("let tls_block", 1)[1].split(
+            "let mapping", 1
+        )[0]
+        self.assertIn("tls_released.load(Ordering::Acquire)", tls_reclamation)
+        self.assertLess(
+            tls_reclamation.index("static_tls::release_thread(tls_block)"),
+            tls_reclamation.index("tls_released.store(1, Ordering::Release)"),
+        )
         explicit_exit_publish = pthread_create_join.split(
             "fn publish_current_selected_worker_result", 1
-        )[1].split("/// Map one control/TLS/stack backing range", 1)[0]
+        )[1].split("/// Map one control/stack backing range", 1)[0]
         self.assertIn("worker_tid.load", explicit_exit_publish)
         self.assertIn("child_tid.load", explicit_exit_publish)
         self.assertLess(
             explicit_exit_publish.index("lock_selected_worker_registry"),
             explicit_exit_publish.index("publish_worker_result"),
+        )
+        worker_entry = pthread_create_join.split(
+            'unsafe extern "C" fn worker_entry', 1
+        )[1].split("/// Create one default-attribute", 1)[0]
+        self.assertIn("start_ready.load(Ordering::Acquire)", worker_entry)
+        self.assertLess(
+            worker_entry.index("start_ready.load(Ordering::Acquire)"),
+            worker_entry.index("current_linux_thread_id()"),
+        )
+        pthread_create_body = pthread_create_join.split(
+            'pub unsafe extern "C" fn pthread_create', 1
+        )[1].split("/// Exit a selected worker", 1)[0]
+        self.assertLess(
+            pthread_create_body.index("static_tls::is_ready()"),
+            pthread_create_body.index("static_tls::allocate_thread()"),
+        )
+        self.assertLess(
+            pthread_create_body.index("start_ready.store(1, Ordering::Release)"),
+            pthread_create_body.index("__crabc_x86_pthread_clone("),
+        )
+        clone_failure = pthread_create_body.split("if is_linux_error(clone_result)", 1)[
+            1
+        ].split("// SAFETY: clone succeeded", 1)[0]
+        self.assertIn("if !release_selected_worker", clone_failure)
+        self.assertIn("return EAGAIN", clone_failure)
+        self.assertLess(
+            clone_failure.index("if !release_selected_worker"),
+            clone_failure.index("unmap_worker"),
         )
         for symbol in ("pthread_create", "pthread_exit", "pthread_join"):
             self.assertIn(symbol, static_export_names)
@@ -2850,6 +2918,172 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, static_export_names)
         self.assertIn("libc-pthread-create-join-tls", runner)
+
+    def test_libc_static_initial_tls_v1_artifact_stays_narrow(self) -> None:
+        """Keep the reusable x86 initial-TLS owner separate from CRT claims.
+
+        This contract requires the private static entry hook to validate and
+        materialize the final executable's complete PT_TLS image before the
+        bounded pthread leaf can use it.  It remains a private static-artifact
+        gate, not a CRT handoff, loader implementation, or promotion claim.
+        """
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        static_tls = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_tls.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_static_tls_v1_probe.c"
+        ).read_text(encoding="utf-8")
+        peer = (
+            ROOT / "compat" / "x86_64" / "libc_static_tls_v1_peer.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_static_tls_v1_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_static_tls_v1.sh"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "static_tls.rs"]', static_root)
+        for required in (
+            "StaticInitialTlsPlan",
+            "StaticInitialTlsBlock",
+            "AT_PHDR",
+            "PT_TLS",
+            "PT_PHDR",
+            "ET_EXEC",
+            "ELF64_HEADER_SIZE",
+            "variant_ii_image_offset",
+            "ARCH_SET_FS",
+            "SYS_ARCH_PRCTL",
+            "from_initial_stack",
+            "bootstrap_initial_thread",
+            "allocate_thread",
+            "release_thread",
+            "__crabc_x86_static_tls_bootstrap",
+            ".hidden __crabc_x86_static_tls_bootstrap",
+            "TLS_STATE_READY",
+            "CLONE_SETTLS",
+            "STATIC_INITIAL_TLS_STATE",
+            "STATIC_INITIAL_TLS_PLAN",
+        ):
+            self.assertIn(required, static_tls)
+        load_bias_selection = static_tls.split(
+            "let load_bias = match program_header_virtual_address", 1
+        )[1].split("let (image, filesz, memsz, tls_alignment)", 1)[0]
+        self.assertIn("Some(program_header_virtual_address)", load_bias_selection)
+        self.assertIn(
+            "static_executable_load_bias_without_pt_phdr", load_bias_selection
+        )
+        et_exec_fallback = static_tls.split(
+            "unsafe fn static_executable_load_bias_without_pt_phdr", 1
+        )[1].split("/// Locate the auxiliary vector", 1)[0]
+        for required in (
+            "ET_EXEC",
+            "ELF64_HEADER_SIZE",
+            "ELF64_CLASS",
+            "ELFDATA2LSB",
+            "EV_CURRENT",
+            "EM_X86_64",
+            "virtual_range_within_readable_file_load",
+            "Some(0)",
+        ):
+            self.assertIn(required, et_exec_fallback)
+        self.assertIn("!= ET_EXEC", et_exec_fallback)
+        static_tls_exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                static_tls,
+            )
+        )
+        self.assertSetEqual(
+            static_tls_exports, {"__crabc_x86_static_tls_bootstrap"}
+        )
+        self.assertIn("__crabc_x86_static_tls_bootstrap", static_exports)
+        for forbidden in (
+            "__tls_get_addr",
+            "TLSDESC",
+            "TLSGD",
+            "TLSLD",
+            "dlopen",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, static_tls)
+
+        self.assertIn("static_tls::allocate_thread", pthread_create_join)
+        self.assertIn("static_tls::release_thread", pthread_create_join)
+        for forbidden in (
+            "initial_errno_offset",
+            "INITIAL_TLS_REGION_SIZE",
+            "child_errno",
+            "child_thread_pointer",
+            "SYS_ARCH_PRCTL",
+            "ARCH_SET_FS",
+        ):
+            self.assertNotIn(forbidden, pthread_create_join)
+
+        for required in (
+            "__thread",
+            "aligned(4096)",
+            "ARCH_GET_FS",
+            "arch_get_fs",
+            "kernel_thread_pointer",
+            "initial_tls_value",
+            "tbss",
+            "pthread_create",
+            "pthread_join",
+            "CRABC_STATIC_TLS_V1_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("__thread", "peer_initial_tls_value", "peer_tbss"):
+            self.assertIn(required, peer)
+        self.assertIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "-pthread",
+            "-nostdlib -static",
+            "__crabc_x86_static_tls_bootstrap",
+            "R_X86_64_TPOFF",
+            "PT_TLS",
+            "ET_EXEC no-PT_PHDR",
+            "candidate execution exited",
+            "expect_bootstrap_rejection",
+            "fallback ELF version",
+            "PT_TLS p_filesz",
+            "__tls_get_addr",
+            "libc_static_tls_v1_peer.c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn('id = "static-c-initial-tls-v1"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-static-tls-v1"',
+            parity_ledger,
+        )
+        pthread_tls_family = parity_ledger.split(
+            '[[family]]\nid = "libc.pthread-tls"', 1
+        )[1].split("\n[[family]]", 1)[0]
+        self.assertIn('status = "planned"', pthread_tls_family)
+        self.assertIn("public x86 support", pthread_tls_family)
+        self.assertIn("libc-static-tls-v1", runner)
 
     def test_libc_static_c_abi_termios_control_artifact_stays_narrow(self) -> None:
         static_root = (

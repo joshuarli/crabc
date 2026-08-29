@@ -80,6 +80,7 @@ candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
+bootstrap_disassembly="$work_dir/static-tls-bootstrap-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 clone_disassembly="$work_dir/pthread-clone-disassembly"
 join_disassembly="$work_dir/pthread-join-disassembly"
@@ -106,12 +107,15 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location pthread_create pthread_exit pthread_join; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
+    pthread_create pthread_exit pthread_join; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
     || fail "archive pthread clone boundary is not hidden"
+grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" \
+    || fail "archive Static Initial TLS v1 bootstrap is not hidden"
 for unselected in clone __clone pthread_detach pthread_self pthread_equal \
     pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     pthread_key_create pthread_setspecific pthread_getspecific pthread_mutex_init \
@@ -142,12 +146,15 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location pthread_create pthread_exit pthread_join __crabc_x86_pthread_clone; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
+    pthread_create pthread_exit pthread_join __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$candidate_symbols" \
     || fail "candidate pthread clone boundary is not hidden"
+grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$candidate_symbols" \
+    || fail "candidate Static Initial TLS v1 bootstrap is not hidden"
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
@@ -172,6 +179,22 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
     || fail "candidate errno does not use direct fs initial TLS"
+objdump -d --disassemble=__crabc_x86_static_tls_bootstrap "$candidate" >"$bootstrap_disassembly"
+grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
+    compat/x86_64/libc_pthread_create_join_tls_start.S \
+    || fail "fixture start does not delegate first-thread TLS to libc"
+if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
+    compat/x86_64/libc_pthread_create_join_tls_start.S; then
+    fail "fixture start must not install a private FS base"
+fi
+# The public hidden hook is deliberately thin; inspect the fully linked
+# candidate for its raw x86 bootstrap path rather than requiring inlining.
+grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$candidate_disassembly" \
+    || fail "candidate lacks raw Static Initial TLS v1 syscalls"
+grep -Eq '\$0x9e(,|[[:space:]]|$)' "$candidate_disassembly" \
+    || fail "candidate lacks arch_prctl syscall 158 for Static Initial TLS v1"
+grep -Eq '\$0x9(,|[[:space:]]|$)' "$candidate_disassembly" \
+    || fail "candidate lacks mmap syscall 9 for Static Initial TLS v1"
 objdump -d --disassemble=__crabc_x86_pthread_clone "$candidate" >"$clone_disassembly"
 grep -Eq '\bsyscall\b' "$clone_disassembly" \
     || fail "pthread clone boundary lacks an x86 syscall instruction"
@@ -199,6 +222,11 @@ grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' "$join_disassembly"
 grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' "$join_disassembly" \
     || fail "pthread_join lacks munmap syscall number 11"
 
-"$candidate"
+if "$candidate"; then
+    :
+else
+    candidate_status=$?
+    fail "candidate execution exited ${candidate_status}"
+fi
 
 printf 'x86 static crabc-libc pthread create/exit/join TLS: PASS\n'

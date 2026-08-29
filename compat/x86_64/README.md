@@ -326,6 +326,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-bootstrap-primitives
 ./scripts/dev-x86_64.sh libc-signal-control
 ./scripts/dev-x86_64.sh libc-signal-execution
+./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
@@ -1727,22 +1728,44 @@ alternate stacks, signalfd, legacy signal APIs, pthread signal/cancellation
 policy, generic process lifecycle, libc.so, CRT, loader, sysroot, signal/header
 family completion, or public x86 support.
 
+`libc-static-tls-v1` is a separately recorded private static
+`verified_artifact` inside still-planned `libc.pthread-tls`. Its freestanding
+candidate start shim passes the untouched Linux entry stack to the hidden
+libc `__crabc_x86_static_tls_bootstrap` hook before selected C code can access
+TLS. The hook validates the final executable's `AT_PHDR` program-header view
+through `PT_PHDR` when present or a strict static `ET_EXEC` no-`PT_PHDR`
+ELF-header fallback, then validates the optional single `PT_TLS` image,
+materializes its main-thread x86 Variant-II image, and retains the immutable
+template for the selected worker seam. The
+fixture links initialized, TBSS, and 4096-byte-aligned TLS definitions from
+two C translation units plus libc `errno`; after it mutates the main image,
+two sequential workers prove that each receives the original linked state.
+The gate requires direct TPOFF forms, one real initialized/TBSS `PT_TLS`, raw
+`arch_prctl(ARCH_SET_FS)` and mapping paths, and no dynamic TLS resolver or
+ambient runtime. It separately corrupts the fallback ELF version and `PT_TLS`
+`p_filesz`, requiring the entry shim's bootstrap-failure status 127 for each
+malformed image. It does not select DTV/module state, a loader handoff, dynamic
+TLS, a general pthread runtime, CRT/sysroot integration, or public x86
+support. The qualified private `rcrt1.o` static-PIE TLS bootstrap remains a
+separate CRT owner until a later explicit CRT-to-libc handoff.
+
 `libc-pthread-create-join-tls` is a separately recorded static
-`verified_artifact` under the still-planned `libc.pthread-tls` family. Its
+`verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
 project-header C body first runs against pinned musl and then in a
 `-nostdlib -static` candidate. It selects a null-attribute `pthread_create`
 with one `pthread_join` for either a normal return or the selected-worker
-`pthread_exit` path: each concurrently live worker has a distinct zeroed
-initial-TLS `errno` slot, a pointer result crosses the join boundary, and the
-creator's `errno` remains unchanged. The gate proves the hidden musl-shaped
-clone=56 register shuffle, selected exit=60 path, the clear-child-tid shared
-futex=202 wait, and post-exit munmap=11 reclamation. A fixed private 64-worker
-registry validates the explicit-exit caller's `%fs:0`, kernel `gettid`, and
-still-live clear-child-tid word, serializes publication with join withdrawal,
-and is exhausted/reused by a candidate-only capacity route. It does not select
-attributes, detach, pthread-exit cleanup/TSD/main-thread behavior, self/equal,
-cancellation, synchronization objects, dynamic TLS/DTV, loader or CRT TLS,
-C11 threads, or public x86 support.
+`pthread_exit` path: each concurrently live worker receives a distinct full
+Static Initial TLS v1 final-image copy, so its errno and fixture TLS state are
+fresh while the creator's live TLS remains unchanged. A pointer result crosses
+the join boundary. The gate proves the hidden musl-shaped clone=56 register
+shuffle, selected exit=60 path, the clear-child-tid shared futex=202 wait, and
+post-exit TLS plus control/stack munmap=11 reclamation. A fixed private
+64-worker registry validates the explicit-exit caller's `%fs:0`, kernel
+`gettid`, and still-live clear-child-tid word, serializes publication with join
+withdrawal, and is exhausted/reused by a candidate-only capacity route. It does
+not select attributes, detach, pthread-exit cleanup/TSD/main-thread behavior,
+self/equal, cancellation, synchronization objects, dynamic TLS/DTV, loader or
+CRT TLS, C11 threads, or public x86 support.
 
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
@@ -2176,12 +2199,14 @@ Earlier errno-observing candidates use fixture-local startup that reserves the
 initial-TLS errno datum and installs the x86 Variant-II `%fs:0` self pointer;
 the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
-All candidates have no interpreter,
-`DT_NEEDED`, unresolved symbols, dynamic TLS resolver, allocator, or ambient C
-runtime. Apart from the bounded child mapping established by
-`libc-pthread-create-join-tls`, their fixture setup is not a CRT, general TLS
-lifecycle, pthread runtime, dynamic-loader, sysroot, `libc.so`, or public-x86-
-support claim.
+That older fixture setup does not describe `libc-static-tls-v1` or
+`libc-pthread-create-join-tls`: their start shims delegate the untouched entry
+stack to the hidden libc Static Initial TLS v1 owner instead of writing an FS
+base themselves. All candidates have no interpreter, `DT_NEEDED`, unresolved
+symbols, dynamic TLS resolver, allocator, or ambient C runtime. Apart from
+the bounded child mapping established by `libc-pthread-create-join-tls`, their
+fixture setup is not a CRT, general TLS lifecycle, pthread runtime,
+dynamic-loader, sysroot, `libc.so`, or public-x86-support claim.
 
 `libc-thread-pointer` compiles only the private
 `libc/src/c_abi/x86_64/thread_pointer.rs` leaf. It maps pinned musl 1.2.6
@@ -2464,9 +2489,15 @@ the program-header/image boundary and fails malformed TLS metadata closed.
 This is not a libc, pthread, dynamic-TLS, dynamic-loader, sysroot, or public
 x86-support claim.
 
+`libc-static-tls-v1` does not replace that CRT proof. It is a separate private
+libc-archive artifact that owns the same kind of final-executable TLS template
+only for its freestanding candidate and selected workers. Until an explicit
+CRT-to-libc handoff composes the two owners, neither proves a unified startup
+path, CRT integration, or public x86 support.
+
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
-`libc-pthread-create-join-tls`, `libc-termios-control`,
+`libc-static-tls-v1`, `libc-pthread-create-join-tls`, `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
