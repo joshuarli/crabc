@@ -50,7 +50,10 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib --target
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 for symbol in imaxabs imaxdiv; do grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" || fail "archive does not define $symbol"; done
-for unselected in atoi atol atoll strtoimax strtoumax strtol strtoul strtoll strtoull a64l l64a; do if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then fail "archive accidentally exports unselected $unselected"; fi; done
+# `atoi`/`atol`/`atoll` and `strtol`/`strtoul`/`strtoll`/`strtoull`/
+# `strtoimax`/`strtoumax` belong to the separately selected integer-parsing
+# artifact in this shared archive, rather than to this intmax-arithmetic fixture.
+for unselected in a64l l64a; do if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then fail "archive accidentally exports unselected $unselected"; fi; done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_INTMAX_ARITHMETIC_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_intmax_arithmetic_probe.c compat/x86_64/libc_intmax_arithmetic_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"; readelf --program-headers --wide "$candidate" >"$headers"; readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wide "$candidate" >"$relocs"; objdump -d "$candidate" >"$disassembly"
 for symbol in imaxabs imaxdiv; do grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"; done

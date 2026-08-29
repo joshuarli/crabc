@@ -1351,6 +1351,23 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-integer-arithmetic)\n        [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"',
             source,
         )
+        self.assertIn('integer-parse-header-abi', source)
+        self.assertIn('run_integer_parse_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_integer_parse_header_abi.sh', source,
+        )
+        self.assertIn(
+            '    integer-parse-header-abi)\n        [ "$#" -eq 0 ] || fail "integer-parse-header-abi takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-integer-parse', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_integer_parse.sh', source,
+        )
+        self.assertIn(
+            '    libc-integer-parse)\n        [ "$#" -eq 0 ] || fail "libc-integer-parse takes no arguments"',
+            source,
+        )
         self.assertIn('libc-credential-observation', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_credential_observation.sh', source,
@@ -3921,6 +3938,134 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-integer-arithmetic", runner)
+
+    def test_libc_static_c_abi_integer_parse_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        integer_parse = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "integer_parse.rs"
+        ).read_text(encoding="utf-8")
+        inttypes_header = (ROOT / "include" / "inttypes.h").read_text(
+            encoding="utf-8"
+        )
+        stdlib_header = (ROOT / "include" / "stdlib.h").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_integer_parse_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_integer_parse.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_integer_parse_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "integer_parse_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "integer_parse_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = (
+            "atoi",
+            "atol",
+            "atoll",
+            "strtol",
+            "strtoul",
+            "strtoll",
+            "strtoull",
+            "strtoimax",
+            "strtoumax",
+        )
+        self.assertIn('#[path = "integer_parse.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}(", integer_parse)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdlib/strtol.c",
+            "src/internal/intscan.c",
+            "src/internal/intscan.h",
+            "src/internal/shgetc.c",
+            "src/internal/shgetc.h",
+            "src/stdlib/atoi.c",
+            "src/stdlib/atol.c",
+            "src/stdlib/atoll.c",
+            "base validation",
+            "end-pointer",
+            "EINVAL",
+            "ERANGE",
+            "defined-input",
+            "allocation-free",
+            "LP64",
+        ):
+            self.assertIn(required, integer_parse)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn strtod(",
+            "fn wcstol(",
+            "fn malloc(",
+            "raw_syscall::",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, integer_parse)
+        for required in (
+            "#include <errno.h>",
+            "#include <inttypes.h>",
+            "#include <limits.h>",
+            "#include <stdlib.h>",
+            "expect_long",
+            "expect_ulong",
+            "expect_intmax",
+            '"0x"',
+            "CRABC_INTEGER_PARSE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate lacks the selected errno TLS segment",
+            "__strtol_internal",
+            "strtoimax",
+            "stdlib.h",
+            "run_integer_parse_header_abi.sh",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "-std=c++17",
+            "inttypes.h",
+            "stdlib.h",
+            "bits/alltypes.h",
+        ):
+            self.assertIn(required, header_runner)
+        self.assertIn("strtoimax_signature", header_c_probe)
+        self.assertIn("decltype(&strtol)", header_cxx_probe)
+        self.assertIn('extern "C" {', inttypes_header)
+        self.assertIn('extern "C" {', stdlib_header)
+        self.assertIn('id = "static-c-integer-parse"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-integer-parse"',
+            parity_ledger,
+        )
+        self.assertIn("integer-parse-header-abi", runner)
+        self.assertIn("libc-integer-parse", runner)
 
     def test_libc_static_c_abi_intmax_arithmetic_artifact_stays_narrow(self) -> None:
         static_root = (

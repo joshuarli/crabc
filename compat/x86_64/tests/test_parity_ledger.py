@@ -42,7 +42,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 25)
+        self.assertEqual(report["verified_artifact_count"], 26)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -118,7 +118,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 24
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 25
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -498,6 +498,35 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("allocation-free", integer_arithmetic["description"])
         self.assertIn("unconditional", integer_arithmetic["x86_header_prerequisites"][0])
         self.assertIn("src/stdlib/abs.c", integer_arithmetic["oracle"][0]["role"])
+        integer_parse = artifacts_by_id["static-c-integer-parse"]
+        assert isinstance(integer_parse, dict)
+        self.assertNotIn("capabilities", integer_parse)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/integer_parse.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "include/errno.h",
+            "include/inttypes.h",
+            "include/stdlib.h",
+            "compat/x86_64/integer_parse_header_abi_probe.c",
+            "compat/x86_64/integer_parse_header_abi_probe.cpp",
+            "compat/x86_64/run_integer_parse_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_integer_parse_probe.c",
+            "compat/x86_64/libc_integer_parse_start.S",
+            "compat/x86_64/run_libc_integer_parse.sh",
+        ):
+            self.assertIn(owner, integer_parse["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in integer_parse["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-integer-parse"},
+        )
+        self.assertIn("integer-parsing block", integer_parse["description"])
+        self.assertIn("defined-input", integer_parse["description"])
+        self.assertIn("allocation-free", integer_parse["description"])
+        self.assertIn("unconditional", integer_parse["x86_header_prerequisites"][0])
+        self.assertIn("src/internal/intscan.c", integer_parse["oracle"][0]["role"])
         intmax_arithmetic = artifacts_by_id["static-c-intmax-arithmetic"]
         assert isinstance(intmax_arithmetic, dict)
         self.assertNotIn("capabilities", intmax_arithmetic)
@@ -976,6 +1005,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/byte_strings_header_abi_probe.cpp",
             "compat/x86_64/run_byte_strings_header_abi.sh",
             "include/inttypes.h",
+            "compat/x86_64/integer_parse_header_abi_probe.c",
+            "compat/x86_64/integer_parse_header_abi_probe.cpp",
+            "compat/x86_64/run_integer_parse_header_abi.sh",
             "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
             "compat/x86_64/intmax_arithmetic_header_abi_probe.cpp",
             "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
@@ -1002,6 +1034,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh poll-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh select-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh byte-strings-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh integer-parse-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", header_commands)
         self.assertIn(
             "./scripts/dev-x86_64.sh credential-observation-header-abi",
@@ -3095,6 +3128,37 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-byte-strings command"):
+            ledger.validate_ledger(data)
+
+    def test_integer_parse_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-integer-parse"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "invalid-base/no-conversion", "invalid-base-only"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "invalid-base/no-conversion"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-integer-parse"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-intmax-arithmetic"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-integer-parse command"
+        ):
             ledger.validate_ledger(data)
 
     def test_credential_observation_artifact_keeps_its_closed_mapping_contract(self) -> None:

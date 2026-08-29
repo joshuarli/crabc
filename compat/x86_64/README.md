@@ -197,6 +197,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh stat-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
+./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh child-reaping-header-abi
@@ -328,6 +329,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-string-copy
 ./scripts/dev-x86_64.sh libc-ctype
 ./scripts/dev-x86_64.sh libc-integer-arithmetic
+./scripts/dev-x86_64.sh libc-integer-parse
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
@@ -398,15 +400,26 @@ This is compile-only header evidence; it does not select locale behavior,
 `<stdlib.h>` declarations for `abs`, `labs`, `llabs`, `div`, `ldiv`, and
 `lldiv`. All six declarations are unconditional; the probes additionally
 ratchet the x86 LP64 `div_t`, `ldiv_t`, and `lldiv_t` field layouts and return
-types. This is compile-only header evidence; it does not select integer
-parsing, random state, `crabc-libc`, or a general C runtime ABI.
+types. This arithmetic-only gate is distinct from the separately staged
+integer-parsing declaration and archive artifact; it does not select random
+state, `crabc-libc`, or a general C runtime ABI.
+
+`integer-parse-header-abi` compiles project-first and pinned-musl C/C++
+`<stdlib.h>` and `<inttypes.h>` declarations for `atoi`, `atol`, `atoll`,
+`strtol`, `strtoul`, `strtoll`, `strtoull`, `strtoimax`, and `strtoumax`.
+All nine declarations are unconditional; the probes ratchet their exact
+pointer/result types, x86 LP64 `intmax_t`/`uintmax_t` aliases, and unmangled
+C++ linkage. This is compile-only declaration evidence; the separately staged
+static artifact owns the runtime byte-scan, `errno`, range, and end-pointer
+behavior. It does not select `crabc-libc` generally or a general C runtime ABI.
 
 `intmax-arithmetic-header-abi` compiles project-first and pinned-musl C/C++
 `<inttypes.h>` declarations for `imaxabs` and `imaxdiv`. Both declarations are
 unconditional; the probes additionally ratchet the x86 LP64 `imaxdiv_t` field
 layout, return type, and unmangled C++ linkage. This is compile-only header
-evidence; it does not select integer parsing, `strtoimax`/`strtoumax`,
-`crabc-libc`, or a general C runtime ABI.
+evidence for the arithmetic forms only; it is distinct from the separately
+staged `strtoimax`/`strtoumax` declaration and archive evidence, and does not
+select `crabc-libc` or a general C runtime ABI.
 
 `credential-observation-header-abi` compiles project-first and pinned-musl
 C/C++ `<unistd.h>` declarations for unconditional `getgroups` and GNU-only
@@ -1532,7 +1545,7 @@ native C fixture through the installed project `errno.h`. It proves a local
 initial-TLS datum with `R_X86_64_TPOFF*`, no `__tls_get_addr` path, zero
 initialization, and independent main/pthread `errno` slots. This standalone
 probe remains direct relocation evidence; the shared archive is selected by
-twenty-seven separately recorded static artifact boundaries, while only their
+twenty-eight separately recorded static artifact boundaries, while only their
 errno-observing leaves link this owner. It is not a musl differential or a
 general C ABI claim.
 
@@ -1548,7 +1561,7 @@ proves direct all-ones no-change and rejected-input `EINVAL` behavior, while
 expecting the candidate aliases to return `-1`/`EOPNOTSUPP` without mutation
 where musl succeeds through its process-wide credential rendezvous.
 
-The remaining twenty-five static artifacts are non-capability archive boundaries;
+The remaining twenty-six static artifacts are non-capability archive boundaries;
 they remain distinct from the `filesystem.stat-compat` and
 `process.credentials` semantic leaves.
 
@@ -1858,11 +1871,26 @@ absolute values and typed quotient/remainder aggregates. The leaf is
 stateless and allocation-free, with no errno/TLS or syscall boundary; native
 signed division retains C's undefined-domain processor fault for a zero
 divisor or unrepresentable signed result, which the fixture deliberately does
-not invoke. It excludes parsing, random state, `imaxabs`/`imaxdiv`, callback
-sorting/searching, floating-point math, dynamic runtime, allocator, loader,
-sysroot, and public x86 support.
+not invoke. It is distinct from the separately selected integer parser; it
+excludes random state, `imaxabs`/`imaxdiv`, callback sorting/searching,
+floating-point math, dynamic runtime, allocator, loader, sysroot, and public
+x86 support.
 
-`libc-intmax-arithmetic` is the twenty-fifth, separately recorded
+`libc-integer-parse` is the twenty-fifth, separately recorded
+`static-c-integer-parse` `verified_artifact` gate over that archive, not a
+general numeric or C runtime capability. Its project-header C body first
+executes through pinned musl and then through a `-nostdlib -static` candidate.
+It resolves exactly `atoi`, `atol`, `atoll`, `strtol`, `strtoul`, `strtoll`,
+`strtoull`, `strtoimax`, and `strtoumax`. The fixed-C-locale byte scan covers
+ASCII whitespace and signs, bases `0` and `2..36`, `0`/`0x` prefixes, exact
+end-pointer movement, musl's invalid-base/no-conversion `EINVAL` result,
+stale `errno` on success, and signed/unsigned `ERANGE` boundaries. The three
+decimal convenience entries cover defined inputs only and do not write
+`errno`. It excludes floating, wide, locale-specific, and internal conversion
+forms; stdio; allocation; dynamic runtime; allocator; loader; sysroot; and
+public x86 support.
+
+`libc-intmax-arithmetic` is the twenty-sixth, separately recorded
 `static-c-intmax-arithmetic` `verified_artifact` gate over that archive, not a
 general numeric or C runtime capability. Its project-header C body first
 executes through pinned musl and then through a `-nostdlib -static` candidate.
@@ -1871,11 +1899,11 @@ and quotient/remainder aggregate forms. The leaf is stateless and
 allocation-free, with no errno/TLS or syscall boundary; native signed division
 retains C's undefined-domain processor fault for a zero divisor or
 unrepresentable signed result, which the fixture deliberately does not invoke.
-It excludes parsing, `strtoimax`/`strtoumax`, callback sorting/searching,
-floating-point math, dynamic runtime, allocator, loader, sysroot, and public
-x86 support.
+It is distinct from the separately selected `strtoimax`/`strtoumax` parser;
+it excludes callback sorting/searching, floating-point math, dynamic runtime,
+allocator, loader, sysroot, and public x86 support.
 
-`libc-credential-observation` is the twenty-sixth, separately recorded
+`libc-credential-observation` is the twenty-seventh, separately recorded
 `static-c-credential-observation` `verified_artifact` gate over that archive,
 not a general C-process or account-database capability. Its project-header C
 body first executes through pinned musl and then through a `-nostdlib -static`
@@ -1887,7 +1915,7 @@ order and direct `EFAULT` behavior even when all observed IDs are equal. It
 excludes account lookup, mutation, credential synchronization, child/process
 control, dynamic runtime, allocator, loader, sysroot, and public x86 support.
 
-`libc-ffs` is the twenty-seventh, separately recorded `static-c-ffs`
+`libc-ffs` is the twenty-eighth, separately recorded `static-c-ffs`
 `verified_artifact` gate over that archive, not a general bit-operation or C
 runtime capability. Its project-header C body first executes through pinned
 musl and then through a `-nostdlib -static` candidate. It selects only `ffs`,
@@ -2165,8 +2193,8 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-system-observation`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-intmax-arithmetic`, `libc-credential-observation`, and `libc-ffs` static archive
-harnesses,
+`libc-integer-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
+and `libc-ffs` static archive harnesses,
 the lane owns no
 allocator evidence and exposes no generic Cargo, shell, general `crabc-libc`
 artifact, dynamic-loader artifact, CRT, or sysroot command. Those remain

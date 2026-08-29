@@ -114,8 +114,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected process resources,
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
-# locale ctype, scalar integer arithmetic, intmax arithmetic, and
-# find-first-set, direct POSIX clock_nanosleep, descriptor entry, and bounded
+# locale ctype, scalar integer arithmetic, complete integer parsing, intmax
+# arithmetic, and find-first-set, direct POSIX clock_nanosleep, descriptor entry, and bounded
 # fcntl status control.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
@@ -136,6 +136,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/descriptor_io.rs"),
     Path("libc/src/c_abi/x86_64/ffs.rs"),
     Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),
+    Path("libc/src/c_abi/x86_64/integer_parse.rs"),
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
     Path("libc/src/c_abi/x86_64/fenv.rs"),
@@ -3324,6 +3325,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "string_copy.rs"]',
         '#[path = "ctype.rs"]',
         '#[path = "integer_arithmetic.rs"]',
+        '#[path = "integer_parse.rs"]',
         '#[path = "intmax_arithmetic.rs"]',
         '#[path = "ffs.rs"]',
         '#[path = "system_observation.rs"]',
@@ -4363,6 +4365,70 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named integer-arithmetic symbols"
         )
 
+    integer_parse_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "integer_parse.rs"
+    )
+    integer_parse_text = integer_parse_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/stdlib/strtol.c",
+        "src/internal/intscan.c",
+        "src/internal/intscan.h",
+        "src/internal/shgetc.c",
+        "src/internal/shgetc.h",
+        "src/stdlib/atoi.c",
+        "src/stdlib/atol.c",
+        "src/stdlib/atoll.c",
+        "base validation",
+        "end-pointer",
+        "EINVAL",
+        "ERANGE",
+        "defined-input",
+        "allocation-free",
+        "LP64",
+    ):
+        if required not in integer_parse_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/integer_parse.rs: selected static "
+                f"integer-parsing boundary is missing {required!r}"
+            )
+    integer_parse_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            integer_parse_text,
+        )
+    )
+    expected_integer_parse_exports = {
+        "atoi",
+        "atol",
+        "atoll",
+        "strtol",
+        "strtoul",
+        "strtoll",
+        "strtoull",
+        "strtoimax",
+        "strtoumax",
+    }
+    if integer_parse_exports != expected_integer_parse_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/integer_parse.rs: selected static "
+            "artifact must export only its named integer-parsing symbols"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn strtod(",
+        "fn wcstol(",
+        "fn malloc(",
+        "raw_syscall::",
+        "__tls_get_addr",
+    ):
+        if forbidden in integer_parse_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/integer_parse.rs: selected static "
+                f"integer-parsing boundary must not select {forbidden!r}"
+            )
+
     intmax_arithmetic_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "intmax_arithmetic.rs"
     )
@@ -4610,6 +4676,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         string_copy_text,
         ctype_text,
         integer_arithmetic_text,
+        integer_parse_text,
         intmax_arithmetic_text,
         credential_observation_text,
         ffs_text,
@@ -4822,6 +4889,15 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "div",
         "ldiv",
         "lldiv",
+        "atoi",
+        "atol",
+        "atoll",
+        "strtol",
+        "strtoul",
+        "strtoll",
+        "strtoull",
+        "strtoimax",
+        "strtoumax",
         "imaxabs",
         "imaxdiv",
         "getgroups",
@@ -4842,7 +4918,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
-            "fixed-C-locale ctype, integer-arithmetic, intmax-arithmetic, credential-observation, and "
+            "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "find-first-set, "
             "and abort-personality surfaces"
         )
@@ -4874,6 +4950,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("string_copy.rs", string_copy_text),
         ("ctype.rs", ctype_text),
         ("integer_arithmetic.rs", integer_arithmetic_text),
+        ("integer_parse.rs", integer_parse_text),
         ("intmax_arithmetic.rs", intmax_arithmetic_text),
         ("ffs.rs", ffs_text),
         ("system_observation.rs", system_observation_text),

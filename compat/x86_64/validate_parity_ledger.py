@@ -152,6 +152,18 @@ INTEGER_ARITHMETIC_SYMBOLS = (
 
 INTMAX_ARITHMETIC_SYMBOLS = ("imaxabs", "imaxdiv")
 
+INTEGER_PARSE_SYMBOLS = (
+    "atoi",
+    "atol",
+    "atoll",
+    "strtol",
+    "strtoul",
+    "strtoll",
+    "strtoull",
+    "strtoimax",
+    "strtoumax",
+)
+
 CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
 
 CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
@@ -573,6 +585,68 @@ def require_integer_arithmetic_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-integer-arithmetic"},
         "static-c-integer-arithmetic must use the closed libc-integer-arithmetic command",
+    )
+
+
+def require_integer_parse_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the bounded integer-parsing artifact identity and scope durable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-integer-parse"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-integer-parse artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in INTEGER_PARSE_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-integer-parse description omits {symbol}",
+        )
+    for phrase in (
+        "integer-parsing block",
+        "complete selected byte-string scan",
+        "fixed-C-locale",
+        "`0x` prefixes",
+        "`EINVAL` invalid-base/no-conversion",
+        "stale errno on success",
+        "`ERANGE` saturation",
+        "defined-input",
+        "allocation-free",
+    ):
+        require(
+            phrase in description,
+            f"static-c-integer-parse description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "rdi/rsi/rdx" in item and "intmax_t/uintmax_t" in item
+            for item in prerequisites
+        ),
+        "static-c-integer-parse must record its SysV and LP64 calling contract",
+    )
+    require(
+        any(
+            "strtol.c" in item and "intscan.c" in item and "shgetc" in item
+            for item in prerequisites
+        ),
+        "static-c-integer-parse must record its pinned-musl scan mapping",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-integer-parse"},
+        "static-c-integer-parse must use the closed libc-integer-parse command",
     )
 
 
@@ -1207,6 +1281,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require_string_copy_artifact(by_id["libc.posix-runtime"])
     require_ctype_artifact(by_id["libc.posix-runtime"])
     require_integer_arithmetic_artifact(by_id["libc.posix-runtime"])
+    require_integer_parse_artifact(by_id["libc.posix-runtime"])
     require_intmax_arithmetic_artifact(by_id["libc.posix-runtime"])
     require_credential_observation_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])

@@ -8,7 +8,7 @@
 //! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-observation, UTS-namespace identity, basic socket-transport,
-//! credential-observation, integer-arithmetic, intmax-arithmetic,
+//! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, callback-algorithms, and POSIX
 //! `clock_nanosleep`
 //! artifacts.
@@ -49,6 +49,8 @@ mod string_copy;
 mod ctype;
 #[path = "integer_arithmetic.rs"]
 mod integer_arithmetic;
+#[path = "integer_parse.rs"]
+mod integer_parse;
 #[path = "intmax_arithmetic.rs"]
 mod intmax_arithmetic;
 #[path = "ffs.rs"]

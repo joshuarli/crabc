@@ -2,15 +2,15 @@
 # Native Linux/x86-64 staged foundation evidence entry point.
 #
 # This is a deliberately closed foundation lane. It proves explicitly named
-# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-seven
+# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-eight
 # static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_nanosleep,
 # selected descriptor entry, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
-# ctype, integer arithmetic, intmax arithmetic, credential observation, and
-# find-first-set);
+# ctype, integer arithmetic, integer parsing, intmax arithmetic, credential
+# observation, and find-first-set);
 # it does not select a general libc, ldso artifact, CRT, sysroot, or allocator
 # build.
 set -euo pipefail
@@ -36,6 +36,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
   ctype-header-abi  compile the staged x86 C/C++ ctype declarations
   integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
+  integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
   intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
   credential-observation-header-abi  compile the staged x86 C/C++ unistd credential-observation declarations
   child-reaping-header-abi  compile the staged x86 C/C++ sys/wait child-reaping declarations
@@ -166,6 +167,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-uts-identity  run the static x86 crabc-libc hostname/domain identity slice
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
+  libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-intmax-arithmetic  run the static x86 crabc-libc intmax-arithmetic slice
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
@@ -1042,6 +1044,10 @@ run_integer_arithmetic_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_integer_arithmetic_header_abi.sh
 }
 
+run_integer_parse_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_integer_parse_header_abi.sh
+}
+
 run_intmax_arithmetic_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_intmax_arithmetic_header_abi.sh
 }
@@ -1899,13 +1905,13 @@ case "$command" in
     image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image) ;;
     madvise-reference) ;;
     ctype-header-abi) ;;
-    integer-arithmetic-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -1958,6 +1964,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "integer-arithmetic-header-abi takes no arguments"
         ensure_image
         run_integer_arithmetic_header_abi
+        ;;
+    integer-parse-header-abi)
+        [ "$#" -eq 0 ] || fail "integer-parse-header-abi takes no arguments"
+        ensure_image
+        run_integer_parse_header_abi
         ;;
     libc-intmax-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-intmax-arithmetic takes no arguments"
@@ -2600,6 +2611,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_integer_arithmetic.sh
+        ;;
+    libc-integer-parse)
+        [ "$#" -eq 0 ] || fail "libc-integer-parse takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_integer_parse.sh
         ;;
     libc-credential-observation)
         [ "$#" -eq 0 ] || fail "libc-credential-observation takes no arguments"

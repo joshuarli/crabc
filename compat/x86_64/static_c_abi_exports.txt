@@ -21,6 +21,9 @@ _setjmp
 abs
 accept
 accept4
+atoi
+atol
+atoll
 bcmp
 bind
 bsearch
@@ -184,6 +187,12 @@ strpbrk
 strrchr
 strspn
 strstr
+strtoimax
+strtol
+strtoll
+strtoul
+strtoull
+strtoumax
 sysinfo
 tcflow
 tcflush
