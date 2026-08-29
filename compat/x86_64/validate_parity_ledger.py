@@ -1354,7 +1354,8 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
         "`getpagesize`",
         "`getdtablesize`",
         "path- and fd-independent",
-        "current AArch64",
+        "corresponding AArch64",
+        "focused dynamic fixture",
         "full musl sysconf table",
         "startup-owned auxv/getauxval",
     ):
@@ -1371,6 +1372,9 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/unistd_header_abi_probe.c",
         "compat/x86_64/unistd_header_abi_probe.cpp",
         "compat/x86_64/run_unistd_header_abi.sh",
+        "libc/src/regression_stubs.rs",
+        "tests/fixtures/path_configuration_exports_test.c",
+        "tests/path_configuration_exports.rs",
     ):
         require(
             owner in owners,
@@ -1383,8 +1387,13 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
         "static-c-system-configuration must record the prlimit64 four-register ABI",
     )
     require(
-        any("path- and fd-independent" in item and "statfs" in item for item in prerequisites),
-        "static-c-system-configuration must record the musl pathconf divergence",
+        any(
+            "path- and fd-independent" in item
+            and "corresponding AArch64" in item
+            and "focused dynamic fixture" in item
+            for item in prerequisites
+        ),
+        "static-c-system-configuration must record the AArch64 musl pathconf proof",
     )
     evidence = artifact["native_evidence"]
     assert isinstance(evidence, list)

@@ -814,11 +814,11 @@ support.
 `libc-system-configuration` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 the bounded page/tick `sysconf`, `confstr`, table-based `pathconf`/`fpathconf`,
-`getpagesize`, and `getdtablesize` boundary. It deliberately follows musl's
-path- and fd-independent table instead of the current AArch64
-filesystem-dependent path-configuration divergence, and it does not select a
-full `sysconf` table, startup/auxv ownership, filesystem capacity APIs,
-dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+`getpagesize`, and `getdtablesize` boundary. It follows musl's path- and
+fd-independent table; the corresponding AArch64 focused dynamic fixture now
+proves the same selected behavior. It does not select a full `sysconf` table,
+startup/auxv ownership, filesystem capacity APIs, dynamic libc, CRT/TLS
+lifecycle, loader, sysroot, or public x86 support.
 `libc-nanosleep` links that archive into a separate freestanding project-header
 C fixture after an equivalent pinned-musl run. It selects only the normal
 `nanosleep` result/errno and relative remaining-pointer boundary: zero

@@ -1709,10 +1709,11 @@ selectors deliberately neither read a pathname nor consume a file descriptor,
 including valid indeterminate `-1` values that preserve stale `errno`;
 invalid selectors return `EINVAL`. The candidate emits only
 `prlimit64=302` for `getdtablesize` and rejects accidental path-configuration
-syscalls. Current AArch64 `pathconf`/`fpathconf` instead uses `statfs`, which
-is a recorded pre-existing divergence from the pinned musl oracle. This x86
-artifact follows musl and therefore is not evidence that the two platforms are
-yet behaviorally identical at this cluster. It excludes the rest of musl's
+syscalls. The corresponding AArch64 implementation now uses this same table,
+with `tests/path_configuration_exports.rs` dynamically comparing it to pinned
+musl without filesystem access. This is agreement for this selected cluster,
+not evidence that the two platforms are otherwise behaviorally identical. It
+excludes the rest of musl's
 `sysconf` table, `statfs`/`statvfs`, filesystem policy, `/proc`, startup-owned
 auxv/`getauxval`, dynamic runtime, and public x86 support.
 

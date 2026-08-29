@@ -19,10 +19,9 @@
 //! - `src/legacy/getpagesize.c` maps to [`getpagesize`].
 //! - `src/legacy/getdtablesize.c` maps to [`getdtablesize`].
 //!
-//! The currently selected AArch64 implementation takes a filesystem-dependent
-//! `statfs` path for `pathconf`/`fpathconf`; that is not musl's C/POSIX
-//! behavior. This x86 artifact follows the pinned musl oracle rather than
-//! importing that pre-existing platform divergence. Likewise, this is not a
+//! The corresponding AArch64 implementation now follows this same table, and
+//! `tests/path_configuration_exports.rs` dynamically compares it to pinned
+//! musl without filesystem access. That focused agreement does not make this a
 //! complete musl `sysconf` table: selectors which would need scheduler,
 //! `sysinfo`, or startup-owned auxv state remain outside the admitted boundary.
 //! Linux/x86-64's base page size is architecturally 4096 bytes, so unlike the

@@ -826,6 +826,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/syscall.rs",
             "libc/src/c_abi/x86_64/process_resources.rs",
             "libc/src/c_abi/x86_64/system_configuration.rs",
+            "libc/src/regression_stubs.rs",
             "include/unistd.h",
             "include/sys/resource.h",
             "compat/x86_64/unistd_header_abi_probe.c",
@@ -835,6 +836,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/libc_system_configuration_probe.c",
             "compat/x86_64/libc_system_configuration_start.S",
             "compat/x86_64/run_libc_system_configuration.sh",
+            "tests/fixtures/path_configuration_exports_test.c",
+            "tests/path_configuration_exports.rs",
         ):
             self.assertIn(owner, system_configuration["source_owners"])
         self.assertEqual(
@@ -847,7 +850,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "system-configuration block",
             "path- and fd-independent",
-            "current AArch64",
+            "corresponding AArch64",
+            "focused dynamic fixture",
             "full musl sysconf table",
             "startup-owned auxv/getauxval",
         ):
