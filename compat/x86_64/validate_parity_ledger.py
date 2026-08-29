@@ -1810,6 +1810,125 @@ def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the coherent C process-signal artifact bounded and evidence-led."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-process-signal-execution"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-process-signal-execution artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "process-signal execution block",
+        "`kill`",
+        "`killpg`",
+        "`raise`",
+        "`sigqueue`",
+        "`sigtimedwait`",
+        "`sigwaitinfo`",
+        "`sigwait`",
+        "application-signal block/restore transaction",
+        "EINTR retry",
+        "`-1`/errno",
+        "fixture-only raw clone/pipe/wait/exit",
+        "`tgkill`",
+        "sigaltstack",
+        "signalfd",
+        "planned `libc.posix-runtime`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-process-signal-execution description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/signal_execution.rs",
+        "libc/src/c_abi/x86_64/signal_control.rs",
+        "libc/src/c_abi/x86_64/readiness_waits.rs",
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/signal_header_posix_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+        "compat/x86_64/libc_signal_execution_probe.c",
+        "compat/x86_64/libc_signal_execution_start.S",
+        "compat/x86_64/run_libc_signal_execution.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(
+            owner in owners,
+            f"static-c-process-signal-execution must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "kill=62" in item
+            and "rt_sigprocmask=14" in item
+            and "rt_sigtimedwait=128" in item
+            and "rt_sigqueueinfo=129" in item
+            and "gettid=186" in item
+            and "tkill=200" in item
+            and "rdi/rsi/rdx/r10" in item
+            for item in prerequisites
+        ),
+        "static-c-process-signal-execution must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "0xfffffffc7fffffff" in item
+            and "eight bytes" in item
+            and "__block_app_sigs/__restore_sigs" in item
+            for item in prerequisites
+        ),
+        "static-c-process-signal-execution must record its musl signal transaction",
+    )
+    require(
+        any(
+            "128-byte align-8" in item
+            and "offsets 0/4/8" in item
+            and "16/20" in item
+            and "24" in item
+            for item in prerequisites
+        ),
+        "static-c-process-signal-execution must record queued siginfo layout",
+    )
+    require(
+        any(
+            "retries raw EINTR" in item
+            and "sigwait" in item
+            and "-1" in item
+            for item in prerequisites
+        ),
+        "static-c-process-signal-execution must record musl wait conventions",
+    )
+    require(
+        any(
+            "Raw clone=56" in item
+            and "fixture EINTR containment" in item
+            for item in prerequisites
+        ),
+        "static-c-process-signal-execution must retain fixture-only child containment",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-signal-execution"},
+        "static-c-process-signal-execution must use the closed libc-signal-execution command",
+    )
+
+
 def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct-positive-error clock sleep boundary durable."""
     artifacts = require_verified_artifacts(
@@ -2479,6 +2598,7 @@ def validate_ledger(
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
+    require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

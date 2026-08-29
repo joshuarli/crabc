@@ -64,13 +64,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             1,
         )
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-thread-pointer|libc-foundation|libc-fenv|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn("libc-stat-compat", source)
         self.assertIn("libc-credentials", source)
         self.assertIn("libc-bootstrap-primitives", source)
         self.assertIn("libc-signal-control", source)
+        self.assertIn("libc-signal-execution", source)
         self.assertIn("libc-pthread-create-join-tls", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
@@ -1354,6 +1355,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-signal-control)\n        [ "$#" -eq 0 ] || fail "libc-signal-control takes no arguments"',
             source,
         )
+        self.assertIn('run_libc_signal_execution_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_signal_execution.sh', source
+        )
+        self.assertIn(
+            '    libc-signal-execution)\n        [ "$#" -eq 0 ] || fail "libc-signal-execution takes no arguments"',
+            source,
+        )
         self.assertIn('run_libc_pthread_create_join_tls_probe()', source)
         self.assertIn(
             '/workspace/compat/x86_64/run_libc_pthread_create_join_tls.sh', source
@@ -2508,6 +2517,152 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-signal-control", runner)
+
+    def test_libc_static_c_abi_signal_execution_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        signal_execution = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_execution.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_signal_execution_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_signal_execution_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_signal_execution.sh"
+        )
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing signal-execution input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "signal_execution.rs"]', static_root)
+        for source in (
+            "src/signal/kill.c",
+            "src/signal/killpg.c",
+            "src/signal/raise.c",
+            "src/signal/sigqueue.c",
+            "src/signal/sigtimedwait.c",
+            "src/signal/sigwaitinfo.c",
+            "src/signal/sigwait.c",
+        ):
+            self.assertIn(source, signal_execution)
+        for symbol in (
+            "fn kill(",
+            "fn killpg(",
+            "fn raise(",
+            "fn sigqueue(",
+            "fn sigtimedwait(",
+            "fn sigwaitinfo(",
+            "fn sigwait(",
+        ):
+            self.assertIn(symbol, signal_execution)
+        for required in (
+            "APPLICATION_SIGNAL_MASK",
+            "0xffff_fffc_7fff_ffff",
+            "block_application_signals",
+            "restore_signals",
+            "SYS_TKILL",
+            "SYS_RT_SIGQUEUEINFO",
+            "SYS_RT_SIGTIMEDWAIT",
+            "process_context::getuid()",
+            "process_context::getpid()",
+            "result != -EINTR",
+            "return -1;",
+            "positive errno value",
+        ):
+            self.assertIn(required, signal_execution)
+        for forbidden in (
+            "pub extern \"C\" fn tgkill(",
+            "pub extern \"C\" fn sigaltstack(",
+            "pub extern \"C\" fn signalfd(",
+            "pub extern \"C\" fn pthread_kill(",
+            "pub extern \"C\" fn clone(",
+        ):
+            self.assertNotIn(forbidden, signal_execution)
+
+        for required in (
+            "sizeof(siginfo_t) == 128",
+            "offsetof(siginfo_t, si_value) == 24",
+            "raw_clone_sigchld",
+            "raw_wait4_cleanup",
+            "check_retry_after_eintr",
+            "killpg(-1, 0)",
+            "sigtimedwait(0, &info, &zero_timeout)",
+            "sigwait(0, &waited_signal)",
+            "sigsuspend(&empty_set)",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_signal_execution_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_signal_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "TLSGD",
+            "__gxx_personality_v0",
+            "pthread_create",
+            "pthread_kill",
+            "getauxval sysconf",
+            "assert_named_syscall kill 3e",
+            "assert_named_syscall killpg 3e",
+            "assert_named_syscall raise e",
+            "assert_named_syscall raise c8",
+            "assert_named_syscall sigqueue e",
+            "assert_named_syscall sigqueue 81",
+            "assert_named_syscall sigtimedwait 80",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "kill",
+            "killpg",
+            "raise",
+            "sigqueue",
+            "sigtimedwait",
+            "sigwaitinfo",
+            "sigwait",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-process-signal-execution"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-signal-execution"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_signal_execution_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_signal_execution.sh", runner
+        )
+        self.assertIn(
+            '    libc-signal-execution)\n        [ "$#" -eq 0 ] || fail "libc-signal-execution takes no arguments"',
+            runner,
+        )
 
     def test_libc_static_c_abi_pthread_create_exit_join_tls_artifact_stays_bounded(
         self,

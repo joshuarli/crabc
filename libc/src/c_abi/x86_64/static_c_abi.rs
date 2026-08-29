@@ -4,8 +4,9 @@
 //! independently evidenced metadata and credential verticals alongside the x86
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, and basic complex accessor/conjugation primitives as a
-//! real C bootstrap block, plus deliberately narrow simple signal action/mask,
-//! one default-attribute create/explicit-exit/join worker with private
+//! real C bootstrap block, plus deliberately narrow simple signal action/mask
+//! and bounded process-signal execution, one default-attribute
+//! create/explicit-exit/join worker with private
 //! initial-TLS `errno`,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
@@ -73,6 +74,8 @@ mod setjmp;
 mod signal_foundation;
 #[path = "signal_control.rs"]
 mod signal_control;
+#[path = "signal_execution.rs"]
+mod signal_execution;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
 #[path = "termios_control.rs"]

@@ -325,6 +325,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-credentials
 ./scripts/dev-x86_64.sh libc-bootstrap-primitives
 ./scripts/dev-x86_64.sh libc-signal-control
+./scripts/dev-x86_64.sh libc-signal-execution
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
@@ -1653,6 +1654,24 @@ evidence only: it selects no C `kill`, `raise`, or `tgkill` wrapper. It also exc
 cancellation points, queues, alternate stacks, pthread signal policy, legacy
 helpers, generic signal management, and public x86 support.
 
+`libc-signal-execution` is a separately recorded
+`static-c-process-signal-execution` `verified_artifact` within planned
+`libc.posix-runtime`, not a `process.signal` capability or C-runtime
+completion. Its project-header C body runs first through pinned musl and then
+through a `-nostdlib -static` candidate. It composes the existing simple
+action/set/mask/sigsuspend boundary with exactly `kill`, `killpg`, `raise`,
+`sigqueue`, `sigtimedwait`, `sigwaitinfo`, and `sigwait`. The gate checks
+musl's one-word application-signal block/restore transaction, queued
+128-byte align-8 `siginfo_t` sender/value layout, stale `errno`, EINTR retry,
+and the musl `sigwait` `-1`/`errno` failure convention. A raw clone/pipe/wait/
+exit child is fixture-only deterministic containment for the interrupted wait;
+the archive exposes no lifecycle API. The runner ratchets exact archive
+exports and rejects dynamic TLS, C++ runtime, allocator, pthread/clone,
+auxv/sysconf, and unselected signal paths. It does not select `tgkill`,
+alternate stacks, signalfd, legacy signal APIs, pthread signal/cancellation
+policy, generic process lifecycle, libc.so, CRT, loader, sysroot, signal/header
+family completion, or public x86 support.
+
 `libc-pthread-create-join-tls` is a separately recorded static
 `verified_artifact` under the still-planned `libc.pthread-tls` family. Its
 project-header C body first runs against pinned musl and then in a
@@ -2364,7 +2383,7 @@ This is not a libc, pthread, dynamic-TLS, dynamic-loader, sysroot, or public
 x86-support claim.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
-`libc-bootstrap-primitives`, `libc-signal-control`, and
+`libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
 `libc-pthread-create-join-tls`, `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,

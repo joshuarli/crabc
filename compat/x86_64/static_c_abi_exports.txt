@@ -118,6 +118,8 @@ ispunct
 isspace
 isupper
 isxdigit
+kill
+killpg
 labs
 ldiv
 listen
@@ -158,6 +160,7 @@ pthread_join
 pwrite
 qsort
 qsort_r
+raise
 read
 recv
 recvfrom
@@ -194,8 +197,12 @@ siglongjmp
 signal
 sigpending
 sigprocmask
+sigqueue
 sigsetjmp
 sigsuspend
+sigtimedwait
+sigwait
+sigwaitinfo
 socket
 socketpair
 stat

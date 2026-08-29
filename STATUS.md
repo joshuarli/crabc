@@ -37,6 +37,18 @@ inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
 family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
 shared-memory, and process-wide VM synchronization remain unselected.
 
+`./scripts/dev-x86_64.sh libc-signal-execution` is one further private
+`static-c-process-signal-execution` artifact inside planned
+`libc.posix-runtime`. Its pinned-musl/freestanding-static C proof composes the
+existing simple signal action/set/mask boundary with exactly `kill`, `killpg`,
+`raise`, `sigqueue`, `sigtimedwait`, `sigwaitinfo`, and `sigwait`, including
+the application-signal mask transaction, queued `siginfo_t` layout, stale
+`errno`, EINTR retry, and musl `sigwait` `-1`/`errno` failure convention. A
+fixture-only raw child makes the interrupted wait deterministic. It does not
+select general process lifecycle, `tgkill`, alternate stacks, signalfd, legacy
+signal APIs, pthread signal policy, libc.so, CRT, loader, sysroot, family or
+platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned
 `libc.headers-layouts`. It composes the existing selected archive through a

@@ -13,6 +13,16 @@
 
 _Static_assert(sizeof(sigset_t) == 128, "x86 sigset_t size");
 _Static_assert(_Alignof(sigset_t) == 8, "x86 sigset_t alignment");
+_Static_assert(sizeof(union sigval) == 8, "x86 sigval size");
+_Static_assert(_Alignof(union sigval) == 8, "x86 sigval alignment");
+_Static_assert(sizeof(siginfo_t) == 128, "x86 siginfo size");
+_Static_assert(_Alignof(siginfo_t) == 8, "x86 siginfo alignment");
+_Static_assert(offsetof(siginfo_t, si_signo) == 0, "x86 siginfo signo");
+_Static_assert(offsetof(siginfo_t, si_errno) == 4, "x86 siginfo errno");
+_Static_assert(offsetof(siginfo_t, si_code) == 8, "x86 siginfo code");
+_Static_assert(offsetof(siginfo_t, si_pid) == 16, "x86 siginfo pid");
+_Static_assert(offsetof(siginfo_t, si_uid) == 20, "x86 siginfo uid");
+_Static_assert(offsetof(siginfo_t, si_value) == 24, "x86 siginfo value");
 _Static_assert(sizeof(struct sigaction) == 152, "x86 sigaction size");
 _Static_assert(_Alignof(struct sigaction) == 8, "x86 sigaction alignment");
 _Static_assert(offsetof(struct sigaction, sa_mask) == 8, "x86 sigaction mask");
@@ -65,3 +75,21 @@ _Static_assert(MINSIGSTKSZ == 2048 && SIGSTKSZ == 8192,
     "x86 alternate signal-stack constants");
 _Static_assert(SA_RESTORER == 0x04000000 && SA_ONSTACK == 0x08000000,
     "x86 signal-action constants");
+_Static_assert(SI_QUEUE == -1 && SI_TKILL == -6,
+    "x86 queued and thread signal codes");
+
+_Static_assert(__builtin_types_compatible_p(__typeof__(&kill),
+    int (*)(int, int)), "GNU kill declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&killpg),
+    int (*)(pid_t, int)), "GNU killpg declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&raise),
+    int (*)(int)), "GNU raise declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigqueue),
+    int (*)(pid_t, int, union sigval)), "GNU sigqueue declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigtimedwait),
+    int (*)(const sigset_t *, siginfo_t *, const struct timespec *)),
+    "GNU sigtimedwait declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigwaitinfo),
+    int (*)(const sigset_t *, siginfo_t *)), "GNU sigwaitinfo declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigwait),
+    int (*)(const sigset_t *, int *)), "GNU sigwait declaration");

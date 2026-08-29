@@ -108,7 +108,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 }
 # The selected x86 `crabc-libc` artifact admits independently evidenced static
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
-# primitives, narrow simple signal control, one bounded pthread create/exit/
+# primitives, narrow simple signal control, bounded process-signal execution,
+# one bounded pthread create/exit/
 # join initial-TLS worker, named termios control, selected
 # process context, child reaping, C11 immediate termination, callback algorithms,
 # selected descriptor entry and fcntl status control, selected descriptor I/O,
@@ -153,6 +154,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
+    Path("libc/src/c_abi/x86_64/signal_execution.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
     Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
     Path("libc/src/c_abi/x86_64/stat_compat.rs"),
@@ -3472,6 +3474,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "setjmp.rs"]',
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
+        '#[path = "signal_execution.rs"]',
         '#[path = "pthread_create_join.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
@@ -4154,6 +4157,73 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if required not in raw_syscall_text:
             errors.append(
                 "libc/src/c_abi/x86_64/syscall.rs: selected static mapping-core "
+                f"boundary is missing {required!r}"
+            )
+
+    signal_execution_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_execution.rs"
+    )
+    signal_execution_text = signal_execution_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/signal/kill.c",
+        "src/signal/killpg.c",
+        "src/signal/raise.c",
+        "src/signal/sigqueue.c",
+        "src/signal/sigtimedwait.c",
+        "src/signal/sigwaitinfo.c",
+        "src/signal/sigwait.c",
+        "APPLICATION_SIGNAL_MASK",
+        "0xffff_fffc_7fff_ffff",
+        "block_application_signals",
+        "restore_signals",
+        "SYS_TKILL",
+        "SYS_RT_SIGQUEUEINFO",
+        "SYS_RT_SIGTIMEDWAIT",
+        "process_context::getuid()",
+        "process_context::getpid()",
+        "result != -EINTR",
+        "return -1;",
+        "positive errno value",
+        "sigaltstack",
+        "signalfd",
+    ):
+        if required not in signal_execution_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_execution.rs: selected static "
+                f"process-signal boundary is missing {required!r}"
+            )
+    signal_execution_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_execution_text,
+        )
+    )
+    expected_signal_execution_exports = {
+        "kill",
+        "killpg",
+        "raise",
+        "sigqueue",
+        "sigtimedwait",
+        "sigwaitinfo",
+        "sigwait",
+    }
+    if signal_execution_exports != expected_signal_execution_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_execution.rs: selected static "
+            "artifact must export only the named process-signal symbols"
+        )
+    for required in (
+        "pub(crate) const SYS_KILL: i64 = 62;",
+        "pub(crate) const SYS_RT_SIGPROCMASK: i64 = 14;",
+        "pub(crate) const SYS_RT_SIGTIMEDWAIT: i64 = 128;",
+        "pub(crate) const SYS_RT_SIGQUEUEINFO: i64 = 129;",
+        "pub(crate) const SYS_GETTID: i64 = 186;",
+        "pub(crate) const SYS_TKILL: i64 = 200;",
+    ):
+        if required not in raw_syscall_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/syscall.rs: selected static process-signal "
                 f"boundary is missing {required!r}"
             )
 
@@ -5053,6 +5123,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errno_text,
         fenv_text,
         signal_control_text,
+        signal_execution_text,
         pthread_create_join_text,
         termios_control_text,
         process_context_text,
@@ -5159,6 +5230,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigprocmask",
         "sigpending",
         "__libc_current_sigrtmax",
+        "kill",
+        "killpg",
+        "raise",
+        "sigqueue",
+        "sigtimedwait",
+        "sigwaitinfo",
+        "sigwait",
         "pthread_create",
         "pthread_exit",
         "pthread_join",
@@ -5324,7 +5402,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -5343,6 +5421,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
+        ("signal_execution.rs", signal_execution_text),
         ("pthread_create_join.rs", pthread_create_join_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),

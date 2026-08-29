@@ -45,7 +45,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 35)
+        self.assertEqual(report["verified_artifact_count"], 36)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertFalse(report["promotion_ready"])
@@ -439,7 +439,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 29
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 30
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -4076,6 +4076,117 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh mapping-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-mapping-core command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-process-signal-execution"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_execution.rs",
+            "libc/src/c_abi/x86_64/signal_control.rs",
+            "libc/src/c_abi/x86_64/readiness_waits.rs",
+            "compat/x86_64/signal_header_abi_probe.c",
+            "compat/x86_64/signal_header_posix_abi_probe.c",
+            "compat/x86_64/run_signal_header_abi.sh",
+            "compat/x86_64/libc_signal_execution_probe.c",
+            "compat/x86_64/libc_signal_execution_start.S",
+            "compat/x86_64/run_libc_signal_execution.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-signal-execution"},
+        )
+        for phrase in (
+            "process-signal execution block",
+            "`kill`",
+            "`killpg`",
+            "`raise`",
+            "`sigqueue`",
+            "`sigtimedwait`",
+            "`sigwaitinfo`",
+            "`sigwait`",
+            "application-signal block/restore transaction",
+            "EINTR retry",
+            "`-1`/errno",
+            "fixture-only raw clone/pipe/wait/exit",
+            "planned `libc.posix-runtime`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "kill=62" in prerequisite
+                and "rt_sigprocmask=14" in prerequisite
+                and "rt_sigtimedwait=128" in prerequisite
+                and "rt_sigqueueinfo=129" in prerequisite
+                and "gettid=186" in prerequisite
+                and "tkill=200" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "0xfffffffc7fffffff" in prerequisite
+                and "__block_app_sigs/__restore_sigs" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-process-signal-execution"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("tkill=200", "tkill=201")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-process-signal-execution"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "planned `libc.posix-runtime`", "completed runtime"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "planned `libc.posix-runtime`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-process-signal-execution"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-header-abi"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-signal-execution command"
         ):
             ledger.validate_ledger(data)
 
