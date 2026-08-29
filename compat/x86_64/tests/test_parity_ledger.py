@@ -42,7 +42,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 24)
+        self.assertEqual(report["verified_artifact_count"], 25)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -118,7 +118,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 23
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 24
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -227,7 +227,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh libc-descriptor-io"},
         )
         self.assertIn("pwrite", descriptor_io["description"])
-        self.assertIn("does not select C open/path/fcntl", descriptor_io["description"])
+        self.assertIn(
+            "does not select C open/path, generic fcntl command",
+            descriptor_io["description"],
+        )
         self.assertIn("EBUSY loops", descriptor_io["native_evidence"][0]["scope"])
         self.assertIn(
             "libc/src/c_abi/x86_64/descriptor_io.rs",
@@ -716,10 +719,58 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("descriptor-entry block", descriptor_entry["description"])
         self.assertIn("O_CLOEXEC", descriptor_entry["description"])
-        self.assertIn("does not select C fcntl", descriptor_entry["description"])
+        self.assertIn(
+            "does not expand C fcntl beyond", descriptor_entry["description"]
+        )
         self.assertIn("src/fcntl/open.c", descriptor_entry["oracle"][0]["role"])
         self.assertIn(
             "libc/src/c_abi/x86_64/descriptor_entry.rs",
+            posix_runtime["source_owners"],
+        )
+        fcntl_status_control = artifacts_by_id["static-c-fcntl-status-control"]
+        assert isinstance(fcntl_status_control, dict)
+        self.assertNotIn("capabilities", fcntl_status_control)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/descriptor_control.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "include/fcntl.h",
+            "include/bits/fcntl.h",
+            "compat/x86_64/fcntl_header_abi_probe.c",
+            "compat/x86_64/fcntl_header_abi_probe.cpp",
+            "compat/x86_64/run_fcntl_header_abi.sh",
+            "compat/x86_64/run_x86_fcntl_status_reference.sh",
+            "compat/x86_64/x86_fcntl_status_reference_probe.c",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_fcntl_status_control_probe.c",
+            "compat/x86_64/libc_fcntl_status_control_start.S",
+            "compat/x86_64/run_libc_fcntl_status_control.sh",
+        ):
+            self.assertIn(owner, fcntl_status_control["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in fcntl_status_control["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-fcntl-status-control"},
+        )
+        for phrase in (
+            "fcntl status-control block",
+            "`F_GETFD`",
+            "`F_SETFD`",
+            "`F_GETFL`",
+            "`F_SETFL`",
+            "O_LARGEFILE",
+            "-1/EINVAL",
+            "does not select generic C fcntl",
+        ):
+            self.assertIn(phrase, fcntl_status_control["description"])
+        self.assertIn(
+            "src/fcntl/fcntl.c", fcntl_status_control["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/descriptor_control.rs",
             posix_runtime["source_owners"],
         )
         ffs = artifacts_by_id["static-c-ffs"]
@@ -3208,6 +3259,39 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-status-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-descriptor-entry command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_fcntl_status_control_artifact_keeps_its_variadic_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fcntl-status-control"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("fcntl=72", "fcntl=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "variadic register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fcntl-status-control"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-status-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-fcntl-status-control command"
         ):
             ledger.validate_ledger(data)
 

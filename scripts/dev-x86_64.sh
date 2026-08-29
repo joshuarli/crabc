@@ -2,11 +2,11 @@
 # Native Linux/x86-64 staged foundation evidence entry point.
 #
 # This is a deliberately closed foundation lane. It proves explicitly named
-# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-six
+# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-seven
 # static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_nanosleep,
-# selected descriptor entry, selected descriptor I/O, selected process resources, and selected readiness
+# selected descriptor entry, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
 # ctype, integer arithmetic, intmax arithmetic, credential observation, and
@@ -158,6 +158,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
+  libc-fcntl-status-control  run the static x86 crabc-libc fcntl status-control slice
   libc-descriptor-io  run the static x86 crabc-libc selected descriptor-I/O slice
   libc-process-resources  run the static x86 crabc-libc selected resource slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
@@ -225,7 +226,8 @@ dynamic libc, or application-startup claim.
 exercises the same archive through a freestanding project-header C fixture
 after an equivalent pinned-musl run. It selects only direct descriptor
 transfer/position/truncate/sync requests, duplication, and pipe creation;
-fixture-local raw memfd/fcntl setup does not select C open/path/fcntl APIs.
+fixture-local raw memfd/fcntl setup does not select C open/path or generic
+fcntl-command APIs.
 Pthread cancellation, AIO coordination, durability policy, dynamic libc, and
 application startup remain outside that artifact. `libc-process-resources`
 exercises the same archive through a freestanding project-header C fixture
@@ -240,7 +242,7 @@ simple signal-control calls only arrange the tested readiness and pending-mask
 states. It preserves musl's caller-timeout copies and atomic temporary-mask
 restoration, but deliberately omits pthread cancellation. `pause` has an
 emitted-code gate rather than a racy runtime wakeup harness. It does not select
-epoll/eventfd, C open/path/fcntl, generic delivery or signal waits, timers,
+epoll/eventfd, C open/path or generic fcntl-command APIs, generic delivery or signal waits, timers,
 process lifecycle, dynamic libc, or application startup.
 `libc-system-observation` exercises the same archive through a freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
@@ -803,15 +805,26 @@ project-header C fixture after an equivalent pinned-musl run. It selects only
 and private O_CLOEXEC F_SETFD path, direct errno results, relative descriptor
 resolution, create mode, and truncation behavior. Fixture-local raw syscalls
 own a PID-specific temporary directory and observe descriptor/stat state. It
-does not provide public C fcntl, path policy, a filesystem capability,
+does not exercise or expand the separately selected bounded C fcntl
+status-control entry, path policy, a filesystem capability,
 cancellation/AIO integration, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
+`libc-fcntl-status-control` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+the public `fcntl` status/descriptor-flag commands `F_GETFD`, `F_SETFD`,
+`F_GETFL`, and `F_SETFL`: legal absent-vararg and scalar-vararg dispatch,
+musl's O_LARGEFILE rule, descriptor-local CLOEXEC, shared status state, and
+direct errno results. Every other command returns the explicit selected-profile
+`EINVAL` result without reading a vararg or issuing a syscall. It does not
+provide generic fcntl, locking, descriptor lifecycle, filesystem policy,
+cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
+support.
 `libc-descriptor-io` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 descriptor transfer, positioned I/O, signed seek/truncate, synchronization
 requests, duplication, and pipe construction; raw fixture memfd/fcntl helpers
-only establish files and observe flags. It does not provide C open/path/fcntl
-or vector-I/O APIs, cancellation/AIO integration, filesystem durability,
+only establish files and observe flags. It does not provide C open/path,
+generic fcntl-command, or vector-I/O APIs, cancellation/AIO integration, filesystem durability,
 dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-process-resources` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
@@ -827,7 +840,7 @@ selected pipe and simple signal-control calls only arrange readiness and
 pending-mask observations. It preserves caller timeout records, proves atomic
 temporary-mask restoration, and deliberately omits pthread cancellation.
 `pause` retains a direct emitted-code gate rather than a racy runtime wakeup
-harness. It does not provide epoll/eventfd, C open/path/fcntl, generic signal
+harness. It does not provide epoll/eventfd, C open/path or generic fcntl-command APIs, generic signal
 delivery/waits, timers, process lifecycle, dynamic libc, CRT/TLS lifecycle,
 loader, sysroot, or public x86 support.
 `libc-system-observation` links that archive into a separate freestanding
@@ -1075,6 +1088,10 @@ run_libc_clock_nanosleep() {
 
 run_libc_descriptor_entry() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_entry.sh
+}
+
+run_libc_fcntl_status_control() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_fcntl_status_control.sh
 }
 
 run_ffs_header_abi() {
@@ -1888,7 +1905,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-nanosleep|libc-descriptor-entry|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2613,6 +2630,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-descriptor-entry takes no arguments"
         ensure_image
         run_libc_descriptor_entry
+        ;;
+    libc-fcntl-status-control)
+        [ "$#" -eq 0 ] || fail "libc-fcntl-status-control takes no arguments"
+        ensure_image
+        run_libc_fcntl_status_control
         ;;
     libc-ffs)
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"

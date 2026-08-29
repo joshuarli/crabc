@@ -131,7 +131,7 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
         || fail "archive does not define ${symbol}"
 done
 for unselected in epoll_create epoll_create1 epoll_ctl epoll_wait epoll_pwait \
-    eventfd eventfd_read eventfd_write fcntl readv writev \
+    eventfd eventfd_read eventfd_write readv writev \
     preadv pwritev splice vmsplice tee sendfile copy_file_range fork _Fork \
     vfork clone execve kill raise tgkill alarm sleep \
     usleep nanosleep sigtimedwait sigwaitinfo sigwait \

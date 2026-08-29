@@ -5,7 +5,7 @@
 //! bulk-memory, floating-environment, and continuation primitives as a real C
 //! bootstrap block, plus deliberately narrow simple signal action/mask,
 //! termios-control, selected process-context, child-reaping, selected
-//! descriptor-entry, descriptor-I/O, and
+//! descriptor-entry, bounded fcntl status-control, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, intmax-arithmetic,
@@ -77,6 +77,8 @@ mod callback_algorithms;
 mod clock_nanosleep;
 #[path = "descriptor_entry.rs"]
 mod descriptor_entry;
+#[path = "descriptor_control.rs"]
+mod descriptor_control;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
 #[path = "process_resources.rs"]

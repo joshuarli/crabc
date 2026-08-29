@@ -110,11 +110,13 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
 # primitives, narrow simple signal control, named termios control, selected
 # process context, child reaping, C11 immediate termination, callback algorithms,
-# selected descriptor I/O, selected process resources,
+# selected descriptor entry and fcntl status control, selected descriptor I/O,
+# selected process resources,
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, intmax arithmetic, and
-# find-first-set, direct POSIX clock_nanosleep, and descriptor entry.
+# find-first-set, direct POSIX clock_nanosleep, descriptor entry, and bounded
+# fcntl status control.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
 # exception.
@@ -127,6 +129,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
+    Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
@@ -3310,6 +3313,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "callback_algorithms.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
+        '#[path = "descriptor_control.rs"]',
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
         '#[path = "readiness_waits.rs"]',
@@ -3825,6 +3829,52 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/descriptor_entry.rs: selected static "
             "artifact must export only open, openat, and creat"
+        )
+
+    descriptor_control_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_control.rs"
+    )
+    descriptor_control_text = descriptor_control_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/fcntl/fcntl.c",
+        "global_asm!",
+        ".global fcntl",
+        "fcntl_no_argument",
+        "fcntl_scalar",
+        "fcntl_unsupported",
+        "F_GETFD",
+        "F_SETFD",
+        "F_GETFL",
+        "F_SETFL",
+        "O_LARGEFILE",
+        "if command == F_SETFL",
+        "raw_syscall::SYS_FCNTL",
+        "raw_syscall::syscall3(",
+        "errno::set_errno(EINVAL)",
+        "must not read an absent vararg",
+        "rdi/rsi/rdx",
+    ):
+        if required not in descriptor_control_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/descriptor_control.rs: selected static "
+                f"fcntl status-control boundary is missing {required!r}"
+            )
+    descriptor_control_exports = set(
+        re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", descriptor_control_text)
+    )
+    if descriptor_control_exports != {"fcntl"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/descriptor_control.rs: selected static "
+            "artifact must export only the assembly-dispatched fcntl entry"
+        )
+    if re.search(
+        r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+fcntl(?:<|\s*\()',
+        descriptor_control_text,
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/descriptor_control.rs: variadic fcntl "
+            "must remain assembly-dispatched rather than a fixed Rust C entry"
         )
 
     descriptor_io_source = (
@@ -4549,6 +4599,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         callback_algorithms_text,
         clock_nanosleep_text,
         descriptor_entry_text,
+        descriptor_control_text,
         descriptor_io_text,
         process_resources_text,
         readiness_waits_text,
@@ -4579,7 +4630,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     assembly_exports = set().union(
         *(
             set(re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", source))
-            for source in (memory_text, fenv_text, setjmp_text)
+            for source in (memory_text, fenv_text, setjmp_text, descriptor_control_text)
         )
     )
     exports = rust_exports | assembly_exports | callback_algorithms_aliases
@@ -4684,6 +4735,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "ftruncate",
         "fsync",
         "fdatasync",
+        "fcntl",
         "dup",
         "dup2",
         "dup3",
@@ -4787,7 +4839,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_nanosleep, selected "
-            "descriptor-entry and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
+            "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
             "fixed-C-locale ctype, integer-arithmetic, intmax-arithmetic, credential-observation, and "
@@ -4812,6 +4864,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("callback_algorithms.rs", callback_algorithms_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
+        ("descriptor_control.rs", descriptor_control_text),
         ("descriptor_io.rs", descriptor_io_text),
         ("process_resources.rs", process_resources_text),
         ("readiness_waits.rs", readiness_waits_text),

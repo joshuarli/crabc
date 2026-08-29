@@ -3,7 +3,7 @@
 //! This leaf owns one coherent pathname-to-descriptor entry block: C `open`,
 //! `openat`, and `creat`. It composes only the raw Linux syscall register
 //! boundary and the selected initial-TLS C `errno` publisher. It is not public
-//! C `fcntl`, pathname normalization or policy, a filesystem capability,
+//! generic C `fcntl` command coverage, pathname normalization or policy, a filesystem capability,
 //! vector I/O, stdio, a general C/POSIX runtime, libc.so, CRT, pthread/TLS
 //! lifecycle, dynamic TLS, loader, sysroot, allocator, or public x86 support.
 //!
@@ -20,8 +20,9 @@
 //! This selected direct Linux-5.10 leaf retains the mode and flag algorithms,
 //! but deliberately omits pthread cancellation and cleanup. On x86-64, musl's
 //! `open` path uses open=2 and follows a successful `O_CLOEXEC` request with a
-//! private F_SETFD/FD_CLOEXEC syscall; retain that ignored-result fix-up while
-//! leaving public C fcntl explicitly unselected. `openat` uses openat=257;
+//! private F_SETFD/FD_CLOEXEC syscall; retain that ignored-result fix-up
+//! without expanding the separately selected bounded C `fcntl` status-control
+//! surface. `openat` uses openat=257;
 //! its four Linux arguments occupy rdi/rsi/rdx/r10 rather than C's fourth
 //! argument register rcx.
 
@@ -77,7 +78,8 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -
     if result >= 0 && flags & O_CLOEXEC != 0 {
         // Musl keeps this private post-open fix-up even though Linux 5.10
         // understands O_CLOEXEC. Its result is intentionally ignored, exactly
-        // as in the pinned source; it neither exports nor selects C fcntl.
+        // as in the pinned source; it neither exports a second fcntl entry nor
+        // expands the separately selected bounded status-control surface.
         let _ = unsafe {
             raw_syscall::syscall3(
                 raw_syscall::SYS_FCNTL,

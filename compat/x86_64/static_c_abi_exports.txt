@@ -38,6 +38,7 @@ div
 dup
 dup2
 dup3
+fcntl
 fdatasync
 feclearexcept
 fegetenv

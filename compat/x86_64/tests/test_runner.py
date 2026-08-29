@@ -4640,14 +4640,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_open_syscall",
             "assert_named_syscall openat 101",
             "assert_open_cloexec_fixup",
-            "candidate does not define public fcntl",
             "%r10",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         for symbol in ("open", "openat", "creat"):
             self.assertIn(symbol, static_export_names)
-        self.assertNotIn("fcntl", static_export_names)
         self.assertIn('id = "static-c-descriptor-entry"', parity_ledger)
         self.assertIn(
             'command = "./scripts/dev-x86_64.sh libc-descriptor-entry"',
@@ -4659,6 +4657,121 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-descriptor-entry)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-entry takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_fcntl_status_control_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_control = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_control.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_fcntl_status_control_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_fcntl_status_control_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_fcntl_status_control.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "descriptor_control.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/fcntl/fcntl.c",
+            "global_asm!",
+            "fcntl_no_argument",
+            "fcntl_scalar",
+            "fcntl_unsupported",
+            "raw_syscall::SYS_FCNTL",
+            "F_GETFD",
+            "F_SETFD",
+            "F_GETFL",
+            "F_SETFL",
+            "O_LARGEFILE",
+            "if command == F_SETFL",
+            "EINVAL",
+            "rdi/rsi/rdx",
+        ):
+            self.assertIn(required, descriptor_control)
+        for forbidden in (
+            "pub unsafe extern \"C\" fn fcntl",
+            "__tls_get_addr",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, descriptor_control)
+        for required in (
+            "#include <fcntl.h>",
+            "check_descriptor_flags",
+            "check_status_flags",
+            "check_unsupported_commands",
+            "F_GETOWN",
+            "CRABC_FCNTL_STATUS_CONTROL_FREESTANDING",
+            "raw_syscall3",
+            "SYS_open",
+            "SYS_dup",
+            "SYS_close",
+            "fcntl(duplicate, F_GETFD) != FD_CLOEXEC",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_fcntl_status_control_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_fcntl_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_fcntl_no_argument_path",
+            "assert_fcntl_scalar_path",
+            "assert_fcntl_unsupported_path",
+            "assert_fixture_tls_capacity",
+            "INITIAL_TLS_BYTES",
+            "INITIAL_TLS_ALIGNMENT",
+            "unexpectedly pulls",
+            "O_LARGEFILE",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("fcntl", static_export_names)
+        self.assertIn('id = "static-c-fcntl-status-control"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-fcntl-status-control"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_fcntl_status_control()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_fcntl_status_control.sh", runner
+        )
+        self.assertIn(
+            '    libc-fcntl-status-control)\n        [ "$#" -eq 0 ] || fail "libc-fcntl-status-control takes no arguments"',
             runner,
         )
 

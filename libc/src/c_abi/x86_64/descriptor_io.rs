@@ -6,7 +6,8 @@
 //! `fsync`, and `fdatasync`), duplication (`dup`, `dup2`, and `dup3`), and
 //! pipe creation (`pipe` and `pipe2`). It composes only the raw Linux syscall
 //! register boundary and the selected initial-TLS C `errno` writer. It is not
-//! C pathname/open/fcntl or vector-I/O support, a filesystem policy layer,
+//! C pathname/open or generic fcntl command support, or vector-I/O support,
+//! a filesystem policy layer,
 //! stdio, a general C/POSIX runtime, libc.so, CRT, pthread/TLS lifecycle,
 //! dynamic TLS, loader, sysroot, allocator, or public x86 support.
 //!
@@ -254,7 +255,8 @@ pub unsafe extern "C" fn pwrite(
     }
 
     // SAFETY: F_GETFL takes scalar descriptor/command words. This is a
-    // private adaptation detail, not a public C fcntl selection.
+    // private adaptation detail, not a use of the separately selected public
+    // C fcntl status-control entry.
     let status_flags = unsafe {
         raw_syscall::syscall2(
             raw_syscall::SYS_FCNTL,

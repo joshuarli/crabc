@@ -874,7 +874,7 @@ def require_descriptor_entry_artifact(family: Mapping[str, Any]) -> None:
         "`creat`",
         "O_CLOEXEC",
         "O_LARGEFILE",
-        "does not select C fcntl",
+        "does not expand C fcntl beyond",
         "cancellation",
     ):
         require(
@@ -912,6 +912,91 @@ def require_descriptor_entry_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-descriptor-entry"},
         "static-c-descriptor-entry must use the closed libc-descriptor-entry command",
+    )
+
+
+def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the bounded variadic C fcntl artifact honest and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-fcntl-status-control"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-fcntl-status-control artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "fcntl status-control block",
+        "`F_GETFD`",
+        "`F_SETFD`",
+        "`F_GETFL`",
+        "`F_SETFL`",
+        "O_LARGEFILE",
+        "-1/EINVAL",
+        "does not select generic C fcntl",
+        "F_SETLKW cancellation",
+    ):
+        require(
+            phrase in description,
+            f"static-c-fcntl-status-control description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "fcntl=72" in item
+            and "rdi/rsi/rdx" in item
+            and "F_GETFD=1" in item
+            and "F_GETFL=3" in item
+            and "F_SETFD=2" in item
+            and "F_SETFL=4" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-status-control must record its variadic register ABI",
+    )
+    require(
+        any(
+            "rdx=0" in item and "F_GETFD=1" in item and "F_GETFL=3" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-status-control must record its no-vararg boundary",
+    )
+    require(
+        any("O_LARGEFILE=0x8000" in item and "F_SETFL" in item for item in prerequisites),
+        "static-c-fcntl-status-control must record its F_SETFL O_LARGEFILE rule",
+    )
+    require(
+        any(
+            "-1/EINVAL" in item and "without observing an absent vararg" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-status-control must record its unsupported-command boundary",
+    )
+    require(
+        any(
+            "src/fcntl/fcntl.c" in item
+            and "__syscall_cp" in item
+            and "F_GETOWN" in item
+            and "F_DUPFD_CLOEXEC" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-status-control must record its pinned-musl differences",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-fcntl-status-control"},
+        "static-c-fcntl-status-control must use the closed libc-fcntl-status-control command",
     )
 
 
@@ -1129,6 +1214,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
+    require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]

@@ -151,7 +151,7 @@ for symbol in __errno_location open openat creat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in fcntl openat2 open_by_handle_at readv writev preadv pwritev \
+for unselected in openat2 open_by_handle_at readv writev preadv pwritev \
     preadv2 pwritev2 splice vmsplice tee sendfile copy_file_range close_range \
     fork _Fork vfork clone execve kill raise gettid syscall setfsuid setfsgid \
     malloc free calloc realloc pthread_create mmap mprotect munmap; do
