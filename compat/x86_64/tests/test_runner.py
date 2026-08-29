@@ -2517,11 +2517,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("ARCH_SET_FS", control_start)
         self.assertIn("mov %rsi, %fs:0", control_start)
         self.assertIn("crabc_x86_64_signal_control_probe", control_start)
-        # The archive is shared with the separately selected readiness/signal-
-        # waits artifact. Its `sigsuspend` export must not be treated as an
-        # accidental signal-control export by this older artifact gate.
-        self.assertNotIn("sigsuspend sigtimedwait", control_runner)
-        self.assertIn("sigtimedwait sigwaitinfo sigwait", control_runner)
+        # The archive is shared with the separately selected process-signal
+        # and readiness/waits artifacts. Their named exports must not be
+        # treated as accidental signal-control exports by this older gate.
+        self.assertIn("The selected process-signal and readiness artifacts", control_runner)
+        self.assertIn("tgkill", control_runner)
+        self.assertIn("sigaltstack pthread_sigmask", control_runner)
+        self.assertIn("signalfd", control_runner)
         for required in (
             "static_c_abi_exports.txt",
             'ar t "$archive_path"',
@@ -5883,6 +5885,42 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-access)\n        [ "$#" -eq 0 ] || fail "libc-access takes no arguments"',
             runner,
         )
+
+    def test_static_artifact_negative_export_checks_never_reject_selected_exports(
+        self,
+    ) -> None:
+        """Keep per-artifact exclusions compatible with the shared archive ratchet."""
+
+        selected_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+
+        for artifact_runner in sorted(
+            (ROOT / "compat" / "x86_64").glob("run_libc_*.sh")
+        ):
+            source = artifact_runner.read_text(encoding="utf-8")
+            if "assert_selected_c_abi_surface" not in source:
+                continue
+
+            excluded_exports: set[str] = set()
+            for match in re.finditer(
+                r"for unselected in\s+(.*?);\s*do", source, re.DOTALL
+            ):
+                excluded_exports.update(
+                    token for token in match.group(1).split() if token != "\\"
+                )
+
+            with self.subTest(artifact_runner=artifact_runner.name):
+                self.assertSetEqual(
+                    selected_exports & excluded_exports,
+                    set(),
+                    "a shared selected C ABI export cannot remain an artifact-local "
+                    "unselected exclusion",
+                )
 
     def test_libc_static_c_abi_descriptor_entry_artifact_stays_narrow(self) -> None:
         static_root = (

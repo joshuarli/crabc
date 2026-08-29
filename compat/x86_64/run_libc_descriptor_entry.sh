@@ -153,8 +153,8 @@ for symbol in __errno_location open openat creat; do
 done
 for unselected in openat2 open_by_handle_at readv writev preadv pwritev \
     preadv2 pwritev2 splice vmsplice tee sendfile copy_file_range close_range \
-    fork _Fork vfork clone execve kill raise gettid syscall setfsuid setfsgid \
-    malloc free calloc realloc mmap mprotect munmap; do
+    fork _Fork vfork clone execve gettid syscall setfsuid setfsgid \
+    malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

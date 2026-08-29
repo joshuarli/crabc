@@ -135,9 +135,8 @@ for symbol in __errno_location getrlimit setrlimit prlimit getrusage getpriority
 done
 for unselected in getrlimit64 setrlimit64 prlimit64 times sched_getscheduler \
     sched_setscheduler sched_getparam sched_setparam sched_yield setfsuid \
-    setfsgid fork _Fork vfork clone execve kill raise syscall malloc free calloc \
-    realloc mmap \
-    mprotect munmap; do
+    setfsgid fork _Fork vfork clone execve syscall malloc free calloc \
+    realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

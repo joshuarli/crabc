@@ -124,8 +124,8 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
 for unselected in get_nprocs get_nprocs_conf get_phys_pages get_avphys_pages \
     getloadavg \
-    fork _Fork vfork clone execve kill raise syscall \
-    malloc free calloc realloc mmap mprotect munmap; do
+    fork _Fork vfork clone execve syscall \
+    malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

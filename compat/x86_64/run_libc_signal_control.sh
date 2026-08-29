@@ -119,10 +119,11 @@ if grep -Eq '[[:space:]][TW][[:space:]]crabc_x86_64_signal_action_pack$' \
     "$archive_symbols"; then
     fail "archive accidentally exports the source-only signal packing bridge"
 fi
-# `sigsuspend` is owned by the separately selected readiness/signal-waits
-# artifact in this shared archive; the remaining signal waits stay unselected.
-for unselected in syscall malloc free calloc realloc raise kill tgkill \
-    sigtimedwait sigwaitinfo sigwait sigaltstack sigqueue pthread_sigmask \
+# The selected process-signal and readiness artifacts own the named delivery
+# and wait exports in this shared archive; the remaining signal APIs stay
+# unselected here.
+for unselected in syscall malloc free calloc realloc tgkill \
+    sigaltstack pthread_sigmask \
     signalfd; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

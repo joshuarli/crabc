@@ -239,8 +239,8 @@ for symbol in __errno_location fcntl; do
 done
 for unselected in fcntl64 lockf lockf64 flock fchmod fchown ioctl readv writev \
     preadv pwritev preadv2 pwritev2 openat2 open_by_handle_at close_range \
-    fork _Fork vfork clone execve kill raise gettid syscall setfsuid setfsgid \
-    malloc free calloc realloc mmap mprotect munmap; do
+    fork _Fork vfork clone execve gettid syscall setfsuid setfsgid \
+    malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

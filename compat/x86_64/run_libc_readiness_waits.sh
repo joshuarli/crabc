@@ -133,10 +133,8 @@ done
 for unselected in epoll_create epoll_create1 epoll_ctl epoll_wait epoll_pwait \
     eventfd eventfd_read eventfd_write readv writev \
     preadv pwritev splice vmsplice tee sendfile copy_file_range fork _Fork \
-    vfork clone execve kill raise tgkill alarm sleep \
-    usleep sigtimedwait sigwaitinfo sigwait \
-    sigaltstack sigqueue pthread_sigmask signalfd syscall malloc free calloc \
-    realloc mmap mprotect munmap; do
+    vfork clone execve tgkill alarm sleep usleep \
+    sigaltstack pthread_sigmask signalfd syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

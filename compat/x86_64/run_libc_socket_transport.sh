@@ -134,8 +134,7 @@ for unselected in getsockopt setsockopt sockatmark ioctl if_nametoindex \
     if_indextoname sendmsg recvmsg sendmmsg recvmmsg readv writev preadv \
     pwritev getaddrinfo freeaddrinfo getnameinfo \
     gethostbyname gethostbyaddr fork _Fork vfork clone execve \
-    pthread_cancel malloc free calloc realloc mmap \
-    mprotect munmap; do
+    pthread_cancel malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

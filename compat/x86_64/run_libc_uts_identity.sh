@@ -131,9 +131,8 @@ for symbol in __errno_location uname gethostname sethostname getdomainname setdo
         || fail "archive does not define ${symbol}"
 done
 for unselected in gethostid sethostid get_nprocs get_nprocs_conf get_phys_pages \
-    get_avphys_pages getloadavg sysconf fork _Fork vfork clone execve kill raise \
-    syscall malloc free calloc realloc \
-    mmap mprotect munmap; do
+    get_avphys_pages getloadavg fork _Fork vfork clone execve \
+    syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

@@ -76,8 +76,7 @@ for symbol in wait waitpid waitid; do
         || fail "archive does not define $symbol"
 done
 for unselected in fork _Fork vfork clone execve wait4 syscall posix_spawn \
-    pthread_atfork kill raise sigwaitinfo sigwait wait3 malloc free \
-    calloc realloc mmap mprotect munmap; do
+    pthread_atfork wait3 malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
