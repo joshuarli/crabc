@@ -4,7 +4,7 @@
 //! is only the static-PIE foundation: no dynamic-loader handoff, ordinary
 //! `crt1.o`, or `Scrt1.o` contract is implied by this source.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
 
 const MAX_INITIAL_POINTERS: usize = 1 << 20;
 
@@ -22,12 +22,12 @@ unsafe extern "C" {
     fn _init();
     fn _fini();
     fn __libc_start_main(
-        main: ApplicationMain,
+        main: Option<ApplicationMain>,
         argc: i32,
         argv: *const *const u8,
-        init: *const c_void,
-        fini: *const c_void,
-        rtld_fini: *const c_void,
+        init: Option<LifecycleHook>,
+        fini: Option<LifecycleHook>,
+        rtld_fini: Option<LifecycleHook>,
     ) -> !;
     fn __crabc_preinit_array_start_address() -> *const LinkerArrayEntry;
     fn __crabc_preinit_array_end_address() -> *const LinkerArrayEntry;
@@ -99,12 +99,12 @@ pub unsafe extern "C" fn __crabc_x86_64_static_pie_start(initial_stack: *const u
     }
     unsafe {
         __libc_start_main(
-            main,
+            Some(main),
             process.argc,
             process.argv,
-            __crabc_x86_64_executable_init as LifecycleHook as *const c_void,
-            __crabc_x86_64_executable_fini as LifecycleHook as *const c_void,
-            core::ptr::null(),
+            Some(__crabc_x86_64_executable_init),
+            Some(__crabc_x86_64_executable_fini),
+            None,
         )
     }
 }

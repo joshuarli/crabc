@@ -3,8 +3,9 @@
 #
 # The same project-header C fixture first runs against pinned musl, then as a
 # true `-nostdlib -static` executable linked solely through the selected
-# archive. Its local raw clone/wait plumbing observes `_Exit` without selecting
-# ordinary exit or a process-supervision API.
+# archive. Its local raw clone/wait plumbing observes `_Exit` independently of
+# the separately selected bounded static-startup ordinary-exit path and without
+# selecting a process-supervision API.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -72,7 +73,7 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 grep -Eq '[[:space:]][TW][[:space:]]_Exit$' "$archive_symbols" \
     || fail "archive does not define _Exit"
-for unselected in _exit exit abort atexit at_quick_exit quick_exit fork vfork clone \
+for unselected in abort at_quick_exit quick_exit fork vfork clone \
     execve pthread_atfork malloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

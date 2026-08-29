@@ -3,9 +3,9 @@
 #
 # A shared C lifecycle body first executes with pinned musl, then a true
 # static PIE links exact pinned-rustc rcrt1.o/crti.o/crtn.o source objects and
-# the selected crabc-libc archive. The fixture owns only the narrow
-# __libc_start_main lifecycle seam; libc alone validates/materializes PT_TLS
-# and retains the worker template.
+# the selected crabc-libc archive. The archive owns both the narrow
+# __libc_start_main lifecycle and PT_TLS materialization, then retains the
+# selected worker template.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -128,7 +128,6 @@ candidate_without_archive="$work_dir/crabc-crt-static-tls-without-archive"
 without_archive_log="$work_dir/without-archive-link.log"
 probe_object="$work_dir/probe.o"
 peer_object="$work_dir/peer.o"
-seam_object="$work_dir/startup-seam.o"
 header_trace="$work_dir/header-trace"
 rcrt_symbols="$work_dir/rcrt-symbols"
 rcrt_disassembly="$work_dir/rcrt-disassembly"
@@ -151,7 +150,7 @@ bad_tls_filesz="$work_dir/candidate-bad-tls-filesz"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_crt_static_tls_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h pthread.h stdint.h bits/alltypes.h features.h; do
+for header in errno.h pthread.h stdint.h stdlib.h bits/alltypes.h features.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project ${header}"
 done
@@ -167,8 +166,8 @@ else
     reference_status=$?
     fail "pinned-musl reference exited ${reference_status} with output ${reference_output@Q}"
 fi
-[ "$reference_output" = PIMF ] ||
-    fail "pinned-musl reference lifecycle output is ${reference_output@Q}, not PIMF"
+[ "$reference_output" = PIMBCAF ] ||
+    fail "pinned-musl reference lifecycle output is ${reference_output@Q}, not PIMBCAF"
 
 mkdir "$crt_dir"
 for object in rcrt1 crti crtn; do
@@ -202,7 +201,8 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap pthread_create pthread_join; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap __libc_start_main \
+    _exit exit atexit __cxa_atexit __cxa_finalize __funcs_on_exit pthread_create pthread_join; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -221,28 +221,27 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|
     fail "PIC archive selects a resolver TLS path or unowned runtime dependency: ${archive_violation@Q}"
 fi
 
-for source_and_object in \
-    "compat/x86_64/libc_crt_static_tls_probe.c:$probe_object" \
-    "compat/x86_64/libc_crt_static_tls_peer.c:$peer_object" \
-    "compat/x86_64/libc_crt_static_tls_startup_seam.c:$seam_object"; do
-    source_path="${source_and_object%%:*}"
-    object_path="${source_and_object#*:}"
-    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fPIE -ffreestanding -fno-builtin \
-        -fno-stack-protector -ftls-model=local-exec -I"$ROOT_DIR/include" \
-        -c "$source_path" -o "$object_path"
-done
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_CRT_STATIC_TLS_CANDIDATE \
+    -fPIE -ffreestanding -fno-builtin -fno-stack-protector \
+    -ftls-model=local-exec -I"$ROOT_DIR/include" \
+    -c compat/x86_64/libc_crt_static_tls_probe.c -o "$probe_object"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fPIE -ffreestanding -fno-builtin \
+    -fno-stack-protector -ftls-model=local-exec -I"$ROOT_DIR/include" \
+    -c compat/x86_64/libc_crt_static_tls_peer.c -o "$peer_object"
 
 if "$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$probe_object" "$peer_object" \
-    "$seam_object" "$crt_dir/crtn.o" -o "$candidate_without_archive" >"$without_archive_log" 2>&1; then
+    "$crt_dir/crtn.o" -o "$candidate_without_archive" >"$without_archive_log" 2>&1; then
     fail "rcrt1 static PIE linked without the required libc archive"
 fi
 grep -Fq '__crabc_x86_static_tls_bootstrap' "$without_archive_log" ||
     fail "no-archive link did not fail at the libc TLS-bootstrap boundary"
+grep -Fq '__libc_start_main' "$without_archive_log" ||
+    fail "no-archive link did not fail at the libc startup boundary"
 
 "$link_editor" -pie -static --no-dynamic-linker --no-undefined -z relro -z now -e _start \
     "$crt_dir/rcrt1.o" "$crt_dir/crti.o" "$probe_object" "$peer_object" \
-    "$seam_object" "$archive" "$crt_dir/crtn.o" -o "$candidate"
+    "$archive" "$crt_dir/crtn.o" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --file-header --wide "$candidate" >"$candidate_file_header"
@@ -279,16 +278,17 @@ lifecycle_call_pattern="call.*# (0x)?0*${lifecycle_slot}([[:space:]]|<)"
 grep -Eq "$bootstrap_call_pattern" "$candidate_startup_disassembly" ||
     fail "CRT startup does not call libc through its RELATIVE TLS-bootstrap slot"
 grep -Eq "$lifecycle_call_pattern" "$candidate_startup_disassembly" ||
-    fail "CRT startup does not enter the fixture lifecycle through its RELATIVE slot"
+    fail "CRT startup does not enter libc startup through its RELATIVE slot"
 bootstrap_line="$(grep -nE "$bootstrap_call_pattern" "$candidate_startup_disassembly" | head -n 1 | cut -d: -f1)"
 lifecycle_line="$(grep -nE "$lifecycle_call_pattern" "$candidate_startup_disassembly" | head -n 1 | cut -d: -f1)"
 if [ -z "$bootstrap_line" ] || [ -z "$lifecycle_line" ] ||
     (( bootstrap_line >= lifecycle_line )); then
-    fail "CRT enters the fixture lifecycle before libc installs initial TLS"
+    fail "CRT enters libc startup before it installs initial TLS"
 fi
 
 for symbol in __crabc_x86_static_tls_bootstrap __crabc_x86_64_static_pie_start \
-    __libc_start_main pthread_create pthread_join main; do
+    __libc_start_main _exit exit atexit __cxa_atexit __cxa_finalize __funcs_on_exit \
+    pthread_create pthread_join main; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -324,8 +324,8 @@ else
     candidate_status=$?
     fail "candidate execution exited ${candidate_status}"
 fi
-[ "$candidate_output" = PIMF ] ||
-    fail "candidate lifecycle output is ${candidate_output@Q}, not PIMF"
+[ "$candidate_output" = PIMBCAF ] ||
+    fail "candidate lifecycle output is ${candidate_output@Q}, not PIMBCAF"
 
 candidate_phoff="$(od -An -tu8 -j "$ELF64_PROGRAM_HEADER_OFFSET" -N 8 "$candidate" | tr -d '[:space:]')"
 candidate_phnum="$(od -An -tu2 -j "$ELF64_PROGRAM_HEADER_COUNT_OFFSET" -N 2 "$candidate" | tr -d '[:space:]')"

@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 enum {
     primary_initial_value = 0x13579bdf,
@@ -153,11 +154,53 @@ static void init(void)
     emit('I');
 }
 
+static unsigned int callbacks_completed;
+static unsigned int quiet_callbacks_completed;
+static unsigned char cxa_argument;
+
+static int main_values_hold(void)
+{
+    return errno == EACCES && crabc_crt_primary_initial == main_value &&
+        crabc_crt_primary_tbss == main_value && crabc_crt_peer_initial == main_value &&
+        crabc_crt_peer_tbss == main_value;
+}
+
+static void first_exit_handler(void)
+{
+    if (!main_values_hold() || callbacks_completed != 6)
+        reject(89);
+    callbacks_completed = 7;
+    emit('A');
+}
+
+static void second_exit_handler(void)
+{
+    if (!main_values_hold() || callbacks_completed != 0 ||
+        quiet_callbacks_completed != 28)
+        reject(90);
+    callbacks_completed = 2;
+    emit('B');
+}
+
+static void cxa_exit_handler(void *argument)
+{
+    if (!main_values_hold() || argument != &cxa_argument || callbacks_completed != 2)
+        reject(93);
+    callbacks_completed = 6;
+    emit('C');
+}
+
+static void quiet_exit_handler(void)
+{
+    ++quiet_callbacks_completed;
+}
+
 static void fini(void)
 {
     if (errno != EACCES || crabc_crt_primary_initial != main_value ||
         crabc_crt_primary_tbss != main_value || crabc_crt_peer_initial != main_value ||
-        crabc_crt_peer_tbss != main_value)
+        crabc_crt_peer_tbss != main_value || callbacks_completed != 7 ||
+        quiet_callbacks_completed != 28)
         reject(84);
     emit('F');
 }
@@ -189,12 +232,20 @@ int main(int argc, char **argv, char **envp)
     };
     int *main_errno_location = __errno_location();
 
+    extern int __cxa_atexit(void (*)(void *), void *, void *);
+    extern void __cxa_finalize(void *);
+
 #if defined(CRABC_CRT_STATIC_TLS_MUSL_REFERENCE)
     /* Musl's ordinary route does not call .preinit_array. Keep its TLS and
      * pthread behavior as the oracle while the fixture explicitly supplies
      * the lifecycle sequence that real rcrt1 owns in the candidate. */
     preinit();
     init();
+    /* Ordinary musl exit owns the LIFO callback walk. Its normal CRT does
+     * not dispatch this fixture's fini array, so establish the candidate's
+     * pre-application fini registration explicitly before app handlers. */
+    if (atexit(fini) != 0)
+        return 91;
 #endif
 
     if (argc <= 0 || argv == 0 || argv[0] == 0 || envp == 0 ||
@@ -218,9 +269,22 @@ int main(int argc, char **argv, char **envp)
         crabc_crt_primary_tbss != main_value || crabc_crt_peer_initial != main_value ||
         crabc_crt_peer_tbss != main_value)
         return 88;
-    emit('M');
-#if defined(CRABC_CRT_STATIC_TLS_MUSL_REFERENCE)
-    fini();
+    if (atexit(first_exit_handler) != 0 ||
+        __cxa_atexit(cxa_exit_handler, &cxa_argument, 0) != 0 ||
+        atexit(second_exit_handler) != 0)
+        return 92;
+    /* Musl leaves ordinary registrations for the process-exit walk; the
+     * selected archive intentionally preserves that no-op compatibility
+     * boundary instead of claiming DSO-specific destruction. */
+    __cxa_finalize(0);
+    for (unsigned int index = 0; index < 28; ++index) {
+        if (atexit(quiet_exit_handler) != 0)
+            return 94;
+    }
+#if defined(CRABC_CRT_STATIC_TLS_CANDIDATE)
+    if (atexit(quiet_exit_handler) != -1)
+        return 95;
 #endif
+    emit('M');
     return 0;
 }

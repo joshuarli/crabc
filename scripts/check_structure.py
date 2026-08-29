@@ -111,7 +111,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # primitives, narrow simple signal control, bounded process-signal execution,
 # one bounded pthread create/exit/
 # join initial-TLS worker, named termios control, selected
-# process context, child reaping, C11 immediate termination, callback algorithms,
+# process context, child reaping, C11 immediate termination, bounded static
+# startup/ordinary exit, callback algorithms,
 # selected descriptor entry, fcntl status control, and bounded generic ioctl,
 # selected descriptor I/O,
 # selected process resources,
@@ -161,6 +162,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
     Path("libc/src/c_abi/x86_64/signal_foundation.rs"),
     Path("libc/src/c_abi/x86_64/static_c_abi.rs"),
+    Path("libc/src/c_abi/x86_64/static_startup.rs"),
     Path("libc/src/c_abi/x86_64/static_tls.rs"),
     Path("libc/src/c_abi/x86_64/stat_compat.rs"),
     Path("libc/src/c_abi/x86_64/string_copy.rs"),
@@ -3458,7 +3460,9 @@ def check_x86_crt_libc_static_tls_handoff(errors: list[str]) -> None:
     bootstrap_call = "if unsafe { __crabc_x86_static_tls_bootstrap(initial_stack) } != 0"
     lifecycle_call = "unsafe {\n        __libc_start_main("
     for required in (
-        "use core::ffi::{c_int, c_void};",
+        "use core::ffi::c_int;",
+        "type ApplicationMain = unsafe extern \"C\" fn",
+        "type LifecycleHook = unsafe extern \"C\" fn();",
         "fn __crabc_x86_static_tls_bootstrap(initial_stack: *const usize) -> c_int;",
         'core::arch::global_asm!(".hidden __crabc_x86_static_tls_bootstrap");',
         bootstrap_call,
@@ -3515,6 +3519,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "errno.rs"]',
         '#[path = "syscall.rs"]',
         '#[path = "static_tls.rs"]',
+        '#[path = "static_startup.rs"]',
         '#[path = "stat_compat.rs"]',
         '#[path = "credentials.rs"]',
         '#[path = "credential_observation.rs"]',
@@ -3564,6 +3569,48 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/static_c_abi.rs: selected static C ABI root "
                 f"is missing {required!r}"
             )
+
+    static_startup_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+    static_startup_text = static_startup_source.read_text(errors="replace")
+    for required in (
+        "Static Initial TLS v1",
+        "const ATEXIT_CAPACITY: usize = 32;",
+        "pub unsafe extern \"C\" fn __cxa_atexit(",
+        "pub unsafe extern \"C\" fn atexit(",
+        "pub unsafe extern \"C\" fn __funcs_on_exit()",
+        "pub unsafe extern \"C\" fn __cxa_finalize(",
+        "pub unsafe extern \"C\" fn _exit(",
+        "pub unsafe extern \"C\" fn exit(",
+        "pub unsafe extern \"C\" fn __libc_start_main(",
+        "if rtld_fini.is_some() || !static_tls::is_ready()",
+        "if fini.is_some() && unsafe { atexit(fini) } != 0",
+        "immediate_termination::_Exit(127)",
+    ):
+        if required not in static_startup_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/static_startup.rs: selected static "
+                f"startup boundary is missing {required!r}"
+            )
+    static_startup_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            static_startup_text,
+        )
+    )
+    expected_static_startup_exports = {
+        "__cxa_atexit",
+        "atexit",
+        "__funcs_on_exit",
+        "__cxa_finalize",
+        "_exit",
+        "exit",
+        "__libc_start_main",
+    }
+    if static_startup_exports != expected_static_startup_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_startup.rs: selected static startup "
+            "artifact must export only its bounded lifecycle symbols"
+        )
 
     stat_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stat_compat.rs"
     stat_text = stat_source.read_text(errors="replace")
@@ -5505,6 +5552,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         credentials_text,
         errno_text,
         static_tls_text,
+        static_startup_text,
         fenv_text,
         signal_control_text,
         signal_execution_text,
@@ -5782,6 +5830,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "getresuid",
         "getresgid",
         "_Exit",
+        "__cxa_atexit",
+        "atexit",
+        "__funcs_on_exit",
+        "__cxa_finalize",
+        "_exit",
+        "exit",
+        "__libc_start_main",
         "bsearch",
         "__qsort_r",
         "qsort",
@@ -5806,6 +5861,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("credentials.rs", credentials_text),
         ("credential_observation.rs", credential_observation_text),
         ("errno.rs", errno_text),
+        ("static_startup.rs", static_startup_text),
         ("memory.rs", memory_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),

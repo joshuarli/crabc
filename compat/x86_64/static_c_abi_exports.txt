@@ -8,15 +8,19 @@
 # glue, uninstalled and not a stable public C API.
 _Exit
 __crabc_x86_static_tls_bootstrap
+__cxa_atexit
+__cxa_finalize
 __errno_location
 __fesetround
 __flt_rounds
 __fpclassify
 __fpclassifyf
 __fpclassifyl
+__funcs_on_exit
 __fxstat
 __fxstatat
 __libc_current_sigrtmax
+__libc_start_main
 __lxstat
 __memcpy_fwd
 __qsort_r
@@ -26,12 +30,14 @@ __signbitf
 __signbitl
 __sigsetjmp
 __xstat
+_exit
 _longjmp
 _setjmp
 abs
 accept
 accept4
 access
+atexit
 atoi
 atol
 atoll
@@ -65,6 +71,7 @@ dup2
 dup3
 eaccess
 euidaccess
+exit
 faccessat
 fcntl
 fdatasync

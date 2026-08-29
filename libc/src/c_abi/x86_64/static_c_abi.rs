@@ -13,7 +13,8 @@
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
-//! find-first-set, C11 immediate-termination, callback-algorithms, and POSIX
+//! find-first-set, C11 immediate-termination, a bounded private static
+//! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
 //! `nanosleep` and `clock_nanosleep`
 //! artifacts.
 //! It deliberately shares only the raw
@@ -21,7 +22,9 @@
 //! private Static Initial TLS v1 owner. The
 //! archive is not `libc.so`,
 //! a general C runtime, a CRT, a general pthread/TLS lifecycle, a dynamic-TLS
-//! implementation, a loader, or a sysroot. The pthread artifacts are
+//! implementation, a loader, or a sysroot. Its private static startup owns
+//! only bounded no-allocation `atexit` callbacks; it is not stdio flushing,
+//! C++/DSO destruction, or a concurrent process-exit protocol. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path; it is not a claim for the broader
 //! pthread header surface.
@@ -89,6 +92,8 @@ mod process_context;
 mod child_reaping;
 #[path = "immediate_termination.rs"]
 mod immediate_termination;
+#[path = "static_startup.rs"]
+mod static_startup;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
 #[path = "clock_nanosleep.rs"]

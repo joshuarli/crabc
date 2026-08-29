@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 41)
+        self.assertEqual(report["verified_artifact_count"], 42)
         self.assertEqual(report["header_layout_probe_count"], 35)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1149,7 +1149,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 32
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 33
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -1265,6 +1265,50 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("EBUSY loops", descriptor_io["native_evidence"][0]["scope"])
         self.assertIn(
             "libc/src/c_abi/x86_64/descriptor_io.rs",
+            posix_runtime["source_owners"],
+        )
+        descriptor_lifecycle = artifacts_by_id["static-c-descriptor-lifecycle"]
+        assert isinstance(descriptor_lifecycle, dict)
+        self.assertNotIn("capabilities", descriptor_lifecycle)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stat_compat.rs",
+            "libc/src/c_abi/x86_64/descriptor_entry.rs",
+            "libc/src/c_abi/x86_64/descriptor_control.rs",
+            "libc/src/c_abi/x86_64/descriptor_io.rs",
+            "include/fcntl.h",
+            "include/stddef.h",
+            "include/sys/stat.h",
+            "compat/x86_64/fcntl_header_abi_probe.c",
+            "compat/x86_64/run_fcntl_header_abi.sh",
+            "compat/x86_64/stat_header_abi_probe.c",
+            "compat/x86_64/run_stat_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_descriptor_lifecycle_probe.c",
+            "compat/x86_64/libc_descriptor_lifecycle_start.S",
+            "compat/x86_64/run_libc_descriptor_lifecycle.sh",
+        ):
+            self.assertIn(owner, descriptor_lifecycle["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in descriptor_lifecycle["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-descriptor-lifecycle"},
+        )
+        self.assertIn(
+            "descriptor-lifecycle composition", descriptor_lifecycle["description"]
+        )
+        self.assertIn(
+            "does not establish a general C runtime",
+            descriptor_lifecycle["description"],
+        )
+        self.assertIn(
+            "fdatasync", descriptor_lifecycle["native_evidence"][0]["scope"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/stat_compat.rs",
             posix_runtime["source_owners"],
         )
         process_resources = artifacts_by_id["static-c-process-resources"]
@@ -2170,6 +2214,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crt/build_x86_64.py",
             "crt/src/x86_64_startup.rs",
             "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/static_startup.rs",
             "crt/fixtures/static_pie_fixture_x86_64.rs",
             "crt/tests/test_x86_64_static_pie.py",
             "crt/x86_64-static-pie.md",
@@ -4348,7 +4393,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crti.o",
             "crtn.o",
             "__crabc_x86_static_tls_bootstrap",
-            "preinit, init, main, and fini",
+            "__libc_start_main",
+            "preinit, init, main",
+            "32-registration",
+            "atexit",
             "PT_TLS.p_filesz",
             "public x86 support",
         ):
@@ -4360,18 +4408,22 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crt/src/x86_64_crti.rs",
             "crt/src/x86_64_crtn.rs",
             "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/static_startup.rs",
+            "libc/src/c_abi/x86_64/immediate_termination.rs",
+            "include/stdlib.h",
             "compat/x86_64/libc_crt_static_tls_probe.c",
             "compat/x86_64/libc_crt_static_tls_peer.c",
-            "compat/x86_64/libc_crt_static_tls_startup_seam.c",
             "compat/x86_64/run_libc_crt_static_tls.sh",
         ):
             self.assertIn(owner, crt_handoff["source_owners"])
         crt_scope = crt_handoff["native_evidence"][0]["scope"]
         for phrase in (
             "pinned-musl",
-            "explicit fixture lifecycle",
+            "explicit reference adaptation",
             "no archive link fails",
-            "PIMF",
+            "archive-owned startup",
+            "32-registration",
+            "PIMBCAF",
             "PT_TLS p_filesz mutation",
             "exit 127",
             "public x86 support",
@@ -5064,6 +5116,39 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-status-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-descriptor-entry command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_descriptor_lifecycle_artifact_keeps_its_composition_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-descriptor-lifecycle"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[1], str)
+        prerequisites[1] = prerequisites[1].replace("fstat=5", "fstat=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "selected stat ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-descriptor-lifecycle"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-descriptor-io"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-descriptor-lifecycle command"
         ):
             ledger.validate_ledger(data)
 

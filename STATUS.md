@@ -34,12 +34,14 @@ candidate-only cap check exhausts all slots and proves reuse after joining.
 The fourth artifact, `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls
-`__crabc_x86_static_tls_bootstrap(original_entry_stack)` before the fixture
-lifecycle seam. It proves one initialized/TBSS/high-alignment `PT_TLS` image,
-preinit/init/main/fini order, one fresh selected worker, and malformed
+`__crabc_x86_static_tls_bootstrap(original_entry_stack)` before libc's bounded
+static `__libc_start_main`. It proves one initialized/TBSS/high-alignment
+`PT_TLS` image, preinit/init/main/ordinary-exit/fini order, a 32-registration
+no-allocation LIFO callback block, one fresh selected worker, and malformed
 `PT_TLS.p_filesz` rejection. `libc.pthread-tls` remains planned: this is not
 general pthread/TLS parity, dynamic or loader TLS, a general CRT/libc startup
-ABI, sysroot support, or public x86 support.
+ABI, stdio/C++/DSO or concurrent-exit lifecycle, sysroot support, or public
+x86 support.
 
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root
@@ -70,6 +72,16 @@ paths, direct errno behavior, and strong caller alias override. It is not
 filesystem capability or C-runtime parity; pathname policy, `fchmodat`/
 `lchmod`, broader C credential/process behavior, and public x86 support remain
 planned.
+
+`./scripts/dev-x86_64.sh libc-descriptor-lifecycle` is a separate private
+`static-c-descriptor-lifecycle` composition artifact inside that same planned
+family. It runs one project-header C body through pinned musl and then a
+freestanding static archive, composing the already selected descriptor-entry,
+fcntl-status, descriptor-I/O, and `fstat`/`fstatat` leaves through a
+PID-isolated relative-directory lifecycle. Raw syscalls only make and remove
+the test directory. It proves no descriptor/filesystem capability, general
+C runtime, cancellation behavior, family completion, AArch64 parity, or
+public x86 support.
 
 `./scripts/dev-x86_64.sh libc-signal-execution` is one further private
 `static-c-process-signal-execution` artifact inside planned

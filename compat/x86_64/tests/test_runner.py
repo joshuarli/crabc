@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -98,6 +98,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
+        self.assertIn("libc-descriptor-lifecycle", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -1447,6 +1448,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-descriptor-io)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-io takes no arguments"',
+            source,
+        )
+        self.assertIn('run_libc_descriptor_lifecycle_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_descriptor_lifecycle.sh', source
+        )
+        self.assertIn(
+            '    libc-descriptor-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-lifecycle takes no arguments"',
             source,
         )
         self.assertIn('run_libc_process_resources_probe()', source)
@@ -3098,7 +3107,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-static-tls-v1", runner)
 
     def test_libc_crt_static_tls_handoff_artifact_stays_private_and_composed(self) -> None:
-        """Ratchet the real rcrt1-to-libc TLS boundary without promoting startup."""
+        """Ratchet archive-owned static startup without promoting it to general CRT."""
 
         rcrt1 = (ROOT / "crt" / "src" / "x86_64_rcrt1.rs").read_text(
             encoding="utf-8"
@@ -3109,14 +3118,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         static_tls = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_tls.rs"
         ).read_text(encoding="utf-8")
+        static_startup = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_crt_static_tls_probe.c"
         ).read_text(encoding="utf-8")
         peer = (
             ROOT / "compat" / "x86_64" / "libc_crt_static_tls_peer.c"
-        ).read_text(encoding="utf-8")
-        seam = (
-            ROOT / "compat" / "x86_64" / "libc_crt_static_tls_startup_seam.c"
         ).read_text(encoding="utf-8")
         artifact_runner = (
             ROOT / "compat" / "x86_64" / "run_libc_crt_static_tls.sh"
@@ -3138,6 +3147,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertLess(startup.index(bootstrap_call), startup.index(lifecycle_call))
         self.assertIn("rcrt1.o", static_tls)
         self.assertIn("Static Initial TLS v1", static_tls)
+        self.assertFalse(
+            (ROOT / "compat" / "x86_64" / "libc_crt_static_tls_startup_seam.c").exists()
+        )
+        for required in (
+            "__libc_start_main",
+            "static_tls::is_ready()",
+            "rtld_fini.is_some()",
+            "ATEXIT_CAPACITY: usize = 32",
+            "__cxa_atexit",
+            "__cxa_finalize",
+            "__funcs_on_exit",
+            "pub unsafe extern \"C\" fn exit",
+            "immediate_termination::_Exit(127)",
+        ):
+            self.assertIn(required, static_startup)
 
         for required in (
             "__thread",
@@ -3149,13 +3173,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_create",
             "pthread_join",
             "CRABC_CRT_STATIC_TLS_MUSL_REFERENCE",
+            "CRABC_CRT_STATIC_TLS_CANDIDATE",
+            "atexit",
+            "__cxa_atexit",
+            "__cxa_finalize",
+            "quiet_exit_handler",
         ):
             self.assertIn(required, probe)
         for required in ("__thread", "crabc_crt_peer_initial", "crabc_crt_peer_tbss"):
             self.assertIn(required, peer)
-        self.assertIn("__libc_start_main", seam)
-        self.assertIn("exit_group", seam)
-
         for required in (
             "rustup run nightly-2026-07-24 rustc",
             "rcrt1.o",
@@ -3166,15 +3192,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "GOTTPOFF",
             "candidate_without_archive",
             "__crabc_x86_static_tls_bootstrap",
+            "__libc_start_main",
             "PT_PHDR",
             "tls_filesz_offset",
-            "PIMF",
+            "PIMBCAF",
             "candidate_startup_disassembly",
             "RELATIVE TLS-bootstrap slot",
             "expect_bootstrap_rejection",
+            "CRABC_CRT_STATIC_TLS_CANDIDATE",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("startup_seam", artifact_runner)
 
         self.assertIn('id = "static-c-crt-initial-tls-handoff"', parity_ledger)
         self.assertIn(
@@ -3576,6 +3605,133 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-descriptor-io", runner)
+
+    def test_libc_static_c_abi_descriptor_lifecycle_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        stat_compat = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stat_compat.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_entry = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_entry.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_control = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_control.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_io = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_io.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_lifecycle_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_lifecycle_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_descriptor_lifecycle.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for module in (
+            '#[path = "stat_compat.rs"]',
+            '#[path = "descriptor_entry.rs"]',
+            '#[path = "descriptor_control.rs"]',
+            '#[path = "descriptor_io.rs"]',
+        ):
+            self.assertIn(module, static_root)
+        for symbol in ("fn fstat(", "fn fstatat("):
+            self.assertIn(symbol, stat_compat)
+        for symbol in ("fn open(", "fn openat(", "fn creat("):
+            self.assertIn(symbol, descriptor_entry)
+        self.assertIn("fcntl_no_argument", descriptor_control)
+        for symbol in ("fn read(", "fn pread(", "fn dup3("):
+            self.assertIn(symbol, descriptor_io)
+        for required in (
+            "#include <errno.h>",
+            "#include <fcntl.h>",
+            "#include <stddef.h>",
+            "#include <sys/stat.h>",
+            "#include <unistd.h>",
+            "fstat declaration",
+            "fstatat declaration",
+            "O_CLOEXEC",
+            "O_LARGEFILE",
+            "ftruncate(primary, 6)",
+            "fstatat(directory_fd, \"primary\"",
+            "dup3(duplicate, duplicate, O_CLOEXEC)",
+            "close(-1)",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_descriptor_lifecycle_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_fcntl_header_abi.sh",
+            "run_stat_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_fcntl_no_argument_path",
+            "assert_fcntl_scalar_path",
+            "assert_named_syscall fstat 5",
+            "assert_named_syscall fstatat 106",
+            "assert_named_syscall dup3 124",
+            "assert_named_syscall fsync 4a",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "open",
+            "openat",
+            "creat",
+            "fcntl",
+            "read",
+            "write",
+            "pread",
+            "pwrite",
+            "lseek",
+            "fstat",
+            "fstatat",
+            "dup",
+            "dup2",
+            "dup3",
+            "ftruncate",
+            "fsync",
+            "fdatasync",
+            "close",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-descriptor-lifecycle"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-descriptor-lifecycle"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_descriptor_lifecycle_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_descriptor_lifecycle.sh", runner
+        )
+        self.assertIn(
+            '    libc-descriptor-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-lifecycle takes no arguments"',
+            runner,
+        )
 
     def test_libc_static_c_abi_process_resources_artifact_stays_narrow(self) -> None:
         static_root = (

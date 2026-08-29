@@ -345,6 +345,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-access
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
 ./scripts/dev-x86_64.sh libc-descriptor-io
+./scripts/dev-x86_64.sh libc-descriptor-lifecycle
 ./scripts/dev-x86_64.sh libc-process-resources
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
@@ -1759,19 +1760,21 @@ support. This isolated archive fixture is distinct from the composed
 `libc-crt-static-tls` is a separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. It
 links the real Rust `rcrt1.o`/`crti.o`/`crtn.o` objects with the selected libc
-archive and a fixture-owned narrow `__libc_start_main` seam. The no-archive
-link must fail at the hidden, non-preemptible
-`__crabc_x86_static_tls_bootstrap` boundary. The candidate has one real
-initialized/TBSS/4096-byte-aligned `PT_TLS` image from two C translation
-units; after checked relocation and RELRO the real CRT invokes that libc owner
-before preinit, init, main, and fini. One selected normal pthread worker sees
-fresh initial TLS and errno. The gate rejects an interpreter, `DT_NEEDED`,
-PLT, unresolved symbols, and dynamic TLS forms, then corrupts final
-`PT_TLS.p_filesz` and requires status 127. Pinned musl is the selected C
-TLS/pthread oracle; because its ordinary startup does not dispatch the
-fixture's preinit array, the reference fixture explicitly invokes the same
-lifecycle sequence. This does not select a general CRT/startup or libc entry
-ABI, pthread/TLS parity, loader TLS, sysroot, or public x86 support.
+archive-owned bounded `__libc_start_main`. The no-archive link must fail at
+both the hidden, non-preemptible `__crabc_x86_static_tls_bootstrap` and startup
+boundaries. The candidate has one real initialized/TBSS/4096-byte-aligned
+`PT_TLS` image from two C translation units; after checked relocation and
+RELRO the real CRT invokes libc before preinit, init, main, 32 fixed
+no-allocation C `atexit`/`__cxa_atexit` registrations in LIFO order, and
+fini. Its no-op `__cxa_finalize` retains ordinary handlers for that exit walk.
+One selected normal pthread worker sees fresh initial TLS and errno. The gate
+rejects an interpreter, `DT_NEEDED`, PLT, unresolved symbols, and dynamic TLS
+forms, then corrupts final `PT_TLS.p_filesz` and requires status 127. Pinned
+musl is the selected C TLS/pthread/ordinary-exit oracle; because its ordinary
+startup does not dispatch the fixture's preinit array, the reference fixture
+explicitly adapts that lifecycle. This does not select a general CRT/startup
+or libc entry ABI, stdio/C++/DSO or concurrent-exit lifecycle, pthread/TLS
+parity, loader TLS, sysroot, or public x86 support.
 
 `libc-pthread-create-join-tls` is a separately recorded static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
@@ -2033,6 +2036,16 @@ the exact musl `pwrite` `-1`/O_APPEND boundary, duplication replacement and
 close-on-exec behavior, and pipe flags. It excludes C open/path, generic fcntl-command, or vector
 I/O, pthread cancellation/AIO integration, filesystem durability, general
 runtime, and public x86 support.
+
+`libc-descriptor-lifecycle` is a separately recorded private static
+`verified_artifact` gate over that archive, not a descriptor/filesystem
+capability. One project-header C body runs through pinned musl and then a
+`-nostdlib -static` candidate, composing selected `open`/`openat`/`creat`,
+public status-control `fcntl`, descriptor I/O, `fstat`/`fstatat`, duplication,
+and close behavior in one PID-isolated relative-directory lifecycle. Raw
+syscalls only create and remove that directory. It does not establish general
+C runtime, cancellation, CRT, loader, sysroot, family completion, AArch64
+parity, or public x86 support.
 
 `libc-process-resources` is a separately recorded static
 `verified_artifact` gate over that archive, not a process-resource capability.
@@ -2526,11 +2539,11 @@ x86-support claim.
 
 `./scripts/dev-x86_64.sh libc-crt-static-tls` is the separate composed proof:
 real Rust CRT objects require the hidden libc bootstrap archive boundary, then
-run a high-alignment initialized/TBSS `PT_TLS` image through preinit/init/main/
-fini and one selected worker. It rejects malformed final `PT_TLS.p_filesz`
-with status 127. The fixture owns only the narrow `__libc_start_main` seam, so
-this proves neither general CRT or libc startup, loader TLS, sysroot, nor
-public x86 support.
+run a high-alignment initialized/TBSS `PT_TLS` image through archive-owned
+preinit/init/main/ordinary-exit/fini and one selected worker. It proves the
+fixed 32-entry LIFO ordinary-exit block and rejects malformed final
+`PT_TLS.p_filesz` with status 127. This remains neither general CRT or libc
+startup, loader TLS, sysroot, nor public x86 support.
 
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
@@ -2549,6 +2562,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-fcntl-status-control`,
 `libc-ioctl`,
 `libc-descriptor-io`,
+`libc-descriptor-lifecycle`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,

@@ -53,10 +53,13 @@ handoff:
 
 It links the real `rcrt1.o`/`crti.o`/`crtn.o` with the selected libc archive,
 requires the hidden libc boundary to resolve from that archive, and verifies a
-real initialized/TBSS/high-alignment `PT_TLS` image before preinit, init, main,
-and fini. It also rejects malformed `PT_TLS.p_filesz` with status 127. This
-remains one private static-PIE composition artifact, not complete CRT,
-pthread/TLS, loader, sysroot, or public x86 support.
+real initialized/TBSS/high-alignment `PT_TLS` image before archive-owned
+preinit, init, main, bounded ordinary exit, and fini. It proves 32 fixed
+no-allocation C/C++-ABI callback registrations, LIFO `atexit`/`__cxa_atexit`
+dispatch, and no-op `__cxa_finalize`, then rejects malformed `PT_TLS.p_filesz`
+with status 127. This remains one private static-PIE composition artifact, not
+complete CRT, stdio/C++/DSO or concurrent-exit lifecycle, pthread/TLS, loader,
+sysroot, or public x86 support.
 
 Remaining work is intentionally out of this slice: dynamic `crt1.o` and
 `Scrt1.o`, owned-loader startup handoff, x86-64 ldso relocation/TLS support,

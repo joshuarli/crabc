@@ -3509,7 +3509,10 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "crti.o",
         "crtn.o",
         "__crabc_x86_static_tls_bootstrap",
-        "preinit, init, main, and fini",
+        "__libc_start_main",
+        "preinit, init, main",
+        "32-registration",
+        "atexit",
         "PT_TLS.p_filesz",
         "general CRT/startup",
         "public x86 support",
@@ -3525,10 +3528,12 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "crt/src/x86_64_crti.rs",
         "crt/src/x86_64_crtn.rs",
         "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/immediate_termination.rs",
         "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "include/stdlib.h",
         "compat/x86_64/libc_crt_static_tls_probe.c",
         "compat/x86_64/libc_crt_static_tls_peer.c",
-        "compat/x86_64/libc_crt_static_tls_startup_seam.c",
         "compat/x86_64/run_libc_crt_static_tls.sh",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
@@ -3550,6 +3555,9 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "ARCH_SET_FS",
         "GOTTPOFF/DTPOFF",
         "__tls_get_addr",
+        "__libc_start_main",
+        "32-registration",
+        "__cxa_finalize",
         "fresh Static Initial TLS v1 image",
     ):
         require(
@@ -3567,10 +3575,12 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
     assert isinstance(scope, str)
     for phrase in (
         "pinned-musl",
-        "explicit fixture lifecycle",
+        "explicit reference adaptation",
         "no archive link fails",
         "PT_PHDR ET_DYN static PIE",
-        "PIMF",
+        "archive-owned startup",
+        "32-registration",
+        "PIMBCAF",
         "PT_TLS p_filesz mutation",
         "exit 127",
         "general CRT",
@@ -4851,6 +4861,197 @@ def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the composed descriptor proof private and tied to its boundaries."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-descriptor-lifecycle"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-descriptor-lifecycle artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-descriptor-lifecycle must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "descriptor-lifecycle composition",
+        "`open`",
+        "`openat`",
+        "`creat`",
+        "`fstat`/`fstatat`",
+        "O_CLOEXEC",
+        "O_LARGEFILE",
+        "shared open-file-description status",
+        "Fixture-local raw Linux calls",
+        "does not establish a general C runtime",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-descriptor-lifecycle description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-descriptor-lifecycle.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/stat_compat.rs",
+        "libc/src/c_abi/x86_64/descriptor_entry.rs",
+        "libc/src/c_abi/x86_64/descriptor_control.rs",
+        "libc/src/c_abi/x86_64/descriptor_io.rs",
+        "include/fcntl.h",
+        "include/stddef.h",
+        "include/sys/stat.h",
+        "include/unistd.h",
+        "compat/x86_64/fcntl_header_abi_probe.c",
+        "compat/x86_64/run_fcntl_header_abi.sh",
+        "compat/x86_64/stat_header_abi_probe.c",
+        "compat/x86_64/run_stat_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_descriptor_lifecycle_probe.c",
+        "compat/x86_64/libc_descriptor_lifecycle_start.S",
+        "compat/x86_64/run_libc_descriptor_lifecycle.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-descriptor-lifecycle source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-descriptor-lifecycle.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "open=2" in item
+            and "openat=257" in item
+            and "fcntl=72" in item
+            and "rdi/rsi/rdx" in item
+            and "r10" in item
+            and "F_GETFD/F_GETFL" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-lifecycle must record its entry and variadic fcntl ABI",
+    )
+    require(
+        any(
+            "fstat=5" in item
+            and "fstatat" in item
+            and "newfstatat=262" in item
+            and "144-byte x86 LP64 record" in item
+            and "r10" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-lifecycle must record its selected stat ABI",
+    )
+    require(
+        any(
+            "FD_CLOEXEC" in item
+            and "shared open file description" in item
+            and "O_APPEND" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-lifecycle must record descriptor-state and errno ownership",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "Variant-II thread-pointer self word" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-lifecycle must record its fixture-only TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-descriptor-lifecycle.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "fcntl C/C++ gate" in item
+            and "stat C/C++ gate" in item
+            and "not header closure" in item
+            for item in headers
+        ),
+        "static-c-descriptor-lifecycle must retain its existing header-gate boundary",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "open",
+        "openat",
+        "creat",
+        "fcntl",
+        "read",
+        "write",
+        "pread",
+        "pwrite",
+        "lseek",
+        "fstat",
+        "fstatat",
+        "dup",
+        "dup2",
+        "dup3",
+        "ftruncate",
+        "fsync",
+        "fdatasync",
+        "close",
+    ):
+        require(
+            symbol in static_exports,
+            f"static-c-descriptor-lifecycle must retain selected export {symbol}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-descriptor-lifecycle"},
+        "static-c-descriptor-lifecycle must use the closed libc-descriptor-lifecycle command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "`-nostdlib -static` candidate",
+                "PT_TLS capacity",
+                "PID-isolated descriptor-relative lifecycle",
+                "O_CLOEXEC/O_LARGEFILE",
+                "fstat/fstatat",
+                "dup/dup2/dup3",
+                "public x86 support",
+            )
+        ),
+        "static-c-descriptor-lifecycle evidence must retain its bounded composition scope",
+    )
+
+
 def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     """Keep the stateless find-first-set artifact identity and scope durable."""
     artifacts = require_verified_artifacts(
@@ -5293,6 +5494,7 @@ def validate_ledger(
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
+    require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
 
