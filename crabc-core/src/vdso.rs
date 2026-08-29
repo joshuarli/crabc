@@ -270,8 +270,8 @@ unsafe fn resolve_kernel_vdso_function(
     // SAFETY: `image_length` is derived from the kernel vDSO's PT_LOAD file
     // ranges and capped at one MiB before creating this slice.
     let image = unsafe { core::slice::from_raw_parts(base as *const u8, image_length) };
-    let offset = symbol_offset(image)?;
-    let address = base.checked_add(offset)?;
+    let file_offset = symbol_offset(image)?;
+    let address = base.checked_add(file_offset)?;
     (address != UNRESOLVED && address & 3 == 0).then_some(address)
 }
 
@@ -288,8 +288,9 @@ fn gettimeofday_symbol_offset(image: &[u8]) -> Option<usize> {
 
 /// Resolve one of `names` from the bounded kernel vDSO image.
 ///
-/// Every candidate must be a function inside an executable `PT_LOAD` range;
-/// callers separately validate the resulting address against their ABI.
+/// Every candidate must be a function inside an executable `PT_LOAD` range.
+/// The returned value is its bounded file offset within the kernel mapping,
+/// which callers add to `AT_SYSINFO_EHDR` after this translation.
 fn vdso_symbol_offset(image: &[u8], names: &[&[u8]]) -> Option<usize> {
     let table = program_header_table(image)?;
     let table_bytes = table.entry_size.checked_mul(table.count)?;
@@ -344,7 +345,13 @@ fn vdso_symbol_offset(image: &[u8], names: &[&[u8]]) -> Option<usize> {
     let symbol = names.iter().find_map(|name| {
         lookup_sysv_symbol(hash, symbols, strings, name, bucket_count, symbol_count)
     })?;
-    executable_virtual_range_to_file(image, table, symbol, 4).map(|_| symbol)
+
+    // Translate the ELF virtual coordinate through its executable PT_LOAD
+    // record before returning it to the caller. Native kernels normally use
+    // load-relative values; QEMU user-mode can expose the same metadata
+    // already relocated. Both forms map to this bounded file offset, so the
+    // caller adds `AT_SYSINFO_EHDR` exactly once.
+    executable_virtual_range_to_file(image, table, symbol, 4)
 }
 
 fn program_header_table(image: &[u8]) -> Option<ProgramHeaderTable> {
@@ -649,6 +656,23 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_an_already_relocated_vdso_symbol_value_to_its_file_offset() {
+        let mut image = synthetic_vdso();
+        // QEMU user-mode can expose a consistent, already-relocated set of
+        // ELF virtual coordinates. The resolver must translate them back to
+        // the same bounded file offset before adding the vDSO load base.
+        const RELOCATED_BASE: u64 = 0x0000_7fff_0000_0000;
+        put_u64(&mut image, 64 + 16, RELOCATED_BASE);
+        put_u64(&mut image, 120 + 16, RELOCATED_BASE + 176);
+        put_dynamic(&mut image, 176, 5, RELOCATED_BASE + 320);
+        put_dynamic(&mut image, 208, 6, RELOCATED_BASE + 384);
+        put_dynamic(&mut image, 240, 4, RELOCATED_BASE + 280);
+        put_u64(&mut image, 384 + 24 + 8, RELOCATED_BASE + 448);
+
+        assert_eq!(clock_gettime_symbol_offset(&image), Some(448));
+    }
+
+    #[test]
     fn missing_vdso_metadata_selects_the_direct_syscall_fallback() {
         let mut output = Timespec {
             seconds: 0,
@@ -705,8 +729,12 @@ mod tests {
     fn live_kernel_vdso_resolves_and_accepts_monotonic_time() {
         let base = param::auxv_value(param::AT_SYSINFO_EHDR)
             .expect("Linux supplies AT_SYSINFO_EHDR for the vDSO");
+        // Native kernels and QEMU user-mode represent these ELF virtual
+        // coordinates differently; the bounded parser normalizes either
+        // form to the vDSO function's file offset before dispatching it.
         let address = unsafe {
-            resolve_kernel_clock_gettime(base).expect("vDSO exports a bounded clock_gettime entry")
+            resolve_kernel_clock_gettime(base)
+                .expect("vDSO exports a bounded clock_gettime entry")
         };
         let function: ClockGettime = unsafe { core::mem::transmute(address) };
         let mut output = Timespec {
@@ -723,8 +751,11 @@ mod tests {
     fn live_kernel_vdso_resolves_and_accepts_realtime() {
         let base = param::auxv_value(param::AT_SYSINFO_EHDR)
             .expect("Linux supplies AT_SYSINFO_EHDR for the vDSO");
+        // See the monotonic route above: validated native and QEMU metadata
+        // both normalize to a bounded vDSO entry before it is dispatched.
         let address = unsafe {
-            resolve_kernel_gettimeofday(base).expect("vDSO exports a bounded gettimeofday entry")
+            resolve_kernel_gettimeofday(base)
+                .expect("vDSO exports a bounded gettimeofday entry")
         };
         let function: Gettimeofday = unsafe { core::mem::transmute(address) };
         let mut output = Timeval {
