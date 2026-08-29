@@ -18,6 +18,9 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
+HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH = (
+    ROOT / "compat" / "x86_64" / "headers-layouts-foundation.toml"
+)
 PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
 PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
@@ -25,6 +28,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v2"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -41,6 +45,318 @@ EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "stdatomic.h",
     "strverscmp.h",
     "sys/module.h",
+}
+
+EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
+    "c11-gnu": {
+        "language": "c",
+        "standard": "c11",
+        "macros": ["_GNU_SOURCE"],
+        "state": "partial-verified",
+    },
+    "cxx17-gnu": {
+        "language": "c++",
+        "standard": "c++17",
+        "macros": ["_GNU_SOURCE"],
+        "state": "planned",
+    },
+    "c11-strict": {
+        "language": "c",
+        "standard": "c11",
+        "macros": [],
+        "state": "planned",
+    },
+    "c11-posix-2008": {
+        "language": "c",
+        "standard": "c11",
+        "macros": ["_POSIX_C_SOURCE=200809L"],
+        "state": "planned",
+    },
+    "c11-xopen-700": {
+        "language": "c",
+        "standard": "c11",
+        "macros": ["_XOPEN_SOURCE=700"],
+        "state": "planned",
+    },
+    "c11-bsd": {
+        "language": "c",
+        "standard": "c11",
+        "macros": ["_BSD_SOURCE"],
+        "state": "planned",
+    },
+    "cxx17-strict": {
+        "language": "c++",
+        "standard": "c++17",
+        "macros": [],
+        "state": "planned",
+    },
+}
+
+EXPECTED_HEADER_FOUNDATION_CLASS_IDS = (
+    "pinned-non-uapi",
+    "pinned-uapi-inputs",
+    "project-only-extensions",
+)
+EXPECTED_HEADER_FOUNDATION_CURRENT_PROFILES = ("c11-gnu", "cxx17-gnu")
+EXPECTED_HEADER_FOUNDATION_FUTURE_PROFILES = (
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-bsd",
+    "cxx17-strict",
+)
+EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
+    "pinned-non-uapi": (
+        "public-path-inventory",
+        "candidate-tree-presence",
+        "c11-gnu-consumability",
+        "candidate-transitive-closure",
+        "cxx17-consumability",
+        "feature-visibility",
+        "callable-prototype-layout",
+        "callable-linkage-ownership",
+        "legacy-direct-layout-inputs",
+        "static-c-cxx-composition",
+    ),
+    "pinned-uapi-inputs": (
+        "public-path-inventory",
+        "candidate-tree-presence",
+        "uapi-input-provenance",
+        "candidate-transitive-closure",
+        "cxx17-consumability",
+        "feature-visibility",
+        "callable-prototype-layout",
+        "callable-linkage-ownership",
+    ),
+    "project-only-extensions": (
+        "project-only-extension-policy",
+        "candidate-tree-presence",
+        "candidate-transitive-closure",
+        "cxx17-consumability",
+        "feature-visibility",
+        "callable-prototype-layout",
+        "callable-linkage-ownership",
+    ),
+}
+EXPECTED_HEADER_FOUNDATION_CLASS_LINKAGE_OWNERS = {
+    "pinned-non-uapi": (
+        "current-static-c-exports",
+        "unlisted-public-callables",
+        "noncallable-header-abi",
+    ),
+    "pinned-uapi-inputs": (
+        "current-static-c-exports",
+        "unlisted-public-callables",
+        "noncallable-header-abi",
+    ),
+    "project-only-extensions": (
+        "current-static-c-exports",
+        "unlisted-public-callables",
+        "noncallable-header-abi",
+    ),
+}
+EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS = {
+    ("pinned-non-uapi", "c11-gnu"): (
+        "applicable",
+        "partial-verified",
+        ("public-header-c-consumability",),
+    ),
+    ("pinned-non-uapi", "cxx17-gnu"): (
+        "oracle-required",
+        "planned",
+        ("oracle-derived-cxx17-matrix",),
+    ),
+    ("pinned-non-uapi", "c11-strict"): (
+        "oracle-required",
+        "planned",
+        ("strict-posix-xopen-gnu-bsd-matrix",),
+    ),
+    ("pinned-non-uapi", "c11-posix-2008"): (
+        "oracle-required",
+        "planned",
+        ("strict-posix-xopen-gnu-bsd-matrix",),
+    ),
+    ("pinned-non-uapi", "c11-xopen-700"): (
+        "oracle-required",
+        "planned",
+        ("strict-posix-xopen-gnu-bsd-matrix",),
+    ),
+    ("pinned-non-uapi", "c11-bsd"): (
+        "oracle-required",
+        "planned",
+        ("strict-posix-xopen-gnu-bsd-matrix",),
+    ),
+    ("pinned-non-uapi", "cxx17-strict"): (
+        "oracle-required",
+        "planned",
+        ("oracle-derived-cxx17-matrix",),
+    ),
+    ("pinned-uapi-inputs", "c11-gnu"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree",),
+    ),
+    ("pinned-uapi-inputs", "cxx17-gnu"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree", "oracle-derived-cxx17-matrix"),
+    ),
+    ("pinned-uapi-inputs", "c11-strict"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("pinned-uapi-inputs", "c11-posix-2008"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("pinned-uapi-inputs", "c11-xopen-700"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("pinned-uapi-inputs", "c11-bsd"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("pinned-uapi-inputs", "cxx17-strict"): (
+        "blocked-missing-input",
+        "planned",
+        ("pinned-linux-5.10-uapi-tree", "oracle-derived-cxx17-matrix"),
+    ),
+    ("project-only-extensions", "c11-gnu"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification",),
+    ),
+    ("project-only-extensions", "cxx17-gnu"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification", "oracle-derived-cxx17-matrix"),
+    ),
+    ("project-only-extensions", "c11-strict"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("project-only-extensions", "c11-posix-2008"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("project-only-extensions", "c11-xopen-700"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("project-only-extensions", "c11-bsd"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+    ),
+    ("project-only-extensions", "cxx17-strict"): (
+        "oracle-required",
+        "planned",
+        ("project-only-header-classification", "oracle-derived-cxx17-matrix"),
+    ),
+}
+
+EXPECTED_HEADER_FOUNDATION_FACETS = {
+    "public-path-inventory": (
+        "partial-verified",
+        "all-pinned-public-headers",
+        "libc.headers-layouts",
+        ("public-header-c-consumability",),
+    ),
+    "candidate-tree-presence": (
+        "partial-verified",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("public-header-c-consumability",),
+    ),
+    "c11-gnu-consumability": (
+        "partial-verified",
+        "pinned-non-uapi",
+        "libc.headers-layouts",
+        ("public-header-c-consumability",),
+    ),
+    "uapi-input-provenance": (
+        "planned",
+        "pinned-uapi-inputs",
+        "libc.headers-layouts",
+        ("pinned-linux-5.10-uapi-tree",),
+    ),
+    "project-only-extension-policy": (
+        "planned",
+        "project-only-extensions",
+        "libc.c-abi-compat",
+        ("project-only-header-classification",),
+    ),
+    "candidate-transitive-closure": (
+        "planned",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("isolated-candidate-header-tree",),
+    ),
+    "cxx17-consumability": (
+        "planned",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("oracle-derived-cxx17-matrix",),
+    ),
+    "feature-visibility": (
+        "planned",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("strict-posix-xopen-gnu-bsd-matrix",),
+    ),
+    "callable-prototype-layout": (
+        "planned",
+        "all-pinned-and-project-only-public-headers",
+        "libc.headers-layouts",
+        ("generated-x86-prototype-layout-matrix",),
+    ),
+    "callable-linkage-ownership": (
+        "planned",
+        "all-pinned-and-project-only-public-headers",
+        "libc.c-abi-compat",
+        ("declared-callable-linkage-audit",),
+    ),
+    "legacy-direct-layout-inputs": (
+        "partial-verified",
+        "v1-direct-probe-union",
+        "libc.headers-layouts",
+        ("headers-layouts.toml",),
+    ),
+    "static-c-cxx-composition": (
+        "partial-verified",
+        "selected-existing-static-archive-leaves",
+        "libc.headers-layouts",
+        ("static-c-header-layouts-baseline",),
+    ),
+}
+
+EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS = {
+    "current-static-c-exports": (
+        "partial-verified",
+        "all symbols listed by static_c_abi_exports",
+        "libc.c-abi-compat",
+        ("compat/x86_64/static_c_abi_exports.txt", "selected-static-artifacts"),
+    ),
+    "unlisted-public-callables": (
+        "planned",
+        "every public callable declaration not selected by the current static export ratchet",
+        "libc.c-abi-compat",
+        ("declared-callable-linkage-audit",),
+    ),
+    "noncallable-header-abi": (
+        "planned",
+        "public typedefs constants macros records and inline-only header contracts",
+        "libc.headers-layouts",
+        ("generated-x86-prototype-layout-matrix",),
+    ),
 }
 
 EXPECTED_HEADER_LAYOUT_PROBES = {
@@ -667,6 +983,572 @@ def validate_header_layout_manifest(
         "header-layout manifest probe order or roster drifted",
     )
     return {"probe_count": len(probe_ids)}
+
+
+def static_c_abi_export_names(path: Path) -> list[str]:
+    """Load the selected static C export ratchet without treating it as ABI closure."""
+    text = path.read_text(encoding="utf-8")
+    require(text.endswith("\n"), "static C ABI export contract must end with a newline")
+    names = [
+        line
+        for line in text.splitlines()
+        if line and not line.startswith("#")
+    ]
+    require(names, "static C ABI export contract must name at least one symbol")
+    require(names == sorted(names), "static C ABI export contract must remain ASCII-sorted")
+    require(len(names) == len(set(names)), "static C ABI export contract has a duplicate symbol")
+    for index, name in enumerate(names):
+        require(
+            all(character.isascii() and (character.isalnum() or character == "_") for character in name),
+            f"static C ABI export contract symbol {index} is invalid",
+        )
+    return names
+
+
+def validate_header_layout_foundation_manifest(
+    family: Mapping[str, Any],
+    legacy_manifest: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> dict[str, int]:
+    """Validate the planned all-header accounting contract without promoting it.
+
+    The v2 contract resolves every current pathname into one class and expands
+    every class into explicit language/feature obligations. It deliberately
+    keeps unresolved C++ applicability, Linux-UAPI inputs, declaration/layout
+    comparisons, and declared-callable linkage in planned evidence lanes.
+    """
+    require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
+    expected_manifest_keys = {
+        "schema",
+        "family",
+        "target",
+        "platform",
+        "kernel_msrv",
+        "status",
+        "oracle",
+        "legacy_direct_manifest",
+        "pinned_public_inventory",
+        "static_c_abi_exports",
+        "policy",
+        "completion",
+        "profile_matrix",
+        "uapi_input",
+        "language_profile",
+        "profile_obligation",
+        "header_class",
+        "uapi_path",
+        "abi_facet",
+        "linkage_owner",
+    }
+    require(
+        set(manifest) == expected_manifest_keys,
+        "header-foundation manifest top-level keys drifted",
+    )
+    require(
+        manifest["schema"] == EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA,
+        "unexpected header-foundation manifest schema",
+    )
+    require(manifest["family"] == "libc.headers-layouts", "header-foundation manifest family drifted")
+    require(manifest["target"] == EXPECTED_TARGET, "header-foundation manifest target drifted")
+    require(manifest["platform"] == EXPECTED_PLATFORM, "header-foundation manifest platform drifted")
+    require(
+        manifest["kernel_msrv"] == EXPECTED_KERNEL_MSRV,
+        "header-foundation manifest kernel MSRV drifted",
+    )
+    require(manifest["status"] == "planned", "header-foundation manifest must remain planned")
+    require(manifest["oracle"] == "Pinned musl 1.2.6", "header-foundation manifest oracle drifted")
+
+    policy = manifest["policy"]
+    require(isinstance(policy, Mapping), "header-foundation manifest policy must be a table")
+    require(
+        dict(policy)
+        == {
+            "native_execution_only": True,
+            "project_headers_first": True,
+            "inventory_accounting": True,
+            "candidate_transitive_include_closure": False,
+            "full_c11_consumer_matrix": False,
+            "full_cxx17_consumer_matrix": False,
+            "feature_visibility_matrix": False,
+            "abi_facet_matrix": False,
+            "callable_linkage_audit": False,
+            "aggregate_family_completion": False,
+            "runtime_completion": False,
+            "public_support": False,
+        },
+        "header-foundation manifest policy drifted",
+    )
+    completion = manifest["completion"]
+    require(isinstance(completion, Mapping), "header-foundation manifest completion must be a table")
+    require(
+        dict(completion)
+        == {
+            "inventory_accounted": True,
+            "project_only_paths_accounted": True,
+            "uapi_paths_accounted": True,
+            "language_profiles_accounted": True,
+            "feature_modes_accounted": True,
+            "abi_facets_accounted": True,
+            "callable_linkage_owners_accounted": True,
+            "legacy_direct_inputs_accounted": True,
+            "candidate_transitive_include_closure": False,
+            "c11_consumer_matrix": False,
+            "cxx17_consumer_matrix": False,
+            "feature_visibility_matrix": False,
+            "abi_facet_matrix": False,
+            "callable_linkage_audit": False,
+            "runtime_completion": False,
+            "family_promotion": False,
+            "public_support": False,
+        },
+        "header-foundation manifest completion drifted",
+    )
+
+    require(
+        family.get("status") == "planned",
+        "libc.headers-layouts must remain planned while header foundation is incomplete",
+    )
+    require(
+        family.get("capabilities") == [],
+        "libc.headers-layouts foundation manifest must not claim baseline capabilities",
+    )
+    foundation_path = repository_path(
+        str(family.get("header_foundation_manifest", "")),
+        "family[libc.headers-layouts].header_foundation_manifest",
+    )
+    require(
+        foundation_path == HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH,
+        "libc.headers-layouts must use the checked-in header-foundation manifest",
+    )
+    legacy_path = repository_path(
+        str(manifest["legacy_direct_manifest"]),
+        "header-foundation manifest legacy_direct_manifest",
+    )
+    require(
+        legacy_path == HEADER_LAYOUT_MANIFEST_PATH,
+        "header-foundation manifest must retain the checked-in v1 direct manifest",
+    )
+    require(
+        legacy_manifest.get("schema") == EXPECTED_HEADER_LAYOUT_SCHEMA,
+        "header-foundation manifest must build on the v1 direct manifest",
+    )
+    inventory_path = repository_path(
+        str(manifest["pinned_public_inventory"]),
+        "header-foundation manifest pinned_public_inventory",
+    )
+    require(
+        inventory_path == PUBLIC_HEADER_INVENTORY_PATH,
+        "header-foundation manifest must use the checked-in pinned public inventory",
+    )
+    static_export_path = repository_path(
+        str(manifest["static_c_abi_exports"]),
+        "header-foundation manifest static_c_abi_exports",
+    )
+    require(
+        static_export_path == ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt",
+        "header-foundation manifest must use the selected static C export ratchet",
+    )
+    source_owners = nonempty_strings(
+        family["source_owners"], "family[libc.headers-layouts].source_owners"
+    )
+    for owner in (
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/headers-layouts.toml",
+        "compat/x86_64/public_headers.txt",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(owner in source_owners, f"libc.headers-layouts must own {owner}")
+
+    profile_matrix = manifest["profile_matrix"]
+    require(isinstance(profile_matrix, Mapping), "header-foundation profile_matrix must be a table")
+    require(
+        dict(profile_matrix)
+        == {
+            "row_key": "resolved-header-path plus language-profile",
+            "final_applicability_states": [
+                "applicable",
+                "not-applicable",
+                "blocked-missing-input",
+            ],
+            "all_rows_resolved": False,
+        },
+        "header-foundation profile_matrix drifted",
+    )
+
+    uapi_inputs = manifest["uapi_input"]
+    require(isinstance(uapi_inputs, list) and len(uapi_inputs) == 1, "header-foundation requires one Linux UAPI input")
+    uapi_input = uapi_inputs[0]
+    require(isinstance(uapi_input, Mapping), "header-foundation UAPI input must be a table")
+    require(
+        set(uapi_input) == {"id", "state", "source", "role", "paths", "closure_rule"},
+        "header-foundation UAPI input keys drifted",
+    )
+    require(uapi_input["id"] == "linux-5.10-uapi", "header-foundation UAPI input id drifted")
+    require(
+        uapi_input["state"] == "required-unpinned",
+        "header-foundation Linux UAPI input must remain explicitly required and unpinned",
+    )
+    require(
+        uapi_input["source"] == "Linux 5.10 UAPI export tree",
+        "header-foundation Linux UAPI source drifted",
+    )
+    require(
+        isinstance(uapi_input["role"], str) and uapi_input["role"],
+        "header-foundation Linux UAPI input needs a role",
+    )
+    require(
+        isinstance(uapi_input["closure_rule"], str)
+        and "hash-pinned" in uapi_input["closure_rule"]
+        and "ambient host" in uapi_input["closure_rule"],
+        "header-foundation Linux UAPI input must reject ambient-host closure",
+    )
+    uapi_input_paths = string_list(uapi_input["paths"], "header-foundation UAPI input paths")
+    require(
+        tuple(uapi_input_paths) == tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS.values()),
+        "header-foundation Linux UAPI input paths drifted",
+    )
+
+    profiles = manifest["language_profile"]
+    require(
+        isinstance(profiles, list) and len(profiles) == len(EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES),
+        "header-foundation language profile count drifted",
+    )
+    profile_ids: list[str] = []
+    for index, entry in enumerate(profiles):
+        location = f"header-foundation language_profile[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        require(
+            set(entry) == {"id", "language", "standard", "macros", "state"},
+            f"{location} keys drifted",
+        )
+        identifier = entry["id"]
+        require(isinstance(identifier, str), f"{location}.id is invalid")
+        require(
+            identifier in EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES,
+            f"{location}.id is not an expected language profile",
+        )
+        expected = {"id": identifier, **EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES[identifier]}
+        require(dict(entry) == expected, f"{location} drifted from its language/feature contract")
+        profile_ids.append(identifier)
+    require(
+        tuple(profile_ids) == tuple(EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES),
+        "header-foundation language profile order or roster drifted",
+    )
+
+    inventory_text = inventory_path.read_text(encoding="utf-8")
+    pinned_paths = inventory_text.splitlines()
+    require(inventory_text.endswith("\n"), "header-foundation pinned inventory must end with a newline")
+    require(
+        len(pinned_paths) == EXPECTED_PUBLIC_HEADER_COUNT
+        and pinned_paths == sorted(pinned_paths)
+        and len(pinned_paths) == len(set(pinned_paths)),
+        "header-foundation pinned inventory drifted",
+    )
+    pinned_path_set = set(pinned_paths)
+    uapi_header_paths = tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS)
+    uapi_header_set = set(uapi_header_paths)
+    require(
+        uapi_header_set <= pinned_path_set,
+        "header-foundation UAPI wrappers must remain pinned public headers",
+    )
+    project_only_paths = tuple(sorted(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY))
+    project_only_set = set(project_only_paths)
+    class_expected_paths = {
+        "pinned-non-uapi": pinned_path_set - uapi_header_set,
+        "pinned-uapi-inputs": uapi_header_set,
+        "project-only-extensions": project_only_set,
+    }
+    header_classes = manifest["header_class"]
+    require(
+        isinstance(header_classes, list) and len(header_classes) == len(EXPECTED_HEADER_FOUNDATION_CLASS_IDS),
+        "header-foundation header class count drifted",
+    )
+    class_paths: dict[str, set[str]] = {}
+    class_ids: list[str] = []
+    for index, entry in enumerate(header_classes):
+        location = f"header-foundation header_class[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        identifier = entry.get("id")
+        require(isinstance(identifier, str), f"{location}.id is invalid")
+        require(
+            identifier in EXPECTED_HEADER_FOUNDATION_CLASS_IDS,
+            f"{location}.id is not an expected header class",
+        )
+        expected_keys = {
+            "id",
+            "origin",
+            "expected_count",
+            "language_profiles",
+            "future_feature_profiles",
+            "abi_facets",
+            "linkage_owners",
+        }
+        expected_keys.add("excluded_paths" if identifier == "pinned-non-uapi" else "paths")
+        require(set(entry) == expected_keys, f"{location} keys drifted")
+        expected_origin = {
+            "pinned-non-uapi": "pinned-inventory-excluding",
+            "pinned-uapi-inputs": "explicit-pinned",
+            "project-only-extensions": "explicit-project-only",
+        }[identifier]
+        require(entry["origin"] == expected_origin, f"{location}.origin drifted")
+        require(
+            entry["expected_count"] == len(class_expected_paths[identifier]),
+            f"{location}.expected_count does not match its resolved header class",
+        )
+        require(
+            tuple(string_list(entry["language_profiles"], f"{location}.language_profiles"))
+            == EXPECTED_HEADER_FOUNDATION_CURRENT_PROFILES,
+            f"{location}.language_profiles drifted",
+        )
+        require(
+            tuple(string_list(entry["future_feature_profiles"], f"{location}.future_feature_profiles"))
+            == EXPECTED_HEADER_FOUNDATION_FUTURE_PROFILES,
+            f"{location}.future_feature_profiles drifted",
+        )
+        require(
+            tuple(string_list(entry["abi_facets"], f"{location}.abi_facets"))
+            == EXPECTED_HEADER_FOUNDATION_CLASS_FACETS[identifier],
+            f"{location}.abi_facets drifted",
+        )
+        require(
+            tuple(string_list(entry["linkage_owners"], f"{location}.linkage_owners"))
+            == EXPECTED_HEADER_FOUNDATION_CLASS_LINKAGE_OWNERS[identifier],
+            f"{location}.linkage_owners drifted",
+        )
+        if identifier == "pinned-non-uapi":
+            paths = string_list(entry["excluded_paths"], f"{location}.excluded_paths")
+            require(
+                tuple(paths) == uapi_header_paths,
+                f"{location}.excluded_paths must be the named Linux-UAPI wrappers",
+            )
+            resolved_paths = pinned_path_set - set(paths)
+        else:
+            paths = string_list(entry["paths"], f"{location}.paths")
+            require(len(paths) == len(set(paths)), f"{location}.paths contains a duplicate")
+            if identifier == "pinned-uapi-inputs":
+                require(
+                    tuple(paths) == uapi_header_paths,
+                    f"{location}.paths must name every Linux-UAPI wrapper",
+                )
+            else:
+                require(
+                    tuple(paths) == project_only_paths,
+                    f"{location}.paths must name every project-only public header",
+                )
+                for path in paths:
+                    require(
+                        (ROOT / "include" / path).is_file(),
+                        f"{location}.paths contains a missing project header: {path}",
+                    )
+            resolved_paths = set(paths)
+        require(
+            resolved_paths == class_expected_paths[identifier],
+            f"{location} does not resolve its exact header inventory",
+        )
+        class_paths[identifier] = resolved_paths
+        class_ids.append(identifier)
+    require(
+        tuple(class_ids) == EXPECTED_HEADER_FOUNDATION_CLASS_IDS,
+        "header-foundation header class order or roster drifted",
+    )
+    require(
+        set().union(*class_paths.values()) == pinned_path_set | project_only_set,
+        "header-foundation classes do not cover every pinned and project-only public header",
+    )
+    accounted_header_count = sum(len(paths) for paths in class_paths.values())
+    require(
+        accounted_header_count == len(pinned_path_set | project_only_set),
+        "header-foundation classes overlap",
+    )
+
+    profile_obligations = manifest["profile_obligation"]
+    require(
+        isinstance(profile_obligations, list)
+        and len(profile_obligations) == len(EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS),
+        "header-foundation profile obligation count drifted",
+    )
+    obligation_keys: list[tuple[str, str]] = []
+    for index, entry in enumerate(profile_obligations):
+        location = f"header-foundation profile_obligation[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        require(
+            set(entry) == {"header_class", "profile", "applicability", "state", "evidence"},
+            f"{location} keys drifted",
+        )
+        header_class = entry["header_class"]
+        profile = entry["profile"]
+        require(isinstance(header_class, str) and isinstance(profile, str), f"{location} key is invalid")
+        key = (header_class, profile)
+        require(
+            key in EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS,
+            f"{location} is not an expected header/profile obligation",
+        )
+        expected_applicability, expected_state, expected_evidence = (
+            EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS[key]
+        )
+        require(
+            entry["applicability"] == expected_applicability,
+            f"{location}.applicability drifted",
+        )
+        require(entry["state"] == expected_state, f"{location}.state drifted")
+        require(
+            tuple(string_list(entry["evidence"], f"{location}.evidence")) == expected_evidence,
+            f"{location}.evidence drifted",
+        )
+        obligation_keys.append(key)
+    require(
+        tuple(obligation_keys) == tuple(EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS),
+        "header-foundation profile obligation order or roster drifted",
+    )
+    profile_matrix_row_count = sum(
+        len(class_paths[header_class])
+        for header_class, _profile in obligation_keys
+    )
+    require(
+        profile_matrix_row_count == accounted_header_count * len(profile_ids),
+        "header-foundation profile obligations do not expand to every header/profile row",
+    )
+
+    uapi_paths = manifest["uapi_path"]
+    require(
+        isinstance(uapi_paths, list) and len(uapi_paths) == len(EXPECTED_PUBLIC_HEADER_UAPI_GAPS),
+        "header-foundation UAPI path count drifted",
+    )
+    observed_uapi_paths: list[tuple[str, str]] = []
+    for index, entry in enumerate(uapi_paths):
+        location = f"header-foundation uapi_path[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        require(set(entry) == {"header", "dependency", "state"}, f"{location} keys drifted")
+        header = entry["header"]
+        dependency = entry["dependency"]
+        require(
+            isinstance(header, str) and isinstance(dependency, str),
+            f"{location} header or dependency is invalid",
+        )
+        require(
+            EXPECTED_PUBLIC_HEADER_UAPI_GAPS.get(header) == dependency,
+            f"{location} does not name a required Linux-UAPI dependency",
+        )
+        require(
+            entry["state"] == "blocked-missing-pinned-linux-uapi",
+            f"{location}.state must retain the missing pinned Linux-UAPI boundary",
+        )
+        observed_uapi_paths.append((header, dependency))
+    require(
+        tuple(observed_uapi_paths) == tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS.items()),
+        "header-foundation UAPI path order or roster drifted",
+    )
+    require(
+        tuple(dependency for _header, dependency in observed_uapi_paths) == tuple(uapi_input_paths),
+        "header-foundation UAPI paths must use the explicit Linux 5.10 input",
+    )
+
+    facets = manifest["abi_facet"]
+    require(
+        isinstance(facets, list) and len(facets) == len(EXPECTED_HEADER_FOUNDATION_FACETS),
+        "header-foundation ABI facet count drifted",
+    )
+    facet_ids: list[str] = []
+    for index, entry in enumerate(facets):
+        location = f"header-foundation abi_facet[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        identifier = entry.get("id")
+        require(isinstance(identifier, str), f"{location}.id is invalid")
+        expected_keys = {"id", "state", "scope", "owner", "evidence", "description"}
+        if identifier == "legacy-direct-layout-inputs":
+            expected_keys.add("legacy_probes")
+        require(set(entry) == expected_keys, f"{location} keys drifted")
+        require(
+            identifier in EXPECTED_HEADER_FOUNDATION_FACETS,
+            f"{location}.id is not an expected ABI facet",
+        )
+        expected_state, expected_scope, expected_owner, expected_evidence = (
+            EXPECTED_HEADER_FOUNDATION_FACETS[identifier]
+        )
+        require(entry["state"] == expected_state, f"{location}.state drifted")
+        require(entry["scope"] == expected_scope, f"{location}.scope drifted")
+        require(entry["owner"] == expected_owner, f"{location}.owner drifted")
+        require(
+            tuple(string_list(entry["evidence"], f"{location}.evidence")) == expected_evidence,
+            f"{location}.evidence drifted",
+        )
+        require(
+            isinstance(entry["description"], str) and entry["description"],
+            f"{location}.description is empty",
+        )
+        if identifier == "legacy-direct-layout-inputs":
+            require(
+                tuple(string_list(entry["legacy_probes"], f"{location}.legacy_probes"))
+                == tuple(EXPECTED_HEADER_LAYOUT_PROBES),
+                f"{location}.legacy_probes drifted",
+            )
+        facet_ids.append(identifier)
+    require(
+        tuple(facet_ids) == tuple(EXPECTED_HEADER_FOUNDATION_FACETS),
+        "header-foundation ABI facet order or roster drifted",
+    )
+
+    linkage_owners = manifest["linkage_owner"]
+    require(
+        isinstance(linkage_owners, list)
+        and len(linkage_owners) == len(EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS),
+        "header-foundation linkage owner count drifted",
+    )
+    linkage_ids: list[str] = []
+    for index, entry in enumerate(linkage_owners):
+        location = f"header-foundation linkage_owner[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        require(
+            set(entry) == {"id", "state", "scope", "family", "evidence", "description"},
+            f"{location} keys drifted",
+        )
+        identifier = entry["id"]
+        require(isinstance(identifier, str), f"{location}.id is invalid")
+        require(
+            identifier in EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS,
+            f"{location}.id is not an expected linkage owner",
+        )
+        expected_state, expected_scope, expected_family, expected_evidence = (
+            EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS[identifier]
+        )
+        require(entry["state"] == expected_state, f"{location}.state drifted")
+        require(entry["scope"] == expected_scope, f"{location}.scope drifted")
+        require(entry["family"] == expected_family, f"{location}.family drifted")
+        require(
+            tuple(string_list(entry["evidence"], f"{location}.evidence")) == expected_evidence,
+            f"{location}.evidence drifted",
+        )
+        require(
+            isinstance(entry["description"], str) and entry["description"],
+            f"{location}.description is empty",
+        )
+        linkage_ids.append(identifier)
+    require(
+        tuple(linkage_ids) == tuple(EXPECTED_HEADER_FOUNDATION_LINKAGE_OWNERS),
+        "header-foundation linkage owner order or roster drifted",
+    )
+    static_export_names = static_c_abi_export_names(static_export_path)
+    require(
+        "unlisted-public-callables" in linkage_ids,
+        "header-foundation needs the declared-callable catch-all ownership rule",
+    )
+    require(
+        "noncallable-header-abi" in linkage_ids,
+        "header-foundation needs the noncallable-header ABI ownership rule",
+    )
+
+    return {
+        "header_count": accounted_header_count,
+        "pinned_header_count": len(pinned_path_set),
+        "project_only_header_count": len(project_only_set),
+        "uapi_path_count": len(observed_uapi_paths),
+        "language_profile_count": len(profile_ids),
+        "profile_obligation_count": len(obligation_keys),
+        "profile_matrix_row_count": profile_matrix_row_count,
+        "abi_facet_count": len(facet_ids),
+        "linkage_owner_count": len(linkage_ids),
+        "static_export_count": len(static_export_names),
+    }
 
 
 def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
@@ -2420,7 +3302,10 @@ def has_musl_oracle(family: Mapping[str, Any]) -> bool:
 
 
 def validate_ledger(
-    data: Mapping[str, Any], *, header_layout_manifest: Mapping[str, Any] | None = None
+    data: Mapping[str, Any],
+    *,
+    header_layout_manifest: Mapping[str, Any] | None = None,
+    header_layout_foundation_manifest: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     require(data.get("schema") == EXPECTED_SCHEMA, "unexpected x86 parity ledger schema")
     require(data.get("target") == EXPECTED_TARGET, "unexpected x86 parity target")
@@ -2581,6 +3466,13 @@ def validate_ledger(
     public_header_inventory_count = require_public_header_surface_artifact(
         by_id["libc.headers-layouts"]
     )
+    if header_layout_foundation_manifest is None:
+        header_layout_foundation_manifest = load_toml(HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)
+    header_layout_foundation_report = validate_header_layout_foundation_manifest(
+        by_id["libc.headers-layouts"],
+        header_layout_manifest,
+        header_layout_foundation_manifest,
+    )
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
 
     require_byte_string_artifact(by_id["libc.posix-runtime"])
@@ -2671,6 +3563,34 @@ def validate_ledger(
         "verified_artifact_count": len(verified_artifact_ids),
         "header_layout_probe_count": header_layout_report["probe_count"],
         "public_header_inventory_count": public_header_inventory_count,
+        "header_foundation_header_count": header_layout_foundation_report["header_count"],
+        "header_foundation_pinned_header_count": header_layout_foundation_report[
+            "pinned_header_count"
+        ],
+        "header_foundation_project_only_header_count": header_layout_foundation_report[
+            "project_only_header_count"
+        ],
+        "header_foundation_uapi_path_count": header_layout_foundation_report[
+            "uapi_path_count"
+        ],
+        "header_foundation_language_profile_count": header_layout_foundation_report[
+            "language_profile_count"
+        ],
+        "header_foundation_profile_obligation_count": header_layout_foundation_report[
+            "profile_obligation_count"
+        ],
+        "header_foundation_profile_matrix_row_count": header_layout_foundation_report[
+            "profile_matrix_row_count"
+        ],
+        "header_foundation_abi_facet_count": header_layout_foundation_report[
+            "abi_facet_count"
+        ],
+        "header_foundation_linkage_owner_count": header_layout_foundation_report[
+            "linkage_owner_count"
+        ],
+        "header_foundation_static_export_count": header_layout_foundation_report[
+            "static_export_count"
+        ],
         "promotion_ready": all(family["status"] == "foundation-verified" for family in families),
         "public_support": policy["public_support"],
     }

@@ -60,6 +60,19 @@ C API references. It adds no export or installed-header edit, and is not
 all-header closure, general C/C++ runtime support, libc.so, CRT, loader,
 sysroot, family/platform parity, or public x86 support.
 
+`compat/x86_64/headers-layouts-foundation.toml` is now the separate planned
+v2 accounting contract for eventually closing that header family. It resolves
+the 183 pinned-musl paths and eight project-only headers into exact classes,
+names `sys/kd.h` -> `linux/kd.h`, `sys/soundcard.h` ->
+`linux/soundcard.h`, and `sys/vt.h` -> `linux/vt.h` as required but not yet
+hash-pinned Linux 5.10 UAPI inputs, and expands those classes across the
+C11/C++17 GNU and strict/POSIX/XOPEN/BSD profile obligations. It also assigns
+the existing static export ratchet, every unlisted callable declaration, and
+noncallable header ABI to their eventual owning families. It is inventory and
+ownership accounting only: isolated candidate closure, per-header C++ and
+feature visibility, declaration/layout and linkage matrices, runtime
+completion, family promotion, and public x86 support all remain planned.
+
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
 [`docs/design/allocator.md`](docs/design/allocator.md), and

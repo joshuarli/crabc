@@ -27,6 +27,11 @@ class X86ParityLedgerTests(unittest.TestCase):
     def header_manifest(self) -> dict[str, object]:
         return copy.deepcopy(ledger.load_toml(ledger.HEADER_LAYOUT_MANIFEST_PATH))
 
+    def header_foundation_manifest(self) -> dict[str, object]:
+        return copy.deepcopy(
+            ledger.load_toml(ledger.HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)
+        )
+
     @staticmethod
     def family(data: dict[str, object], identifier: str) -> dict[str, object]:
         entries = data["family"]
@@ -48,6 +53,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["verified_artifact_count"], 36)
         self.assertEqual(report["header_layout_probe_count"], 30)
         self.assertEqual(report["public_header_inventory_count"], 183)
+        self.assertEqual(report["header_foundation_header_count"], 191)
+        self.assertEqual(report["header_foundation_pinned_header_count"], 183)
+        self.assertEqual(report["header_foundation_project_only_header_count"], 8)
+        self.assertEqual(report["header_foundation_uapi_path_count"], 3)
+        self.assertEqual(report["header_foundation_language_profile_count"], 7)
+        self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
+        self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 12)
+        self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
+        self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -147,6 +162,136 @@ class X86ParityLedgerTests(unittest.TestCase):
         probes[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(ledger.LedgerError, "command drifted"):
             ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+    def test_header_foundation_manifest_accounts_for_all_paths_without_promotion(self) -> None:
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        report = ledger.validate_ledger(
+            data, header_layout_foundation_manifest=manifest
+        )
+        headers_layouts = self.family(data, "libc.headers-layouts")
+
+        self.assertEqual(
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v2"
+        )
+        self.assertEqual(manifest["status"], "planned")
+        self.assertEqual(manifest["family"], "libc.headers-layouts")
+        self.assertEqual(
+            headers_layouts["header_foundation_manifest"],
+            "compat/x86_64/headers-layouts-foundation.toml",
+        )
+        self.assertIn(
+            "compat/x86_64/headers-layouts-foundation.toml",
+            headers_layouts["source_owners"],
+        )
+        self.assertEqual(report["header_foundation_header_count"], 191)
+        self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
+
+        classes = manifest["header_class"]
+        assert isinstance(classes, list)
+        self.assertEqual(
+            [entry["id"] for entry in classes],
+            [
+                "pinned-non-uapi",
+                "pinned-uapi-inputs",
+                "project-only-extensions",
+            ],
+        )
+        uapi = classes[1]
+        project_only = classes[2]
+        assert isinstance(uapi, dict) and isinstance(project_only, dict)
+        self.assertEqual(uapi["paths"], ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"])
+        self.assertEqual(
+            project_only["paths"],
+            [
+                "daemon.h",
+                "dn_expand.h",
+                "linux/capability.h",
+                "lrand48.h",
+                "pthread_atfork.h",
+                "stdatomic.h",
+                "strverscmp.h",
+                "sys/module.h",
+            ],
+        )
+
+        inputs = manifest["uapi_input"]
+        assert isinstance(inputs, list) and len(inputs) == 1 and isinstance(inputs[0], dict)
+        self.assertEqual(inputs[0]["id"], "linux-5.10-uapi")
+        self.assertEqual(inputs[0]["state"], "required-unpinned")
+        self.assertEqual(
+            inputs[0]["paths"], ["linux/kd.h", "linux/soundcard.h", "linux/vt.h"]
+        )
+        self.assertFalse(manifest["completion"]["family_promotion"])
+        self.assertFalse(manifest["completion"]["public_support"])
+
+        obligations = manifest["profile_obligation"]
+        assert isinstance(obligations, list)
+        self.assertEqual(len(obligations), 21)
+        current = next(
+            obligation
+            for obligation in obligations
+            if obligation["header_class"] == "pinned-non-uapi"
+            and obligation["profile"] == "c11-gnu"
+        )
+        assert isinstance(current, dict)
+        self.assertEqual(current["applicability"], "applicable")
+        self.assertEqual(current["state"], "partial-verified")
+        self.assertEqual(current["evidence"], ["public-header-c-consumability"])
+
+        owners = manifest["linkage_owner"]
+        assert isinstance(owners, list)
+        self.assertEqual(
+            [entry["id"] for entry in owners],
+            [
+                "current-static-c-exports",
+                "unlisted-public-callables",
+                "noncallable-header-abi",
+            ],
+        )
+
+    def test_header_foundation_manifest_rejects_false_closure_or_accounting_drift(self) -> None:
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        completion = manifest["completion"]
+        assert isinstance(completion, dict)
+        completion["family_promotion"] = True
+        with self.assertRaisesRegex(ledger.LedgerError, "completion drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        uapi_paths = manifest["uapi_path"]
+        assert isinstance(uapi_paths, list) and isinstance(uapi_paths[0], dict)
+        uapi_paths[0]["dependency"] = "linux/input.h"
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux-UAPI dependency"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        classes = manifest["header_class"]
+        assert isinstance(classes, list) and isinstance(classes[2], dict)
+        paths = classes[2]["paths"]
+        assert isinstance(paths, list)
+        paths.pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "project-only public header"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        obligations = manifest["profile_obligation"]
+        assert isinstance(obligations, list) and isinstance(obligations[1], dict)
+        obligations[1]["applicability"] = "applicable"
+        with self.assertRaisesRegex(ledger.LedgerError, "applicability drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        owners = manifest["linkage_owner"]
+        assert isinstance(owners, list) and isinstance(owners[1], dict)
+        owners[1]["family"] = "libc.headers-layouts"
+        with self.assertRaisesRegex(ledger.LedgerError, "family drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
     def test_public_header_surface_inventory_is_a_checked_partial_artifact(self) -> None:
         """Every pinned public header must be visible before ABI closure is claimed."""
