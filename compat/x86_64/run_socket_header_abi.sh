@@ -3,8 +3,10 @@
 #
 # Pinned musl 1.2.6 is the declaration/value/layout oracle. The project
 # headers are placed first for the candidate pass; neither pass links or
-# selects crabc-libc. Socket options and vectored/ancillary-message APIs are
-# intentionally outside this declaration slice.
+# selects crabc-libc. A separate tiny C executable evaluates the installed
+# IPv6 address-classification macros against both header sets. Socket options
+# and vectored/ancillary-message APIs are intentionally outside this
+# declaration slice.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,13 +32,18 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 c_probe="$ROOT_DIR/compat/x86_64/socket_header_abi_probe.c"
 cxx_probe="$ROOT_DIR/compat/x86_64/socket_header_abi_probe.cpp"
+ipv6_macro_probe="$ROOT_DIR/compat/x86_64/socket_header_ipv6_macro_probe.c"
 work_dir="$(mktemp -d /tmp/crabc-x86-64-socket-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 header_trace="$work_dir/header-trace"
+musl_ipv6_macro="$work_dir/musl-ipv6-macro"
+project_ipv6_macro="$work_dir/project-ipv6-macro"
 
 # First prove that the fixtures match the pinned musl declarations themselves.
 "$ORACLE_CC" -std=c11 -fsyntax-only "$c_probe"
 "$ORACLE_CC" -std=c++17 -x c++ -fsyntax-only "$cxx_probe"
+"$ORACLE_CC" -std=c11 "$ipv6_macro_probe" -o "$musl_ipv6_macro"
+"$musl_ipv6_macro"
 
 # `-H` makes the project-header provenance explicit. Compile-only is
 # intentional: this slice makes no claim about a crabc C runtime implementation.
@@ -46,5 +53,8 @@ grep -Fq "$ROOT_DIR/include/sys/socket.h" "$header_trace" || {
     fail "C probe did not use the project <sys/socket.h>"
 }
 "$ORACLE_CC" -std=c++17 -x c++ -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
+"$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" "$ipv6_macro_probe" \
+    -o "$project_ipv6_macro"
+"$project_ipv6_macro"
 
 printf 'x86 pinned-musl C/C++ base socket transport header ABI: PASS\n'

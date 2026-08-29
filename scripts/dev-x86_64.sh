@@ -59,7 +59,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
-  socket-header-abi  compile the staged x86 C/C++ base socket transport declarations/layouts
+  socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -390,9 +390,11 @@ a general C terminal/runtime claim. `resource-header-abi` is likewise
 header-only and does not select process-resource behavior or a C runtime.
 `socket-header-abi` compile-checks only staged C/C++ base transport
 declarations, `socklen_t` and generic/IPv4/IPv6 socket-address layouts, and
-creation, shutdown, and basic send/receive constants. It does not select
-socket options, vectored or ancillary-message APIs, a C runtime, or a general
-socket capability.
+creation, shutdown, and basic send/receive constants, then executes the
+installed IPv6 address-classification macros through project and pinned-musl
+headers. It does not select socket options, vectored or ancillary-message
+APIs, address-conversion or socket behavior, a C runtime, or a general socket
+capability.
 `mm-abi-reference` establishes only the pinned-musl constants used by the
 separately admitted Rust mapping facade.
 `memory-vm-reference` establishes only the separate private x86 VM-policy

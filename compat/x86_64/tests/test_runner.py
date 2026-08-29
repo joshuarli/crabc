@@ -3119,6 +3119,44 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-readiness-waits", runner)
 
+    def test_socket_header_ipv6_macro_regression_stays_native(self) -> None:
+        header = (ROOT / "include" / "netinet" / "in.h").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "socket_header_ipv6_macro_probe.c"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_socket_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for macro in (
+            "IN6_IS_ADDR_UNSPECIFIED",
+            "IN6_IS_ADDR_LOOPBACK",
+            "IN6_IS_ADDR_MULTICAST",
+            "IN6_IS_ADDR_LINKLOCAL",
+            "IN6_IS_ADDR_SITELOCAL",
+            "IN6_IS_ADDR_V4MAPPED",
+            "IN6_IS_ADDR_V4COMPAT",
+            "IN6_IS_ADDR_MC_NODELOCAL",
+            "IN6_IS_ADDR_MC_LINKLOCAL",
+            "IN6_IS_ADDR_MC_SITELOCAL",
+            "IN6_IS_ADDR_MC_ORGLOCAL",
+            "IN6_IS_ADDR_MC_GLOBAL",
+        ):
+            self.assertIn(macro, header)
+            self.assertIn(macro, probe)
+        self.assertIn("__IN6_ADDR_BYTE", header)
+        self.assertNotIn("#define IN6_IS_ADDR_UNSPECIFIED(a) 0", header)
+        for required in (
+            "socket_header_ipv6_macro_probe.c",
+            '"$ORACLE_CC" -std=c11 "$ipv6_macro_probe"',
+            '"$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" "$ipv6_macro_probe"',
+            '"$musl_ipv6_macro"',
+            '"$project_ipv6_macro"',
+        ):
+            self.assertIn(required, runner)
+
     def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

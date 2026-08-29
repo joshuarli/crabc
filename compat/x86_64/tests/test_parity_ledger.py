@@ -310,6 +310,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "include/sys/socket.h",
             "compat/x86_64/socket_header_abi_probe.c",
             "compat/x86_64/socket_header_abi_probe.cpp",
+            "compat/x86_64/socket_header_ipv6_macro_probe.c",
             "compat/x86_64/run_socket_header_abi.sh",
             "compat/x86_64/static_c_abi_exports.txt",
             "compat/x86_64/libc_socket_transport_probe.c",
@@ -327,6 +328,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("cancellation semantics", socket_transport["native_evidence"][0]["scope"])
         self.assertIn("atomic CLOEXEC/NONBLOCK", socket_transport["native_evidence"][0]["scope"])
         self.assertIn("null-output socketpair EFAULT", socket_transport["native_evidence"][0]["scope"])
+        self.assertIn(
+            "IPv6 address-classification macros",
+            socket_transport["native_evidence"][0]["scope"],
+        )
         self.assertIn(
             "libc/src/c_abi/x86_64/socket_transport.rs",
             posix_runtime["source_owners"],
@@ -992,6 +997,23 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(detail, static_pie_scope)
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
+        for owner in (
+            "include/arpa/inet.h",
+            "include/netinet/in.h",
+            "include/sys/socket.h",
+            "compat/x86_64/socket_header_abi_probe.c",
+            "compat/x86_64/socket_header_abi_probe.cpp",
+            "compat/x86_64/socket_header_ipv6_macro_probe.c",
+            "compat/x86_64/run_socket_header_abi.sh",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+        socket_header_evidence = next(
+            evidence
+            for evidence in headers_layouts["native_evidence"]
+            if evidence["command"] == "./scripts/dev-x86_64.sh socket-header-abi"
+        )
+        self.assertEqual(socket_header_evidence["state"], "required")
+        self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 1
         bootstrap = artifacts[0]

@@ -1453,6 +1453,7 @@ source_owners = [
   "include/bits/syscall.h",
   "include/ctype.h",
   "include/features.h",
+  "include/arpa/inet.h",
   "include/inttypes.h",
   "include/stddef.h",
   "include/stdint.h",
@@ -1471,6 +1472,8 @@ source_owners = [
   "include/time.h",
   "include/unistd.h",
   "include/sys/mman.h",
+  "include/netinet/in.h",
+  "include/sys/socket.h",
   "include/sys/stat.h",
   "include/sys/syscall.h",
   "include/sys/sysinfo.h",
@@ -1562,6 +1565,10 @@ source_owners = [
   "compat/x86_64/resource_header_abi_probe.c",
   "compat/x86_64/resource_header_abi_probe.cpp",
   "compat/x86_64/run_resource_header_abi.sh",
+  "compat/x86_64/socket_header_abi_probe.c",
+  "compat/x86_64/socket_header_abi_probe.cpp",
+  "compat/x86_64/socket_header_ipv6_macro_probe.c",
+  "compat/x86_64/run_socket_header_abi.sh",
   "compat/x86_64/libc_fenv_probe.c",
   "compat/x86_64/libc_fenv_probe.rs",
   "compat/x86_64/run_libc_fenv.sh",
@@ -1623,6 +1630,7 @@ x86_header_prerequisites = [
   "The selected static immediate-termination header gate proves unconditional C11/C++ _Exit(int) declaration and unmangled C++ linkage against pinned musl; it selects no ordinary exit/quick-exit hook or lifecycle completion.",
   "The selected static callback-algorithms header gate proves unconditional C/C++ bsearch and qsort declarations plus GNU/BSD-only qsort_r with its final-context comparator ABI, strict/POSIX/XOPEN hiding, private __qsort_r rejection, and unmangled C++ linkage against pinned musl; it selects no callback ownership, C longjmp, C++ exception, or general stdlib lifecycle contract.",
   "The selected static descriptor-entry artifact runs the project/pinned-musl C/C++ fcntl declaration gate, then separately compiles project errno, fcntl/bits-fcntl, sys/stat, sys/types, unistd, and syscall headers into a freestanding C consumer. It proves variadic open/openat and mode_t creat declarations, selected descriptor flags, and x86 syscall facts without selecting a general filesystem header or runtime surface.",
+  "The socket-header gate compile-checks project-first and pinned-musl GNU C/C++ base socket transport declarations and address layouts, then executes the installed netinet/in.h IPv6 address-classification macros through both header sets. It proves only generic/IPv4/IPv6 socket-address records, selected transport declarations/constants, and the named classification macros; socket options, vectored/ancillary messages, address-conversion behavior, and C networking runtime behavior remain outside this partial header-evidence slice.",
 ]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
@@ -1656,6 +1664,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh libc-signal-foundation", scope = "This source-only pinned-musl x86 sigaction-record conversion and syscall-15 restorer leaf proves no public signal export, not C signal behavior or crabc-libc selection." },
   { state = "required", command = "./scripts/dev-x86_64.sh mman-header-abi", scope = "This compile-only C/C++ sys/mman declaration and value slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh resource-header-abi", scope = "This compile-only C/C++ sys/resource strict/GNU/LFS layout, declaration, and alias slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh socket-header-abi", scope = "This project-first/pinned-musl C/C++ base socket transport declaration/layout plus tiny native IPv6 address-classification macro-behavior slice is partial evidence; it does not select socket options, vectored/ancillary messages, address conversion, or C networking runtime behavior." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-setjmp", scope = "This standalone source-only x86 control-transfer and signal-mask slice is partial evidence. Its separate selected archive use is recorded only by `static-c-bootstrap-primitives`; this command does not make general crabc-libc selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-bootstrap-primitives", scope = "The completed static artifact is recorded below as `verified_artifact`; aggregate header/layout closure remains required." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-termios-control", scope = "The completed static artifact is recorded under libc.posix-runtime as `verified_artifact`; aggregate header/layout closure remains required." },
@@ -2428,6 +2437,7 @@ source_owners = [
   "include/bits/syscall.h",
   "compat/x86_64/socket_header_abi_probe.c",
   "compat/x86_64/socket_header_abi_probe.cpp",
+  "compat/x86_64/socket_header_ipv6_macro_probe.c",
   "compat/x86_64/run_socket_header_abi.sh",
   "compat/x86_64/static_c_abi_exports.txt",
   "compat/x86_64/libc_socket_transport_probe.c",
@@ -2443,8 +2453,8 @@ x86_abi_prerequisites = [
   "`send` is exactly sendto(fd, buffer, length, flags, null, 0) and `recv` is exactly recvfrom(fd, buffer, length, flags, null, null); this leaf contains no cancellation point, cancellation cleanup, or pthread interaction",
   "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
 ]
-x86_header_prerequisites = ["The candidate preprocesses the project errno.h, fcntl.h, bits/fcntl.h, arpa/inet.h, netinet/in.h, stddef.h, stdint.h, sys/socket.h, sys/types.h, sys/syscall.h, and bits/syscall.h surfaces. The separate header gate compile-checks project-first and pinned-musl C/C++ base socket-address records and selected declarations. Together they select only the named socket transport declarations, public address/length type facts, errno, and x86 syscall constants, not a general installed x86 header or C networking ABI claim."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-socket-transport", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact crate-owned C object-member exports separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; emitted socket=41, socketpair=53, bind=49, listen=50, accept=43, accept4=288, connect=42, send/sendto=44, recv/recvfrom=45, shutdown=48, getsockname=51, and getpeername=52 paths; direct null-address send/recv forms; atomic CLOEXEC/NONBLOCK flags on socket, socketpair, and accept4; direct null-output socketpair EFAULT; and selected local loopback/Unix-pair lifecycle and errno behavior. It deliberately omits cancellation semantics and does not select resolver/netdb, socket options, ancillary messages, address conversion, network-device ioctls, generic descriptor I/O, pthreads, libc.so, general startup, allocator, loader, sysroot, or public x86 support." }]
+x86_header_prerequisites = ["The candidate preprocesses the project errno.h, fcntl.h, bits/fcntl.h, arpa/inet.h, netinet/in.h, stddef.h, stdint.h, sys/socket.h, sys/types.h, sys/syscall.h, and bits/syscall.h surfaces. The separate header gate compile-checks project-first and pinned-musl C/C++ base socket-address records and selected declarations, then executes the installed IPv6 address-classification macros through both header sets. Together they select only the named socket transport declarations, public address/length type facts, IPv6 macro classifications, errno, and x86 syscall constants, not a general installed x86 header or C networking ABI claim."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-socket-transport", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact crate-owned C object-member exports separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; emitted socket=41, socketpair=53, bind=49, listen=50, accept=43, accept4=288, connect=42, send/sendto=44, recv/recvfrom=45, shutdown=48, getsockname=51, and getpeername=52 paths; direct null-address send/recv forms; atomic CLOEXEC/NONBLOCK flags on socket, socketpair, and accept4; direct null-output socketpair EFAULT; and selected local loopback/Unix-pair lifecycle and errno behavior. Its paired header gate also executes the installed IPv6 address-classification macros, but that header-only evidence does not broaden this artifact's selected runtime. It deliberately omits cancellation semantics and does not select resolver/netdb, socket options, ancillary messages, address conversion, network-device ioctls, generic descriptor I/O, pthreads, libc.so, general startup, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/network/socket.c, socketpair.c, bind.c, listen.c, accept.c, accept4.c, connect.c, send.c, recv.c, sendto.c, recvfrom.c, shutdown.c, getsockname.c, and getpeername.c map respectively to the selected C wrappers; declaration, direct-wrapper, errno, and cancellation-omission boundary oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Selected direct socket syscall numbers, SysV register order, LP64 pointer/length words, raw errno, and caller-owned socket-address contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Static initial-exec TLS and Variant-II thread-pointer fixture contract." }]
 
 [[family.verified_artifact]]

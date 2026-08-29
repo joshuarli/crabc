@@ -551,13 +551,15 @@ against pinned musl: an unsigned-long-long `rlim_t`, 16-byte `rlimit`, and
 header evidence and does not select process-resource behavior or `crabc-libc`.
 
 `socket-header-abi` compile-checks project-first and pinned-musl GNU C/C++
-`<sys/socket.h>` and `<netinet/in.h>` base transport declarations. It covers
-only generic and IPv4/IPv6 socket-address records, `socklen_t`, selected
-address-family/type, creation, shutdown, and basic send/receive constants, and
-the `socket`/`socketpair`, bind/listen/accept/`accept4`/connect,
-send/receive, name-query, and shutdown signatures. It is source-only header
+`<sys/socket.h>` and `<netinet/in.h>` base transport declarations, then runs a
+tiny C probe through each header set for the installed IPv6 address-
+classification macros. It covers only generic and IPv4/IPv6 socket-address
+records, `socklen_t`, selected address-family/type, creation, shutdown, and
+basic send/receive constants, the `socket`/`socketpair`,
+bind/listen/accept/`accept4`/connect, send/receive, name-query, and shutdown
+signatures, and the named IPv6 macro classifications. It is source-only header
 evidence: it does not select socket options, vector or ancillary-message APIs,
-socket behavior, `crabc-libc`, or public x86 support.
+address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 
 `mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mremap`/`mprotect`/
 `munmap` numbers and the closed mapping/remapping constants used by the native
