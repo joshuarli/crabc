@@ -57,10 +57,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
         self.assertEqual(report["header_foundation_project_only_header_count"], 8)
         self.assertEqual(report["header_foundation_uapi_path_count"], 3)
+        self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 12)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 13)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -198,7 +199,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v2"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v3"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -213,6 +214,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("compat/upstreams.toml", headers_layouts["source_owners"])
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
+        self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
 
         classes = manifest["header_class"]
         assert isinstance(classes, list)
@@ -267,6 +269,59 @@ class X86ParityLedgerTests(unittest.TestCase):
             inputs[0]["paths"], ["linux/kd.h", "linux/soundcard.h", "linux/vt.h"]
         )
 
+        matrix = manifest["uapi_wrapper_matrix"]
+        assert isinstance(matrix, dict)
+        self.assertEqual(matrix["id"], "linux-5.10-uapi-wrapper-profile-matrix")
+        self.assertEqual(matrix["state"], "partial-verified")
+        self.assertEqual(matrix["required_result"], "pass")
+        self.assertEqual(
+            matrix["command"], "./scripts/dev-x86_64.sh uapi-wrapper-matrix"
+        )
+        self.assertEqual(matrix["header_class"], "pinned-uapi-inputs")
+        self.assertEqual(matrix["headers"], ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"])
+        self.assertEqual(
+            matrix["profiles"],
+            [
+                "c11-gnu",
+                "cxx17-gnu",
+                "c11-strict",
+                "c11-posix-2008",
+                "c11-xopen-700",
+                "c11-bsd",
+                "cxx17-strict",
+            ],
+        )
+        self.assertEqual(matrix["row_count"], 21)
+        rows = matrix["row"]
+        assert isinstance(rows, list)
+        self.assertEqual(len(rows), 21)
+        self.assertEqual(
+            [
+                (row["header"], row["dependency"], row["profile"])
+                for row in rows
+                if isinstance(row, dict)
+            ],
+            [
+                (header, dependency, profile)
+                for header, dependency in ledger.EXPECTED_PUBLIC_HEADER_UAPI_GAPS.items()
+                for profile in ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES
+            ],
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in rows
+            )
+        )
+        completion = manifest["completion"]
+        assert isinstance(completion, dict)
+        self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
+        self.assertFalse(completion["family_promotion"])
+        self.assertFalse(completion["public_support"])
+
         diagnostics = manifest["closure_diagnostic"]
         assert (
             isinstance(diagnostics, list)
@@ -281,9 +336,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh candidate-header-closure",
         )
         self.assertEqual(diagnostics[0]["record_count"], 382)
-        self.assertFalse(manifest["completion"]["family_promotion"])
-        self.assertFalse(manifest["completion"]["public_support"])
-
         obligations = manifest["profile_obligation"]
         assert isinstance(obligations, list)
         self.assertEqual(len(obligations), 21)
@@ -297,6 +349,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(current["applicability"], "applicable")
         self.assertEqual(current["state"], "partial-verified")
         self.assertEqual(current["evidence"], ["public-header-c-consumability"])
+        uapi_current = next(
+            obligation
+            for obligation in obligations
+            if obligation["header_class"] == "pinned-uapi-inputs"
+            and obligation["profile"] == "c11-gnu"
+        )
+        assert isinstance(uapi_current, dict)
+        self.assertEqual(uapi_current["applicability"], "applicable")
+        self.assertEqual(uapi_current["state"], "partial-verified")
+        self.assertEqual(
+            uapi_current["evidence"],
+            [
+                "pinned-linux-5.10-uapi-input",
+                "linux-5.10-uapi-wrapper-profile-matrix",
+            ],
+        )
 
         owners = manifest["linkage_owner"]
         assert isinstance(owners, list)
@@ -316,6 +384,36 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(completion, dict)
         completion["family_promotion"] = True
         with self.assertRaisesRegex(ledger.LedgerError, "completion drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        matrix = manifest["uapi_wrapper_matrix"]
+        assert isinstance(matrix, dict)
+        rows = matrix["row"]
+        assert isinstance(rows, list)
+        rows.pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "matrix row roster drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        matrix = manifest["uapi_wrapper_matrix"]
+        assert isinstance(matrix, dict)
+        rows = matrix["row"]
+        assert isinstance(rows, list) and isinstance(rows[0], dict)
+        rows[0]["dependency"] = "linux/input.h"
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux-UAPI dependency drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        matrix = manifest["uapi_wrapper_matrix"]
+        assert isinstance(matrix, dict)
+        rows = matrix["row"]
+        assert isinstance(rows, list) and isinstance(rows[0], dict)
+        rows[0]["candidate"] = "incomplete"
+        with self.assertRaisesRegex(ledger.LedgerError, "resolved compile-only result"):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()

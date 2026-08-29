@@ -28,13 +28,16 @@ LINUX_5_10_UAPI_VERIFIER_PATH = ROOT / "compat" / "x86_64" / "run_linux_5_10_uap
 CANDIDATE_HEADER_CLOSURE_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_candidate_header_closure.sh"
 )
+UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
+)
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v2"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v3"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -42,6 +45,10 @@ EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
     "sys/soundcard.h": "linux/soundcard.h",
     "sys/vt.h": "linux/vt.h",
 }
+EXPECTED_UAPI_WRAPPER_MATRIX_ID = "linux-5.10-uapi-wrapper-profile-matrix"
+EXPECTED_UAPI_WRAPPER_MATRIX_COMMAND = "./scripts/dev-x86_64.sh uapi-wrapper-matrix"
+EXPECTED_UAPI_WRAPPER_MATRIX_HEADERS = tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS)
+EXPECTED_UAPI_WRAPPER_MATRIX_ROW_COUNT = 21
 EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "daemon.h",
     "dn_expand.h",
@@ -112,6 +119,7 @@ EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
         "state": "planned",
     },
 }
+EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES = tuple(EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES)
 
 EXPECTED_HEADER_FOUNDATION_CLASS_IDS = (
     "pinned-non-uapi",
@@ -143,6 +151,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "public-path-inventory",
         "candidate-tree-presence",
         "uapi-input-provenance",
+        "uapi-wrapper-profile-matrix",
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
@@ -213,43 +222,39 @@ EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS = {
         ("oracle-derived-cxx17-matrix",),
     ),
     ("pinned-uapi-inputs", "c11-gnu"): (
-        "oracle-required",
-        "planned",
-        ("pinned-linux-5.10-uapi-input", "isolated-candidate-header-closure"),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("pinned-uapi-inputs", "cxx17-gnu"): (
-        "oracle-required",
-        "planned",
-        (
-            "pinned-linux-5.10-uapi-input",
-            "isolated-candidate-header-closure",
-            "oracle-derived-cxx17-matrix",
-        ),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("pinned-uapi-inputs", "c11-strict"): (
-        "oracle-required",
-        "planned",
-        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("pinned-uapi-inputs", "c11-posix-2008"): (
-        "oracle-required",
-        "planned",
-        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("pinned-uapi-inputs", "c11-xopen-700"): (
-        "oracle-required",
-        "planned",
-        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("pinned-uapi-inputs", "c11-bsd"): (
-        "oracle-required",
-        "planned",
-        ("pinned-linux-5.10-uapi-input", "strict-posix-xopen-gnu-bsd-matrix"),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("pinned-uapi-inputs", "cxx17-strict"): (
-        "oracle-required",
-        "planned",
-        ("pinned-linux-5.10-uapi-input", "oracle-derived-cxx17-matrix"),
+        "applicable",
+        "partial-verified",
+        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
     ),
     ("project-only-extensions", "c11-gnu"): (
         "oracle-required",
@@ -312,6 +317,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "pinned-uapi-inputs",
         "libc.headers-layouts",
         ("pinned-linux-5.10-uapi-input",),
+    ),
+    "uapi-wrapper-profile-matrix": (
+        "partial-verified",
+        "pinned-uapi-inputs",
+        "libc.headers-layouts",
+        (EXPECTED_UAPI_WRAPPER_MATRIX_ID,),
     ),
     "project-only-extension-policy": (
         "planned",
@@ -1037,10 +1048,11 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v2 contract resolves every current pathname into one class and expands
+    The v3 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
-    Linux-UAPI input and requires a live C11/C++17 empty-TU closure diagnostic,
-    while keeping aggregate applicability, declaration/layout comparisons, and
+    Linux-UAPI input, resolves one selected three-wrapper-by-seven-profile ABI
+    matrix, and requires a live C11/C++17 empty-TU closure diagnostic, while
+    keeping aggregate applicability, declaration/layout comparisons, and
     declared-callable linkage in planned evidence lanes.
     """
     require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
@@ -1059,6 +1071,7 @@ def validate_header_layout_foundation_manifest(
         "completion",
         "profile_matrix",
         "uapi_input",
+        "uapi_wrapper_matrix",
         "closure_diagnostic",
         "language_profile",
         "profile_obligation",
@@ -1118,6 +1131,7 @@ def validate_header_layout_foundation_manifest(
             "abi_facets_accounted": True,
             "callable_linkage_owners_accounted": True,
             "legacy_direct_inputs_accounted": True,
+            "uapi_wrapper_profile_matrix_slice": True,
             "candidate_transitive_include_closure": False,
             "c11_consumer_matrix": False,
             "cxx17_consumer_matrix": False,
@@ -1185,10 +1199,15 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/headers-layouts.toml",
         "compat/x86_64/public_headers.txt",
         "compat/x86_64/run_linux_5_10_uapi.sh",
+        "compat/x86_64/run_uapi_wrapper_matrix.sh",
+        "compat/x86_64/uapi_wrappers_header_abi_probe.c",
+        "compat/x86_64/uapi_wrappers_header_abi_probe.cpp",
         "compat/x86_64/run_candidate_header_closure.sh",
         "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/tests/test_candidate_header_closure.py",
+        "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
+        "compat/x86_64/tests/test_runner.py",
         "scripts/dev-x86_64.sh",
     ):
         require(owner in source_owners, f"libc.headers-layouts must own {owner}")
@@ -1448,6 +1467,166 @@ def validate_header_layout_foundation_manifest(
     require(
         tuple(profile_ids) == tuple(EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES),
         "header-foundation language profile order or roster drifted",
+    )
+
+    uapi_wrapper_matrix = manifest["uapi_wrapper_matrix"]
+    require(
+        isinstance(uapi_wrapper_matrix, Mapping),
+        "header-foundation UAPI wrapper matrix must be a table",
+    )
+    require(
+        set(uapi_wrapper_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "headers",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation UAPI wrapper matrix keys drifted",
+    )
+    require(
+        uapi_wrapper_matrix["id"] == EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+        "header-foundation UAPI wrapper matrix id drifted",
+    )
+    require(
+        uapi_wrapper_matrix["state"] == "partial-verified"
+        and uapi_wrapper_matrix["required_result"] == "pass",
+        "header-foundation UAPI wrapper matrix must remain partial verified evidence",
+    )
+    require(
+        uapi_wrapper_matrix["command"] == EXPECTED_UAPI_WRAPPER_MATRIX_COMMAND,
+        "header-foundation UAPI wrapper matrix command drifted",
+    )
+    require(
+        uapi_wrapper_matrix["header_class"] == "pinned-uapi-inputs",
+        "header-foundation UAPI wrapper matrix must remain scoped to pinned UAPI inputs",
+    )
+    matrix_headers = string_list(
+        uapi_wrapper_matrix["headers"], "header-foundation UAPI wrapper matrix headers"
+    )
+    require(
+        tuple(matrix_headers) == EXPECTED_UAPI_WRAPPER_MATRIX_HEADERS,
+        "header-foundation UAPI wrapper matrix headers drifted",
+    )
+    matrix_profiles = string_list(
+        uapi_wrapper_matrix["profiles"], "header-foundation UAPI wrapper matrix profiles"
+    )
+    require(
+        tuple(matrix_profiles) == EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+        "header-foundation UAPI wrapper matrix profiles drifted",
+    )
+    require(
+        uapi_wrapper_matrix["row_count"] == EXPECTED_UAPI_WRAPPER_MATRIX_ROW_COUNT
+        and uapi_wrapper_matrix["row_count"] == len(matrix_headers) * len(matrix_profiles),
+        "header-foundation UAPI wrapper matrix row count drifted",
+    )
+    matrix_scope = uapi_wrapper_matrix["scope"]
+    require(
+        isinstance(matrix_scope, str)
+        and all(
+            phrase in matrix_scope
+            for phrase in (
+                "callable linkage",
+                "device/ioctl behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation UAPI wrapper matrix scope must retain its non-completion boundary",
+    )
+    matrix_rows = uapi_wrapper_matrix["row"]
+    require(
+        isinstance(matrix_rows, list)
+        and len(matrix_rows) == EXPECTED_UAPI_WRAPPER_MATRIX_ROW_COUNT,
+        "header-foundation UAPI wrapper matrix row roster drifted",
+    )
+    expected_matrix_rows = tuple(
+        (header, dependency, profile)
+        for header, dependency in EXPECTED_PUBLIC_HEADER_UAPI_GAPS.items()
+        for profile in EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES
+    )
+    observed_matrix_rows: list[tuple[str, str, str]] = []
+    for index, row in enumerate(matrix_rows):
+        location = f"header-foundation uapi_wrapper_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row)
+            == {"header", "dependency", "profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        header = row["header"]
+        dependency = row["dependency"]
+        profile = row["profile"]
+        require(
+            isinstance(header, str) and isinstance(dependency, str) and isinstance(profile, str),
+            f"{location} row key is invalid",
+        )
+        require(
+            EXPECTED_PUBLIC_HEADER_UAPI_GAPS.get(header) == dependency,
+            f"{location} Linux-UAPI dependency drifted",
+        )
+        require(
+            profile in EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+            f"{location} profile is not a declared UAPI wrapper profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_matrix_rows.append((header, dependency, profile))
+    require(
+        tuple(observed_matrix_rows) == expected_matrix_rows,
+        "header-foundation UAPI wrapper matrix row order or cross-product drifted",
+    )
+    require(
+        UAPI_WRAPPER_MATRIX_RUNNER_PATH.is_file(),
+        "header-foundation UAPI wrapper matrix runner is missing",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "uapi-wrapper-matrix)" in dispatch_source,
+        "uapi-wrapper-matrix is absent from the native dispatcher",
+    )
+    family_native_evidence = family.get("native_evidence")
+    require(
+        isinstance(family_native_evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_UAPI_WRAPPER_MATRIX_COMMAND
+    ]
+    require(
+        len(matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one UAPI wrapper matrix evidence command",
+    )
+    require(
+        matrix_evidence[0].get("state") == "required"
+        and isinstance(matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in matrix_evidence[0]["scope"]
+            for phrase in (
+                "callable linkage",
+                "device/ioctl behavior",
+                "all-header closure",
+                "runtime",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts UAPI wrapper matrix evidence must retain its non-completion boundary",
     )
 
     inventory_text = inventory_path.read_text(encoding="utf-8")
@@ -1757,6 +1936,7 @@ def validate_header_layout_foundation_manifest(
         "pinned_header_count": len(pinned_path_set),
         "project_only_header_count": len(project_only_set),
         "uapi_path_count": len(observed_uapi_paths),
+        "uapi_wrapper_matrix_row_count": len(observed_matrix_rows),
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -3848,6 +4028,9 @@ def validate_ledger(
         ],
         "header_foundation_uapi_path_count": header_layout_foundation_report[
             "uapi_path_count"
+        ],
+        "header_foundation_uapi_wrapper_matrix_row_count": header_layout_foundation_report[
+            "uapi_wrapper_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"

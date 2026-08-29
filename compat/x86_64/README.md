@@ -410,7 +410,7 @@ headers. The report is generated under `compat/reports/`; it is a
 consumability/accounting artifact, not declaration, layout, linkage, runtime,
 installed-header completion, or public x86 support evidence.
 
-`headers-layouts-foundation.toml` is the planned v2 contract that turns those
+`headers-layouts-foundation.toml` is the planned v3 contract that turns those
 separate inventories into a reviewable closure plan without claiming family
 completion. It partitions all 183 pinned paths plus eight project-only
 extensions, fixes the three `sys/*` dependencies to one Linux 5.10 x86 UAPI
@@ -420,6 +420,12 @@ export (source SHA-256
 `00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e`),
 with `compat/upstreams.toml#linux_5_10_uapi` owning that identity, and makes
 `linux-5-10-uapi` verify that input independently. The live
+`uapi-wrapper-matrix` command resolves exactly the three `sys/*` wrappers
+across all five C11 and two C++17 profiles through both pinned-musl and
+raw-GCC project-header-first roots, with selected forwarding constants, ioctl
+encodings, and x86 LP64 layouts. It is compile-only and does not select
+callable linkage, sound/console device behavior, general UAPI behavior, or
+runtime support. The live
 `candidate-header-closure` command requires all 382 raw-GCC candidate and
 pinned-musl-reference C11/C++17 empty-TU rows to pass with only project,
 raw-GCC builtin, and declared Linux-UAPI roots; it is not an expected-failure
