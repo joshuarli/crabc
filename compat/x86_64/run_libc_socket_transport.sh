@@ -132,7 +132,7 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
 done
 for unselected in getsockopt setsockopt sockatmark ioctl if_nametoindex \
     if_indextoname sendmsg recvmsg sendmmsg recvmmsg readv writev preadv \
-    pwritev open openat creat fcntl getaddrinfo freeaddrinfo getnameinfo \
+    pwritev fcntl getaddrinfo freeaddrinfo getnameinfo \
     gethostbyname gethostbyaddr fork _Fork vfork clone execve pthread_create \
     pthread_cancel malloc free calloc realloc mmap \
     mprotect munmap; do

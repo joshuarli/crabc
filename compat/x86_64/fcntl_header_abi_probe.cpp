@@ -30,10 +30,16 @@ static_assert(AT_EMPTY_PATH == 0x1000 && F_SEAL_WRITE == 8 &&
     SPLICE_F_GIFT == 8, "x86 C++ GNU flags");
 
 using open_function = int (*)(const char *, int, ...);
+using openat_function = int (*)(int, const char *, int, ...);
+using creat_function = int (*)(const char *, mode_t);
 using fcntl_function = int (*)(int, int, ...);
 using lockf_function = int (*)(int, int, off64_t);
 static_assert(__is_same(decltype(&open), open_function),
     "x86 C++ open declaration");
+static_assert(__is_same(decltype(&openat), openat_function),
+    "x86 C++ openat declaration");
+static_assert(__is_same(decltype(&creat), creat_function),
+    "x86 C++ creat declaration");
 static_assert(__is_same(decltype(&fcntl), fcntl_function),
     "x86 C++ fcntl declaration");
 static_assert(__is_same(decltype(&lockf64), lockf_function),

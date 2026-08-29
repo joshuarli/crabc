@@ -850,6 +850,71 @@ def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_descriptor_entry_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the static C descriptor-entry artifact concrete and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-descriptor-entry"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-descriptor-entry artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "descriptor-entry block",
+        "`open`",
+        "`openat`",
+        "`creat`",
+        "O_CLOEXEC",
+        "O_LARGEFILE",
+        "does not select C fcntl",
+        "cancellation",
+    ):
+        require(
+            phrase in description,
+            f"static-c-descriptor-entry description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "open=2" in item
+            and "openat=257" in item
+            and "rdi/rsi/rdx/r10" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-entry must record its open/openat register ABI",
+    )
+    require(
+        any(
+            "complete O_TMPFILE" in item and "O_LARGEFILE" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-entry must record its optional-mode and O_LARGEFILE contract",
+    )
+    require(
+        any(
+            "F_SETFD=2/FD_CLOEXEC=1" in item and "omits all __syscall_cp" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-entry must record its private O_CLOEXEC and cancellation boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-descriptor-entry"},
+        "static-c-descriptor-entry must use the closed libc-descriptor-entry command",
+    )
+
+
 def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     """Keep the stateless find-first-set artifact identity and scope durable."""
     artifacts = require_verified_artifacts(
@@ -1063,6 +1128,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
+    require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]

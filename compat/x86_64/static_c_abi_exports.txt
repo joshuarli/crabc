@@ -33,6 +33,7 @@ cfsetspeed
 clock_nanosleep
 close
 connect
+creat
 div
 dup
 dup2
@@ -109,6 +110,8 @@ memmove
 memrchr
 memset
 nice
+open
+openat
 pause
 pipe
 pipe2

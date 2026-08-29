@@ -118,7 +118,7 @@ for symbol in __errno_location cfgetispeed cfgetospeed cfsetispeed cfsetospeed \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in syscall ioctl open openat tcdrain tcgetsid tcgetpgrp \
+for unselected in syscall ioctl tcdrain tcgetsid tcgetpgrp \
     tcsetpgrp isatty ttyname ttyname_r openpty forkpty login_tty posix_openpt \
     grantpt unlockpt ptsname ptsname_r malloc free calloc realloc pthread_create \
     pthread_cancel; do

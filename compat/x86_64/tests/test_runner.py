@@ -4535,6 +4535,133 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_descriptor_entry_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_entry = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_entry.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_entry_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_entry_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_descriptor_entry.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "descriptor_entry.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "fn open(",
+            "fn openat(",
+            "fn creat(",
+            "src/fcntl/open.c",
+            "src/fcntl/openat.c",
+            "src/fcntl/creat.c",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_OPENAT",
+            "raw_syscall::SYS_FCNTL",
+            "O_LARGEFILE",
+            "O_TMPFILE",
+            "(flags & O_TMPFILE) == O_TMPFILE",
+            "F_SETFD",
+            "FD_CLOEXEC",
+            "c_status(result)",
+            "__syscall_cp",
+            "rdi/rsi/rdx/r10",
+        ):
+            self.assertIn(required, descriptor_entry)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "pub unsafe extern \"C\" fn fcntl",
+            "fn fcntl(",
+            "__tls_get_addr",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, descriptor_entry)
+        for required in (
+            "openat_signature",
+            "creat_signature",
+            "openat_signature)(int, const char *, int, ...)",
+            "creat_signature)(const char *, mode_t)",
+        ):
+            self.assertIn(required, header_c_probe)
+        for required in (
+            "openat_function",
+            "creat_function",
+            "decltype(&openat)",
+            "decltype(&creat)",
+        ):
+            self.assertIn(required, header_cxx_probe)
+        for required in (
+            "#include <fcntl.h>",
+            "raw_fcntl",
+            "check_open_without_mode",
+            "check_open_create_cloexec",
+            "check_openat_relative_create",
+            "check_creat_truncates",
+            "O_CLOEXEC",
+            "F_GETFD",
+            "CRABC_DESCRIPTOR_ENTRY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_descriptor_entry_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_fcntl_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_open_syscall",
+            "assert_named_syscall openat 101",
+            "assert_open_cloexec_fixup",
+            "candidate does not define public fcntl",
+            "%r10",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("open", "openat", "creat"):
+            self.assertIn(symbol, static_export_names)
+        self.assertNotIn("fcntl", static_export_names)
+        self.assertIn('id = "static-c-descriptor-entry"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-descriptor-entry"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_descriptor_entry()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_descriptor_entry.sh", runner
+        )
+        self.assertIn(
+            '    libc-descriptor-entry)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-entry takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_ffs_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

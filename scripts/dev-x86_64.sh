@@ -2,11 +2,11 @@
 # Native Linux/x86-64 staged foundation evidence entry point.
 #
 # This is a deliberately closed foundation lane. It proves explicitly named
-# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-five
+# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-six
 # static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_nanosleep,
-# selected descriptor I/O, selected process resources, and selected readiness
+# selected descriptor entry, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
 # ctype, integer arithmetic, intmax arithmetic, credential observation, and
@@ -157,6 +157,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
+  libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
   libc-descriptor-io  run the static x86 crabc-libc selected descriptor-I/O slice
   libc-process-resources  run the static x86 crabc-libc selected resource slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
@@ -796,6 +797,15 @@ x86 syscall-230 register path. It intentionally leaves musl's realtime
 `nanosleep` route and pthread cancellation unselected, alongside C clocks and
 timers, signal policy, dynamic libc, CRT/TLS lifecycle, loader, sysroot, and
 public x86 support.
+`libc-descriptor-entry` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+`open`, `openat`, and `creat`: their optional-mode ABI, musl's O_LARGEFILE
+and private O_CLOEXEC F_SETFD path, direct errno results, relative descriptor
+resolution, create mode, and truncation behavior. Fixture-local raw syscalls
+own a PID-specific temporary directory and observe descriptor/stat state. It
+does not provide public C fcntl, path policy, a filesystem capability,
+cancellation/AIO integration, dynamic libc, CRT/TLS lifecycle, loader,
+sysroot, or public x86 support.
 `libc-descriptor-io` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 descriptor transfer, positioned I/O, signed seek/truncate, synchronization
@@ -1061,6 +1071,10 @@ run_libc_callback_algorithms() {
 
 run_libc_clock_nanosleep() {
     run_in_container bash /workspace/compat/x86_64/run_libc_clock_nanosleep.sh
+}
+
+run_libc_descriptor_entry() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_entry.sh
 }
 
 run_ffs_header_abi() {
@@ -1874,7 +1888,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-nanosleep|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-nanosleep|libc-descriptor-entry|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2594,6 +2608,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-clock-nanosleep takes no arguments"
         ensure_image
         run_libc_clock_nanosleep
+        ;;
+    libc-descriptor-entry)
+        [ "$#" -eq 0 ] || fail "libc-descriptor-entry takes no arguments"
+        ensure_image
+        run_libc_descriptor_entry
         ;;
     libc-ffs)
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"

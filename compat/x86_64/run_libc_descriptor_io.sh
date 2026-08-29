@@ -135,7 +135,7 @@ for symbol in __errno_location close read write pread pwrite lseek ftruncate \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in open openat creat fcntl readv writev preadv pwritev preadv2 \
+for unselected in fcntl readv writev preadv pwritev preadv2 \
     pwritev2 splice vmsplice tee sendfile copy_file_range close_range fork _Fork \
     vfork clone execve kill raise gettid syscall setfsuid \
     setfsgid malloc free calloc realloc pthread_create mmap \

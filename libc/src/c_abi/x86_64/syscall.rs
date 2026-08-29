@@ -5,7 +5,10 @@
 //! register ABI and the matching syscall-number table. The selected static
 //! metadata leaf uses `fstat` and `newfstatat`; the credential leaf uses its
 //! selected identity syscalls; the selected process-context leaf uses its
-//! scalar identity, group/session, mask, and selected descriptor-I/O syscalls;
+//! scalar identity, group/session, and mask syscalls; the selected
+//! descriptor-entry leaf uses `open`, `openat`, and its private post-open
+//! `fcntl` request; the selected descriptor-I/O leaf uses its named transfer,
+//! lifecycle, and pipe syscalls;
 //! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
 //! and byte-transfer syscalls.
@@ -247,6 +250,7 @@ pub(crate) unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
 // its target-specific single source of truth when x86-64 composition is added.
 pub(crate) const SYS_READ: i64 = 0;
 pub(crate) const SYS_WRITE: i64 = 1;
+pub(crate) const SYS_OPEN: i64 = 2;
 pub(crate) const SYS_CLOSE: i64 = 3;
 pub(crate) const SYS_FSTAT: i64 = 5;
 pub(crate) const SYS_POLL: i64 = 7;

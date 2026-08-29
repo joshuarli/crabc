@@ -42,7 +42,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 23)
+        self.assertEqual(report["verified_artifact_count"], 24)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -118,7 +118,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 22
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 23
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -688,6 +688,38 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("does not select nanosleep/sleep", clock_nanosleep["description"])
         self.assertIn(
             "libc/src/c_abi/x86_64/clock_nanosleep.rs",
+            posix_runtime["source_owners"],
+        )
+        descriptor_entry = artifacts_by_id["static-c-descriptor-entry"]
+        assert isinstance(descriptor_entry, dict)
+        self.assertNotIn("capabilities", descriptor_entry)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/descriptor_entry.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "include/fcntl.h",
+            "include/bits/fcntl.h",
+            "include/sys/stat.h",
+            "compat/x86_64/fcntl_header_abi_probe.c",
+            "compat/x86_64/fcntl_header_abi_probe.cpp",
+            "compat/x86_64/run_fcntl_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_descriptor_entry_probe.c",
+            "compat/x86_64/libc_descriptor_entry_start.S",
+            "compat/x86_64/run_libc_descriptor_entry.sh",
+        ):
+            self.assertIn(owner, descriptor_entry["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in descriptor_entry["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-descriptor-entry"},
+        )
+        self.assertIn("descriptor-entry block", descriptor_entry["description"])
+        self.assertIn("O_CLOEXEC", descriptor_entry["description"])
+        self.assertIn("does not select C fcntl", descriptor_entry["description"])
+        self.assertIn("src/fcntl/open.c", descriptor_entry["oracle"][0]["role"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/descriptor_entry.rs",
             posix_runtime["source_owners"],
         )
         ffs = artifacts_by_id["static-c-ffs"]
@@ -3143,6 +3175,39 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh clock-nanosleep-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-clock-nanosleep command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_descriptor_entry_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-descriptor-entry"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("open=2", "open=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "open/openat register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-descriptor-entry"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-status-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-descriptor-entry command"
         ):
             ledger.validate_ledger(data)
 

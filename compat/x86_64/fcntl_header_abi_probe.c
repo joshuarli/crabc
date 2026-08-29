@@ -56,6 +56,7 @@ _Static_assert(F_GETLK64 == F_GETLK && sizeof(off64_t) == sizeof(off_t),
 
 static int (*open_signature)(const char *, int, ...) = open;
 static int (*openat_signature)(int, const char *, int, ...) = openat;
+static int (*creat_signature)(const char *, mode_t) = creat;
 static int (*fcntl_signature)(int, int, ...) = fcntl;
 static int (*lockf_signature)(int, int, off_t) = lockf;
 static int (*lockf64_signature)(int, int, off64_t) = lockf64;
@@ -66,6 +67,7 @@ int crabc_x86_64_fcntl_header_abi_probe(void)
     struct flock value = { 0 };
     (void)open_signature;
     (void)openat_signature;
+    (void)creat_signature;
     (void)fcntl_signature;
     (void)lockf_signature;
     (void)lockf64_signature;
