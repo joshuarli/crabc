@@ -4,7 +4,7 @@
 //! signal-control, termios-control, selected process-context, selected
 //! descriptor-I/O, selected process-resources, and selected readiness/signal-
 //! waits, selected system-observation, selected UTS-namespace identity, and
-//! basic socket-transport, and integer-parsing artifact boundaries share this
+//! basic socket-transport, integer-parsing, and nanosleep artifact boundaries share this
 //! one initial-TLS slot.
 //! Its source-only probe
 //! remains the direct relocation proof: `ERRNO` uses the executable's initial TLS block

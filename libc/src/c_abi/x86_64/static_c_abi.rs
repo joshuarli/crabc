@@ -10,7 +10,7 @@
 //! system-observation, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, callback-algorithms, and POSIX
-//! `clock_nanosleep`
+//! `nanosleep` and `clock_nanosleep`
 //! artifacts.
 //! It deliberately shares only the raw
 //! Linux syscall register boundary and one initial-TLS C `errno` slot. The
@@ -77,6 +77,8 @@ mod immediate_termination;
 mod callback_algorithms;
 #[path = "clock_nanosleep.rs"]
 mod clock_nanosleep;
+#[path = "nanosleep.rs"]
+mod nanosleep;
 #[path = "descriptor_entry.rs"]
 mod descriptor_entry;
 #[path = "descriptor_control.rs"]

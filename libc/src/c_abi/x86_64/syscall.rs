@@ -11,7 +11,8 @@
 //! lifecycle, and pipe syscalls;
 //! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
-//! and byte-transfer syscalls.
+//! and byte-transfer syscalls; and the selected nanosleep leaf uses its direct
+//! two-pointer relative sleep syscall.
 //! All other public C wrappers remain unintegrated until their own ABI
 //! boundaries have evidence.
 //!

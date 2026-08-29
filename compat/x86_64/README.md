@@ -314,6 +314,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-child-reaping
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-callback-algorithms
+./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
 ./scripts/dev-x86_64.sh libc-descriptor-entry
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
@@ -733,8 +734,8 @@ error from its C function, whereas the raw syscall uses `-1` plus `errno`; the
 typed Rust facade instead uses its direct syscall error boundary. It completes
 only `time.clock-sleep`: C sleep APIs, clock mutation, POSIX timers, and
 broader time policy remain excluded.
-It is distinct from `libc-clock-nanosleep`, which is the separately selected
-private C static-archive artifact below.
+It is distinct from the separately selected private C static-archive
+`libc-nanosleep` and `libc-clock-nanosleep` artifacts below.
 
 `getitimer-reference` executes the direct typed x86 read-only interval-timer
 query. It pins signed 16-byte, align-8 `timeval` and 32-byte, align-8
@@ -1549,7 +1550,7 @@ native C fixture through the installed project `errno.h`. It proves a local
 initial-TLS datum with `R_X86_64_TPOFF*`, no `__tls_get_addr` path, zero
 initialization, and independent main/pthread `errno` slots. This standalone
 probe remains direct relocation evidence; the shared archive is selected by
-twenty-eight separately recorded static artifact boundaries, while only their
+twenty-nine separately recorded static artifact boundaries, while only their
 errno-observing leaves link this owner. It is not a musl differential or a
 general C ABI claim.
 
@@ -1668,7 +1669,21 @@ It is private native x86 evidence only: it excludes generic C sorting/search,
 callback registries, C longjmp/C++ exception transport, dynamic runtime, and
 public x86 support.
 
-`libc-clock-nanosleep` is the tenth, separately recorded
+`libc-nanosleep` is the tenth, separately recorded `static-c-nanosleep`
+`verified_artifact` gate over that archive, not a C time or runtime capability.
+Its project-header C body first executes through pinned musl and then through
+a `-nostdlib -static` candidate. It selects only `nanosleep`'s normal
+zero-or-`-1`/`errno` convention: zero completion preserves stale errno,
+invalid and null requests produce `EINVAL`/`EFAULT`, and a delivered signal
+produces `EINTR` with a positive remaining interval. The candidate emits
+`nanosleep=35` through rdi/rsi and writes the selected initial-TLS errno slot
+on error. Musl's `nanosleep` delegates through its relative realtime
+`clock_nanosleep` route to `__syscall_cp` cancellation machinery; this direct
+leaf intentionally omits pthread cancellation until the x86 pthread/TLS
+runtime exists. It excludes `sleep`/`usleep`, C clock/timer state, signal
+policy, dynamic runtime, and public x86 support.
+
+`libc-clock-nanosleep` is the eleventh, separately recorded
 `static-c-clock-nanosleep` `verified_artifact` gate over that archive, not a C
 time or runtime capability. Its project-header C body first executes through
 pinned musl and then through a `-nostdlib -static` candidate. It selects only
@@ -1681,11 +1696,12 @@ rule because raw Linux returns `EOPNOTSUPP`; fixture-local initial TLS exists
 only for the selected signal helper. Musl routes relative `CLOCK_REALTIME`
 requests through `nanosleep` and uses `__syscall_cp` as a cancellation point;
 the direct leaf intentionally uses syscall 230 for every remaining clock and
-omits pthread cancellation. It excludes
-`nanosleep`/`sleep`, C clock/timer state, signal policy, pthread/TLS lifecycle,
-`libc.so`, CRT, loader, sysroot, and public x86 support.
+omits pthread cancellation without calling or depending on the separately
+selected `nanosleep` leaf. It excludes `sleep`/`usleep`, C clock/timer state,
+signal policy, pthread/TLS lifecycle, `libc.so`, CRT, loader, sysroot, and
+public x86 support.
 
-`libc-descriptor-entry` is the eleventh, separately recorded
+`libc-descriptor-entry` is the twelfth, separately recorded
 `static-c-descriptor-entry` `verified_artifact` gate over that archive, not a
 descriptor/filesystem capability. Its project-header C body first executes
 through pinned musl and then through a `-nostdlib -static` candidate. It
@@ -1701,7 +1717,7 @@ behavior, descriptor flags, and direct errno results. It excludes pathname
 policy, a filesystem capability, cancellation, dynamic runtime, and public
 x86 support.
 
-`libc-fcntl-status-control` is the twelfth, separately recorded
+`libc-fcntl-status-control` is the thirteenth, separately recorded
 `static-c-fcntl-status-control` `verified_artifact` gate over that archive,
 not a descriptor/filesystem capability or generic C `fcntl` implementation.
 Its project-header C body first executes through pinned musl for only
@@ -1720,7 +1736,7 @@ separate direct Rust `F_GETLK`/status/seal slices do not widen this C
 artifact. It excludes `lockf`/`flock`, cancellation, generic descriptor or
 filesystem policy, general runtime, and public x86 support.
 
-`libc-descriptor-io` is the thirteenth, separately recorded static
+`libc-descriptor-io` is the fourteenth, separately recorded static
 `verified_artifact` gate over that archive, not a descriptor/filesystem
 capability. Its project-header C body first executes through pinned musl and
 then through a `-nostdlib -static` candidate. It selects only `close`,
@@ -1733,7 +1749,7 @@ close-on-exec behavior, and pipe flags. It excludes C open/path, generic fcntl-c
 I/O, pthread cancellation/AIO integration, filesystem durability, general
 runtime, and public x86 support.
 
-`libc-process-resources` is the fourteenth, separately recorded static
+`libc-process-resources` is the fifteenth, separately recorded static
 `verified_artifact` gate over that archive, not a process-resource capability.
 Its project-header C body first executes through pinned musl and then through
 a `-nostdlib -static` candidate. It selects only `getrlimit`/`setrlimit`, GNU
@@ -1745,7 +1761,7 @@ encoding, and the capability-conditional `nice` `EACCES` to `EPERM` mapping.
 It excludes `times`, scheduler policy, cgroups, C process lifecycle,
 pthread coordination, general runtime, and public x86 support.
 
-`libc-readiness-waits` is the fixture for the fifteenth, separately recorded
+`libc-readiness-waits` is the fixture for the sixteenth, separately recorded
 `static-c-readiness-signal-waits` `verified_artifact` gate over that archive,
 not a descriptor-readiness or
 signal-wait capability. Its project-header C body first executes through
@@ -1762,7 +1778,7 @@ direct Linux syscall path. It excludes epoll/eventfd, C open/path, generic
 fcntl-command, or vector I/O, AIO, generic signal delivery/waits, pthread mask policy, timers,
 process lifecycle, general runtime, and public x86 support.
 
-`libc-system-observation` is the fixture for the sixteenth, separately recorded
+`libc-system-observation` is the fixture for the seventeenth, separately recorded
 `static-c-system-observation` `verified_artifact` gate over that archive, not
 a general system-information capability. Its project-header C body first
 executes through pinned musl and then through a `-nostdlib -static` candidate.
@@ -1775,7 +1791,7 @@ excludes the separately recorded hostname/domain identity artifact,
 system-file parsing, process identity, generic system information, dynamic
 runtime, and public x86 support.
 
-`libc-uts-identity` is the seventeenth, separately recorded
+`libc-uts-identity` is the eighteenth, separately recorded
 `static-c-uts-identity` `verified_artifact` gate over that archive, not a
 namespace or system-information capability. Its project-header C body first
 executes through pinned musl and then through a `-nostdlib -static` candidate.
@@ -1791,7 +1807,7 @@ and direct setter `EFAULT`/`EINVAL` results. It excludes namespace management,
 gethostid/sethostid, system-file parsing, sysconf, process identity, general
 runtime, and public x86 support.
 
-`libc-socket-transport` is the eighteenth, separately recorded
+`libc-socket-transport` is the nineteenth, separately recorded
 `static-c-socket-transport` `verified_artifact` gate over that archive, not a
 general socket capability. Its project-header C body first executes through
 pinned musl and then through a `-nostdlib -static` candidate. It selects only
@@ -1805,7 +1821,7 @@ command no additional capabilities. It excludes socket options, vector or
 ancillary-message APIs, resolver/netdb state, interface ioctls, general socket
 policy, dynamic runtime, and public x86 support.
 
-`libc-byte-strings` is the nineteenth, separately recorded
+`libc-byte-strings` is the twentieth, separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
 promotion of the Rust-subsumed text capabilities. Its project-header C body
 first executes through pinned musl and then through a `-nostdlib -static`
@@ -1818,7 +1834,7 @@ intentional implementation boundary. The artifact excludes stateful string,
 locale, allocation, vectorized, dynamic-runtime, and public-x86-support
 claims.
 
-`libc-random-entropy` is the twentieth, separately recorded
+`libc-random-entropy` is the twenty-first, separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a
 promotion of the Rust random-source or random-state capabilities. Its
 project-header C body first executes through pinned musl and then through a
@@ -1833,7 +1849,7 @@ pointer/flag errors, and the 256-byte `EIO` boundary. It excludes C random-state
 helpers, general pthread/TLS lifecycle, dynamic runtime, allocator, loader,
 sysroot, and public x86 support.
 
-`libc-memory-search` is the twenty-first, separately recorded
+`libc-memory-search` is the twenty-second, separately recorded
 `static-c-memory-search` `verified_artifact` gate over that archive, not a
 general C string capability. Its project-header C body first executes through
 pinned musl and then through a `-nostdlib -static` candidate. It selects only
@@ -1843,7 +1859,7 @@ allocation-free, and has no errno/TLS or syscall boundary. It excludes general
 string/locale/stateful text support, libc.so, dynamic runtime, allocator,
 loader, sysroot, and public x86 support.
 
-`libc-string-copy` is the twenty-second, separately recorded
+`libc-string-copy` is the twenty-third, separately recorded
 `static-c-string-copy` `verified_artifact` gate over that archive, not a
 general C string capability. Its project-header C body first executes through
 pinned musl and then through a `-nostdlib -static` candidate. It selects only
@@ -1854,7 +1870,7 @@ errno/TLS or syscall boundary. It excludes bounded byte transfer,
 duplication/allocation, token/locale state, libc.so, dynamic runtime,
 allocator, loader, sysroot, and public x86 support.
 
-`libc-ctype` is the twenty-third, separately recorded `static-c-ctype`
+`libc-ctype` is the twenty-fourth, separately recorded `static-c-ctype`
 `verified_artifact` gate over that archive, not a general locale or C text
 capability. Its project-header C body first executes through pinned musl and
 then through a `-nostdlib -static` candidate. It selects only `isalnum`,
@@ -1866,7 +1882,7 @@ with no errno/TLS or syscall boundary; its fixture covers `EOF` and every
 multibyte text, collation, dynamic runtime, allocator, loader, sysroot, and
 public x86 support.
 
-`libc-integer-arithmetic` is the twenty-fourth, separately recorded
+`libc-integer-arithmetic` is the twenty-fifth, separately recorded
 `static-c-integer-arithmetic` `verified_artifact` gate over that archive, not
 a general numeric or C runtime capability. Its project-header C body first
 executes through pinned musl and then through a `-nostdlib -static` candidate.
@@ -1880,7 +1896,7 @@ excludes random state, `imaxabs`/`imaxdiv`, callback sorting/searching,
 floating-point math, dynamic runtime, allocator, loader, sysroot, and public
 x86 support.
 
-`libc-integer-parse` is the twenty-fifth, separately recorded
+`libc-integer-parse` is the twenty-sixth, separately recorded
 `static-c-integer-parse` `verified_artifact` gate over that archive, not a
 general numeric or C runtime capability. Its project-header C body first
 executes through pinned musl and then through a `-nostdlib -static` candidate.
@@ -1894,7 +1910,7 @@ decimal convenience entries cover defined inputs only and do not write
 forms; stdio; allocation; dynamic runtime; allocator; loader; sysroot; and
 public x86 support.
 
-`libc-intmax-arithmetic` is the twenty-sixth, separately recorded
+`libc-intmax-arithmetic` is the twenty-seventh, separately recorded
 `static-c-intmax-arithmetic` `verified_artifact` gate over that archive, not a
 general numeric or C runtime capability. Its project-header C body first
 executes through pinned musl and then through a `-nostdlib -static` candidate.
@@ -1907,7 +1923,7 @@ It is distinct from the separately selected `strtoimax`/`strtoumax` parser;
 it excludes callback sorting/searching, floating-point math, dynamic runtime,
 allocator, loader, sysroot, and public x86 support.
 
-`libc-credential-observation` is the twenty-seventh, separately recorded
+`libc-credential-observation` is the twenty-eighth, separately recorded
 `static-c-credential-observation` `verified_artifact` gate over that archive,
 not a general C-process or account-database capability. Its project-header C
 body first executes through pinned musl and then through a `-nostdlib -static`
@@ -1919,7 +1935,7 @@ order and direct `EFAULT` behavior even when all observed IDs are equal. It
 excludes account lookup, mutation, credential synchronization, child/process
 control, dynamic runtime, allocator, loader, sysroot, and public x86 support.
 
-`libc-ffs` is the twenty-eighth, separately recorded `static-c-ffs`
+`libc-ffs` is the twenty-ninth, separately recorded `static-c-ffs`
 `verified_artifact` gate over that archive, not a general bit-operation or C
 runtime capability. Its project-header C body first executes through pinned
 musl and then through a `-nostdlib -static` candidate. It selects only `ffs`,
@@ -2198,6 +2214,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, and
 `libc-termios-control`, `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
+`libc-nanosleep`,
 `libc-clock-nanosleep`,
 `libc-descriptor-entry`,
 `libc-fcntl-status-control`,

@@ -115,7 +115,7 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
-# arithmetic, and find-first-set, direct POSIX clock_nanosleep, descriptor entry, and bounded
+# arithmetic, and find-first-set, direct POSIX nanosleep and clock_nanosleep, descriptor entry, and bounded
 # fcntl status control.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
@@ -128,6 +128,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
+    Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
@@ -3313,6 +3314,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "immediate_termination.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "clock_nanosleep.rs"]',
+        '#[path = "nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
         '#[path = "descriptor_control.rs"]',
         '#[path = "descriptor_io.rs"]',
@@ -3774,7 +3776,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__syscall_cp",
         "special-cases a relative realtime request",
         "CLOCK_THREAD_CPUTIME_ID",
-        "nanosleep itself unselected",
+        "independent of the",
     ):
         if required not in clock_nanosleep_text:
             errors.append(
@@ -3791,6 +3793,37 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/clock_nanosleep.rs: selected static "
             "artifact must export only clock_nanosleep"
+        )
+
+    nanosleep_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "nanosleep.rs"
+    nanosleep_text = nanosleep_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/nanosleep.c",
+        "src/time/clock_nanosleep.c",
+        "nanosleep=35",
+        "raw_syscall::SYS_NANOSLEEP",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        "initial-TLS errno",
+        "__syscall_cp",
+        "omits cancellation",
+    ):
+        if required not in nanosleep_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/nanosleep.rs: selected static "
+                f"nanosleep boundary is missing {required!r}"
+            )
+    nanosleep_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            nanosleep_text,
+        )
+    )
+    if nanosleep_exports != {"nanosleep"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/nanosleep.rs: selected static artifact "
+            "must export only nanosleep"
         )
 
     descriptor_entry_source = (
@@ -4664,6 +4697,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         immediate_termination_text,
         callback_algorithms_text,
         clock_nanosleep_text,
+        nanosleep_text,
         descriptor_entry_text,
         descriptor_control_text,
         descriptor_io_text,
@@ -4790,6 +4824,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_nanosleep",
+        "nanosleep",
         "open",
         "openat",
         "creat",
@@ -4914,7 +4949,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_nanosleep, selected "
+            "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct nanosleep and clock_nanosleep, selected "
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -4939,6 +4974,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("immediate_termination.rs", immediate_termination_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
+        ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("descriptor_control.rs", descriptor_control_text),
         ("descriptor_io.rs", descriptor_io_text),

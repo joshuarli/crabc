@@ -4682,7 +4682,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "positive errno",
             "__syscall_cp",
             "special-cases a relative realtime request",
-            "nanosleep itself unselected",
+            "independent of the",
         ):
             self.assertIn(required, clock_nanosleep)
         for forbidden in (
@@ -4737,6 +4737,95 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-clock-nanosleep)\n        [ "$#" -eq 0 ] || fail "libc-clock-nanosleep takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_nanosleep_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        nanosleep = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "nanosleep.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_nanosleep_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_nanosleep_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_nanosleep.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "nanosleep.rs"]', static_root)
+        self.assertIn("fn nanosleep(", nanosleep)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/nanosleep.c",
+            "nanosleep=35",
+            "raw_syscall::SYS_NANOSLEEP",
+            "raw_syscall::syscall2(",
+            "c_status",
+            "initial-TLS errno",
+            "__syscall_cp",
+            "cancellation",
+        ):
+            self.assertIn(required, nanosleep)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn sleep(",
+            "fn usleep(",
+            "__tls_get_addr",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, nanosleep)
+        for required in (
+            "#include <errno.h>",
+            "#include <signal.h>",
+            "#include <time.h>",
+            "raw_arm_alarm",
+            "check_immediate_and_error_conventions",
+            "check_relative_interruption",
+            "CRABC_NANOSLEEP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_nanosleep_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_time_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall nanosleep 23",
+            "candidate errno does not use direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("nanosleep", static_export_names)
+        self.assertIn('id = "static-c-nanosleep"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-nanosleep"', parity_ledger
+        )
+        self.assertIn("run_libc_nanosleep()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_nanosleep.sh", runner)
+        self.assertIn(
+            '    libc-nanosleep)\n        [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"',
             runner,
         )
 

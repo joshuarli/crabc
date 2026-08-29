@@ -17,11 +17,13 @@
 //! `CLOCK_THREAD_CPUTIME_ID` with `EINVAL` before the syscall. This bounded
 //! Linux-5.10 leaf retains the latter musl-visible error rule, but intentionally
 //! uses `clock_nanosleep=230` rather than musl's realtime `nanosleep` route for
-//! every remaining clock request while keeping nanosleep itself unselected. The
+//! every remaining clock request while keeping this leaf independent of the
+//! separately selected `nanosleep` boundary. The
 //! x86-64 raw ABI places clock ID, flags,
 //! request, and remaining-timespec pointers in `rdi`, `rsi`, `rdx`, and `r10`.
 //!
-//! This does not select `nanosleep`, `sleep`, `clock_gettime`, C timer state,
+//! This leaf does not call or depend on the separately selected `nanosleep`
+//! boundary, and it does not select `sleep`, `clock_gettime`, C timer state,
 //! time-zone/calendar services, timer delivery policy, pthread cancellation,
 //! libc.so, CRT, dynamic TLS, loader, sysroot, or public x86 support.
 

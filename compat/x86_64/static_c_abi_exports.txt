@@ -113,6 +113,7 @@ memmem
 memmove
 memrchr
 memset
+nanosleep
 nice
 open
 openat

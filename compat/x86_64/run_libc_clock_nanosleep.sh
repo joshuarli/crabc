@@ -5,7 +5,7 @@
 # as a true -nostdlib -static candidate linked solely through the selected
 # crabc archive. It proves only clock_nanosleep's zero-or-positive-errno
 # convention and direct non-cancellation path; local raw timer/clock calls
-# merely trigger deterministic interruption. It is not a C nanosleep/clock/
+# merely trigger deterministic interruption. It is not a C sleep or clock/
 # timer surface, pthread cancellation, libc.so, CRT, loader, sysroot, or
 # public x86 support.
 set -euo pipefail
@@ -132,7 +132,7 @@ for symbol in __errno_location clock_nanosleep; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in nanosleep sleep usleep clock_gettime clock_getres clock_settime \
+for unselected in sleep usleep clock_gettime clock_getres clock_settime \
     clock_getcpuclockid timer_create timer_delete timer_getoverrun timer_gettime \
     timer_settime gettimeofday setitimer alarm ualarm pthread_create malloc free \
     calloc realloc mmap mprotect munmap; do

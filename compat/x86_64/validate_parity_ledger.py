@@ -907,7 +907,7 @@ def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
         "CLOCK_REALTIME",
         "__syscall_cp",
         "omits cancellation",
-        "nanosleep/sleep",
+        "separately selected nanosleep leaf",
         "initial-TLS errno",
     ):
         require(
@@ -930,6 +930,53 @@ def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-clock-nanosleep"},
         "static-c-clock-nanosleep must use the closed libc-clock-nanosleep command",
+    )
+
+
+def require_nanosleep_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the normal-C-result nanosleep boundary durable and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-nanosleep"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-nanosleep artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "POSIX nanosleep block",
+        "`nanosleep`",
+        "-1/errno",
+        "initial-TLS errno",
+        "__syscall_cp",
+        "omits cancellation",
+        "`sleep`/`usleep`",
+    ):
+        require(
+            phrase in description,
+            f"static-c-nanosleep description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("nanosleep=35" in item and "rdi/rsi" in item for item in prerequisites),
+        "static-c-nanosleep must record its two-register syscall ABI",
+    )
+    require(
+        any("remaining timespec only on EINTR" in item for item in prerequisites),
+        "static-c-nanosleep must record the EINTR remainder contract",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-nanosleep"},
+        "static-c-nanosleep must use the closed libc-nanosleep command",
     )
 
 
@@ -1311,6 +1358,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
+    require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
