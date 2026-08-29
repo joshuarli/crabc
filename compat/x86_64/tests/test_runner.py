@@ -2509,7 +2509,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, static_export_names)
         self.assertIn("libc-signal-control", runner)
 
-    def test_libc_static_c_abi_pthread_create_join_tls_artifact_stays_bounded(
+    def test_libc_static_c_abi_pthread_create_exit_join_tls_artifact_stays_bounded(
         self,
     ) -> None:
         static_root = (
@@ -2540,6 +2540,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('#[path = "pthread_create_join.rs"]', static_root)
         for required in (
             "src/thread/pthread_create.c::__pthread_create",
+            "src/thread/pthread_create.c::__pthread_exit",
             "src/thread/x86_64/clone.s::__clone",
             "src/thread/pthread_join.c",
             "struct ThreadControl",
@@ -2552,19 +2553,29 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "raw_syscall::SYS_MUNMAP",
             "raw_syscall::SYS_FUTEX",
             "initial_errno_offset",
+            "SELECTED_WORKER_REGISTRY_SIZE",
+            "SELECTED_WORKER_REGISTRY",
+            "SELECTED_WORKER_REGISTRY_LOCK",
+            "reserve_selected_worker",
+            "publish_current_selected_worker_result",
+            "release_selected_worker",
+            "current_linux_thread_id",
+            "raw_syscall::SYS_GETTID",
+            "registry_retired",
             "finished",
             ".hidden __crabc_x86_pthread_clone",
             "fn pthread_create(",
+            "fn pthread_exit(",
             "fn pthread_join(",
         ):
             self.assertIn(required, pthread_create_join)
         for forbidden in (
             "fn pthread_detach(",
-            "fn pthread_exit(",
             "fn pthread_self(",
             "fn pthread_cancel(",
             "fn pthread_key_create(",
             "fn pthread_mutex_",
+            "WORKER_CONTROL_TPOFF",
             "__tls_get_addr",
             "crabc_core",
             "crabc_mimalloc",
@@ -2574,11 +2585,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "#include <errno.h>",
             "#include <pthread.h>",
             "run_worker_round",
+            "observe_explicit_exit_worker",
+            "observe_held_explicit_exit_worker",
+            "run_explicit_exit_round",
             "run_null_result_join",
             "run_concurrent_worker_round",
+            "run_concurrent_explicit_exit_round",
+            "run_registry_capacity_round",
+            "pthread_exit",
             "__atomic_fetch_add",
             "first.errno_location == second.errno_location",
             "CRABC_PTHREAD_CREATE_JOIN_TLS_FREESTANDING",
+            "CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT",
         ):
             self.assertIn(required, probe)
         for required in (
@@ -2593,6 +2611,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_types_header_abi.sh",
             "-pthread",
             "-nostdlib -static",
+            "-DCRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT=64",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "__crabc_x86_pthread_clone",
@@ -2602,6 +2621,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread clone boundary lacks clone syscall number 56",
             "seventh-argument child-tid shuffle",
             "child exit syscall number 60",
+            "pthread_exit lacks an x86 thread-exit syscall instruction",
+            "candidate lacks gettid syscall number 186 identity validation",
+            "pthread_exit lacks thread exit syscall number 60",
             "pthread_join lacks futex syscall number 202",
             "pthread_join lacks munmap syscall number 11",
             "pthread_detach",
@@ -2609,11 +2631,26 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
-        for symbol in ("pthread_create", "pthread_join"):
+        pthread_join_body = pthread_create_join.split(
+            'pub unsafe extern "C" fn pthread_join', 1
+        )[1]
+        self.assertLess(
+            pthread_join_body.index("release_selected_worker"),
+            pthread_join_body.index("unmap_worker"),
+        )
+        explicit_exit_publish = pthread_create_join.split(
+            "fn publish_current_selected_worker_result", 1
+        )[1].split("/// Map one control/TLS/stack backing range", 1)[0]
+        self.assertIn("worker_tid.load", explicit_exit_publish)
+        self.assertIn("child_tid.load", explicit_exit_publish)
+        self.assertLess(
+            explicit_exit_publish.index("lock_selected_worker_registry"),
+            explicit_exit_publish.index("publish_worker_result"),
+        )
+        for symbol in ("pthread_create", "pthread_exit", "pthread_join"):
             self.assertIn(symbol, static_export_names)
         for forbidden in (
             "pthread_detach",
-            "pthread_exit",
             "pthread_self",
             "pthread_cancel",
             "pthread_mutex_init",

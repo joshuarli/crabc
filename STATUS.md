@@ -6,9 +6,14 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
-The x86 lane now also has one private static `pthread_create`/`pthread_join`
-initial-TLS artifact: it proves a null-attribute, normal-returning worker with
+The x86 lane now also has private static `pthread_create`/`pthread_exit`/
+`pthread_join` initial-TLS artifacts: they prove a null-attribute worker that
+returns normally or uses the selected worker-only explicit-exit path, with
 isolated child `errno`, result handoff, and clear-child-tid join reclamation.
+A fixed private 64-worker registry serializes explicit-exit publication with
+join withdrawal and validates `%fs:0`, the child kernel TID, and its still-live
+clear-child-tid word; the
+candidate-only cap check exhausts all slots and proves reuse after joining.
 `libc.pthread-tls` remains planned; this is not general pthread/TLS parity,
 dynamic TLS, CRT/sysroot support, or public x86 support.
 

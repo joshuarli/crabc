@@ -4,7 +4,7 @@
 # This is a deliberately closed foundation lane. It proves explicitly named
 # native core, direct-facade, raw-C-syscall, source-only relocation, and a closed
 # set of static C ABI archive boundaries (stat, credentials, bootstrap primitives,
-# simple signal control, bounded pthread create/join initial TLS, named termios control, selected process context, child reaping,
+# simple signal control, bounded pthread create/exit/join initial TLS, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_gettime,
 # system configuration,
 # nanosleep, and clock_nanosleep,
@@ -157,7 +157,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credentials  run the static x86 crabc-libc credential/errno compatibility slice
   libc-bootstrap-primitives  run the static x86 crabc-libc memory/fenv/setjmp slice
   libc-signal-control  run the static x86 crabc-libc simple signal action/mask slice
-  libc-pthread-create-join-tls  run the static x86 crabc-libc private create/join TLS slice
+  libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
@@ -210,13 +210,20 @@ not a dynamic libc or application-startup claim. `libc-signal-control` exercises
 the same static archive through a freestanding simple action/set/mask/pending
 fixture after an equivalent pinned-musl run. It does not select generic signal
 delivery, waits, queues, pthread signal behavior, dynamic libc, or application
-startup. `libc-pthread-create-join-tls` exercises one private normal-returning
-null-attribute worker through that same archive: each child gets a distinct
-zeroed initial-TLS errno slot, returns one pointer through pthread_join, and
-the kernel clear-child-tid futex gates mapping reclamation. It is not a general
-pthread runtime: attributes, detach, cancellation, TSD, synchronization,
-dynamic TLS/DTV, loader/CRT integration, and public x86 support remain outside
-this artifact. `libc-termios-control` exercises the same archive through a
+startup. `libc-pthread-create-join-tls` exercises one private null-attribute
+worker through that same archive: it either returns normally or takes the
+selected worker-only pthread_exit path after publishing one result, while each
+child gets a distinct zeroed initial-TLS errno slot and the kernel
+clear-child-tid futex gates mapping reclamation. A fixed private 64-worker
+registry validates an explicit-exit caller's `%fs:0`, kernel `gettid`, and
+still-live clear-child-tid word, and serializes its publication with join
+withdrawal before reclamation. The
+candidate-only capacity route exhausts all 64 slots and proves reuse after
+joining. It is not a general pthread runtime: attributes, detach, pthread-exit
+cleanup/TSD/main-thread/signal-handler behavior, self/equal, cancellation,
+synchronization, dynamic TLS/DTV, loader/CRT integration, and public x86
+support remain outside this artifact.
+`libc-termios-control` exercises the same archive through a
 freestanding project-header C fixture after an equivalent pinned-musl run. It
 selects only fixed baud/raw helpers, named attribute/queue/flow/break requests,
 and fixed window-size records; it does not select generic ioctl,

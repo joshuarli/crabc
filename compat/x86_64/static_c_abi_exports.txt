@@ -147,6 +147,7 @@ pread
 prlimit
 pselect
 pthread_create
+pthread_exit
 pthread_join
 pwrite
 qsort

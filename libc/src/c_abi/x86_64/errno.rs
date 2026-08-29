@@ -9,9 +9,9 @@
 //! Its source-only probe
 //! remains the direct relocation proof: `ERRNO` uses the executable's initial TLS block
 //! (`R_X86_64_TPOFF*`), not a dynamic TLS resolver. The separately selected
-//! bounded create/join artifact can materialize only this datum for its child;
-//! general pthread lifecycle, loader-installed dynamic TLS, and a general x86
-//! C runtime remain separate work.
+//! bounded create/explicit-exit/join artifact can materialize only this datum
+//! for its child; general pthread lifecycle, loader-installed dynamic TLS, and
+//! a general x86 C runtime remain separate work.
 
 use core::ffi::c_int;
 

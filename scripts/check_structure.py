@@ -108,8 +108,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 }
 # The selected x86 `crabc-libc` artifact admits independently evidenced static
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
-# primitives, narrow simple signal control, one bounded pthread create/join
-# initial-TLS worker, named termios control, selected
+# primitives, narrow simple signal control, one bounded pthread create/exit/
+# join initial-TLS worker, named termios control, selected
 # process context, child reaping, C11 immediate termination, callback algorithms,
 # selected descriptor entry and fcntl status control, selected descriptor I/O,
 # selected process resources,
@@ -3547,6 +3547,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     pthread_create_join_text = pthread_create_join_source.read_text(errors="replace")
     for required in (
         "src/thread/pthread_create.c::__pthread_create",
+        "src/thread/pthread_create.c::__pthread_exit",
         "src/thread/x86_64/clone.s::__clone",
         "src/thread/pthread_join.c",
         "struct ThreadControl",
@@ -3559,9 +3560,19 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "raw_syscall::SYS_MUNMAP",
         "raw_syscall::SYS_FUTEX",
         "initial_errno_offset",
+        "SELECTED_WORKER_REGISTRY_SIZE",
+        "SELECTED_WORKER_REGISTRY",
+        "SELECTED_WORKER_REGISTRY_LOCK",
+        "reserve_selected_worker",
+        "publish_current_selected_worker_result",
+        "release_selected_worker",
+        "current_linux_thread_id",
+        "raw_syscall::SYS_GETTID",
+        "registry_retired",
         "finished",
         ".hidden __crabc_x86_pthread_clone",
         "pthread_create",
+        "pthread_exit",
         "pthread_join",
         "ENOTSUP",
     ):
@@ -3576,11 +3587,53 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             pthread_create_join_text,
         )
     )
-    if pthread_create_join_exports != {"pthread_create", "pthread_join"}:
+    if pthread_create_join_exports != {"pthread_create", "pthread_exit", "pthread_join"}:
         errors.append(
             "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
-            "pthread worker must export only pthread_create and pthread_join"
+            "pthread worker must export only pthread_create, pthread_exit, and pthread_join"
         )
+    pthread_join_marker = 'pub unsafe extern "C" fn pthread_join'
+    if pthread_join_marker not in pthread_create_join_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
+            "pthread worker is missing its join boundary"
+        )
+    else:
+        pthread_join_text = pthread_create_join_text.split(pthread_join_marker, 1)[1]
+        if (
+            "release_selected_worker" not in pthread_join_text
+            or "unmap_worker" not in pthread_join_text
+            or pthread_join_text.index("release_selected_worker")
+            > pthread_join_text.index("unmap_worker")
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: join must withdraw "
+                "the selected worker registry before unmapping its control record"
+            )
+    explicit_exit_publish_marker = "fn publish_current_selected_worker_result"
+    explicit_exit_publish_end = "/// Map one control/TLS/stack backing range"
+    if (
+        explicit_exit_publish_marker not in pthread_create_join_text
+        or explicit_exit_publish_end not in pthread_create_join_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread exit "
+            "is missing its bounded registry publication helper"
+        )
+    else:
+        explicit_exit_publish_text = pthread_create_join_text.split(
+            explicit_exit_publish_marker, 1
+        )[1].split(explicit_exit_publish_end, 1)[0]
+        if (
+            "worker_tid.load" not in explicit_exit_publish_text
+            or "child_tid.load" not in explicit_exit_publish_text
+            or explicit_exit_publish_text.index("lock_selected_worker_registry")
+            > explicit_exit_publish_text.index("publish_worker_result")
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread exit "
+                "must hold its registry lock through matching worker/gettid/child-TID publication"
+            )
 
     termios_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
@@ -4882,6 +4935,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigpending",
         "__libc_current_sigrtmax",
         "pthread_create",
+        "pthread_exit",
         "pthread_join",
         "cfgetispeed",
         "cfgetospeed",
@@ -5039,7 +5093,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, bounded pthread create/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, nanosleep, and clock_nanosleep, selected "
+            "signal-control, bounded pthread create/exit/join initial-TLS worker, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "

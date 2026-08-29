@@ -9,6 +9,9 @@
 //! - `src/thread/pthread_create.c::__pthread_create` supplies the exact
 //!   Linux thread clone flags and the `EAGAIN` translation for allocation or
 //!   clone failure.
+//! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
+//!   result-before-thread-exit ordering. Its cleanup, TSD, signal, robust-list,
+//!   thread-list, detach, and last-thread paths remain explicitly unselected.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -18,14 +21,22 @@
 //!   TID before it releases worker-owned memory.
 //!
 //! The admitted contract is exactly one default-attribute, joinable worker:
-//! `pthread_create(NULL)`, a normal returning start routine, and one
-//! `pthread_join`. The child gets a distinct zeroed instance of this target's
-//! sole initial-TLS datum, `errno`, and returns one opaque pointer. The leaf
-//! intentionally does **not** provide attrs, detach, `pthread_exit`,
-//! cancellation, keys/TSD, synchronization objects, dynamic TLS/DTV, loader
-//! TLS, signal-mask coordination, thread lists, fork/atfork, custom stacks,
-//! guards, or general pthread semantics. It leaves caller `errno` untouched
-//! because pthread APIs report errors as positive return values.
+//! `pthread_create(NULL)`, a normal returning start routine or selected-worker
+//! `pthread_exit`, and one `pthread_join`. The child gets a distinct zeroed
+//! instance of this target's sole initial-TLS datum, `errno`, and returns one
+//! opaque pointer. The private registry serializes identity scan/result
+//! publication with join withdrawal, and validates `%fs:0`, Linux `gettid`,
+//! and the still-live child-TID word so a foreign thread cannot turn a copied
+//! TLS base into a control-record write after task-ID reuse. It is intentionally
+//! neither signal-safe nor reentrant. The
+//! leaf intentionally does **not** provide attrs, detach,
+//! `pthread_exit` cleanup/TSD/main-thread behavior, cancellation, keys/TSD,
+//! synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
+//! coordination, thread lists, fork/atfork, custom stacks, guards, or general
+//! pthread semantics. It leaves caller `errno` untouched because pthread APIs
+//! report errors as positive return values. At most 64 selected workers may be
+//! live concurrently; exhausting this artifact-local admission registry
+//! returns `EAGAIN` rather than constructing broader lifecycle state.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x86-64");
@@ -77,6 +88,12 @@ const INITIAL_TLS_REGION_SIZE: usize = 4_096;
 const WORKER_STACK_SIZE: usize = 1_024 * 1_024;
 const WORKER_MAPPING_SIZE: usize =
     CONTROL_REGION_SIZE + INITIAL_TLS_REGION_SIZE + WORKER_STACK_SIZE;
+// This is deliberately a fixed private admission registry, not a general
+// pthread thread list. It validates the one selected explicit-exit route
+// before it dereferences any control record and bounds concurrently live
+// workers in this artifact to a small, auditable number.
+const SELECTED_WORKER_REGISTRY_SIZE: usize = 64;
+const SELECTED_WORKER_REGISTRY_RESERVING: usize = usize::MAX;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
 
@@ -94,17 +111,58 @@ struct ThreadControl {
     // One joiner claims a still-live handle before waiting. It is private
     // coordination only; repeated/concurrent joining is outside this slice.
     join_claimed: AtomicU8,
-    // A returning child publishes its callback result before `finished`.
+    // A selected child publishes its callback result before `finished`.
     result: AtomicUsize,
     // This release/acquire handoff makes result visibility explicit rather
     // than relying on the kernel clear-tid write to synchronize a different
     // user-space atomic object.
     finished: AtomicU8,
+    // The selected child publishes its kernel task ID before the callback can
+    // call pthread_exit. Matching it alongside `%fs:0` prevents a foreign
+    // thread from impersonating a live worker merely by installing its TLS
+    // base.
+    worker_tid: AtomicI32,
+    // Once join withdraws this mapping from the registry, a retry after an
+    // unexpected munmap failure must not republish it. The retired mapping is
+    // still safe to reclaim because pthread_exit can no longer find it.
+    registry_retired: AtomicU8,
     mapping: *mut u8,
     mapping_size: usize,
+    registry_slot: usize,
     start: StartRoutine,
     argument: *mut c_void,
 }
+
+struct SelectedWorkerRegistrySlot {
+    // Zero means free; the transient all-ones state is owned by pthread_create
+    // while it initializes the control record before making it visible to a
+    // possible child. A nonzero ordinary pointer identifies one live mapping.
+    control: AtomicUsize,
+    // This is the child Variant-II thread pointer, not a general thread ID.
+    // pthread_exit pairs it with worker_tid and the live child-TID word before
+    // using the paired control pointer.
+    thread_pointer: AtomicUsize,
+}
+
+impl SelectedWorkerRegistrySlot {
+    const fn empty() -> Self {
+        Self {
+            control: AtomicUsize::new(0),
+            thread_pointer: AtomicUsize::new(0),
+        }
+    }
+}
+
+static SELECTED_WORKER_REGISTRY: [SelectedWorkerRegistrySlot; SELECTED_WORKER_REGISTRY_SIZE] =
+    [const { SelectedWorkerRegistrySlot::empty() }; SELECTED_WORKER_REGISTRY_SIZE];
+
+// The lock covers every registry mutation and the complete scan-to-publish
+// interval. It is deliberately held only for bounded local atomics: never
+// across clone, callback execution, futex wait, exit, munmap, or another
+// syscall. Signal-handler/reentrant pthread_exit behavior is outside this
+// private artifact because a signal interrupting a holder could otherwise
+// deadlock here.
+static SELECTED_WORKER_REGISTRY_LOCK: AtomicU8 = AtomicU8::new(0);
 
 const _: () = {
     assert!(size_of::<AtomicI32>() == size_of::<c_int>());
@@ -175,13 +233,12 @@ fn positive_linux_error(result: i64) -> c_int {
     result.wrapping_neg() as c_int
 }
 
-/// Return the current initial-TLS `errno` offset below the x86 thread pointer.
+/// Read the current x86 Variant-II thread pointer from its `%fs:0` self word.
 ///
-/// A normal x86 static executable has `ERRNO` in the executable initial TLS
-/// image at a negative TPOFF. This leaf refuses a layout outside its private
-/// one-page image instead of guessing a DTV or general TLS template.
-fn initial_errno_offset() -> Option<usize> {
-    let thread_pointer: usize;
+/// The selected fixture and child mapping explicitly establish this self word;
+/// this is not a general dynamic-TLS lookup facility.
+fn current_thread_pointer() -> *mut u8 {
+    let thread_pointer: *mut u8;
     // SAFETY: this selected static artifact requires an established x86
     // initial TLS base whose self word is readable at %fs:0. Its test-only
     // entry shim establishes that precondition before calling C code.
@@ -192,6 +249,15 @@ fn initial_errno_offset() -> Option<usize> {
             options(readonly, nostack, preserves_flags),
         );
     }
+    thread_pointer
+}
+
+/// Return the current initial-TLS `errno` offset below the x86 thread pointer.
+///
+/// Refusing an unexpected main-image layout avoids guessing at a dynamic TLS
+/// template or silently materializing a general TLS image.
+fn initial_errno_offset() -> Option<usize> {
+    let thread_pointer = current_thread_pointer() as usize;
     let errno_location = unsafe { errno::__errno_location() as usize };
     let offset = thread_pointer.checked_sub(errno_location)?;
     if offset < size_of::<c_int>()
@@ -201,6 +267,144 @@ fn initial_errno_offset() -> Option<usize> {
         return None;
     }
     Some(offset)
+}
+
+/// Read this task's Linux TID for selected-worker identity validation.
+///
+/// Linux 5.10 `gettid` has no arguments and returns a positive `pid_t` for a
+/// live task. Treating an unexpected kernel-error result as no identity keeps
+/// a foreign or incomplete worker on pthread_exit's raw exit path.
+#[inline(always)]
+fn current_linux_thread_id() -> Option<c_int> {
+    // SAFETY: SYS_gettid has no arguments and the Linux/x86-64 result is read
+    // only as the bounded private worker identity described above.
+    let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+    if is_linux_error(result) || result <= 0 || result > i64::from(c_int::MAX) {
+        return None;
+    }
+    Some(result as c_int)
+}
+
+/// Acquire the bounded registry lock without entering a broader pthread lock.
+fn lock_selected_worker_registry() {
+    while SELECTED_WORKER_REGISTRY_LOCK
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        while SELECTED_WORKER_REGISTRY_LOCK.load(Ordering::Relaxed) != 0 {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+/// Release the bounded registry lock after its local identity operation.
+fn unlock_selected_worker_registry() {
+    SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+}
+
+/// Reserve one private selected-worker registry slot before cloning.
+fn reserve_selected_worker() -> Option<usize> {
+    lock_selected_worker_registry();
+    let mut reservation = None;
+    for (index, slot) in SELECTED_WORKER_REGISTRY.iter().enumerate() {
+        if slot.control.load(Ordering::Acquire) == 0 {
+            slot.thread_pointer.store(0, Ordering::Relaxed);
+            slot.control
+                .store(SELECTED_WORKER_REGISTRY_RESERVING, Ordering::Release);
+            reservation = Some(index);
+            break;
+        }
+    }
+    unlock_selected_worker_registry();
+    reservation
+}
+
+/// Publish a fully initialized selected worker before the child can start.
+///
+/// The `control` release follows every ThreadControl initialization write; an
+/// explicit-exit child acquires it before it uses the record.
+fn publish_selected_worker(
+    registry_slot: usize,
+    control: *mut ThreadControl,
+    thread_pointer: *mut u8,
+) {
+    lock_selected_worker_registry();
+    if let Some(slot) = SELECTED_WORKER_REGISTRY.get(registry_slot) {
+        slot.thread_pointer
+            .store(thread_pointer as usize, Ordering::Relaxed);
+        slot.control.store(control as usize, Ordering::Release);
+    }
+    unlock_selected_worker_registry();
+}
+
+/// Withdraw a selected-worker registry entry without touching its mapping.
+///
+/// A failed compare-and-exchange deliberately retains the entry rather than
+/// risking a corruption-driven release of some other worker's identity. A
+/// successful return guarantees that no pthread_exit scanner can retain this
+/// mapping beyond the lock, so its caller may subsequently unmap it.
+fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) -> bool {
+    lock_selected_worker_registry();
+    let released = if let Some(slot) = SELECTED_WORKER_REGISTRY.get(registry_slot) {
+        if slot
+            .control
+            .compare_exchange(
+                control as usize,
+                SELECTED_WORKER_REGISTRY_RESERVING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            slot.thread_pointer.store(0, Ordering::Relaxed);
+            slot.control.store(0, Ordering::Release);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    unlock_selected_worker_registry();
+    released
+}
+
+/// Publish one result only for the current admitted selected worker.
+///
+/// This reads only the universally established `%fs:0` self word before it
+/// finds an exact `%fs:0`, gettid, and still-live child-TID match in the
+/// bounded registry. It holds the registry lock through the control-record
+/// publish, never returning a raw control pointer that a joiner could unmap
+/// concurrently.
+fn publish_current_selected_worker_result(result: *mut c_void) {
+    let thread_pointer = current_thread_pointer() as usize;
+    let Some(thread_id) = current_linux_thread_id() else {
+        return;
+    };
+    if thread_pointer == 0 {
+        return;
+    }
+
+    lock_selected_worker_registry();
+    for slot in &SELECTED_WORKER_REGISTRY {
+        let control = slot.control.load(Ordering::Acquire);
+        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
+            continue;
+        }
+        if slot.thread_pointer.load(Ordering::Acquire) == thread_pointer {
+            let control = control as *mut ThreadControl;
+            // SAFETY: the matched live registry entry keeps the mapping valid
+            // until this function releases the lock; join withdrawal takes
+            // the same lock before it may reclaim that mapping.
+            if unsafe { (*control).worker_tid.load(Ordering::Acquire) } == thread_id
+                && unsafe { (*control).child_tid.load(Ordering::Acquire) } == thread_id
+            {
+                unsafe { publish_worker_result(control, result) };
+                break;
+            }
+        }
+    }
+    unlock_selected_worker_registry();
 }
 
 /// Map one control/TLS/stack backing range without translating `errno`.
@@ -239,19 +443,39 @@ unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
     }
 }
 
-/// Run the one selected C callback, then publish its result before exit.
-unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
-    let control = opaque.cast::<ThreadControl>();
-    // SAFETY: pthread_create initialized this private record before clone;
-    // the child owns the callback invocation and parent only reads result
-    // after `finished` is published and the child has exited.
-    let result = unsafe { ((*control).start)((*control).argument) };
-    // SAFETY: this is the sole child writer and the mapping remains live until
-    // pthread_join observes the child TID cleared by the kernel.
+/// Publish one selected worker result before the child exits.
+///
+/// The release makes the callback's writes and result visible to the joiner's
+/// acquire of `finished`; Linux's clear-child-tid write remains solely the
+/// lifetime/reclamation notification.
+unsafe fn publish_worker_result(control: *mut ThreadControl, result: *mut c_void) {
+    // SAFETY: the selected worker is the sole result publisher, and its mapping
+    // remains live until pthread_join observes the clear-child-tid transition.
     unsafe {
         (*control).result.store(result as usize, Ordering::Relaxed);
         (*control).finished.store(1, Ordering::Release);
     }
+}
+
+/// Run the one selected C callback, then publish its result before exit.
+unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
+    let control = opaque.cast::<ThreadControl>();
+    let Some(worker_tid) = current_linux_thread_id() else {
+        // This cannot occur for Linux 5.10 SYS_gettid, but completing the
+        // admitted result handoff avoids leaving a joiner to spin forever if
+        // a hostile syscall filter violates that kernel precondition.
+        unsafe { publish_worker_result(control, core::ptr::null_mut()) };
+        return 0;
+    };
+    // SAFETY: this child owns initialization before it calls user code; the
+    // selected pthread_exit path acquires the release below before it uses
+    // this identity to validate the callback's current task.
+    unsafe { (*control).worker_tid.store(worker_tid, Ordering::Release) };
+    // SAFETY: pthread_create initialized this private record before clone;
+    // the child owns the callback invocation and parent only reads result
+    // after `finished` is published and the child has exited.
+    let result = unsafe { ((*control).start)((*control).argument) };
+    unsafe { publish_worker_result(control, result) };
     0
 }
 
@@ -260,13 +484,15 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
 /// `thread` must designate writable `pthread_t` storage; `start` must be a
 /// valid C function pointer and `argument` must remain valid until that
 /// function stops reading it. Only a null `attributes` pointer is admitted.
-/// The caller must execute under the selected static initial-TLS setup.
+/// The caller must execute under the selected static initial-TLS setup. At
+/// most 64 workers from this bounded artifact may be live at once.
 ///
 /// # Safety
 ///
 /// This C ABI boundary cannot validate the output pointer, callback code, or
-/// callback argument lifetime. A callback must return normally; calling an
-/// unsupported thread-exit path leaves this bounded lifecycle outside contract.
+/// callback argument lifetime. A callback must return normally or call the
+/// selected-worker pthread_exit path; other thread-exit behavior remains
+/// outside this bounded lifecycle.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_create(
     thread: *mut *mut c_void,
@@ -303,6 +529,13 @@ pub unsafe extern "C" fn pthread_create(
         }
     };
     let stack_top = unsafe { mapping.add(WORKER_MAPPING_SIZE) };
+    let registry_slot = match reserve_selected_worker() {
+        Some(registry_slot) => registry_slot,
+        None => {
+            let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
+            return EAGAIN;
+        }
+    };
 
     // SAFETY: mmap returned a private page-aligned zeroed allocation of the
     // exact fixed size. These two values establish the minimal Variant-II
@@ -318,13 +551,17 @@ pub unsafe extern "C" fn pthread_create(
                 join_claimed: AtomicU8::new(0),
                 result: AtomicUsize::new(0),
                 finished: AtomicU8::new(0),
+                worker_tid: AtomicI32::new(0),
+                registry_retired: AtomicU8::new(0),
                 mapping,
                 mapping_size: WORKER_MAPPING_SIZE,
+                registry_slot,
                 start,
                 argument,
             },
         );
     }
+    publish_selected_worker(registry_slot, control, child_thread_pointer);
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
     // The mapping supplies a writable child stack, live control record, and
@@ -341,6 +578,7 @@ pub unsafe extern "C" fn pthread_create(
         )
     };
     if is_linux_error(clone_result) {
+        release_selected_worker(registry_slot, control);
         let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
         // Musl intentionally translates every clone failure to EAGAIN.
         return EAGAIN;
@@ -352,7 +590,28 @@ pub unsafe extern "C" fn pthread_create(
     0
 }
 
-/// Join one normal-returning worker created by [`pthread_create`].
+/// Exit a selected worker and publish `result` for its admitted joiner.
+///
+/// This is valid only when called by a callback created through this leaf's
+/// null-attribute pthread_create path. It intentionally omits the full musl
+/// cleanup/TSD/detach/thread-list state machine. Outside that worker contract,
+/// it still performs Linux thread exit but claims no broader pthread behavior.
+///
+/// # Safety
+///
+/// The selected callback must not use any object after this call. Its result
+/// must remain valid until its joining caller consumes it.
+#[no_mangle]
+#[inline(never)]
+pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
+    publish_current_selected_worker_result(result);
+    // SAFETY: Linux SYS_exit terminates precisely the calling task and does
+    // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
+    // clears/wakes the joiner's shared child-TID word after this exit.
+    unsafe { raw_syscall::syscall_noreturn1(raw_syscall::SYS_EXIT, 0) }
+}
+
+/// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].
 ///
 /// `thread` must be the still-live opaque result of this leaf's
 /// `pthread_create`; `result` may be null or writable pointer-result storage.
@@ -421,13 +680,28 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
     while unsafe { (*control).finished.load(Ordering::Acquire) } == 0 {
         core::hint::spin_loop();
     }
+    let registry_slot = unsafe { (*control).registry_slot };
+    let registry_retired = unsafe { (*control).registry_retired.load(Ordering::Acquire) };
+    if registry_retired == 0 {
+        // Withdraw under the same lock used by pthread_exit's complete
+        // scan-to-publish interval. No raw registry pointer can survive this
+        // call into the following munmap, and a retry after a failed munmap
+        // intentionally leaves the worker withdrawn.
+        if !release_selected_worker(registry_slot, control) {
+            unsafe { (*control).join_claimed.store(0, Ordering::Release) };
+            return EINVAL;
+        }
+        unsafe { (*control).registry_retired.store(1, Ordering::Release) };
+    }
+
     let worker_result = unsafe { (*control).result.load(Ordering::Relaxed) as *mut c_void };
     let mapping = unsafe { (*control).mapping };
     let mapping_size = unsafe { (*control).mapping_size };
     let unmap_result = unsafe { unmap_worker(mapping, mapping_size) };
     if is_linux_error(unmap_result) {
         // An unexpected munmap failure leaves the handle live; permit a retry
-        // instead of claiming successful join/reclamation.
+        // instead of claiming successful join/reclamation. Its registry entry
+        // stays withdrawn: a dead worker needs no future pthread_exit lookup.
         unsafe { (*control).join_claimed.store(0, Ordering::Release) };
         return positive_linux_error(unmap_result);
     }

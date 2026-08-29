@@ -13,9 +13,10 @@
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
 //! and byte-transfer syscalls; and the selected nanosleep leaf uses its direct
 //! two-pointer relative sleep syscall. The separately selected bounded
-//! pthread create/join leaf uses mmap, munmap, and futex here; its distinct
-//! private musl-shaped assembly boundary owns clone and child exit so this
-//! generic register module does not become a public clone API.
+//! pthread create/explicit-exit/join leaf uses mmap, munmap, futex, gettid
+//! identity validation, and the selected raw thread exit here; its distinct
+//! private musl-shaped assembly boundary owns clone and normal-return child
+//! exit so this generic register module does not become a public clone API.
 //! All other public C wrappers remain unintegrated until their own ABI
 //! boundaries have evidence.
 //!

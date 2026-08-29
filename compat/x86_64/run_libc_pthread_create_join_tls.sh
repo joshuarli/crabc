@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 bounded static crabc-libc pthread create/join evidence.
+# Native Linux/x86-64 bounded static crabc-libc pthread create/exit/join evidence.
 #
 # The same project-header fixture first runs with pinned musl 1.2.6, then as
 # a true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves one private joinable-worker/TLS lifecycle, not a general
-# pthread implementation, C runtime, CRT, loader, or public x86 support.
+# archive. It proves one private create/explicit-exit/join worker/TLS lifecycle,
+# not a general pthread implementation, C runtime, CRT, loader, or public x86
+# support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -12,7 +13,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
-    printf 'ERROR: x86 static libc pthread create/join TLS: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc pthread create/exit/join TLS: %s\n' "$*" >&2
     exit 1
 }
 
@@ -82,6 +83,7 @@ candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
 clone_disassembly="$work_dir/pthread-clone-disassembly"
 join_disassembly="$work_dir/pthread-join-disassembly"
+exit_disassembly="$work_dir/pthread-exit-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -104,13 +106,13 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location pthread_create pthread_join; do
+for symbol in __errno_location pthread_create pthread_exit pthread_join; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
     || fail "archive pthread clone boundary is not hidden"
-for unselected in clone __clone pthread_detach pthread_exit pthread_self pthread_equal \
+for unselected in clone __clone pthread_detach pthread_self pthread_equal \
     pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     pthread_key_create pthread_setspecific pthread_getspecific pthread_mutex_init \
     pthread_mutex_lock pthread_mutex_unlock pthread_cond_wait pthread_sigmask \
@@ -129,6 +131,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_CREATE_JOIN_TLS_FREESTANDING \
+    -DCRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT=64 \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
     -Wl,--no-undefined compat/x86_64/libc_pthread_create_join_tls_probe.c \
@@ -139,7 +142,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location pthread_create pthread_join __crabc_x86_pthread_clone; do
+for symbol in __errno_location pthread_create pthread_exit pthread_join __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
@@ -178,6 +181,16 @@ grep -Eq '0x8\(%rsp\),%r10' "$clone_disassembly" \
     || fail "pthread clone boundary lacks the seventh-argument child-tid shuffle"
 grep -Eq '\$0x3c,%al|\$0x000000000000003c,%rax|\$0x3c,%rax' "$clone_disassembly" \
     || fail "pthread clone boundary lacks child exit syscall number 60"
+objdump -d --disassemble=pthread_exit "$candidate" >"$exit_disassembly"
+grep -Eq '\bsyscall\b' "$exit_disassembly" \
+    || fail "pthread_exit lacks an x86 thread-exit syscall instruction"
+# The bounded scan is an internal helper called by pthread_exit, so inspect
+# the closed candidate rather than requiring the compiler to inline it into
+# the public noreturn boundary.
+grep -Eq '\$0xba,%al|\$0xba,%eax|\$0xba,%rax|\$0x00000000000000ba,%rax' "$candidate_disassembly" \
+    || fail "candidate lacks gettid syscall number 186 identity validation"
+grep -Eq '\$0x3c,%eax|\$0x3c,%rax|\$0x000000000000003c,%rax' "$exit_disassembly" \
+    || fail "pthread_exit lacks thread exit syscall number 60"
 objdump -d --disassemble=pthread_join "$candidate" >"$join_disassembly"
 grep -Eq '\bsyscall\b' "$join_disassembly" \
     || fail "pthread_join lacks an x86 futex/munmap syscall instruction"
@@ -188,4 +201,4 @@ grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' "$join_disassembly" \
 
 "$candidate"
 
-printf 'x86 static crabc-libc pthread create/join TLS: PASS\n'
+printf 'x86 static crabc-libc pthread create/exit/join TLS: PASS\n'

@@ -4,9 +4,10 @@
  * against a `-nostdlib -static` candidate linked solely through the selected
  * crabc archive. It specifies one deliberately bounded worker contract:
  * a default-attribute joinable worker receives a distinct zeroed initial-TLS
- * errno slot, returns one pointer through pthread_join, and leaves its
- * creator's errno untouched. It does not exercise attributes, detachment,
- * cancellation, TSD, synchronization objects, or a general pthread runtime.
+ * errno slot, returns one pointer through pthread_join (either normally or
+ * through pthread_exit), and leaves its creator's errno untouched. It does
+ * not exercise attributes, detachment, cancellation, TSD, synchronization
+ * objects, or a general pthread runtime.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -55,6 +56,17 @@ static void *observe_worker(void *opaque)
     return (void *)observation->marker;
 }
 
+static void *observe_explicit_exit_worker(void *opaque)
+{
+    struct worker_observation *observation = opaque;
+
+    observation->errno_location = __errno_location();
+    observation->initial_errno = errno;
+    errno = E2BIG;
+    observation->final_errno = errno;
+    pthread_exit((void *)observation->marker);
+}
+
 static void *observe_held_worker(void *opaque)
 {
     struct held_worker_observation *observation = opaque;
@@ -67,6 +79,20 @@ static void *observe_held_worker(void *opaque)
     while (__atomic_load_n(observation->release, __ATOMIC_ACQUIRE) == 0)
         ;
     return (void *)observation->marker;
+}
+
+static void *observe_held_explicit_exit_worker(void *opaque)
+{
+    struct held_worker_observation *observation = opaque;
+
+    observation->errno_location = __errno_location();
+    observation->initial_errno = errno;
+    errno = E2BIG;
+    observation->final_errno = errno;
+    __atomic_fetch_add(observation->entered, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(observation->release, __ATOMIC_ACQUIRE) == 0)
+        ;
+    pthread_exit((void *)observation->marker);
 }
 
 static int run_worker_round(uintptr_t marker, int *main_errno_location)
@@ -117,6 +143,33 @@ static int run_null_result_join(int *main_errno_location)
         return 4;
     if (errno != EACCES || __errno_location() != main_errno_location)
         return 5;
+    return 0;
+}
+
+static int run_explicit_exit_round(uintptr_t marker, int *main_errno_location)
+{
+    pthread_t thread;
+    struct worker_observation observation = {
+        .errno_location = 0,
+        .initial_errno = -1,
+        .final_errno = -1,
+        .marker = marker,
+    };
+    void *thread_result = 0;
+
+    if (pthread_create(&thread, 0, observe_explicit_exit_worker, &observation) != 0)
+        return 1;
+    if (pthread_join(thread, &thread_result) != 0)
+        return 2;
+    if (thread_result != (void *)marker)
+        return 3;
+    if (observation.errno_location == 0 ||
+        observation.errno_location == main_errno_location)
+        return 4;
+    if (observation.initial_errno != 0 || observation.final_errno != E2BIG)
+        return 5;
+    if (errno != EACCES || __errno_location() != main_errno_location)
+        return 6;
     return 0;
 }
 
@@ -178,6 +231,163 @@ static int run_concurrent_worker_round(int *main_errno_location)
     return 0;
 }
 
+static int run_concurrent_explicit_exit_round(int *main_errno_location)
+{
+    pthread_t first_thread;
+    pthread_t second_thread;
+    volatile int entered = 0;
+    volatile int release = 0;
+    struct held_worker_observation first = {
+        .errno_location = 0,
+        .initial_errno = -1,
+        .final_errno = -1,
+        .entered = &entered,
+        .release = &release,
+        .marker = (uintptr_t)0x3141592653589793ULL,
+    };
+    struct held_worker_observation second = {
+        .errno_location = 0,
+        .initial_errno = -1,
+        .final_errno = -1,
+        .entered = &entered,
+        .release = &release,
+        .marker = (uintptr_t)0x2718281828459045ULL,
+    };
+    void *first_result = 0;
+    void *second_result = 0;
+
+    if (pthread_create(&first_thread, 0, observe_held_explicit_exit_worker, &first) != 0)
+        return 1;
+    if (pthread_create(&second_thread, 0, observe_held_explicit_exit_worker, &second) != 0) {
+        __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+        (void)pthread_join(first_thread, 0);
+        return 2;
+    }
+    while (__atomic_load_n(&entered, __ATOMIC_ACQUIRE) != 2)
+        ;
+    if (first.errno_location == 0 || second.errno_location == 0 ||
+        first.errno_location == main_errno_location ||
+        second.errno_location == main_errno_location ||
+        first.errno_location == second.errno_location)
+        return 3;
+    if (first.initial_errno != 0 || second.initial_errno != 0 ||
+        first.final_errno != E2BIG || second.final_errno != E2BIG)
+        return 4;
+    if (errno != EACCES || __errno_location() != main_errno_location)
+        return 5;
+
+    __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(first_thread, &first_result) != 0)
+        return 6;
+    if (pthread_join(second_thread, &second_result) != 0)
+        return 7;
+    if (first_result != (void *)first.marker ||
+        second_result != (void *)second.marker)
+        return 8;
+    if (errno != EACCES || __errno_location() != main_errno_location)
+        return 9;
+    return 0;
+}
+
+#if defined(CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT)
+/* This is candidate-only evidence for the deliberate artifact-local limit.
+ * Pinned musl is the behavioral oracle for the shared routes above, but does
+ * not impose this private 64-slot admission registry. */
+enum {
+    selected_worker_limit = CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT,
+};
+
+_Static_assert(selected_worker_limit == 64,
+    "the selected crabc worker registry has exactly 64 slots");
+
+static int run_registry_capacity_round(int *main_errno_location)
+{
+    pthread_t threads[selected_worker_limit];
+    struct held_worker_observation observations[selected_worker_limit];
+    pthread_t overflow_thread;
+    struct worker_observation overflow = {
+        .errno_location = 0,
+        .initial_errno = -1,
+        .final_errno = -1,
+        .marker = (uintptr_t)0x4545454545454545ULL,
+    };
+    volatile int entered = 0;
+    volatile int release = 0;
+    unsigned int created = 0;
+    unsigned int index;
+
+    for (index = 0; index < selected_worker_limit; ++index) {
+        observations[index].errno_location = 0;
+        observations[index].initial_errno = -1;
+        observations[index].final_errno = -1;
+        observations[index].entered = &entered;
+        observations[index].release = &release;
+        observations[index].marker = (uintptr_t)&observations[index];
+        if (pthread_create(&threads[index], 0, observe_held_explicit_exit_worker,
+                &observations[index]) != 0) {
+            __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+            for (index = 0; index < created; ++index)
+                (void)pthread_join(threads[index], 0);
+            return 1;
+        }
+        ++created;
+    }
+    while (__atomic_load_n(&entered, __ATOMIC_ACQUIRE) != selected_worker_limit)
+        ;
+    if (errno != EACCES || __errno_location() != main_errno_location) {
+        __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+        for (index = 0; index < selected_worker_limit; ++index)
+            (void)pthread_join(threads[index], 0);
+        return 2;
+    }
+
+    int overflow_status = pthread_create(&overflow_thread, 0, observe_worker,
+        &overflow);
+    if (overflow_status != EAGAIN) {
+        if (overflow_status == 0)
+            (void)pthread_join(overflow_thread, 0);
+        __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+        for (index = 0; index < selected_worker_limit; ++index)
+            (void)pthread_join(threads[index], 0);
+        return 3;
+    }
+    if (errno != EACCES || __errno_location() != main_errno_location) {
+        __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+        for (index = 0; index < selected_worker_limit; ++index)
+            (void)pthread_join(threads[index], 0);
+        return 4;
+    }
+
+    __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
+    for (index = 0; index < selected_worker_limit; ++index) {
+        void *thread_result = 0;
+        unsigned int earlier;
+
+        if (pthread_join(threads[index], &thread_result) != 0)
+            return 5;
+        if (thread_result != (void *)observations[index].marker)
+            return 6;
+        if (observations[index].errno_location == 0 ||
+            observations[index].errno_location == main_errno_location ||
+            observations[index].initial_errno != 0 ||
+            observations[index].final_errno != E2BIG)
+            return 7;
+        for (earlier = 0; earlier < index; ++earlier) {
+            if (observations[index].errno_location ==
+                observations[earlier].errno_location)
+                return 8;
+        }
+    }
+    if (errno != EACCES || __errno_location() != main_errno_location)
+        return 9;
+
+    /* Every joined worker withdrew its entry; a fresh explicit-exit worker
+     * must therefore reuse one of the 64 slots successfully. */
+    return run_explicit_exit_round((uintptr_t)0x5656565656565656ULL,
+        main_errno_location);
+}
+#endif
+
 int crabc_x86_64_pthread_create_join_tls_probe(void)
 {
     int *main_errno_location = __errno_location();
@@ -204,6 +414,26 @@ int crabc_x86_64_pthread_create_join_tls_probe(void)
     int concurrent = run_concurrent_worker_round(main_errno_location);
     if (concurrent != 0)
         return 80 + concurrent;
+
+    int first_explicit_exit = run_explicit_exit_round(
+        (uintptr_t)0x2233445566778899ULL, main_errno_location);
+    if (first_explicit_exit != 0)
+        return 100 + first_explicit_exit;
+    int second_explicit_exit = run_explicit_exit_round(
+        (uintptr_t)0x9988776655443322ULL, main_errno_location);
+    if (second_explicit_exit != 0)
+        return 120 + second_explicit_exit;
+
+    int concurrent_explicit_exit =
+        run_concurrent_explicit_exit_round(main_errno_location);
+    if (concurrent_explicit_exit != 0)
+        return 140 + concurrent_explicit_exit;
+
+#if defined(CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT)
+    int registry_capacity = run_registry_capacity_round(main_errno_location);
+    if (registry_capacity != 0)
+        return 160 + registry_capacity;
+#endif
 
     return 0;
 }
