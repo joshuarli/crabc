@@ -38,6 +38,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
+  sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
@@ -1147,6 +1148,10 @@ run_timeval_transitive_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_timeval_transitive_header_abi.sh
 }
 
+run_sys_time_direct_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sys_time_direct_header_abi.sh
+}
+
 run_header_abi_project() {
     run_in_container bash /workspace/compat/x86_64/run_project_header_abi.sh
 }
@@ -2112,6 +2117,7 @@ case "$command" in
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
     timeval-transitive-header-abi) ;;
+    sys-time-direct-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
@@ -2173,6 +2179,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "timeval-transitive-header-abi takes no arguments"
         ensure_image
         run_timeval_transitive_header_abi
+        ;;
+    sys-time-direct-header-abi)
+        [ "$#" -eq 0 ] || fail "sys-time-direct-header-abi takes no arguments"
+        ensure_image
+        run_sys_time_direct_header_abi
         ;;
     header-abi-project)
         [ "$#" -eq 0 ] || fail "header-abi-project takes no arguments"

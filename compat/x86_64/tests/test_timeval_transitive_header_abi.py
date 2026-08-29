@@ -24,7 +24,7 @@ class TimevalTransitiveHeaderAbiTests(unittest.TestCase):
         self.assertIn("#include <features.h>\n#include <sys/select.h>\n", header)
         self.assertLess(
             header.index("#include <sys/select.h>"),
-            header.index("#if defined(_XOPEN_SOURCE)"),
+            header.index("#if defined(_GNU_SOURCE)"),
         )
 
     def test_probes_and_runner_close_the_five_by_seven_layout_matrix(self) -> None:

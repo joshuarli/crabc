@@ -390,7 +390,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the thirty-two selected
+`headers-layouts.toml` is the checked-in contract for the thirty-three selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -410,7 +410,7 @@ headers. The report is generated under `compat/reports/`; it is a
 consumability/accounting artifact, not declaration, layout, linkage, runtime,
 installed-header completion, or public x86 support evidence.
 
-`headers-layouts-foundation.toml` is the planned v5 contract that turns those
+`headers-layouts-foundation.toml` is the planned v6 contract that turns those
 separate inventories into a reviewable closure plan without claiming family
 completion. It partitions all 183 pinned paths plus eight project-only
 extensions, fixes the three `sys/*` dependencies to one Linux 5.10 x86 UAPI
@@ -440,7 +440,13 @@ surface.
 It excludes direct `sys/time.h` callable declaration/linkage, other
 `sys/time.h` feature or macro parity, dependent-header callable linkage,
 runtime behavior, all-header closure, family promotion, and public x86
-support. The live
+support. The separate `sys-time-direct-header-abi` command resolves seven
+compile-only profiles for the direct `sys/time.h` surface: selected
+unconditional and GNU/BSD/GNU-only declarations, x86 LP64
+`timeval`/`itimerval`/`timezone` layouts, interval-timer values,
+timer/conversion macros, and unmangled C++ declaration references. It proves
+the spelling requested by those declarations, not actual callable artifact
+linkage or runtime behavior. The live
 `candidate-header-closure` command requires all 382 raw-GCC candidate and
 pinned-musl-reference C11/C++17 empty-TU rows to pass with only project,
 raw-GCC builtin, and declared Linux-UAPI roots; it is not an expected-failure

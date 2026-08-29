@@ -70,7 +70,7 @@ all-header closure, general C/C++ runtime support, libc.so, CRT, loader,
 sysroot, family/platform parity, or public x86 support.
 
 `compat/x86_64/headers-layouts-foundation.toml` is now the separate planned
-v5 accounting contract for eventually closing that header family. It resolves
+v6 accounting contract for eventually closing that header family. It resolves
 the 183 pinned-musl paths and eight project-only headers into exact classes,
 names `sys/kd.h` -> `linux/kd.h`, `sys/soundcard.h` ->
 `linux/soundcard.h`, and `sys/vt.h` -> `linux/vt.h` through one fixed Linux
@@ -91,7 +91,12 @@ It does not require an identical private include graph or dependent feature
 surface.
 It excludes direct `sys/time.h` callable declaration/linkage, other
 `sys/time.h` feature or macro parity, dependent-header callable linkage, and
-runtime behavior. All three are compile-only evidence: callable linkage,
+runtime behavior. Its separate seven-row `sys-time-direct-header-abi` matrix
+checks selected unconditional and GNU/BSD/GNU-only declarations, x86 LP64
+`timeval`/`itimerval`/`timezone` layouts, interval-timer values,
+timer/conversion macros, and C++ declaration C-linkage spelling. That spelling
+check proves only the external name requested by a header declaration, not a
+crabc artifact export. All four are compile-only evidence: callable linkage,
 device behavior, all-header closure, runtime completion, family promotion, and
 public x86 support all remain planned. Its live 382-record
 raw-GCC/pinned-musl C11/C++17 include diagnostic must also pass without a musl
