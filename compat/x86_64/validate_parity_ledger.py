@@ -9,6 +9,7 @@ it never treats a source-only foundation slice as public target support.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import tomllib
 from pathlib import Path
 from typing import Any, Mapping
@@ -17,11 +18,30 @@ from typing import Any, Mapping
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
 HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
+PUBLIC_HEADER_INVENTORY_PATH = ROOT / "compat" / "x86_64" / "public_headers.txt"
+PUBLIC_HEADER_SURFACE_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_public_header_surface.sh"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
+EXPECTED_PUBLIC_HEADER_COUNT = 183
+EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
+EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
+    "sys/kd.h": "linux/kd.h",
+    "sys/soundcard.h": "linux/soundcard.h",
+    "sys/vt.h": "linux/vt.h",
+}
+EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
+    "daemon.h",
+    "dn_expand.h",
+    "linux/capability.h",
+    "lrand48.h",
+    "pthread_atfork.h",
+    "stdatomic.h",
+    "strverscmp.h",
+    "sys/module.h",
+}
 
 EXPECTED_HEADER_LAYOUT_PROBES = {
     "project": "./scripts/dev-x86_64.sh header-abi-project",
@@ -619,6 +639,137 @@ def validate_header_layout_manifest(
         "header-layout manifest probe order or roster drifted",
     )
     return {"probe_count": len(probe_ids)}
+
+
+def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
+    """Keep the all-public-header consumability inventory honest and bounded.
+
+    This artifact deliberately proves only project-header-first C11+GNU
+    consumption against the pinned musl header tree. Its checked-in inventory
+    prevents a future musl/header change from silently shrinking the surface,
+    while the native runner records the three missing-Linux-UAPI reference
+    inputs and candidate-only headers rather than treating either as ABI or
+    runtime parity.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "public-header-c-consumability"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one public-header-c-consumability artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    require(
+        "without declaration, layout, linkage, runtime, or public-support parity" in description,
+        "public-header-c-consumability must retain its non-completion boundary",
+    )
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "public-header-c-consumability.source_owners",
+    )
+    for owner in (
+        "compat/x86_64/public_headers.txt",
+        "compat/x86_64/run_public_header_surface.sh",
+    ):
+        require(owner in owners, f"public-header-c-consumability omits {owner}")
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == ["./scripts/dev-x86_64.sh public-header-surface"],
+        "public-header-c-consumability must use the closed public-header-surface command",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "public-header-surface)" in dispatch_source,
+        "public-header-surface is absent from the native dispatcher",
+    )
+
+    require(
+        PUBLIC_HEADER_INVENTORY_PATH.is_file(),
+        "checked-in x86 public-header inventory is missing",
+    )
+    inventory_text = PUBLIC_HEADER_INVENTORY_PATH.read_text(encoding="utf-8")
+    names = inventory_text.splitlines()
+    require(inventory_text.endswith("\n"), "public-header inventory must end with a newline")
+    require(
+        len(names) == EXPECTED_PUBLIC_HEADER_COUNT,
+        "public-header inventory count drifted from pinned musl 1.2.6",
+    )
+    require(names == sorted(names), "public-header inventory must be sorted")
+    require(len(names) == len(set(names)), "public-header inventory contains a duplicate")
+    for index, name in enumerate(names):
+        require(
+            name
+            and name.endswith(".h")
+            and not name.startswith("/")
+            and ".." not in name.split("/"),
+            f"public-header inventory entry {index} is invalid",
+        )
+        require(not name.startswith("bits/"), "public-header inventory must exclude musl private bits")
+    require(
+        hashlib.sha256(inventory_text.encode("utf-8")).hexdigest()
+        == EXPECTED_PUBLIC_HEADER_SHA256,
+        "public-header inventory content drifted from pinned musl 1.2.6",
+    )
+    candidate_include = ROOT / "include"
+    candidate_names = sorted(
+        path.relative_to(candidate_include).as_posix()
+        for path in candidate_include.rglob("*.h")
+        if path.is_file()
+        and not path.is_symlink()
+        and "bits" not in path.relative_to(candidate_include).parts
+    )
+    require(
+        not (set(names) - set(candidate_names)),
+        "project public-header tree is missing a pinned inventory entry",
+    )
+    require(
+        set(candidate_names) - set(names) == EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY,
+        "project candidate-only public-header set drifted",
+    )
+
+    require(
+        PUBLIC_HEADER_SURFACE_RUNNER_PATH.is_file(),
+        "public-header consumability runner is missing",
+    )
+    runner = PUBLIC_HEADER_SURFACE_RUNNER_PATH.read_text(encoding="utf-8")
+    for header, uapi_header in EXPECTED_PUBLIC_HEADER_UAPI_GAPS.items():
+        require(
+            header in runner and uapi_header in runner,
+            f"public-header runner omits recorded UAPI limitation {header} -> {uapi_header}",
+        )
+    for header in EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY:
+        require(
+            header not in names,
+            f"candidate-only x86 header unexpectedly entered pinned inventory: {header}",
+        )
+    for phrase in (
+        "-std=c11",
+        "-D_GNU_SOURCE",
+        "-I \"$ROOT_DIR/include\"",
+        "run_musl_oracle.sh",
+        "not declaration/layout/linkage/runtime/public-support parity",
+        "export LC_ALL=C",
+        "prepare_report_path()",
+        "report path component is a symlink",
+        "EXPECTED_PINNED_PUBLIC_HEADER_COUNT=183",
+        "EXPECTED_CANDIDATE_PUBLIC_HEADER_COUNT=191",
+        "EXPECTED_COMPILE_OK_COUNT=180",
+        "EXPECTED_REFERENCE_UAPI_UNAVAILABLE_COUNT=3",
+        "EXPECTED_CANDIDATE_ONLY_COUNT=8",
+    ):
+        require(phrase in runner, f"public-header runner omits {phrase}")
+    return len(names)
 
 
 def require_evidence_state(
@@ -1873,6 +2024,9 @@ def validate_ledger(
     header_layout_report = validate_header_layout_manifest(
         by_id["libc.headers-layouts"], header_layout_manifest
     )
+    public_header_inventory_count = require_public_header_surface_artifact(
+        by_id["libc.headers-layouts"]
+    )
 
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
@@ -1958,6 +2112,7 @@ def validate_ledger(
         "verified_slice_count": len(verified_slice_ids),
         "verified_artifact_count": len(verified_artifact_ids),
         "header_layout_probe_count": header_layout_report["probe_count"],
+        "public_header_inventory_count": public_header_inventory_count,
         "promotion_ready": all(family["status"] == "foundation-verified" for family in families),
         "public_support": policy["public_support"],
     }

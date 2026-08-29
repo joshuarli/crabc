@@ -1,7 +1,10 @@
 # Selected native x86-64 header/layout evidence, not an installed-header
 # completion claim. Each `headers` list records only headers explicitly
 # included by that probe's source; it intentionally does not assert the
-# transitive include closure, archive linkage, or public x86 support.
+# transitive include closure, archive linkage, or public x86 support. The
+# separate `public_headers.txt`/`public-header-surface` artifact inventories
+# every pinned public pathname for C consumability only; it does not promote
+# this selected declaration/layout manifest to aggregate completion.
 schema = "crabc.x86_64-headers-layouts/v1"
 family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"

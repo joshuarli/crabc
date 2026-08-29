@@ -45,8 +45,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
-        self.assertEqual(report["verified_artifact_count"], 29)
+        self.assertEqual(report["verified_artifact_count"], 30)
         self.assertEqual(report["header_layout_probe_count"], 29)
+        self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
 
@@ -126,6 +127,42 @@ class X86ParityLedgerTests(unittest.TestCase):
         probes[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(ledger.LedgerError, "command drifted"):
             ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+    def test_public_header_surface_inventory_is_a_checked_partial_artifact(self) -> None:
+        """Every pinned public header must be visible before ABI closure is claimed."""
+
+        inventory = ROOT / "compat" / "x86_64" / "public_headers.txt"
+        headers = inventory.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(headers), 183)
+        self.assertEqual(headers, sorted(headers))
+        self.assertEqual(len(headers), len(set(headers)))
+        self.assertIn("pthread.h", headers)
+        self.assertIn("stdio.h", headers)
+        self.assertIn("sys/ucontext.h", headers)
+        self.assertIn("sys/vt.h", headers)
+
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "public-header-c-consumability"
+        )
+        assert isinstance(artifact, dict)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh public-header-surface"},
+        )
+        self.assertIn("compat/x86_64/public_headers.txt", artifact["source_owners"])
+        self.assertIn(
+            "compat/x86_64/run_public_header_surface.sh", artifact["source_owners"]
+        )
+        self.assertIn(
+            "without declaration, layout, linkage, runtime, or public-support parity",
+            artifact["description"],
+        )
 
     def test_foundations_remain_narrow_and_source_or_artifact_scoped(self) -> None:
         data = self.data()
@@ -1188,8 +1225,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(socket_header_evidence["state"], "required")
         self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 1
-        bootstrap = artifacts[0]
+        assert isinstance(artifacts, list) and len(artifacts) == 2
+        bootstrap = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-bootstrap-primitives"
+        )
         assert isinstance(bootstrap, dict)
         self.assertEqual(bootstrap["id"], "static-c-bootstrap-primitives")
         self.assertNotIn("capabilities", bootstrap)
@@ -3382,8 +3423,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 1
-        artifact = artifacts[0]
+        assert isinstance(artifacts, list) and len(artifacts) == 2
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "public-header-c-consumability"
+        )
         assert isinstance(artifact, dict)
         artifact["capabilities"] = ["math.fenv"]
         with self.assertRaisesRegex(ledger.LedgerError, "must not carry capabilities"):
@@ -3392,8 +3437,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 1
-        artifact = artifacts[0]
+        assert isinstance(artifacts, list) and len(artifacts) == 2
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "public-header-c-consumability"
+        )
         assert isinstance(artifact, dict)
         artifact["id"] = "filesystem.stat-compat"
         with self.assertRaisesRegex(ledger.LedgerError, "duplicate verified record id"):

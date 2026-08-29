@@ -191,6 +191,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh image
 ./scripts/dev-x86_64.sh musl-oracle
 ./scripts/dev-x86_64.sh header-abi-reference
+./scripts/dev-x86_64.sh public-header-surface
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
@@ -373,6 +374,18 @@ runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
 archive linkage, runtime completion, or public x86 support; the ledger
 validator rejects a missing, renamed, or reclassified gate.
+
+`public-header-surface` adds the separate all-public-header inventory needed
+before that bounded gate set can grow into a completion contract. It derives
+the 183 pinned-musl public header paths, compares them to the checked-in
+`public_headers.txt` inventory, requires every reference path to exist in the
+project include tree, and compiles each empty C11+GNU consumer with project
+headers first and then with pinned musl alone. The current native image records
+180 jointly consumable headers, three shared missing-Linux-UAPI inputs
+(`sys/kd.h`, `sys/soundcard.h`, and `sys/vt.h`), and eight candidate-only
+headers. The report is generated under `compat/reports/`; it is a
+consumability/accounting artifact, not declaration, layout, linkage, runtime,
+installed-header completion, or public x86 support evidence.
 
 `header-abi-project` places the project headers first and compile-checks only
 the staged x86 `fenv`, `float`, and fundamental-type declarations, in both SSE
