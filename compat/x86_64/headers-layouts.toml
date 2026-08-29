@@ -400,3 +400,22 @@ sources = [
   "compat/x86_64/run_epoll_header_abi.sh",
 ]
 headers = ["include/stddef.h", "include/sys/epoll.h", "include/sys/ioctl.h"]
+
+[[probe]]
+id = "timeval-transitive"
+command = "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/timeval_transitive_header_abi_probe.c",
+  "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
+  "compat/x86_64/run_timeval_transitive_header_abi.sh",
+]
+headers = [
+  "include/lastlog.h",
+  "include/stddef.h",
+  "include/sys/time.h",
+  "include/sys/timex.h",
+  "include/utmp.h",
+  "include/utmpx.h",
+]

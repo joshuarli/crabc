@@ -32,13 +32,16 @@ UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
 )
 EPOLL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_epoll_header_abi.sh"
+TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_timeval_transitive_header_abi.sh"
+)
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v4"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v5"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -55,6 +58,23 @@ EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh epoll-he
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/epoll.h"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_DIRECT_MACRO_HEADER = "sys/ioctl.h"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
+EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID = (
+    "x86-timeval-transitive-header-profile-matrix"
+)
+EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_COMMAND = (
+    "./scripts/dev-x86_64.sh timeval-transitive-header-abi"
+)
+EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_HEADERS = (
+    "sys/time.h",
+    "utmpx.h",
+    "utmp.h",
+    "lastlog.h",
+    "sys/timex.h",
+)
+EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_SYS_TIME_REQUIRED_TRANSITIVE_HEADER = (
+    "sys/select.h"
+)
+EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ROW_COUNT = 35
 EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "daemon.h",
     "dn_expand.h",
@@ -146,6 +166,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "candidate-tree-presence",
         "c11-gnu-consumability",
         "epoll-header-profile-matrix",
+        "timeval-transitive-header-profile-matrix",
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
@@ -325,6 +346,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         (EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID,),
     ),
+    "timeval-transitive-header-profile-matrix": (
+        "partial-verified",
+        "sys/time.h plus utmpx.h, utmp.h, lastlog.h, and sys/timex.h timeval transitive layout subset",
+        "libc.headers-layouts",
+        (EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "uapi-input-provenance": (
         "partial-verified",
         "pinned-uapi-inputs",
@@ -440,6 +467,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "resource": "./scripts/dev-x86_64.sh resource-header-abi",
     "socket": "./scripts/dev-x86_64.sh socket-header-abi",
     "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
+    "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -595,6 +623,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/epoll_header_abi_probe.c",
         "compat/x86_64/epoll_header_abi_probe.cpp",
         "compat/x86_64/run_epoll_header_abi.sh",
+    ),
+    "timeval-transitive": (
+        "compat/x86_64/timeval_transitive_header_abi_probe.c",
+        "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
+        "compat/x86_64/run_timeval_transitive_header_abi.sh",
     ),
 }
 
@@ -1067,12 +1100,13 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v4 contract resolves every current pathname into one class and expands
+    The v5 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
-    Linux-UAPI input, resolves selected UAPI-wrapper and epoll-header ABI
-    matrices, and requires a live C11/C++17 empty-TU closure diagnostic, while
-    keeping aggregate applicability, declaration/layout comparisons, and
-    declared-callable linkage in planned evidence lanes.
+    Linux-UAPI input, resolves selected UAPI-wrapper, epoll-header, and
+    timeval-transitive ABI matrices, and requires a live C11/C++17 empty-TU
+    closure diagnostic, while keeping aggregate applicability,
+    declaration/layout comparisons, and declared-callable linkage in planned
+    evidence lanes.
     """
     require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
     expected_manifest_keys = {
@@ -1092,6 +1126,7 @@ def validate_header_layout_foundation_manifest(
         "uapi_input",
         "uapi_wrapper_matrix",
         "epoll_header_profile_matrix",
+        "timeval_transitive_header_profile_matrix",
         "closure_diagnostic",
         "language_profile",
         "profile_obligation",
@@ -1153,6 +1188,7 @@ def validate_header_layout_foundation_manifest(
             "legacy_direct_inputs_accounted": True,
             "uapi_wrapper_profile_matrix_slice": True,
             "epoll_header_profile_matrix_slice": True,
+            "timeval_transitive_header_profile_matrix_slice": True,
             "candidate_transitive_include_closure": False,
             "c11_consumer_matrix": False,
             "cxx17_consumer_matrix": False,
@@ -1226,12 +1262,16 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_epoll_header_abi.sh",
         "compat/x86_64/epoll_header_abi_probe.c",
         "compat/x86_64/epoll_header_abi_probe.cpp",
+        "compat/x86_64/run_timeval_transitive_header_abi.sh",
+        "compat/x86_64/timeval_transitive_header_abi_probe.c",
+        "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
         "compat/x86_64/run_candidate_header_closure.sh",
         "compat/x86_64/header_cxx_closure.cpp",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/tests/test_candidate_header_closure.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
         "compat/x86_64/tests/test_epoll_header_abi.py",
+        "compat/x86_64/tests/test_timeval_transitive_header_abi.py",
         "compat/x86_64/tests/test_runner.py",
         "scripts/dev-x86_64.sh",
     ):
@@ -1800,6 +1840,177 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts epoll header matrix evidence must retain its non-completion boundary",
     )
 
+    timeval_transitive_header_profile_matrix = manifest[
+        "timeval_transitive_header_profile_matrix"
+    ]
+    require(
+        isinstance(timeval_transitive_header_profile_matrix, Mapping),
+        "header-foundation timeval transitive-header matrix must be a table",
+    )
+    require(
+        set(timeval_transitive_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_headers",
+            "sys_time_required_transitive_header",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation timeval transitive-header matrix keys drifted",
+    )
+    require(
+        timeval_transitive_header_profile_matrix["id"]
+        == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation timeval transitive-header matrix id drifted",
+    )
+    require(
+        timeval_transitive_header_profile_matrix["state"] == "partial-verified"
+        and timeval_transitive_header_profile_matrix["required_result"] == "pass",
+        "header-foundation timeval transitive-header matrix must remain partial verified evidence",
+    )
+    require(
+        timeval_transitive_header_profile_matrix["command"]
+        == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation timeval transitive-header matrix command drifted",
+    )
+    require(
+        timeval_transitive_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation timeval transitive-header matrix must remain scoped to fixed pinned non-UAPI headers",
+    )
+    timeval_headers = string_list(
+        timeval_transitive_header_profile_matrix["subject_headers"],
+        "header-foundation timeval transitive-header matrix subject headers",
+    )
+    require(
+        tuple(timeval_headers) == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_HEADERS,
+        "header-foundation timeval transitive-header matrix subject headers drifted",
+    )
+    require(
+        timeval_transitive_header_profile_matrix["sys_time_required_transitive_header"]
+        == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_SYS_TIME_REQUIRED_TRANSITIVE_HEADER,
+        "header-foundation timeval transitive-header matrix required dependency drifted",
+    )
+    timeval_profiles = string_list(
+        timeval_transitive_header_profile_matrix["profiles"],
+        "header-foundation timeval transitive-header matrix profiles",
+    )
+    require(
+        tuple(timeval_profiles) == EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+        "header-foundation timeval transitive-header matrix profiles drifted",
+    )
+    require(
+        timeval_transitive_header_profile_matrix["row_count"]
+        == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and timeval_transitive_header_profile_matrix["row_count"]
+        == len(timeval_headers) * len(timeval_profiles),
+        "header-foundation timeval transitive-header matrix row count drifted",
+    )
+    timeval_scope = timeval_transitive_header_profile_matrix["scope"]
+    require(
+        isinstance(timeval_scope, str)
+        and all(
+            phrase in timeval_scope
+            for phrase in (
+                "direct sys/time.h callable declaration/linkage",
+                "other sys/time.h feature visibility or macro parity",
+                "dependent-header callable linkage",
+                "runtime behavior",
+                "identical private include graph",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation timeval transitive-header matrix scope must retain its non-completion boundary",
+    )
+    timeval_rows = timeval_transitive_header_profile_matrix["row"]
+    require(
+        isinstance(timeval_rows, list)
+        and len(timeval_rows) == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation timeval transitive-header matrix row roster drifted",
+    )
+    expected_timeval_rows = tuple(
+        (header, profile)
+        for header in EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_HEADERS
+        for profile in EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES
+    )
+    observed_timeval_rows: list[tuple[str, str]] = []
+    for index, row in enumerate(timeval_rows):
+        location = f"header-foundation timeval_transitive_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"header", "profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        header = row["header"]
+        profile = row["profile"]
+        require(
+            isinstance(header, str) and isinstance(profile, str),
+            f"{location} row key is invalid",
+        )
+        require(
+            header in EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_HEADERS,
+            f"{location} header is not selected for timeval transitive evidence",
+        )
+        require(
+            profile in EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+            f"{location} profile is not a declared timeval transitive-header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_timeval_rows.append((header, profile))
+    require(
+        tuple(observed_timeval_rows) == expected_timeval_rows,
+        "header-foundation timeval transitive-header matrix row order or cross-product drifted",
+    )
+    require(
+        TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation timeval transitive-header matrix runner is missing",
+    )
+    require(
+        "timeval-transitive-header-abi)" in dispatch_source,
+        "timeval-transitive-header-abi is absent from the native dispatcher",
+    )
+    timeval_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(timeval_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one timeval transitive-header matrix evidence command",
+    )
+    require(
+        timeval_matrix_evidence[0].get("state") == "required"
+        and isinstance(timeval_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in timeval_matrix_evidence[0]["scope"]
+            for phrase in (
+                "direct sys/time.h callable declaration/linkage",
+                "other sys/time.h feature visibility or macro parity",
+                "dependent-header callable linkage",
+                "identical private include graph",
+                "dependent feature surface",
+                "runtime",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts timeval transitive-header matrix evidence must retain its non-completion boundary",
+    )
+
     inventory_text = inventory_path.read_text(encoding="utf-8")
     pinned_paths = inventory_text.splitlines()
     require(inventory_text.endswith("\n"), "header-foundation pinned inventory must end with a newline")
@@ -1815,6 +2026,10 @@ def validate_header_layout_foundation_manifest(
     require(
         uapi_header_set <= pinned_path_set,
         "header-foundation UAPI wrappers must remain pinned public headers",
+    )
+    require(
+        set(timeval_headers) <= pinned_path_set - uapi_header_set,
+        "header-foundation timeval transitive-header subjects must remain pinned non-UAPI headers",
     )
     project_only_paths = tuple(sorted(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY))
     project_only_set = set(project_only_paths)
@@ -2109,6 +2324,7 @@ def validate_header_layout_foundation_manifest(
         "uapi_path_count": len(observed_uapi_paths),
         "uapi_wrapper_matrix_row_count": len(observed_matrix_rows),
         "epoll_header_profile_matrix_row_count": len(observed_epoll_rows),
+        "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -4206,6 +4422,9 @@ def validate_ledger(
         ],
         "header_foundation_epoll_header_profile_matrix_row_count": header_layout_foundation_report[
             "epoll_header_profile_matrix_row_count"
+        ],
+        "header_foundation_timeval_transitive_header_profile_matrix_row_count": header_layout_foundation_report[
+            "timeval_transitive_header_profile_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"

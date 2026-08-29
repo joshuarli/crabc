@@ -70,7 +70,7 @@ all-header closure, general C/C++ runtime support, libc.so, CRT, loader,
 sysroot, family/platform parity, or public x86 support.
 
 `compat/x86_64/headers-layouts-foundation.toml` is now the separate planned
-v4 accounting contract for eventually closing that header family. It resolves
+v5 accounting contract for eventually closing that header family. It resolves
 the 183 pinned-musl paths and eight project-only headers into exact classes,
 names `sys/kd.h` -> `linux/kd.h`, `sys/soundcard.h` ->
 `linux/soundcard.h`, and `sys/vt.h` -> `linux/vt.h` through one fixed Linux
@@ -83,9 +83,17 @@ musl and raw-GCC project-header-first roots, checking selected constants, ioctl
 encodings, and x86 LP64 layouts. Its separate seven-row `epoll-header-abi`
 matrix resolves only `sys/epoll.h`'s packed x86 event record, selected
 declarations/values, and the direct `_IOC`/`_IOR`/`_IOW` encoding subset from
-`sys/ioctl.h`. Both are compile-only evidence: callable linkage, device
-behavior, all-header closure, runtime completion, family promotion, and public
-x86 support all remain planned. Its live 382-record
+`sys/ioctl.h`. Its separate 35-row `timeval-transitive-header-abi` matrix
+checks five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`, and
+`sys/timex.h`) across seven isolated C11/C++17 profiles for complete
+`struct timeval` visibility and named x86 LP64 embedded-record layouts only.
+It does not require an identical private include graph or dependent feature
+surface.
+It excludes direct `sys/time.h` callable declaration/linkage, other
+`sys/time.h` feature or macro parity, dependent-header callable linkage, and
+runtime behavior. All three are compile-only evidence: callable linkage,
+device behavior, all-header closure, runtime completion, family promotion, and
+public x86 support all remain planned. Its live 382-record
 raw-GCC/pinned-musl C11/C++17 include diagnostic must also pass without a musl
 fallback.
 

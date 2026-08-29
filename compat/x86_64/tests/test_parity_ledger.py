@@ -51,7 +51,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
         self.assertEqual(report["verified_artifact_count"], 37)
-        self.assertEqual(report["header_layout_probe_count"], 31)
+        self.assertEqual(report["header_layout_probe_count"], 32)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -59,10 +59,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_uapi_path_count"], 3)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
+        self.assertEqual(
+            report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
+            35,
+        )
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 14)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 15)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -100,7 +104,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 31)
+        self.assertEqual(report["header_layout_probe_count"], 32)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -166,6 +170,30 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/run_epoll_header_abi.sh",
             ],
         )
+        timeval_transitive = next(
+            probe for probe in probes if probe["id"] == "timeval-transitive"
+        )
+        assert isinstance(timeval_transitive, dict)
+        self.assertEqual(timeval_transitive["kind"], "compile-only")
+        self.assertEqual(
+            timeval_transitive["headers"],
+            [
+                "include/lastlog.h",
+                "include/stddef.h",
+                "include/sys/time.h",
+                "include/sys/timex.h",
+                "include/utmp.h",
+                "include/utmpx.h",
+            ],
+        )
+        self.assertEqual(
+            timeval_transitive["sources"],
+            [
+                "compat/x86_64/timeval_transitive_header_abi_probe.c",
+                "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
+                "compat/x86_64/run_timeval_transitive_header_abi.sh",
+            ],
+        )
 
     def test_header_layout_manifest_rejects_scope_or_probe_drift(self) -> None:
         data = self.data()
@@ -215,7 +243,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v4"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v5"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -232,6 +260,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
+        self.assertEqual(
+            report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
+            35,
+        )
 
         classes = manifest["header_class"]
         assert isinstance(classes, list)
@@ -364,10 +396,59 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for row in epoll_rows
             )
         )
+        timeval_matrix = manifest["timeval_transitive_header_profile_matrix"]
+        assert isinstance(timeval_matrix, dict)
+        self.assertEqual(
+            timeval_matrix["id"], "x86-timeval-transitive-header-profile-matrix"
+        )
+        self.assertEqual(timeval_matrix["state"], "partial-verified")
+        self.assertEqual(timeval_matrix["required_result"], "pass")
+        self.assertEqual(
+            timeval_matrix["command"],
+            "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
+        )
+        self.assertEqual(timeval_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(
+            timeval_matrix["subject_headers"],
+            ["sys/time.h", "utmpx.h", "utmp.h", "lastlog.h", "sys/timex.h"],
+        )
+        self.assertEqual(
+            timeval_matrix["sys_time_required_transitive_header"], "sys/select.h"
+        )
+        self.assertEqual(
+            timeval_matrix["profiles"],
+            list(ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES),
+        )
+        self.assertEqual(timeval_matrix["row_count"], 35)
+        timeval_rows = timeval_matrix["row"]
+        assert isinstance(timeval_rows, list)
+        self.assertEqual(len(timeval_rows), 35)
+        self.assertEqual(
+            [
+                (row["header"], row["profile"])
+                for row in timeval_rows
+                if isinstance(row, dict)
+            ],
+            [
+                (header, profile)
+                for header in ledger.EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_HEADERS
+                for profile in ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES
+            ],
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in timeval_rows
+            )
+        )
         completion = manifest["completion"]
         assert isinstance(completion, dict)
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
         self.assertTrue(completion["epoll_header_profile_matrix_slice"])
+        self.assertTrue(completion["timeval_transitive_header_profile_matrix_slice"])
         self.assertFalse(completion["family_promotion"])
         self.assertFalse(completion["public_support"])
 
@@ -481,6 +562,28 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(epoll_matrix, dict)
         epoll_matrix["direct_macro_header"] = "sys/socket.h"
         with self.assertRaisesRegex(ledger.LedgerError, "direct macro header drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        timeval_matrix = manifest["timeval_transitive_header_profile_matrix"]
+        assert isinstance(timeval_matrix, dict)
+        timeval_rows = timeval_matrix["row"]
+        assert isinstance(timeval_rows, list)
+        timeval_rows.pop()
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "timeval transitive-header matrix row roster drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        timeval_matrix = manifest["timeval_transitive_header_profile_matrix"]
+        assert isinstance(timeval_matrix, dict)
+        timeval_matrix["sys_time_required_transitive_header"] = "sys/socket.h"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "required dependency drifted"
+        ):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()

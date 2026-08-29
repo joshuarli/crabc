@@ -2,10 +2,9 @@
 #define _SYS_TIME_H
 
 #include <features.h>
-
-#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #include <sys/select.h>
 
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int utimes(const char *, const struct timeval [2]);
 
 /* GNU/BSD clock-administration interfaces. */
