@@ -4680,6 +4680,98 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("callback-algorithms-header-abi", runner)
         self.assertIn("libc-callback-algorithms", runner)
 
+    def test_libc_static_c_abi_clock_gettime_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        clock_gettime = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_gettime.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_clock_gettime_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_clock_gettime_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_clock_gettime.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "clock_gettime.rs"]', static_root)
+        self.assertIn("pub unsafe extern \"C\" fn clock_gettime(", clock_gettime)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/clock_gettime.c",
+            "raw_syscall::SYS_CLOCK_GETTIME",
+            "raw_syscall::syscall2(",
+            "c_status(result)",
+            "initial-TLS errno",
+            "vDSO resolver",
+        ):
+            self.assertIn(required, clock_gettime)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn clock_getres(",
+            "fn clock_settime(",
+            "__tls_get_addr",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, clock_gettime)
+        for required in (
+            "#include <errno.h>",
+            "#include <time.h>",
+            "SYS_clock_gettime == 228",
+            "CLOCK_REALTIME == 0",
+            "check_success_and_errno",
+            "check_errors",
+            "CLOCK_PROCESS_CPUTIME_ID",
+            "CRABC_CLOCK_GETTIME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_clock_gettime_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_time_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall",
+            "clock_gettime lacks syscall 228",
+            "direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("clock_gettime", static_export_names)
+        self.assertIn('id = "static-c-clock-gettime"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-clock-gettime"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_clock_gettime()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_clock_gettime.sh", runner
+        )
+        self.assertIn(
+            '    libc-clock-gettime)\n        [ "$#" -eq 0 ] || fail "libc-clock-gettime takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_clock_nanosleep_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

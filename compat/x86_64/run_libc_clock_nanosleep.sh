@@ -132,7 +132,7 @@ for symbol in __errno_location clock_nanosleep; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in sleep usleep clock_gettime clock_getres clock_settime \
+for unselected in sleep usleep clock_getres clock_settime \
     clock_getcpuclockid timer_create timer_delete timer_getoverrun timer_gettime \
     timer_settime gettimeofday setitimer alarm ualarm pthread_create malloc free \
     calloc realloc mmap mprotect munmap; do

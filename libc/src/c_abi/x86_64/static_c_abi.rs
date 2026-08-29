@@ -77,6 +77,8 @@ mod immediate_termination;
 mod callback_algorithms;
 #[path = "clock_nanosleep.rs"]
 mod clock_nanosleep;
+#[path = "clock_gettime.rs"]
+mod clock_gettime;
 #[path = "nanosleep.rs"]
 mod nanosleep;
 #[path = "descriptor_entry.rs"]

@@ -883,6 +883,55 @@ def require_callback_algorithms_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_clock_gettime_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the normal-C-result clock-observation boundary concrete."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-clock-gettime"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-clock-gettime artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "POSIX clock_gettime block",
+        "`clock_gettime`",
+        "-1/errno",
+        "initial-TLS errno",
+        "vDSO resolver",
+        "clock_getres",
+        "clock_settime",
+    ):
+        require(
+            phrase in description,
+            f"static-c-clock-gettime description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("clock_gettime=228" in item and "rdi/rsi" in item for item in prerequisites),
+        "static-c-clock-gettime must record its two-register syscall ABI",
+    )
+    require(
+        any("vDSO resolver" in item and "dynamic process-lifetime state" in item for item in prerequisites),
+        "static-c-clock-gettime must record the vDSO boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-clock-gettime"},
+        "static-c-clock-gettime must use the closed libc-clock-gettime command",
+    )
+
+
 def require_clock_nanosleep_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct-positive-error clock sleep boundary durable."""
     artifacts = require_verified_artifacts(
@@ -1357,6 +1406,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require_child_reaping_artifact(by_id["libc.posix-runtime"])
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
+    require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

@@ -2,11 +2,11 @@
 # Native Linux/x86-64 staged foundation evidence entry point.
 #
 # This is a deliberately closed foundation lane. It proves explicitly named
-# native core, direct-facade, raw-C-syscall, source-only relocation, and twenty-nine
+# native core, direct-facade, raw-C-syscall, source-only relocation, and thirty
 # static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, named termios control, selected process context, child reaping,
-# C11 immediate termination, callback algorithms, direct nanosleep and
-# clock_nanosleep,
+# C11 immediate termination, callback algorithms, direct clock_gettime,
+# nanosleep, and clock_nanosleep,
 # selected descriptor entry, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
@@ -159,6 +159,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
   libc-immediate-termination  run the static x86 crabc-libc C11 immediate-termination slice
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
+  libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
@@ -797,6 +798,17 @@ C11 `_Exit`: fixture-local raw clone/wait observes its exact child status,
 without ordinary exit, quick-exit hooks, stdio/fini processing, fork
 coordination, pthread lifecycle, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
+`libc-clock-gettime` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+the ordinary `clock_gettime` zero-or-`-1`/initial-TLS-errno boundary for
+realtime, monotonic, and process-CPU observations, including invalid-clock
+errors. Valid calls require a writable output record: musl may route a clock
+through vDSO code before a null pointer reaches the kernel. The direct x86
+syscall-228 leaf intentionally does not import musl's vDSO resolver or its
+dynamic process state. It does not
+select clock resolution or mutation, `time`, calendar/timer state, pthread
+cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
+support.
 `libc-nanosleep` links that archive into a separate freestanding project-header
 C fixture after an equivalent pinned-musl run. It selects only the normal
 `nanosleep` result/errno and relative remaining-pointer boundary: zero
@@ -1101,6 +1113,10 @@ run_libc_immediate_termination() {
 
 run_libc_callback_algorithms() {
     run_in_container bash /workspace/compat/x86_64/run_libc_callback_algorithms.sh
+}
+
+run_libc_clock_gettime() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_clock_gettime.sh
 }
 
 run_libc_nanosleep() {
@@ -1967,7 +1983,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-clock-gettime|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
         exit 2
@@ -2697,6 +2713,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-callback-algorithms takes no arguments"
         ensure_image
         run_libc_callback_algorithms
+        ;;
+    libc-clock-gettime)
+        [ "$#" -eq 0 ] || fail "libc-clock-gettime takes no arguments"
+        ensure_image
+        run_libc_clock_gettime
         ;;
     libc-nanosleep)
         [ "$#" -eq 0 ] || fail "libc-nanosleep takes no arguments"

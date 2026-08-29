@@ -115,8 +115,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
-# arithmetic, and find-first-set, direct POSIX nanosleep and clock_nanosleep, descriptor entry, and bounded
-# fcntl status control.
+# arithmetic, and find-first-set, direct POSIX clock_gettime, nanosleep, and
+# clock_nanosleep, descriptor entry, and bounded fcntl status control.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
 # exception.
@@ -127,6 +127,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credentials.rs"),
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
+    Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
@@ -3313,6 +3314,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "callback_algorithms.rs"]',
+        '#[path = "clock_gettime.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "descriptor_entry.rs"]',
@@ -3793,6 +3795,42 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/clock_nanosleep.rs: selected static "
             "artifact must export only clock_nanosleep"
+        )
+
+    clock_gettime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_gettime.rs"
+    clock_gettime_text = clock_gettime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/clock_gettime.c",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        "initial-TLS errno",
+        "direct Linux syscall",
+        "vDSO",
+    ):
+        if required not in clock_gettime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_gettime.rs: selected static "
+                f"clock_gettime boundary is missing {required!r}"
+            )
+    clock_gettime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            clock_gettime_text,
+        )
+    )
+    if clock_gettime_exports != {"clock_gettime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/clock_gettime.rs: selected static artifact "
+            "must export only clock_gettime"
+        )
+    raw_syscall_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+    raw_syscall_text = raw_syscall_source.read_text(errors="replace")
+    if "pub(crate) const SYS_CLOCK_GETTIME: i64 = 228;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static clock_gettime "
+            "boundary requires SYS_CLOCK_GETTIME=228"
         )
 
     nanosleep_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "nanosleep.rs"
@@ -4696,6 +4734,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         child_reaping_text,
         immediate_termination_text,
         callback_algorithms_text,
+        clock_gettime_text,
         clock_nanosleep_text,
         nanosleep_text,
         descriptor_entry_text,
@@ -4823,6 +4862,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "wait",
         "waitpid",
         "waitid",
+        "clock_gettime",
         "clock_nanosleep",
         "nanosleep",
         "open",
@@ -4949,7 +4989,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct nanosleep and clock_nanosleep, selected "
+            "signal-control, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, bounded descriptor-control, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -4973,6 +5013,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
         ("callback_algorithms.rs", callback_algorithms_text),
+        ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
