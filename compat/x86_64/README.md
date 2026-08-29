@@ -332,6 +332,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh libc-pthread-identity
+./scripts/dev-x86_64.sh libc-c11-lifecycle
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1805,7 +1806,7 @@ withdrawal, and is exhausted/reused by a candidate-only capacity route. It does
 not select attributes, detach, pthread-exit cleanup/TSD/main-thread behavior,
 any self/equal behavior beyond the separately recorded identity artifact,
 cancellation, synchronization objects, dynamic TLS/DTV, loader or CRT TLS,
-C11 threads, or public x86 support.
+broader C11 threads, or public x86 support.
 
 `libc-pthread-identity` is a separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
@@ -1817,9 +1818,27 @@ returning exactly one for equal identities and zero for distinct identities.
 The main thread, two concurrently live normal workers, and one selected
 explicit-exit worker prove that `pthread_create` returns the child's TP and
 that one join resolves it through the private registry before mapping
-reclamation. It does not select a dereferenceable TCB, C11 creation/join/locks
-or TSD, detach, cancellation, dynamic or loader TLS, CRT, sysroot, general
-pthread behavior, or public x86 support.
+reclamation. It does not select a dereferenceable TCB, broader C11
+lifecycle/locks or TSD, detach, cancellation, dynamic or loader TLS, CRT,
+sysroot, general pthread behavior, or public x86 support.
+
+`libc-c11-lifecycle` is a separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
+project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only typed
+`thrd_create`/`thrd_join`/`thrd_exit`: the `int (*)(void *)` callback stays in
+its dedicated C11 worker arm instead of being cast to a pointer-returning
+pthread routine, each child handle is its opaque `%fs:0` TP, and normal plus
+explicit results retain every signed `int`, including `INT_MIN` and `INT_MAX`.
+The fixture checks identity before a successful join releases the worker's TLS
+and control mappings, then proves independent child errno, a null result slot,
+two simultaneously live workers, and 64-slot exhaustion/reuse. Pinned musl
+covers only standard normal and `thrd_exit` paths. Candidate-only null-start
+and unsupported C11-to-`pthread_exit` / pthread-to-`thrd_exit` routes fail
+closed after safe reclamation without exposing an incompatible result. It does
+not select detach, sleep/yield, once, mutexes/conditions, TSS, cancellation,
+dynamic/loader TLS, broader pthread/C11 behavior, CRT, sysroot, or public x86
+support.
 
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
@@ -2286,7 +2305,8 @@ initial-TLS errno datum and installs the x86 Variant-II `%fs:0` self pointer;
 the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
-`libc-pthread-create-join-tls`, or `libc-pthread-identity`: their start shims
+`libc-pthread-create-join-tls`, `libc-pthread-identity`, or
+`libc-c11-lifecycle`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. All candidates have no
 interpreter, `DT_NEEDED`, unresolved symbols, dynamic TLS resolver, allocator,
@@ -2592,7 +2612,8 @@ startup, loader TLS, sysroot, nor public x86 support.
 Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
-`libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-termios-control`,
+`libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
+`libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,

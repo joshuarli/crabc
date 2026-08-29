@@ -6,8 +6,9 @@
 //! classification/sign, and basic complex accessor/conjugation primitives as a
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask
 //! and bounded process-signal execution, one default-attribute
-//! create/explicit-exit/join worker backed by the private Static Initial TLS
-//! v1 final-executable template plus bounded weak `pthread_self`/
+//! create/explicit-exit/join worker and its typed C11
+//! `thrd_create`/`thrd_exit`/`thrd_join` sibling, both backed by the private
+//! Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control,
@@ -29,7 +30,8 @@
 //! C++/DSO destruction, or a concurrent process-exit protocol. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path, plus opaque current/equality
-//! identity; it is not a claim for the broader pthread header surface.
+//! identity. The C11 lifecycle sibling likewise remains a static-only typed
+//! worker slice; neither is a claim for broader pthread/C11 header support.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
 //! artifact evidence. The shared result translator is intentionally smaller
@@ -90,6 +92,8 @@ mod signal_execution;
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
+#[path = "c11_thread_lifecycle.rs"]
+mod c11_thread_lifecycle;
 #[path = "termios_control.rs"]
 mod termios_control;
 #[path = "process_context.rs"]

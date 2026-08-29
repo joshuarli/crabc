@@ -120,6 +120,7 @@ using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
 using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
 using crabc_thrd_create_signature = int (*)(thrd_t *, thrd_start_t, void *);
 using crabc_thrd_join_signature = int (*)(thrd_t, int *);
+using crabc_thrd_exit_signature = void (*)(int);
 using crabc_thrd_current_signature = thrd_t (*)();
 using crabc_thrd_equal_signature = int (*)(thrd_t, thrd_t);
 using crabc_mtx_timedlock_signature = int (*)(mtx_t *, const timespec *);
@@ -142,6 +143,8 @@ static_assert(__is_same(decltype(&thrd_create), crabc_thrd_create_signature),
 	"thrd_create signature");
 static_assert(__is_same(decltype(&thrd_join), crabc_thrd_join_signature),
 	"thrd_join signature");
+static_assert(__is_same(decltype(&thrd_exit), crabc_thrd_exit_signature),
+	"thrd_exit noreturn signature");
 static_assert(__is_same(decltype(&thrd_current), crabc_thrd_current_signature),
 	"thrd_current signature");
 static_assert(__is_same(decltype(&thrd_equal), crabc_thrd_equal_signature),
@@ -168,6 +171,10 @@ static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
 static crabc_thrd_create_signature const crabc_force_thrd_create
 	__attribute__((used)) = &thrd_create;
+static crabc_thrd_join_signature const crabc_force_thrd_join
+	__attribute__((used)) = &thrd_join;
+static crabc_thrd_exit_signature const crabc_force_thrd_exit
+	__attribute__((used)) = &thrd_exit;
 static crabc_thrd_current_signature const crabc_force_thrd_current
 	__attribute__((used)) = &thrd_current;
 static crabc_thrd_equal_signature const crabc_force_thrd_equal

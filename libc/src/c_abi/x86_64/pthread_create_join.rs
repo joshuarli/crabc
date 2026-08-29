@@ -22,17 +22,20 @@
 //!
 //! The admitted contract is exactly one default-attribute, joinable worker:
 //! `pthread_create(NULL)`, a normal returning start routine or selected-worker
-//! `pthread_exit`, and one `pthread_join`. The child gets a distinct copy of
-//! the libc-owned Static Initial TLS v1 final-executable image, including its
+//! `pthread_exit`, and one `pthread_join`. The private C11 lifecycle sibling
+//! reuses this allocation/clone/join seam through a distinct typed
+//! `int (*)(void *)` start mode; it never reinterprets that callback as the
+//! pointer-returning pthread type. The child gets a distinct copy of the
+//! libc-owned Static Initial TLS v1 final-executable image, including its
 //! initialized prefix, zeroed TBSS tail, high-alignment layout, and `errno`,
 //! and returns its Variant-II thread pointer as the opaque `pthread_t`, exactly
 //! matching its selected `pthread_self` identity. The private registry maps
-//! that public TP back to the private control record and serializes identity scan/result
-//! publication with join withdrawal, and validates `%fs:0`, Linux `gettid`,
-//! and the still-live child-TID word so a foreign thread cannot turn a copied
-//! TLS base into a control-record write after task-ID reuse. It is intentionally
-//! neither signal-safe nor reentrant. The
-//! leaf intentionally does **not** provide attrs, detach,
+//! that public TP back to the private control record and serializes identity
+//! scan/result publication with join withdrawal, and validates `%fs:0`, Linux
+//! `gettid`, and the still-live child-TID word so a foreign thread cannot turn
+//! a copied TLS base into a control-record write after task-ID reuse. It is
+//! intentionally neither signal-safe nor reentrant. The leaf intentionally
+//! does **not** provide attrs, detach,
 //! `pthread_exit` cleanup/TSD/main-thread behavior, cancellation, keys/TSD,
 //! synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
 //! coordination, thread lists, fork/atfork, custom stacks, guards, or general
@@ -95,7 +98,153 @@ const WORKER_MAPPING_SIZE: usize = CONTROL_REGION_SIZE + WORKER_STACK_SIZE;
 const SELECTED_WORKER_REGISTRY_SIZE: usize = 64;
 const SELECTED_WORKER_REGISTRY_RESERVING: usize = usize::MAX;
 
-type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+/// The selected pthread callback ABI.
+///
+/// This remains distinct from [`C11StartRoutine`].  Both return through the
+/// x86-64 integer return register, but the C abstract machines have different
+/// function types and must not be joined by a function-pointer cast.
+pub(super) type PthreadStartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+
+/// The selected C11 callback ABI.
+///
+/// The C11 lifecycle leaf stores this typed function pointer in
+/// [`SelectedWorkerStart::C11`], then the worker trampoline explicitly
+/// sign-extends its `int` result into the private pointer-sized join storage.
+pub(super) type C11StartRoutine = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+/// One typed start mode admitted by the bounded selected-worker seam.
+///
+/// This is intentionally private to the two static C lifecycle leaves.  It is
+/// not a general callback adapter, a public Rust API, or a claim that other
+/// pthread/C11 entry points share implementation semantics.
+#[derive(Clone, Copy)]
+pub(super) enum SelectedWorkerStart {
+    Pthread(PthreadStartRoutine),
+    C11(C11StartRoutine),
+}
+
+/// The representation a selected callback is permitted to publish at join.
+///
+/// This tag prevents a cross-API explicit exit from being silently decoded as
+/// the other API's result type. In particular, `pthread_exit(void *)` from a
+/// C11-mode callback cannot turn an arbitrary pointer into a `thrd_join` int.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum SelectedWorkerResultKind {
+    Pthread,
+    C11,
+    Invalid,
+}
+
+impl SelectedWorkerResultKind {
+    const NONE: u8 = 0;
+    const PTHREAD: u8 = 1;
+    const C11_TAG: u8 = 2;
+    const INVALID: u8 = 3;
+
+    #[inline]
+    const fn encode(self) -> u8 {
+        match self {
+            Self::Pthread => Self::PTHREAD,
+            Self::C11 => Self::C11_TAG,
+            Self::Invalid => Self::INVALID,
+        }
+    }
+
+    #[inline]
+    fn decode(value: u8) -> Self {
+        match value {
+            Self::PTHREAD => Self::Pthread,
+            Self::C11_TAG => Self::C11,
+            // A missing/unknown tag is never decoded as either public result
+            // representation. This keeps an interrupted or cross-mode exit
+            // from manufacturing a pointer-or-int result.
+            Self::NONE | Self::INVALID | _ => Self::Invalid,
+        }
+    }
+}
+
+/// One private callback result before it reaches the shared join word.
+#[derive(Clone, Copy)]
+enum SelectedWorkerResult {
+    Pthread(usize),
+    C11(c_int),
+    Invalid,
+}
+
+impl SelectedWorkerResult {
+    #[inline]
+    const fn kind(self) -> SelectedWorkerResultKind {
+        match self {
+            Self::Pthread(_) => SelectedWorkerResultKind::Pthread,
+            Self::C11(_) => SelectedWorkerResultKind::C11,
+            Self::Invalid => SelectedWorkerResultKind::Invalid,
+        }
+    }
+
+    #[inline]
+    fn encode(self) -> usize {
+        match self {
+            Self::Pthread(result) => result,
+            Self::C11(result) => encode_c11_result(result),
+            Self::Invalid => 0,
+        }
+    }
+}
+
+impl SelectedWorkerStart {
+    /// Run one typed callback and encode its result for the private join word.
+    ///
+    /// The C11 arm performs the conversion at the typed trampoline boundary,
+    /// mirroring musl's separate `start_c11` helper.  It does not reinterpret
+    /// a C11 function pointer as a pthread callback.
+    unsafe fn invoke(self, argument: *mut c_void) -> SelectedWorkerResult {
+        match self {
+            Self::Pthread(start) => {
+                // SAFETY: the C ABI caller supplied one valid pthread start
+                // routine and keeps its argument valid for the callback.
+                SelectedWorkerResult::Pthread(unsafe { start(argument) as usize })
+            }
+            Self::C11(start) => {
+                // SAFETY: the C ABI caller supplied one valid C11 start
+                // routine and keeps its argument valid for the callback.
+                SelectedWorkerResult::C11(unsafe { start(argument) })
+            }
+        }
+    }
+
+    #[inline]
+    const fn result_kind(self) -> SelectedWorkerResultKind {
+        match self {
+            Self::Pthread(_) => SelectedWorkerResultKind::Pthread,
+            Self::C11(_) => SelectedWorkerResultKind::C11,
+        }
+    }
+}
+
+/// Encode a C11 `int` result in the private pointer-sized join word.
+///
+/// x86-64 LP64 has a 64-bit `usize` and a 32-bit C `int`, so the `isize`
+/// conversion preserves every signed C11 result before the bit-preserving
+/// storage cast.  [`decode_c11_result`] is its exact inverse for values made
+/// by this typed C11 path, including `INT_MIN` and `INT_MAX`.
+#[inline]
+pub(super) fn encode_c11_result(result: c_int) -> usize {
+    (result as isize) as usize
+}
+
+/// Decode one private C11 join result without treating it as a C pointer.
+#[inline]
+pub(super) fn decode_c11_result(result: usize) -> c_int {
+    (result as isize) as c_int
+}
+
+/// One reclaimed selected worker result, tagged before either public join ABI
+/// decodes the shared storage word.
+#[derive(Clone, Copy)]
+pub(super) struct SelectedWorkerJoinResult {
+    pub(super) encoded_result: usize,
+    pub(super) kind: SelectedWorkerResultKind,
+}
 
 /// One opaque pthread handle for the admitted lifecycle.
 ///
@@ -115,8 +264,11 @@ struct ThreadControl {
     // One joiner claims a still-live handle before waiting. It is private
     // coordination only; repeated/concurrent joining is outside this slice.
     join_claimed: AtomicU8,
-    // A selected child publishes its callback result before `finished`.
+    // A selected child publishes its callback result and its typed result tag
+    // before `finished`. The tag prevents cross-mode explicit exits from
+    // being decoded as the other API's public result representation.
     result: AtomicUsize,
+    result_kind: AtomicU8,
     // This release/acquire handoff makes result visibility explicit rather
     // than relying on the kernel clear-tid write to synchronize a different
     // user-space atomic object.
@@ -138,7 +290,7 @@ struct ThreadControl {
     mapping_size: usize,
     tls_block: static_tls::StaticInitialTlsBlock,
     registry_slot: usize,
-    start: StartRoutine,
+    start: SelectedWorkerStart,
     argument: *mut c_void,
 }
 
@@ -176,6 +328,7 @@ static SELECTED_WORKER_REGISTRY_LOCK: AtomicU8 = AtomicU8::new(0);
 const _: () = {
     assert!(size_of::<AtomicI32>() == size_of::<c_int>());
     assert!(align_of::<AtomicI32>() == align_of::<c_int>());
+    assert!(size_of::<usize>() >= size_of::<c_int>());
     assert!(size_of::<ThreadControl>() <= CONTROL_REGION_SIZE);
     assert!(WORKER_MAPPING_SIZE % CONTROL_REGION_SIZE == 0);
 };
@@ -392,7 +545,7 @@ fn claim_selected_worker_by_thread_pointer(thread: *mut c_void) -> Option<*mut T
 /// bounded registry. It holds the registry lock through the control-record
 /// publish, never returning a raw control pointer that a joiner could unmap
 /// concurrently.
-fn publish_current_selected_worker_result(result: *mut c_void) {
+fn publish_current_selected_worker_result(result: SelectedWorkerResult) {
     let thread_pointer = pthread_identity::current_thread_pointer() as usize;
     let Some(thread_id) = current_linux_thread_id() else {
         return;
@@ -415,7 +568,18 @@ fn publish_current_selected_worker_result(result: *mut c_void) {
             if unsafe { (*control).worker_tid.load(Ordering::Acquire) } == thread_id
                 && unsafe { (*control).child_tid.load(Ordering::Acquire) } == thread_id
             {
-                unsafe { publish_worker_result(control, result) };
+                // A C11 worker may exit only through thrd_exit, and a pthread
+                // worker only through pthread_exit. Do not let an accidental
+                // cross-mode API call make thrd_join decode a raw pointer (or
+                // pthread_join publish a sign-extended C11 result) as if it
+                // had the selected public representation.
+                let expected_kind = unsafe { (*control).start.result_kind() };
+                let published = if result.kind() == expected_kind {
+                    result
+                } else {
+                    SelectedWorkerResult::Invalid
+                };
+                unsafe { publish_worker_result(control, published) };
                 break;
             }
         }
@@ -464,11 +628,14 @@ unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
 /// The release makes the callback's writes and result visible to the joiner's
 /// acquire of `finished`; Linux's clear-child-tid write remains solely the
 /// lifetime/reclamation notification.
-unsafe fn publish_worker_result(control: *mut ThreadControl, result: *mut c_void) {
+unsafe fn publish_worker_result(control: *mut ThreadControl, result: SelectedWorkerResult) {
     // SAFETY: the selected worker is the sole result publisher, and its mapping
     // remains live until pthread_join observes the clear-child-tid transition.
     unsafe {
-        (*control).result.store(result as usize, Ordering::Relaxed);
+        (*control).result.store(result.encode(), Ordering::Relaxed);
+        (*control)
+            .result_kind
+            .store(result.kind().encode(), Ordering::Relaxed);
         (*control).finished.store(1, Ordering::Release);
     }
 }
@@ -485,7 +652,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         // This cannot occur for Linux 5.10 SYS_gettid, but completing the
         // admitted result handoff avoids leaving a joiner to spin forever if
         // a hostile syscall filter violates that kernel precondition.
-        unsafe { publish_worker_result(control, core::ptr::null_mut()) };
+        unsafe { publish_worker_result(control, SelectedWorkerResult::Invalid) };
         return 0;
     };
     // SAFETY: this child owns initialization before it calls user code; the
@@ -495,19 +662,18 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // SAFETY: pthread_create initialized this private record before clone;
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
-    let result = unsafe { ((*control).start)((*control).argument) };
+    let result = unsafe { (*control).start.invoke((*control).argument) };
     unsafe { publish_worker_result(control, result) };
     0
 }
 
-/// Create one default-attribute, joinable x86 worker with Static Initial TLS v1.
+/// Create one default-attribute, joinable x86 pthread worker with Static Initial TLS v1.
 ///
 /// `thread` must designate writable `pthread_t` storage; `start` must be a
-/// valid C function pointer and `argument` must remain valid until that
-/// function stops reading it. Only a null `attributes` pointer is admitted.
-/// The caller must execute after the private first-thread Static Initial TLS
-/// v1 bootstrap has retained the final executable's validated template. At
-/// most 64 workers from this bounded artifact may be live at once.
+/// valid pthread callback and `argument` must remain valid until that function
+/// stops reading it. Only a null `attributes` pointer is admitted. The private
+/// C11 sibling calls [`create_selected_worker`] with its own typed callback
+/// mode instead of reaching this C ABI through an incompatible cast.
 ///
 /// # Safety
 ///
@@ -519,9 +685,12 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
 pub unsafe extern "C" fn pthread_create(
     thread: *mut *mut c_void,
     attributes: *const c_void,
-    start: Option<StartRoutine>,
+    start: Option<PthreadStartRoutine>,
     argument: *mut c_void,
 ) -> c_int {
+    // Preserve the existing narrow boundary's invalid-input precedence: a
+    // missing output slot or callback is EINVAL even when the caller also
+    // supplies an unsupported attribute object.
     if thread.is_null() || start.is_none() {
         return EINVAL;
     }
@@ -532,6 +701,36 @@ pub unsafe extern "C" fn pthread_create(
         Some(start) => start,
         None => return EINVAL,
     };
+    // SAFETY: the public C boundary validated only the nullable callback; the
+    // common selected-worker seam retains the output-pointer and lifetime
+    // obligations documented above.
+    unsafe { create_selected_worker(thread, SelectedWorkerStart::Pthread(start), argument) }
+}
+
+/// Create one selected default-attribute worker for the pthread or C11 leaf.
+///
+/// This is the one private allocator/clone path shared by the two typed C ABI
+/// boundaries.  Its `SelectedWorkerStart` enum preserves the callback ABI
+/// through the child trampoline: `Pthread` has a pointer result and `C11` has
+/// a signed `int` result.  It returns a POSIX pthread-style positive errno
+/// only so each public boundary can apply its own documented status mapping;
+/// it never changes the creator's `errno`.
+///
+/// # Safety
+///
+/// `thread` must designate writable opaque-handle storage. The typed callback
+/// and its argument must remain valid until the callback stops using them. The
+/// caller must execute after the private Static Initial TLS v1 bootstrap has
+/// retained the final executable template. At most 64 selected workers may be
+/// live at once. This is not a general pthread or C11 creation primitive.
+pub(super) unsafe fn create_selected_worker(
+    thread: *mut *mut c_void,
+    start: SelectedWorkerStart,
+    argument: *mut c_void,
+) -> c_int {
+    if thread.is_null() {
+        return EINVAL;
+    }
     if !static_tls::is_ready() {
         return ENOTSUP;
     }
@@ -571,6 +770,7 @@ pub unsafe extern "C" fn pthread_create(
                 start_ready: AtomicU8::new(0),
                 join_claimed: AtomicU8::new(0),
                 result: AtomicUsize::new(0),
+                result_kind: AtomicU8::new(SelectedWorkerResultKind::NONE),
                 finished: AtomicU8::new(0),
                 worker_tid: AtomicI32::new(0),
                 registry_retired: AtomicU8::new(0),
@@ -626,7 +826,49 @@ pub unsafe extern "C" fn pthread_create(
     0
 }
 
-/// Exit a selected worker and publish `result` for its admitted joiner.
+/// Exit a selected worker and publish its typed result for its admitted joiner.
+///
+/// This is valid only when called by a callback created through this leaf's
+/// null-attribute pthread_create path. It intentionally omits the full musl
+/// cleanup/TSD/detach/thread-list state machine. Outside that worker contract,
+/// it still performs Linux thread exit but claims no broader pthread behavior.
+///
+/// # Safety
+///
+/// The selected callback must not use any object after this call. Its typed
+/// result must remain valid until its joining caller consumes it.
+#[inline(always)]
+unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
+    publish_current_selected_worker_result(result);
+    // SAFETY: Linux SYS_exit terminates precisely the calling task and does
+    // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
+    // clears/wakes the joiner's shared child-TID word after this exit.
+    unsafe { raw_syscall::syscall_noreturn1(raw_syscall::SYS_EXIT, 0) }
+}
+
+/// End one selected pthread-mode worker with its opaque pointer result.
+///
+/// This tags the result as pthread before the shared publisher checks that the
+/// current control record was created in pthread mode.
+#[inline(always)]
+pub(super) unsafe fn exit_selected_pthread_worker(result: *mut c_void) -> ! {
+    // SAFETY: the caller owns the selected pthread-mode exit boundary.
+    unsafe { exit_selected_worker(SelectedWorkerResult::Pthread(result as usize)) }
+}
+
+/// End one selected C11-mode worker with its signed `int` result.
+///
+/// This preserves the C11 tag all the way through the shared registry
+/// publication. If called from a pthread-mode control record, the publisher
+/// records `Invalid` instead of allowing pthread_join to expose a C11 result
+/// as a pointer.
+#[inline(always)]
+pub(super) unsafe fn exit_selected_c11_worker(result: c_int) -> ! {
+    // SAFETY: the caller owns the selected C11-mode exit boundary.
+    unsafe { exit_selected_worker(SelectedWorkerResult::C11(result)) }
+}
+
+/// Exit a selected pthread worker and publish its pointer result for its joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
 /// null-attribute pthread_create path. It intentionally omits the full musl
@@ -640,29 +882,30 @@ pub unsafe extern "C" fn pthread_create(
 #[no_mangle]
 #[inline(never)]
 pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
-    publish_current_selected_worker_result(result);
-    // SAFETY: Linux SYS_exit terminates precisely the calling task and does
-    // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
-    // clears/wakes the joiner's shared child-TID word after this exit.
-    unsafe { raw_syscall::syscall_noreturn1(raw_syscall::SYS_EXIT, 0) }
+    // SAFETY: this exported pthread boundary retains the selected worker-only
+    // exit contract documented above.
+    unsafe { exit_selected_pthread_worker(result) }
 }
 
-/// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].
+/// Join one selected worker and return its private pointer-sized result.
 ///
-/// `thread` must be the still-live opaque TP result of this leaf's
-/// `pthread_create`; `result` may be null or writable pointer-result storage.
-/// No caller may use `thread` after a successful return because its full TLS
-/// and private control mappings have been released.
+/// Both the pthread and C11 leaves invoke this ownership/reclamation boundary,
+/// then decode the returned word according to their own typed result contract.
+/// `thread` must be the still-live opaque TP returned by
+/// [`create_selected_worker`]. No caller may use it after `Ok`, because the
+/// full TLS and private control mappings have then been released.
 ///
 /// # Safety
 ///
-/// The opaque handle and optional result storage must meet those lifetime and
-/// alignment requirements. The caller must not concurrently join the same
-/// handle; such broader pthread behavior is deliberately outside this slice.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_void) -> c_int {
+/// The opaque handle must name one selected live worker. The caller must not
+/// concurrently join the same handle; broader pthread/C11 joining semantics
+/// remain deliberately outside this slice.
+#[inline(always)]
+pub(super) unsafe fn join_selected_worker(
+    thread: *mut c_void,
+) -> Result<SelectedWorkerJoinResult, c_int> {
     let Some(control) = claim_selected_worker_by_thread_pointer(thread) else {
-        return EINVAL;
+        return Err(EINVAL);
     };
 
     loop {
@@ -674,7 +917,7 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
         }
         if child_tid < 0 {
             unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-            return EINVAL;
+            return Err(EINVAL);
         }
         // CLONE_CHILD_CLEARTID wakes this shared (not FUTEX_PRIVATE) word as
         // the last kernel action on normal child exit. EAGAIN and EINTR only
@@ -694,7 +937,7 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
                 continue;
             }
             unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-            return error;
+            return Err(error);
         }
     }
 
@@ -714,12 +957,14 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
         // intentionally leaves the worker withdrawn.
         if !release_selected_worker(registry_slot, control) {
             unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-            return EINVAL;
+            return Err(EINVAL);
         }
         unsafe { (*control).registry_retired.store(1, Ordering::Release) };
     }
 
-    let worker_result = unsafe { (*control).result.load(Ordering::Relaxed) as *mut c_void };
+    let worker_result = unsafe { (*control).result.load(Ordering::Relaxed) };
+    let worker_result_kind =
+        SelectedWorkerResultKind::decode(unsafe { (*control).result_kind.load(Ordering::Relaxed) });
     let tls_block = unsafe { (*control).tls_block };
     if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
         // The clear-child-tid observation plus registry withdrawal above prove
@@ -730,7 +975,7 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
         let tls_unmap_result = unsafe { static_tls::release_thread(tls_block) };
         if is_linux_error(tls_unmap_result) {
             unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-            return positive_linux_error(tls_unmap_result);
+            return Err(positive_linux_error(tls_unmap_result));
         }
         unsafe { (*control).tls_released.store(1, Ordering::Release) };
     }
@@ -742,12 +987,39 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
         // instead of claiming successful join/reclamation. Its registry entry
         // stays withdrawn: a dead worker needs no future pthread_exit lookup.
         unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-        return positive_linux_error(unmap_result);
+        return Err(positive_linux_error(unmap_result));
     }
+    Ok(SelectedWorkerJoinResult {
+        encoded_result: worker_result,
+        kind: worker_result_kind,
+    })
+}
+
+/// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].
+///
+/// `thread` must be the still-live opaque TP result of this leaf's
+/// `pthread_create`; `result` may be null or writable pointer-result storage.
+/// No caller may use `thread` after a successful return because its full TLS
+/// and private control mappings have been released.
+///
+/// # Safety
+///
+/// The opaque handle and optional result storage must meet those lifetime and
+/// alignment requirements. The caller must not concurrently join the same
+/// handle; such broader pthread behavior is deliberately outside this slice.
+#[no_mangle]
+pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_void) -> c_int {
+    let worker_result = match unsafe { join_selected_worker(thread) } {
+        Ok(worker_result) if worker_result.kind == SelectedWorkerResultKind::Pthread => {
+            worker_result.encoded_result
+        }
+        Ok(_) => return EINVAL,
+        Err(error) => return error,
+    };
     if !result.is_null() {
         // SAFETY: the caller gave writable pointer-result storage and the
-        // local copy survives the just-completed worker mapping release.
-        unsafe { core::ptr::write(result, worker_result) };
+        // local value survives the just-completed worker mapping release.
+        unsafe { core::ptr::write(result, worker_result as *mut c_void) };
     }
     0
 }

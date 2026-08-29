@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 44)
+        self.assertEqual(report["verified_artifact_count"], 45)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4316,7 +4316,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 5)
+        self.assertEqual(len(artifacts), 6)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4326,6 +4326,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-create-join-tls",
                 "static-c-pthread-explicit-exit-tls",
                 "static-c-pthread-identity",
+                "static-c-c11-lifecycle",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4333,6 +4334,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         normal_return = by_id["static-c-pthread-create-join-tls"]
         explicit_exit = by_id["static-c-pthread-explicit-exit-tls"]
         identity = by_id["static-c-pthread-identity"]
+        c11_lifecycle = by_id["static-c-c11-lifecycle"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4413,6 +4415,75 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, identity_scope)
+        self.assertEqual(
+            c11_lifecycle["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-c11-lifecycle",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "typed `thrd_create`/`thrd_join`/`thrd_exit`",
+            "never cast to the pointer-returning pthread callback type",
+            "Variant-II `%fs:0` TP",
+            "INT_MIN",
+            "INT_MAX",
+            "tagged private join word",
+            "Candidate-only",
+            "cross-mode",
+            "not musl parity evidence",
+            "thread.pthread-c11",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, c11_lifecycle["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "libc/src/c_abi/x86_64/pthread_identity.rs",
+            "include/limits.h",
+            "include/pthread.h",
+            "include/threads.h",
+            "compat/x86_64/libc_c11_lifecycle_probe.c",
+            "compat/x86_64/libc_c11_lifecycle_start.S",
+            "compat/x86_64/run_libc_c11_lifecycle.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, c11_lifecycle["source_owners"])
+        c11_abi = " ".join(c11_lifecycle["x86_abi_prerequisites"])
+        for phrase in (
+            "thrd_create.c",
+            "pthread_create.c::start_c11",
+            "thrd_join.c",
+            "thrd_exit.c",
+            "SelectedWorkerStart::C11",
+            "sign-extends c_int",
+            "INT_MIN",
+            "INT_MAX",
+            "pointer as an int",
+            "int as a pointer",
+            "clone=56",
+            "CLONE_SETTLS",
+            "futex=202",
+            "munmap=11",
+            "no handle use after successful join",
+        ):
+            self.assertIn(phrase, c11_abi)
+        c11_scope = c11_lifecycle["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "typed thrd_create/thrd_join/thrd_exit",
+            "INT_MIN/INT_MAX",
+            "two simultaneously live TP-identical workers",
+            "64-slot exhaustion/reuse",
+            "null start",
+            "C11-to-pthread_exit",
+            "pthread-to-thrd_exit",
+            "thrd_error or EINVAL",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "general pthread/C11 behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, c11_scope)
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -4518,6 +4589,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-identity must use the closed libc-pthread-identity command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_c11_lifecycle = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-c11-lifecycle"
+        )
+        changed_c11_lifecycle["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-c11-lifecycle must use the closed libc-c11-lifecycle command",
         ):
             ledger.validate_ledger(changed)
 

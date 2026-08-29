@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -2824,6 +2824,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "crabc_mimalloc",
         ):
             self.assertNotIn(forbidden, pthread_create_join)
+        public_create_body = pthread_create_join.split(
+            'pub unsafe extern "C" fn pthread_create', 1
+        )[1].split(
+            "/// Create one selected default-attribute worker for the pthread or C11 leaf.",
+            1,
+        )[0]
+        self.assertLess(
+            public_create_body.index("if thread.is_null() || start.is_none()"),
+            public_create_body.index("if !attributes.is_null()"),
+        )
         for required in (
             "#include <errno.h>",
             "#include <pthread.h>",
@@ -2881,28 +2891,28 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
-        pthread_join_body = pthread_create_join.split(
-            'pub unsafe extern "C" fn pthread_join', 1
-        )[1]
+        selected_join_body = pthread_create_join.split(
+            "pub(super) unsafe fn join_selected_worker", 1
+        )[1].split("/// Join one normal-returning", 1)[0]
         self.assertIn(
             "let Some(control) = claim_selected_worker_by_thread_pointer(thread)",
-            pthread_join_body,
+            selected_join_body,
         )
         self.assertLess(
-            pthread_join_body.index(
+            selected_join_body.index(
                 "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
             ),
-            pthread_join_body.index("(*control)"),
+            selected_join_body.index("(*control)"),
         )
         self.assertLess(
-            pthread_join_body.index("release_selected_worker"),
-            pthread_join_body.index("unmap_worker"),
+            selected_join_body.index("release_selected_worker"),
+            selected_join_body.index("unmap_worker"),
         )
         self.assertLess(
-            pthread_join_body.index("static_tls::release_thread(tls_block)"),
-            pthread_join_body.index("unmap_worker"),
+            selected_join_body.index("static_tls::release_thread(tls_block)"),
+            selected_join_body.index("unmap_worker"),
         )
-        tls_reclamation = pthread_join_body.split("let tls_block", 1)[1].split(
+        tls_reclamation = selected_join_body.split("let tls_block", 1)[1].split(
             "let mapping", 1
         )[0]
         self.assertIn("tls_released.load(Ordering::Acquire)", tls_reclamation)
@@ -2927,22 +2937,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             worker_entry.index("start_ready.load(Ordering::Acquire)"),
             worker_entry.index("current_linux_thread_id()"),
         )
-        pthread_create_body = pthread_create_join.split(
-            'pub unsafe extern "C" fn pthread_create', 1
+        selected_create_body = pthread_create_join.split(
+            "pub(super) unsafe fn create_selected_worker", 1
         )[1].split("/// Exit a selected worker", 1)[0]
         self.assertLess(
-            pthread_create_body.index("static_tls::is_ready()"),
-            pthread_create_body.index("static_tls::allocate_thread()"),
+            selected_create_body.index("static_tls::is_ready()"),
+            selected_create_body.index("static_tls::allocate_thread()"),
         )
         self.assertLess(
-            pthread_create_body.index("start_ready.store(1, Ordering::Release)"),
-            pthread_create_body.index("__crabc_x86_pthread_clone("),
+            selected_create_body.index("start_ready.store(1, Ordering::Release)"),
+            selected_create_body.index("__crabc_x86_pthread_clone("),
         )
         self.assertIn(
             "core::ptr::write(thread, tls_block.thread_pointer().cast())",
-            pthread_create_body,
+            selected_create_body,
         )
-        clone_failure = pthread_create_body.split("if is_linux_error(clone_result)", 1)[
+        clone_failure = selected_create_body.split("if is_linux_error(clone_result)", 1)[
             1
         ].split("// SAFETY: clone succeeded", 1)[0]
         self.assertIn("if !release_selected_worker", clone_failure)
@@ -3031,14 +3041,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "core::ptr::write(thread, tls_block.thread_pointer().cast())",
             pthread_create_join,
         )
-        pthread_join_body = pthread_create_join.split(
-            'pub unsafe extern "C" fn pthread_join', 1
-        )[1]
+        selected_join_body = pthread_create_join.split(
+            "pub(super) unsafe fn join_selected_worker", 1
+        )[1].split("/// Join one normal-returning", 1)[0]
         self.assertLess(
-            pthread_join_body.index(
+            selected_join_body.index(
                 "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
             ),
-            pthread_join_body.index("(*control)"),
+            selected_join_body.index("(*control)"),
         )
 
         self.assertIn(
@@ -3090,6 +3100,201 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             <= static_export_names
         )
         self.assertIn("libc-pthread-identity", runner)
+
+    def test_libc_static_c_abi_c11_lifecycle_artifact_stays_typed_and_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        c11_lifecycle = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_thread_lifecycle.rs"
+        ).read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "libc_c11_lifecycle_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_c11_lifecycle_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_c11_lifecycle.sh"
+        ).read_text(encoding="utf-8")
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "c11_thread_lifecycle.rs"]', static_root)
+        for required in (
+            "src/thread/thrd_create.c",
+            "src/thread/pthread_create.c::start_c11",
+            "src/thread/thrd_join.c",
+            "src/thread/thrd_exit.c",
+            "C11StartRoutine",
+            "SelectedWorkerStart::C11",
+            "THRD_NOMEM",
+            "fn thrd_create(",
+            "fn thrd_join(",
+            "fn thrd_exit(",
+            "exit_selected_c11_worker",
+            "SelectedWorkerResultKind::C11",
+            "INT_MIN",
+            "INT_MAX",
+            "dynamic/loader TLS",
+            "public x86 support",
+        ):
+            self.assertIn(required, c11_lifecycle)
+        for forbidden in (
+            "fn thrd_detach(",
+            "fn thrd_sleep(",
+            "fn thrd_yield(",
+            "fn call_once(",
+            "fn mtx_",
+            "fn cnd_",
+            "fn tss_",
+            "pthread_mutex",
+            "__tls_get_addr",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, c11_lifecycle)
+
+        for required in (
+            "enum SelectedWorkerStart",
+            "C11(C11StartRoutine)",
+            "SelectedWorkerResult::C11",
+            "SelectedWorkerResultKind::Invalid",
+            "exit_selected_pthread_worker",
+            "exit_selected_c11_worker",
+            "join_selected_worker",
+            "result_kind: AtomicU8",
+            "pthread_exit(void *)",
+            "decode_c11_result",
+        ):
+            self.assertIn(required, pthread_create_join)
+        self.assertNotRegex(
+            pthread_create_join,
+            r"C11StartRoutine[^\n]*as[^\n]*(?:PthreadStartRoutine|StartRoutine)",
+        )
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <pthread.h>",
+            "#include <threads.h>",
+            "normal_worker",
+            "explicit_exit_worker",
+            "run_normal_round(INT_MIN)",
+            "run_normal_round(INT_MAX)",
+            "run_explicit_exit_round(INT_MIN)",
+            "run_explicit_exit_round(INT_MAX)",
+            "run_null_result_round",
+            "run_two_live_workers",
+            "run_null_start_rejection_round",
+            "run_cross_mode_pthread_exit_rejection_round",
+            "run_cross_mode_thrd_exit_rejection_round",
+            "run_registry_capacity_round",
+            "thrd_create(&handle, 0, 0) != thrd_error",
+            "pthread_exit(&observation->result)",
+            "thrd_exit(observation->result)",
+            "thrd_join(handle, &joined_result) != thrd_error",
+            "pthread_join(handle, &joined_result) != EINVAL",
+            "volatile int observed;",
+            "__atomic_store_n(&observation->observed, 1, __ATOMIC_RELEASE)",
+            "thrd_nomem",
+            "CRABC_C11_LIFECYCLE_FREESTANDING",
+            "CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT",
+            "errno = E2BIG",
+            "(void *)thrd_current() != inline_thread_pointer()",
+        ):
+            self.assertIn(required, c_probe)
+        # A successful join releases the selected worker's TLS/control mapping,
+        # so handle identity must be checked while the handle is still valid.
+        for round_name, join_call in (
+            ("run_normal_round", "thrd_join(handle, &joined_result)"),
+            ("run_explicit_exit_round", "thrd_join(handle, &joined_result)"),
+            ("run_null_result_round", "thrd_join(handle, 0)"),
+            (
+                "run_cross_mode_pthread_exit_rejection_round",
+                "thrd_join(handle, &joined_result)",
+            ),
+        ):
+            section = c_probe[c_probe.index(f"static int {round_name}") :]
+            self.assertLess(
+                section.index("check = check_observation"),
+                section.index(join_call),
+            )
+        symmetric_cross_mode = c_probe[
+            c_probe.index("static int run_cross_mode_thrd_exit_rejection_round") :
+        ]
+        self.assertLess(
+            symmetric_cross_mode.index("observation.identity"),
+            symmetric_cross_mode.index("pthread_join(handle, &joined_result)"),
+        )
+        self.assertIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertIn("crabc_x86_64_c11_lifecycle_probe", start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "crabc_thrd_exit_signature",
+            "thrd_exit noreturn signature",
+        ):
+            self.assertIn(required, c_header_probe)
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "thrd_create thrd_join thrd_exit thrd_current thrd_equal",
+            "thrd_create|thrd_join|thrd_exit|thrd_current|thrd_equal",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_types_header_abi.sh",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-DCRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT=64",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "thrd_create thrd_exit thrd_join",
+            "thrd_exit lacks an x86 thread-exit syscall instruction",
+            "thrd_join lacks futex syscall number 202",
+            "thrd_join lacks munmap syscall number 11",
+            "C11 callback is cast to the pthread callback type",
+            "SelectedWorkerResultKind::Invalid",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue({"thrd_create", "thrd_join", "thrd_exit"} <= static_exports)
+        self.assertTrue(
+            {"thrd_detach", "thrd_sleep", "thrd_yield", "mtx_init", "cnd_init", "tss_create"}
+            .isdisjoint(static_exports)
+        )
+        self.assertIn("run_libc_c11_lifecycle_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_c11_lifecycle.sh", runner
+        )
+        self.assertIn(
+            '    libc-c11-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-c11-lifecycle takes no arguments"',
+            runner,
+        )
 
     def test_libc_static_initial_tls_v1_artifact_stays_narrow(self) -> None:
         """Keep the isolated x86 initial-TLS template distinct from composition.

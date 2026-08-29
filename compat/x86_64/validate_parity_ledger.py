@@ -3759,6 +3759,167 @@ def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_static_c11_lifecycle_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet typed static C11 lifecycle without promoting pthread/C11 parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-c11-lifecycle"]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-c11-lifecycle artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-c11-lifecycle must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "typed `thrd_create`/`thrd_join`/`thrd_exit`",
+        "never cast to the pointer-returning pthread callback type",
+        "Variant-II `%fs:0` TP",
+        "INT_MIN",
+        "INT_MAX",
+        "tagged private join word",
+        "Candidate-only",
+        "cross-mode",
+        "not musl parity evidence",
+        "thread.pthread-c11",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-c11-lifecycle description omits {phrase}",
+        )
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/pthread_identity.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/pthread.h",
+        "include/threads.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_c11_lifecycle_probe.c",
+        "compat/x86_64/libc_c11_lifecycle_start.S",
+        "compat/x86_64/run_libc_c11_lifecycle.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "static-c-c11-lifecycle source owners"))
+        == expected_sources,
+        "static-c-c11-lifecycle source owners drifted",
+    )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "src/thread/thrd_create.c",
+        "src/thread/pthread_create.c::start_c11",
+        "src/thread/thrd_join.c",
+        "src/thread/thrd_exit.c",
+        "SelectedWorkerStart::C11",
+        "sign-extends c_int",
+        "INT_MIN",
+        "INT_MAX",
+        "pointer as an int",
+        "int as a pointer",
+        "clone=56",
+        "CLONE_SETTLS",
+        "futex=202",
+        "munmap=11",
+        "no handle use after successful join",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-c11-lifecycle ABI prerequisites omit {phrase}",
+        )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "errno.h",
+        "limits.h",
+        "pthread.h",
+        "threads.h",
+        "28-context C/C++",
+        "thrd_create/thrd_join/thrd_exit/current/equality",
+        "C noreturn function-type spelling",
+        "C++ plain function-pointer spelling",
+        "not a broad header or pthread/C11 implementation claim",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-c11-lifecycle header prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-c11-lifecycle"},
+        "static-c-c11-lifecycle must use the closed libc-c11-lifecycle command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "typed thrd_create/thrd_join/thrd_exit",
+        "INT_MIN/INT_MAX",
+        "two simultaneously live TP-identical workers",
+        "64-slot exhaustion/reuse",
+        "null start",
+        "C11-to-pthread_exit",
+        "pthread-to-thrd_exit",
+        "thrd_error or EINVAL",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "general pthread/C11 behavior",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-c11-lifecycle evidence scope omits {phrase}",
+        )
+    static_exports = {
+        line
+        for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt").read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    require(
+        {"thrd_create", "thrd_join", "thrd_exit"} <= static_exports,
+        "static-c-c11-lifecycle static export contract omits a C11 lifecycle symbol",
+    )
+    require(
+        "run_libc_c11_lifecycle.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-c11-lifecycle dispatcher binding is missing",
+    )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -5808,6 +5969,7 @@ def validate_ledger(
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
+    require_static_c11_lifecycle_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

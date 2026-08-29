@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has five private static artifacts inside still-planned
+The x86 lane now has six private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -41,7 +41,16 @@ Variant-II `%fs:0` identity, and canonical one-or-zero macro/function
 equality for the main thread plus two live normal workers and one selected
 explicit-exit worker. `pthread_create` returns that child TP and
 `pthread_join` resolves it under the existing private registry lock; no
-dereferenceable TCB or C11 thread lifecycle is selected. The fifth artifact,
+dereferenceable TCB or broader C11 thread lifecycle is selected. The separate
+`./scripts/dev-x86_64.sh libc-c11-lifecycle` artifact admits only typed
+`thrd_create`/`thrd_join`/`thrd_exit` over that same static worker seam. It
+preserves normal and explicit signed `int` results, including `INT_MIN` and
+`INT_MAX`, and checks the opaque TP identity while the handle is still live.
+The pinned-musl portion covers only those standard C11 paths; candidate-only
+null-start and bidirectional unsupported C11/pthread-exit crossover checks
+fail closed after reclamation without decoding an incompatible result. It does
+not select detach, C11 synchronization/TSS/cancellation, dynamic or loader
+TLS, or general pthread/C11 behavior. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls
@@ -51,7 +60,7 @@ static `__libc_start_main`. It proves one initialized/TBSS/high-alignment
 no-allocation LIFO callback block, one fresh selected worker, and malformed
 `PT_TLS.p_filesz` rejection. `libc.pthread-tls` remains planned: this is not
 general pthread/TLS parity, dynamic or loader TLS, a general CRT/libc startup
-ABI, C11 thread creation or synchronization, stdio/C++/DSO or concurrent-exit
+ABI, broader C11 lifecycle or synchronization, stdio/C++/DSO or concurrent-exit
 lifecycle, sysroot support, or public x86 support.
 
 The x86 direct Rust facade also has verified allocation-free

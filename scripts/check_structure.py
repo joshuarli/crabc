@@ -110,7 +110,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
 # primitives, narrow simple signal control, bounded process-signal execution,
 # one bounded pthread create/exit/
-# join initial-TLS worker, named termios control, selected
+# join initial-TLS worker and its typed static C11 create/exit/join sibling,
+# named termios control, selected
 # process context, child reaping, C11 immediate termination, bounded static
 # startup/ordinary exit, callback algorithms,
 # selected descriptor entry, fcntl status control, bounded generic ioctl, and
@@ -156,6 +157,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
+    Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
     Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
@@ -3535,6 +3537,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_execution.rs"]',
         '#[path = "pthread_identity.rs"]',
         '#[path = "pthread_create_join.rs"]',
+        '#[path = "c11_thread_lifecycle.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "child_reaping.rs"]',
@@ -3986,6 +3989,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
     )
     pthread_create_join_text = pthread_create_join_source.read_text(errors="replace")
+    c11_thread_lifecycle_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_thread_lifecycle.rs"
+    )
+    c11_thread_lifecycle_text = c11_thread_lifecycle_source.read_text(errors="replace")
     for required in (
         "src/thread/pthread_create.c::__pthread_create",
         "src/thread/pthread_create.c::__pthread_exit",
@@ -4055,14 +4062,45 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
             "pthread worker must export only pthread_create, pthread_exit, and pthread_join"
         )
-    pthread_join_marker = 'pub unsafe extern "C" fn pthread_join'
-    if pthread_join_marker not in pthread_create_join_text:
+    public_pthread_create_marker = 'pub unsafe extern "C" fn pthread_create'
+    public_pthread_create_end = (
+        "/// Create one selected default-attribute worker for the pthread or C11 leaf."
+    )
+    if (
+        public_pthread_create_marker not in pthread_create_join_text
+        or public_pthread_create_end not in pthread_create_join_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
+            "pthread worker is missing its public create validation boundary"
+        )
+    else:
+        public_pthread_create_text = pthread_create_join_text.split(
+            public_pthread_create_marker, 1
+        )[1].split(public_pthread_create_end, 1)[0]
+        invalid_inputs = "if thread.is_null() || start.is_none()"
+        unsupported_attributes = "if !attributes.is_null()"
+        if (
+            invalid_inputs not in public_pthread_create_text
+            or unsupported_attributes not in public_pthread_create_text
+            or public_pthread_create_text.index(invalid_inputs)
+            > public_pthread_create_text.index(unsupported_attributes)
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: pthread_create "
+                "must retain invalid thread/start EINVAL precedence before "
+                "unsupported-attribute ENOTSUP"
+            )
+    selected_join_marker = "pub(super) unsafe fn join_selected_worker"
+    if selected_join_marker not in pthread_create_join_text:
         errors.append(
             "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
             "pthread worker is missing its join boundary"
         )
     else:
-        pthread_join_text = pthread_create_join_text.split(pthread_join_marker, 1)[1]
+        pthread_join_text = pthread_create_join_text.split(selected_join_marker, 1)[1].split(
+            "/// Join one normal-returning", 1
+        )[0]
         join_claim_marker = "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
         if (
             join_claim_marker not in pthread_join_text
@@ -4153,7 +4191,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "must acquire its initialized control record before reading worker state"
             )
 
-    pthread_create_marker = 'pub unsafe extern "C" fn pthread_create'
+    pthread_create_marker = "pub(super) unsafe fn create_selected_worker"
     pthread_create_end = "/// Exit a selected worker"
     if (
         pthread_create_marker not in pthread_create_join_text
@@ -4211,6 +4249,91 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                     "libc/src/c_abi/x86_64/pthread_create_join.rs: failed clone must "
                     "retain mappings when registry withdrawal cannot prove no dangling pointer"
                 )
+
+    # The C11 lifecycle is a typed static sibling of the selected pthread
+    # worker, not a reason to reintroduce an ABI-unsafe callback cast or a
+    # broad C11 synchronization/runtime surface.
+    for required in (
+        "pub(super) type C11StartRoutine",
+        "enum SelectedWorkerStart",
+        "C11(C11StartRoutine)",
+        "SelectedWorkerResult::C11",
+        "SelectedWorkerResultKind",
+        "result_kind: AtomicU8",
+        "exit_selected_pthread_worker",
+        "exit_selected_c11_worker",
+        "join_selected_worker",
+        "SelectedWorkerResultKind::Invalid",
+    ):
+        if required not in pthread_create_join_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: typed C11 "
+                f"selected-worker seam is missing {required!r}"
+            )
+    if re.search(
+        r"C11StartRoutine[^\n]*as[^\n]*(?:PthreadStartRoutine|StartRoutine)",
+        pthread_create_join_text,
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: C11 callbacks must not be "
+            "cast to the pthread pointer-return callback type"
+        )
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/thread/thrd_create.c",
+        "src/thread/pthread_create.c::start_c11",
+        "src/thread/thrd_join.c",
+        "src/thread/thrd_exit.c",
+        "C11StartRoutine",
+        "SelectedWorkerStart::C11",
+        "THRD_SUCCESS",
+        "THRD_ERROR",
+        "THRD_NOMEM",
+        "fn thrd_create(",
+        "fn thrd_join(",
+        "fn thrd_exit(",
+        "exit_selected_c11_worker",
+        "SelectedWorkerResultKind::C11",
+        "decode_c11_result",
+        "INT_MIN",
+        "INT_MAX",
+        "dynamic/loader TLS",
+        "public x86 support",
+    ):
+        if required not in c11_thread_lifecycle_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs: bounded static "
+                f"C11 lifecycle leaf is missing {required!r}"
+            )
+    c11_thread_lifecycle_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            c11_thread_lifecycle_text,
+        )
+    )
+    if c11_thread_lifecycle_exports != {"thrd_create", "thrd_join", "thrd_exit"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs: bounded static C11 "
+            "leaf must export only thrd_create, thrd_join, and thrd_exit"
+        )
+    for forbidden in (
+        "fn thrd_detach(",
+        "fn thrd_sleep(",
+        "fn thrd_yield(",
+        "fn call_once(",
+        "fn mtx_",
+        "fn cnd_",
+        "fn tss_",
+        "pthread_mutex",
+        "__tls_get_addr",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in c11_thread_lifecycle_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs: bounded static C11 "
+                f"leaf must not select {forbidden!r}"
+            )
 
     termios_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
@@ -5682,6 +5805,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         signal_execution_text,
         pthread_identity_text,
         pthread_create_join_text,
+        c11_thread_lifecycle_text,
         termios_control_text,
         process_context_text,
         child_reaping_text,
@@ -5826,6 +5950,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_create",
         "pthread_exit",
         "pthread_join",
+        "thrd_create",
+        "thrd_exit",
+        "thrd_join",
         "pthread_self",
         "pthread_equal",
         "thrd_current",
@@ -6003,7 +6130,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker, its typed C11 create/exit/join sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -6026,6 +6153,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_execution.rs", signal_execution_text),
         ("pthread_identity.rs", pthread_identity_text),
         ("pthread_create_join.rs", pthread_create_join_text),
+        ("c11_thread_lifecycle.rs", c11_thread_lifecycle_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

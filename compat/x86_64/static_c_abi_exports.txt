@@ -263,8 +263,11 @@ tcgetwinsize
 tcsendbreak
 tcsetattr
 tcsetwinsize
+thrd_create
 thrd_current
 thrd_equal
+thrd_exit
+thrd_join
 toascii
 tolower
 toupper
