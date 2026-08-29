@@ -79,6 +79,15 @@ select general process lifecycle, `tgkill`, alternate stacks, signalfd, legacy
 signal APIs, pthread signal policy, libc.so, CRT, loader, sysroot, family or
 platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-ioctl` is a private
+`static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
+proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned
+musl and a freestanding static archive for `FIONREAD`, `FIONBIO`, and the two
+safe no-vararg calls `FIOCLEX`/`FIONCLEX`; its assembly shim supplies `rdx=0`
+only for those two forms. It does not establish generic device/request
+behavior, terminal/session policy, socket options, C-runtime parity, family
+completion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned
 `libc.headers-layouts`. It composes the existing selected archive through a
@@ -101,7 +110,12 @@ derived header-manifest SHA-256 are owned by
 and at runtime. Its 21-row `uapi-wrapper-matrix` resolves the three direct
 wrappers across five C11 and two C++17 feature profiles through both pinned
 musl and raw-GCC project-header-first roots, checking selected constants, ioctl
-encodings, and x86 LP64 layouts. Its separate seven-row `epoll-header-abi`
+encodings, and x86 LP64 layouts. Its separate seven-row `ioctl-header-abi`
+matrix resolves direct `sys/ioctl.h`'s signed `int ioctl(int, int, ...)`
+declaration, C++ C-linkage spelling, selected `_IOC` composition, direct
+8-byte align-2 `struct winsize`, and selected request values only; it does not
+prove artifact linkage or generic device/request behavior. Its separate
+seven-row `epoll-header-abi`
 matrix resolves only `sys/epoll.h`'s packed x86 event record, selected
 declarations/values, and the direct `_IOC`/`_IOR`/`_IOW` encoding subset from
 `sys/ioctl.h`. Its separate 35-row `timeval-transitive-header-abi` matrix
@@ -121,7 +135,7 @@ crabc artifact export. Its separate eight-row `access-header-abi` matrix
 checks selected `access`/`faccessat` declarations, access and `AT_*` values,
 GNU-only `eaccess`/`euidaccess` visibility across default-C and isolated
 C11/C++17 profiles, and C++ declaration C-linkage spelling. It likewise
-proves only header-requested names, not an artifact export. All five are
+proves only header-requested names, not an artifact export. All six are
 compile-only evidence: callable linkage,
 device behavior, all-header closure, runtime completion, family promotion, and
 public x86 support all remain planned. Its live 382-record

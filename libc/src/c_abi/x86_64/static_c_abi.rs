@@ -103,6 +103,8 @@ mod descriptor_entry;
 mod filesystem_access;
 #[path = "descriptor_control.rs"]
 mod descriptor_control;
+#[path = "ioctl.rs"]
+mod ioctl;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
 #[path = "process_resources.rs"]

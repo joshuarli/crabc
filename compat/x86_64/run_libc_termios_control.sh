@@ -118,7 +118,7 @@ for symbol in __errno_location cfgetispeed cfgetospeed cfsetispeed cfsetospeed \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in syscall ioctl tcdrain tcgetsid tcgetpgrp \
+for unselected in syscall tcdrain tcgetsid tcgetpgrp \
     tcsetpgrp isatty ttyname ttyname_r openpty forkpty login_tty posix_openpt \
     grantpt unlockpt ptsname ptsname_r malloc free calloc realloc \
     pthread_cancel; do
@@ -152,6 +152,9 @@ for symbol in __errno_location cfgetispeed cfgetospeed cfsetispeed cfsetospeed \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
+if grep -Eq "[[:space:]][TW][[:space:]]ioctl$" "$candidate_symbols"; then
+    fail "termios-control candidate unexpectedly pulls generic ioctl"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

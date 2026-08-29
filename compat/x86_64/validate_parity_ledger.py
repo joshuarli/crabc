@@ -31,6 +31,7 @@ CANDIDATE_HEADER_CLOSURE_RUNNER_PATH = (
 UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
 )
+IOCTL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_ioctl_header_abi.sh"
 EPOLL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_epoll_header_abi.sh"
 TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_timeval_transitive_header_abi.sh"
@@ -57,6 +58,10 @@ EXPECTED_UAPI_WRAPPER_MATRIX_ID = "linux-5.10-uapi-wrapper-profile-matrix"
 EXPECTED_UAPI_WRAPPER_MATRIX_COMMAND = "./scripts/dev-x86_64.sh uapi-wrapper-matrix"
 EXPECTED_UAPI_WRAPPER_MATRIX_HEADERS = tuple(EXPECTED_PUBLIC_HEADER_UAPI_GAPS)
 EXPECTED_UAPI_WRAPPER_MATRIX_ROW_COUNT = 21
+EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ID = "x86-ioctl-header-profile-matrix"
+EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh ioctl-header-abi"
+EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/ioctl.h"
+EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID = "x86-epoll-header-profile-matrix"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh epoll-header-abi"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/epoll.h"
@@ -191,6 +196,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "public-path-inventory",
         "candidate-tree-presence",
         "c11-gnu-consumability",
+        "ioctl-header-profile-matrix",
         "epoll-header-profile-matrix",
         "timeval-transitive-header-profile-matrix",
         "sys-time-direct-header-profile-matrix",
@@ -368,6 +374,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         ("public-header-c-consumability",),
     ),
+    "ioctl-header-profile-matrix": (
+        "partial-verified",
+        "sys/ioctl.h selected declaration macro request vocabulary direct winsize layout and C++ declaration-linkage subset",
+        "libc.headers-layouts",
+        (EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "epoll-header-profile-matrix": (
         "partial-verified",
         "sys/epoll.h plus selected sys/ioctl.h macro encoding subset",
@@ -498,6 +510,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "poll": "./scripts/dev-x86_64.sh poll-header-abi",
     "select": "./scripts/dev-x86_64.sh select-header-abi",
     "fcntl": "./scripts/dev-x86_64.sh fcntl-header-abi",
+    "ioctl": "./scripts/dev-x86_64.sh ioctl-header-abi",
     "unistd": "./scripts/dev-x86_64.sh unistd-header-abi",
     "system": "./scripts/dev-x86_64.sh system-header-abi",
     "syscall": "./scripts/dev-x86_64.sh syscall-header-abi",
@@ -620,6 +633,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/fcntl_header_abi_probe.c",
         "compat/x86_64/fcntl_header_abi_probe.cpp",
         "compat/x86_64/run_fcntl_header_abi.sh",
+    ),
+    "ioctl": (
+        "compat/x86_64/ioctl_header_abi_probe.c",
+        "compat/x86_64/ioctl_header_abi_probe.cpp",
+        "compat/x86_64/run_ioctl_header_abi.sh",
     ),
     "unistd": (
         "compat/x86_64/unistd_header_abi_probe.c",
@@ -1156,7 +1174,7 @@ def validate_header_layout_foundation_manifest(
 
     The v7 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
-    Linux-UAPI input, resolves selected UAPI-wrapper, epoll-header,
+    Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, epoll-header,
     timeval-transitive, direct sys/time, and access-header ABI matrices, and requires a live C11/C++17 empty-TU
     closure diagnostic, while keeping aggregate applicability,
     declaration/layout comparisons, and declared-callable linkage in planned
@@ -1179,6 +1197,7 @@ def validate_header_layout_foundation_manifest(
         "profile_matrix",
         "uapi_input",
         "uapi_wrapper_matrix",
+        "ioctl_header_profile_matrix",
         "epoll_header_profile_matrix",
         "timeval_transitive_header_profile_matrix",
         "sys_time_direct_header_profile_matrix",
@@ -1243,6 +1262,7 @@ def validate_header_layout_foundation_manifest(
             "callable_linkage_owners_accounted": True,
             "legacy_direct_inputs_accounted": True,
             "uapi_wrapper_profile_matrix_slice": True,
+            "ioctl_header_profile_matrix_slice": True,
             "epoll_header_profile_matrix_slice": True,
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
@@ -1317,6 +1337,9 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_uapi_wrapper_matrix.sh",
         "compat/x86_64/uapi_wrappers_header_abi_probe.c",
         "compat/x86_64/uapi_wrappers_header_abi_probe.cpp",
+        "compat/x86_64/run_ioctl_header_abi.sh",
+        "compat/x86_64/ioctl_header_abi_probe.c",
+        "compat/x86_64/ioctl_header_abi_probe.cpp",
         "compat/x86_64/run_epoll_header_abi.sh",
         "compat/x86_64/epoll_header_abi_probe.c",
         "compat/x86_64/epoll_header_abi_probe.cpp",
@@ -1334,6 +1357,7 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/tests/test_candidate_header_closure.py",
         "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
+        "compat/x86_64/tests/test_ioctl_header_abi.py",
         "compat/x86_64/tests/test_epoll_header_abi.py",
         "compat/x86_64/tests/test_timeval_transitive_header_abi.py",
         "compat/x86_64/tests/test_sys_time_direct_header_abi.py",
@@ -1904,6 +1928,153 @@ def validate_header_layout_foundation_manifest(
             )
         ),
         "libc.headers-layouts epoll header matrix evidence must retain its non-completion boundary",
+    )
+
+    ioctl_header_profile_matrix = manifest["ioctl_header_profile_matrix"]
+    require(
+        isinstance(ioctl_header_profile_matrix, Mapping),
+        "header-foundation ioctl header matrix must be a table",
+    )
+    require(
+        set(ioctl_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_header",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation ioctl header matrix keys drifted",
+    )
+    require(
+        ioctl_header_profile_matrix["id"] == EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation ioctl header matrix id drifted",
+    )
+    require(
+        ioctl_header_profile_matrix["state"] == "partial-verified"
+        and ioctl_header_profile_matrix["required_result"] == "pass",
+        "header-foundation ioctl header matrix must remain partial verified evidence",
+    )
+    require(
+        ioctl_header_profile_matrix["command"] == EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation ioctl header matrix command drifted",
+    )
+    require(
+        ioctl_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation ioctl header matrix must remain scoped to one pinned non-UAPI header",
+    )
+    require(
+        ioctl_header_profile_matrix["subject_header"]
+        == EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER,
+        "header-foundation ioctl header matrix subject header drifted",
+    )
+    ioctl_profiles = string_list(
+        ioctl_header_profile_matrix["profiles"], "header-foundation ioctl header matrix profiles"
+    )
+    require(
+        tuple(ioctl_profiles) == EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+        "header-foundation ioctl header matrix profiles drifted",
+    )
+    require(
+        ioctl_header_profile_matrix["row_count"] == EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and ioctl_header_profile_matrix["row_count"] == len(ioctl_profiles),
+        "header-foundation ioctl header matrix row count drifted",
+    )
+    ioctl_scope = ioctl_header_profile_matrix["scope"]
+    require(
+        isinstance(ioctl_scope, str)
+        and all(
+            phrase in ioctl_scope
+            for phrase in (
+                "signed int variadic ioctl declaration",
+                "C++ C-linkage",
+                "winsize",
+                "FIONREAD",
+                "FIONBIO",
+                "FIOCLEX",
+                "FIONCLEX",
+                "ioctl artifact linkage",
+                "generic device/request behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation ioctl header matrix scope must retain its non-completion boundary",
+    )
+    ioctl_rows = ioctl_header_profile_matrix["row"]
+    require(
+        isinstance(ioctl_rows, list)
+        and len(ioctl_rows) == EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation ioctl header matrix row roster drifted",
+    )
+    observed_ioctl_rows: list[str] = []
+    for index, row in enumerate(ioctl_rows):
+        location = f"header-foundation ioctl_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(isinstance(profile, str), f"{location} profile is invalid")
+        require(
+            profile in EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+            f"{location} profile is not a declared ioctl header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_ioctl_rows.append(profile)
+    require(
+        tuple(observed_ioctl_rows) == EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES,
+        "header-foundation ioctl header matrix row order or cross-product drifted",
+    )
+    require(
+        IOCTL_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation ioctl header matrix runner is missing",
+    )
+    require(
+        "ioctl-header-abi)" in dispatch_source,
+        "ioctl-header-abi is absent from the native dispatcher",
+    )
+    ioctl_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_IOCTL_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(ioctl_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one ioctl header matrix evidence command",
+    )
+    require(
+        ioctl_matrix_evidence[0].get("state") == "required"
+        and isinstance(ioctl_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in ioctl_matrix_evidence[0]["scope"]
+            for phrase in (
+                "signed int variadic ioctl declaration",
+                "C++ C-linkage",
+                "winsize",
+                "ioctl artifact linkage",
+                "generic device/request behavior",
+                "all-header closure",
+                "runtime",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts ioctl header matrix evidence must retain its non-completion boundary",
     )
 
     timeval_transitive_header_profile_matrix = manifest[
@@ -2686,6 +2857,7 @@ def validate_header_layout_foundation_manifest(
         "project_only_header_count": len(project_only_set),
         "uapi_path_count": len(observed_uapi_paths),
         "uapi_wrapper_matrix_row_count": len(observed_matrix_rows),
+        "ioctl_header_profile_matrix_row_count": len(observed_ioctl_rows),
         "epoll_header_profile_matrix_row_count": len(observed_epoll_rows),
         "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
@@ -4441,6 +4613,143 @@ def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the generic ioctl ABI forwarder bounded despite its broad spelling."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-generic-ioctl"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-generic-ioctl artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "generic ioctl block",
+        "signed-int variadic `ioctl` entry",
+        "`FIOCLEX`",
+        "`FIONCLEX`",
+        "three-word pointer-or-integer forwarding path",
+        "`FIONREAD`",
+        "`FIONBIO`",
+        "`EBADF`",
+        "does not establish generic device/request behavior",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-generic-ioctl description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-generic-ioctl.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ioctl.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/sys/ioctl.h",
+        "compat/x86_64/ioctl_header_abi_probe.c",
+        "compat/x86_64/ioctl_header_abi_probe.cpp",
+        "compat/x86_64/run_ioctl_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ioctl_probe.c",
+        "compat/x86_64/libc_ioctl_start.S",
+        "compat/x86_64/run_libc_ioctl.sh",
+    ):
+        require(owner in owners, f"static-c-generic-ioctl source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-generic-ioctl.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "ioctl=16" in item
+            and "rdi/rsi" in item
+            and "rdx" in item
+            and "int ioctl(int, int, ...)" in item
+            and "low 32 bits" in item
+            for item in prerequisites
+        ),
+        "static-c-generic-ioctl must record its signed-int SysV/Linux ABI",
+    )
+    require(
+        any(
+            "src/misc/ioctl.c" in item
+            and "FIOCLEX=0x5451" in item
+            and "FIONCLEX=0x5450" in item
+            and "rdx=0" in item
+            and "three-word path" in item
+            for item in prerequisites
+        ),
+        "static-c-generic-ioctl must record its safe no-vararg boundary",
+    )
+    require(
+        any(
+            "FIONREAD=0x541b" in item
+            and "FIONBIO=0x5421" in item
+            and "fcntl=72" in item
+            and "initial-TLS errno" in item
+            for item in prerequisites
+        ),
+        "static-c-generic-ioctl must record selected request behavior and errno",
+    )
+    require(
+        any("Private Static Initial TLS v1 bootstrap" in item for item in prerequisites),
+        "static-c-generic-ioctl must record its static-TLS prerequisite",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-generic-ioctl.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "seven-profile" in item
+            and "signed int variadic declaration" in item
+            and "unmangled C++ declaration reference" in item
+            and "_IOC" in item
+            and "not a complete ioctl header" in item
+            for item in header_prerequisites
+        ),
+        "static-c-generic-ioctl must record its direct header boundary",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    require(
+        "ioctl" in static_exports,
+        "static-c-generic-ioctl must be included in the selected static export ratchet",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-ioctl"},
+        "static-c-generic-ioctl must use the closed libc-ioctl command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "FIOCLEX/FIONCLEX rdx=0 dispatch",
+                "three-word ioctl=16 path",
+                "FIONREAD pointer output",
+                "FIONBIO pointer input",
+                "generic device/request behavior",
+                "public x86 support",
+            )
+        ),
+        "static-c-generic-ioctl evidence must retain its bounded runtime boundary",
+    )
+
+
 def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     """Keep the stateless find-first-set artifact identity and scope durable."""
     artifacts = require_verified_artifacts(
@@ -4881,6 +5190,7 @@ def validate_ledger(
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
+    require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
 
@@ -4961,6 +5271,9 @@ def validate_ledger(
         ],
         "header_foundation_uapi_wrapper_matrix_row_count": header_layout_foundation_report[
             "uapi_wrapper_matrix_row_count"
+        ],
+        "header_foundation_ioctl_header_profile_matrix_row_count": header_layout_foundation_report[
+            "ioctl_header_profile_matrix_row_count"
         ],
         "header_foundation_epoll_header_profile_matrix_row_count": header_layout_foundation_report[
             "epoll_header_profile_matrix_row_count"

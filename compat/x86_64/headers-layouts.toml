@@ -289,6 +289,18 @@ sources = [
 headers = ["include/stddef.h", "include/fcntl.h"]
 
 [[probe]]
+id = "ioctl"
+command = "./scripts/dev-x86_64.sh ioctl-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/ioctl_header_abi_probe.c",
+  "compat/x86_64/ioctl_header_abi_probe.cpp",
+  "compat/x86_64/run_ioctl_header_abi.sh",
+]
+headers = ["include/sys/ioctl.h"]
+
+[[probe]]
 id = "unistd"
 command = "./scripts/dev-x86_64.sh unistd-header-abi"
 state = "required"

@@ -112,13 +112,15 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # one bounded pthread create/exit/
 # join initial-TLS worker, named termios control, selected
 # process context, child reaping, C11 immediate termination, callback algorithms,
-# selected descriptor entry and fcntl status control, selected descriptor I/O,
+# selected descriptor entry, fcntl status control, and bounded generic ioctl,
+# selected descriptor I/O,
 # selected process resources,
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, nanosleep, and
-# clock_nanosleep, descriptor entry, selected filesystem access, bounded fcntl status control, and the
+# clock_nanosleep, descriptor entry, selected filesystem access, bounded fcntl
+# status control, bounded generic ioctl, and the
 # basic x87 classification/sign plus complex accessor/conjugation foundation.
 # The older leaves remain source-only. Keeping exact file boundaries makes
 # every later C-runtime admission deliberate rather than a directory-wide x86
@@ -136,6 +138,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
     Path("libc/src/c_abi/x86_64/filesystem_access.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_control.rs"),
+    Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
@@ -3490,6 +3493,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "descriptor_entry.rs"]',
         '#[path = "filesystem_access.rs"]',
         '#[path = "descriptor_control.rs"]',
+        '#[path = "ioctl.rs"]',
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
         '#[path = "memory_mapping.rs"]',
@@ -4640,6 +4644,44 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/descriptor_control.rs: variadic fcntl "
             "must remain assembly-dispatched rather than a fixed Rust C entry"
+        )
+
+    ioctl_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ioctl.rs"
+    ioctl_text = ioctl_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/misc/ioctl.c",
+        "global_asm!",
+        ".global ioctl",
+        "ioctl_no_argument",
+        "ioctl_word",
+        "FIONCLEX",
+        "FIOCLEX",
+        "raw_syscall::SYS_IOCTL",
+        "i64::from(request)",
+        "c_status(result)",
+        "rdi/rsi/rdx",
+        "must provide an explicit third word",
+        "does not select a request vocabulary",
+    ):
+        if required not in ioctl_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/ioctl.rs: selected static generic ioctl "
+                f"boundary is missing {required!r}"
+            )
+    ioctl_exports = set(re.findall(r"(?m)^\s*\.global\s+(\w+)\s*$", ioctl_text))
+    if ioctl_exports != {"ioctl"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/ioctl.rs: selected static artifact must export "
+            "only the assembly-dispatched ioctl entry"
+        )
+    if re.search(
+        r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+ioctl(?:<|\s*\()',
+        ioctl_text,
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/ioctl.rs: variadic ioctl must remain "
+            "assembly-dispatched rather than a fixed Rust C entry"
         )
 
     descriptor_io_source = (

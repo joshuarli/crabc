@@ -130,7 +130,7 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in getsockopt setsockopt sockatmark ioctl if_nametoindex \
+for unselected in getsockopt setsockopt sockatmark if_nametoindex \
     if_indextoname sendmsg recvmsg sendmmsg recvmmsg readv writev preadv \
     pwritev getaddrinfo freeaddrinfo getnameinfo \
     gethostbyname gethostbyaddr fork _Fork vfork clone execve \
@@ -163,6 +163,9 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
+if grep -Eq "[[:space:]][TW][[:space:]]ioctl$" "$candidate_symbols"; then
+    fail "socket-transport candidate unexpectedly pulls generic ioctl"
+fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2

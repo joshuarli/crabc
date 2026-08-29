@@ -1,13 +1,18 @@
 #ifndef _SYS_IOCTL_H
 #define _SYS_IOCTL_H
 
-#include <sys/types.h>
+/* Match musl's direct-header record dependency: a consumer that includes
+ * only <sys/ioctl.h> may name the Linux `struct winsize` request record. */
+#define __NEED_struct_winsize
+#include <bits/alltypes.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int ioctl(int, unsigned long, ...);
+/* Musl's public Linux ABI takes a signed 32-bit request word. Linux consumes
+ * its low 32 bits after the platform C ABI widens it into an argument word. */
+int ioctl(int, int, ...);
 
 /* Linux's generic ioctl request encoding, used by public device headers. */
 #define _IOC_NRBITS 8

@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc fcntl status-control evidence.
+# Native Linux/x86-64 selected static crabc-libc generic ioctl evidence.
 #
-# The same project-header C fixture first executes through pinned musl, then
-# as a true -nostdlib -static candidate linked solely through the selected
-# crabc archive. It proves only public F_GETFD/F_SETFD/F_GETFL/F_SETFL forms:
-# legal absent-vararg dispatch, scalar-vararg dispatch, O_LARGEFILE, descriptor
-# versus open-file-description state, and C errno results. Fixture setup and
-# teardown use raw Linux open/dup/close syscalls, so no preceding C archive
-# descriptor-entry or descriptor-I/O symbol is pulled into this candidate.
-# Other fcntl command forms are deliberately EINVAL without reading a vararg or
-# issuing a syscall; this is not generic fcntl, locking, descriptor lifecycle,
-# filesystem policy, pthread cancellation, CRT, loader, sysroot, or public x86
-# support.
+# The Rust leaf uses `raw_syscall::SYS_IOCTL` (Linux ioctl=16). The same
+# project-header C fixture first executes through pinned musl 1.2.6,
+# then as a true -nostdlib -static candidate linked only with the selected
+# crabc archive. It proves a generic Linux ioctl=16 forwarding boundary for
+# FIONREAD pointer output, FIONBIO pointer input, the exact no-vararg
+# FIOCLEX/FIONCLEX descriptor requests, and errno translation. The two-word
+# FIOCLEX/FIONCLEX paths force rdx=0 (the expected instruction shape is
+# `xor %edx, %edx`) before syscall; every other admitted call has an explicit
+# third C word. Other two-word forms remain outside this artifact. It does not
+# select a device
+# vocabulary, terminal/session behavior, socket options, cancellation, CRT,
+# loader, sysroot, dynamic libc, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -21,7 +22,7 @@ readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
 fail() {
-    printf 'ERROR: x86 static libc fcntl status control: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc generic ioctl: %s\n' "$*" >&2
     exit 1
 }
 
@@ -77,83 +78,43 @@ helper_symbol() {
     cat "$symbols"
 }
 
-assert_helper_syscall() {
-    local fragment="$1"
+assert_ioctl_no_argument_path() {
+    local dispatcher="$work_dir/ioctl-disassembly"
     local helper
-    local disassembly="$work_dir/${fragment}-disassembly"
+    local helper_disassembly="$work_dir/ioctl-no-argument-disassembly"
 
-    helper="$(helper_symbol "$fragment")"
-    objdump -d --disassemble="$helper" "$candidate" >"$disassembly"
-    grep -Eq '\$0x48,%(e|r)ax' "$disassembly" ||
-        fail "${fragment} lacks Linux fcntl=72"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${fragment} lacks its Linux syscall"
-}
-
-assert_fcntl_no_argument_path() {
-    local dispatcher="$work_dir/fcntl-disassembly"
-    local helper
-    local helper_disassembly="$work_dir/fcntl-no-argument-disassembly"
-
-    objdump -d --disassemble=fcntl "$candidate" >"$dispatcher"
-    grep -Eq '\$0x1,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_GETFD no-vararg dispatch"
-    grep -Eq '\$0x3,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_GETFL no-vararg dispatch"
-    grep -Fq 'fcntl_no_argument' "$dispatcher" ||
-        fail "fcntl lacks its two-word helper tail path"
+    objdump -d --disassemble=ioctl "$candidate" >"$dispatcher"
+    grep -Eq '\$0x5451,%esi' "$dispatcher" ||
+        fail "ioctl lacks FIOCLEX no-vararg dispatch"
+    grep -Eq '\$0x5450,%esi' "$dispatcher" ||
+        fail "ioctl lacks FIONCLEX no-vararg dispatch"
+    grep -Fq 'ioctl_no_argument' "$dispatcher" ||
+        fail "ioctl lacks its two-word helper tail path"
     if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$dispatcher"; then
-        fail "fcntl dispatcher must not enter Linux before command dispatch"
+        fail "ioctl dispatcher must not enter Linux before request dispatch"
     fi
-    helper="$(helper_symbol fcntl_no_argument)"
+
+    helper="$(helper_symbol ioctl_no_argument)"
     objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    grep -Eq '\$0x48,%(e|r)ax' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper lacks Linux fcntl=72"
-    grep -Eq 'xor[[:space:]].*%(e|r)dx' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper does not supply rdx=0"
+    grep -Eq '\$0x10,%(e|r)ax' "$helper_disassembly" ||
+        fail "FIOCLEX/FIONCLEX helper lacks Linux ioctl=16"
+    grep -Eq 'xor[[:space:]].*%(e|r)dx|mov[[:space:]]+\$0x0,%(e|r)dx' \
+        "$helper_disassembly" ||
+        fail "FIOCLEX/FIONCLEX helper does not supply rdx=0"
     grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper lacks its Linux syscall"
+        fail "FIOCLEX/FIONCLEX helper lacks its Linux syscall"
 }
 
-assert_fcntl_scalar_path() {
-    local dispatcher="$work_dir/fcntl-disassembly"
+assert_ioctl_word_path() {
     local helper
-    local helper_disassembly="$work_dir/fcntl-scalar-disassembly"
+    local helper_disassembly="$work_dir/ioctl-word-disassembly"
 
-    objdump -d --disassemble=fcntl "$candidate" >"$dispatcher"
-    grep -Eq '\$0x2,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_SETFD scalar dispatch"
-    grep -Eq '\$0x4,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_SETFL scalar dispatch"
-    grep -Fq 'fcntl_scalar' "$dispatcher" ||
-        fail "fcntl lacks its scalar helper tail path"
-    helper="$(helper_symbol fcntl_scalar)"
+    helper="$(helper_symbol ioctl_word)"
     objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    awk '
-        /\$0x4,%esi/ { setfl_dispatch_seen = 1 }
-        setfl_dispatch_seen && /or.*\$0x8000,%edx/ { setfl_largefile_rule_seen = 1 }
-        END { exit setfl_largefile_rule_seen ? 0 : 1 }
-    ' "$helper_disassembly" ||
-        fail "F_SETFL helper lacks musl's command-path O_LARGEFILE rule"
-    grep -Eq '\$0x48,%(e|r)ax' "$helper_disassembly" ||
-        fail "F_SETFD/F_SETFL helper lacks Linux fcntl=72"
+    grep -Eq '\$0x10,%(e|r)ax' "$helper_disassembly" ||
+        fail "three-word ioctl helper lacks Linux ioctl=16"
     grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-        fail "F_SETFD/F_SETFL helper lacks its Linux syscall"
-}
-
-assert_fcntl_unsupported_path() {
-    local dispatcher="$work_dir/fcntl-disassembly"
-    local helper
-    local helper_disassembly="$work_dir/fcntl-unsupported-disassembly"
-
-    objdump -d --disassemble=fcntl "$candidate" >"$dispatcher"
-    grep -Fq 'fcntl_unsupported' "$dispatcher" ||
-        fail "fcntl lacks its unsupported-command path"
-    helper="$(helper_symbol fcntl_unsupported)"
-    objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly"; then
-        fail "unsupported fcntl commands must not issue a syscall"
-    fi
+        fail "three-word ioctl helper lacks its Linux syscall"
 }
 
 assert_fixture_tls_capacity() {
@@ -179,23 +140,23 @@ assert_fixture_tls_capacity() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep nm objdump readelf rustup wc; do
+for tool in ar awk cargo cat cmp diff grep mkdir nm objdump readelf rustup sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_fcntl_header_abi.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_x86_fcntl_status_reference.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_ioctl_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-fcntl-status-control.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-ioctl.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-fcntl-status-control-reference"
-candidate="$work_dir/crabc-static-fcntl-status-control-candidate"
+reference="$work_dir/musl-ioctl-reference"
+candidate="$work_dir/crabc-static-ioctl-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
+archive_elf_symbols="$work_dir/archive-elf-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
 expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
 archive_relocations="$work_dir/archive-relocations"
@@ -208,21 +169,19 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_fcntl_status_control_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h sys/types.h sys/syscall.h bits/fcntl.h \
-    bits/syscall.h; do
+    compat/x86_64/libc_ioctl_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h fcntl.h sys/ioctl.h sys/syscall.h sys/types.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_fcntl_status_control_probe.c \
-    -o "$reference"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_ioctl_probe.c -o "$reference"
 if "$reference"; then
     :
 else
     status=$?
-    fail "pinned-musl fcntl status-control fixture exited ${status}"
+    fail "pinned-musl ioctl fixture exited ${status}"
 fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
@@ -231,20 +190,16 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
+readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location fcntl; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap ioctl; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in fcntl64 lockf lockf64 flock fchmod fchown readv writev \
-    preadv pwritev preadv2 pwritev2 openat2 open_by_handle_at close_range \
-    fork _Fork vfork clone execve gettid syscall setfsuid setfsgid \
-    malloc free calloc realloc; do
-    if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
-        fail "archive accidentally exports unselected ${unselected}"
-    fi
-done
+grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' \
+    "$archive_elf_symbols" ||
+    fail "Static Initial TLS v1 bootstrap is not hidden"
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
@@ -253,26 +208,28 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_FCNTL_STATUS_CONTROL_FREESTANDING -I"$ROOT_DIR/include" \
-    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_fcntl_status_control_probe.c \
-    compat/x86_64/libc_fcntl_status_control_start.S "$archive" -o "$candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_IOCTL_FREESTANDING \
+    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    compat/x86_64/libc_ioctl_probe.c compat/x86_64/libc_ioctl_start.S \
+    "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location fcntl; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap ioctl \
+    crabc_x86_64_ioctl_probe; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-for unrelated in ioctl open openat creat close dup dup2 dup3 read write pread pwrite \
-    pipe pipe2; do
-    if grep -Eq "[[:space:]]${unrelated}$" "$candidate_symbols"; then
-        fail "fcntl status-control candidate unexpectedly pulls ${unrelated}"
+grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$candidate_symbols" ||
+    fail "candidate bootstrap visibility drifted"
+for unrelated in fcntl tcgetattr tcsetattr read write close pipe pipe2 \
+    open openat socket connect; do
+    if grep -Eq "[[:space:]][TW][[:space:]]${unrelated}$" "$candidate_symbols"; then
+        fail "ioctl candidate unexpectedly pulls ${unrelated}"
     fi
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
@@ -283,8 +240,8 @@ fi
 if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers"; then
     fail "candidate selected a dynamic interpreter"
 fi
-if grep -Eq 'NEEDED' "$candidate_dynamic"; then
-    fail "candidate selected a dynamic dependency"
+if grep -Eq 'NEEDED|DT_NEEDED' "$candidate_dynamic"; then
+    fail "candidate selected a DT_NEEDED dynamic dependency"
 fi
 grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" ||
     fail "candidate lacks the selected errno TLS segment"
@@ -301,15 +258,14 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 
-assert_fcntl_no_argument_path
-assert_fcntl_scalar_path
-assert_fcntl_unsupported_path
+assert_ioctl_no_argument_path
+assert_ioctl_word_path
 
 if "$candidate"; then
     :
 else
     status=$?
-    fail "freestanding fcntl status-control fixture exited ${status}"
+    fail "freestanding ioctl fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc fcntl status control: PASS\n'
+printf 'x86 static crabc-libc generic ioctl: PASS\n'

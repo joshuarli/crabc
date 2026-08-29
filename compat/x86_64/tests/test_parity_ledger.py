@@ -50,14 +50,15 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 39)
-        self.assertEqual(report["header_layout_probe_count"], 34)
+        self.assertEqual(report["verified_artifact_count"], 40)
+        self.assertEqual(report["header_layout_probe_count"], 35)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
         self.assertEqual(report["header_foundation_project_only_header_count"], 8)
         self.assertEqual(report["header_foundation_uapi_path_count"], 3)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
+        self.assertEqual(report["header_foundation_ioctl_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
         self.assertEqual(
             report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
@@ -74,7 +75,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 17)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 18)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -112,7 +113,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 34)
+        self.assertEqual(report["header_layout_probe_count"], 35)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -161,6 +162,18 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/math_complex_header_abi_probe.c",
                 "compat/x86_64/math_complex_header_abi_probe.cpp",
                 "compat/x86_64/run_math_complex_header_abi.sh",
+            ],
+        )
+        ioctl = next(probe for probe in probes if probe["id"] == "ioctl")
+        assert isinstance(ioctl, dict)
+        self.assertEqual(ioctl["kind"], "compile-only")
+        self.assertEqual(ioctl["headers"], ["include/sys/ioctl.h"])
+        self.assertEqual(
+            ioctl["sources"],
+            [
+                "compat/x86_64/ioctl_header_abi_probe.c",
+                "compat/x86_64/ioctl_header_abi_probe.cpp",
+                "compat/x86_64/run_ioctl_header_abi.sh",
             ],
         )
         epoll = next(probe for probe in probes if probe["id"] == "epoll")
@@ -296,6 +309,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
+        self.assertEqual(report["header_foundation_ioctl_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
         self.assertEqual(
             report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
@@ -404,6 +418,36 @@ class X86ParityLedgerTests(unittest.TestCase):
                 and row["candidate"] == "compile-ok"
                 and row["applicability"] == "applicable"
                 for row in rows
+            )
+        )
+        ioctl_matrix = manifest["ioctl_header_profile_matrix"]
+        assert isinstance(ioctl_matrix, dict)
+        self.assertEqual(ioctl_matrix["id"], "x86-ioctl-header-profile-matrix")
+        self.assertEqual(ioctl_matrix["state"], "partial-verified")
+        self.assertEqual(ioctl_matrix["required_result"], "pass")
+        self.assertEqual(
+            ioctl_matrix["command"], "./scripts/dev-x86_64.sh ioctl-header-abi"
+        )
+        self.assertEqual(ioctl_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(ioctl_matrix["subject_header"], "sys/ioctl.h")
+        self.assertEqual(
+            ioctl_matrix["profiles"], list(ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES)
+        )
+        self.assertEqual(ioctl_matrix["row_count"], 7)
+        ioctl_rows = ioctl_matrix["row"]
+        assert isinstance(ioctl_rows, list)
+        self.assertEqual(len(ioctl_rows), 7)
+        self.assertEqual(
+            [row["profile"] for row in ioctl_rows if isinstance(row, dict)],
+            list(ledger.EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES),
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in ioctl_rows
             )
         )
         epoll_matrix = manifest["epoll_header_profile_matrix"]
@@ -556,6 +600,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         completion = manifest["completion"]
         assert isinstance(completion, dict)
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
+        self.assertTrue(completion["ioctl_header_profile_matrix_slice"])
         self.assertTrue(completion["epoll_header_profile_matrix_slice"])
         self.assertTrue(completion["timeval_transitive_header_profile_matrix_slice"])
         self.assertTrue(completion["sys_time_direct_header_profile_matrix_slice"])
@@ -655,6 +700,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(rows, list) and isinstance(rows[0], dict)
         rows[0]["candidate"] = "incomplete"
         with self.assertRaisesRegex(ledger.LedgerError, "resolved compile-only result"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        ioctl_matrix = manifest["ioctl_header_profile_matrix"]
+        assert isinstance(ioctl_matrix, dict)
+        ioctl_rows = ioctl_matrix["row"]
+        assert isinstance(ioctl_rows, list)
+        ioctl_rows.pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "ioctl header matrix row roster drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        ioctl_matrix = manifest["ioctl_header_profile_matrix"]
+        assert isinstance(ioctl_matrix, dict)
+        ioctl_matrix["subject_header"] = "sys/socket.h"
+        with self.assertRaisesRegex(ledger.LedgerError, "ioctl header matrix subject header drifted"):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()
@@ -1086,7 +1149,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 31
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 32
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -5037,6 +5100,79 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-fcntl-status-control command"
         ):
+            ledger.validate_ledger(data)
+
+    def test_generic_ioctl_artifact_keeps_its_safe_no_vararg_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-generic-ioctl"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/ioctl.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/sys/ioctl.h",
+            "compat/x86_64/ioctl_header_abi_probe.c",
+            "compat/x86_64/ioctl_header_abi_probe.cpp",
+            "compat/x86_64/run_ioctl_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_ioctl_probe.c",
+            "compat/x86_64/libc_ioctl_start.S",
+            "compat/x86_64/run_libc_ioctl.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ioctl"},
+        )
+        for phrase in (
+            "generic ioctl block",
+            "signed-int variadic `ioctl` entry",
+            "`FIOCLEX`",
+            "`FIONCLEX`",
+            "three-word pointer-or-integer forwarding path",
+            "`FIONREAD`",
+            "`FIONBIO`",
+            "does not establish generic device/request behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertIn("src/misc/ioctl.c", artifact["oracle"][0]["role"])
+        self.assertIn("ioctl", (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt").read_text(encoding="utf-8").splitlines())
+        self.assertIn("libc/src/c_abi/x86_64/ioctl.rs", self.family(data, "libc.posix-runtime")["source_owners"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-generic-ioctl"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("ioctl=16", "ioctl=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "signed-int SysV/Linux ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-generic-ioctl"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh ioctl-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-ioctl command"):
             ledger.validate_ledger(data)
 
     def test_rejects_an_unknown_aarch64_gate(self) -> None:

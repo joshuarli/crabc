@@ -392,7 +392,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the thirty-four selected
+`headers-layouts.toml` is the checked-in contract for the thirty-five selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -427,7 +427,13 @@ across all five C11 and two C++17 profiles through both pinned-musl and
 raw-GCC project-header-first roots, with selected forwarding constants, ioctl
 encodings, and x86 LP64 layouts. It is compile-only and does not select
 callable linkage, sound/console device behavior, general UAPI behavior, or
-runtime support. The separate `epoll-header-abi` command resolves seven
+runtime support. The separate `ioctl-header-abi` command resolves seven
+compile-only C11/C++17 profile rows for direct `sys/ioctl.h`: the signed
+`int ioctl(int, int, ...)` declaration, C++ C-linkage spelling, selected
+`_IOC` composition, direct 8-byte align-2 `struct winsize`, and selected
+descriptor/terminal/interface request values. It proves neither artifact
+linkage nor generic device/request behavior. The separate `epoll-header-abi`
+command resolves seven
 compile-only C11/C++17 profile rows for the pinned non-UAPI `sys/epoll.h`
 header: its x86 packed event record, selected declarations/values, and only
 the direct `sys/ioctl.h` `_IOC`/`_IOR`/`_IOW` encoding subset used by
@@ -1985,6 +1991,18 @@ separate direct Rust `F_GETLK`/status/seal slices do not widen this C
 artifact. It excludes `lockf`/`flock`, cancellation, generic descriptor or
 filesystem policy, general runtime, and public x86 support.
 
+`libc-ioctl` is a separately recorded `static-c-generic-ioctl`
+`verified_artifact` gate over the same archive, not generic device support.
+After the direct `sys/ioctl.h` C/C++ matrix and a pinned-musl execution, its
+freestanding candidate proves `ioctl=16` forwarding for `FIONREAD` pointer
+output, `FIONBIO` pointer input, and the two legal no-vararg calls
+`FIOCLEX`/`FIONCLEX`. The assembly boundary supplies `rdx=0` only for those
+two request words; every other admitted call requires an explicit third
+pointer or integer word, while other two-word forms remain outside the
+artifact contract. It proves ABI forwarding and errno behavior, not arbitrary
+request/device semantics, terminal/session policy, socket options,
+cancellation, general runtime, or public x86 support.
+
 `libc-descriptor-io` is a separately recorded static
 `verified_artifact` gate over that archive, not a descriptor/filesystem
 capability. Its project-header C body first executes through pinned musl and
@@ -2509,6 +2527,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-descriptor-entry`,
 `libc-access`,
 `libc-fcntl-status-control`,
+`libc-ioctl`,
 `libc-descriptor-io`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-uts-identity`, `libc-socket-transport`,

@@ -113,6 +113,7 @@ getuid
 imaxabs
 imaxdiv
 index
+ioctl
 isalnum
 isalpha
 isascii
