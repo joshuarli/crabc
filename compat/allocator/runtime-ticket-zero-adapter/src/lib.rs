@@ -1,7 +1,7 @@
 //! Test-only prefixed C ABI for the private ticket-zero runtime page owner.
 //!
 //! This crate is deliberately outside `crabc-libc` and is linked only by the
-//! allocator evidence harness. Its eight `crabc_ticket_zero_test_*` exports
+//! allocator evidence harness. Its ten `crabc_ticket_zero_test_*` exports
 //! exercise one process's original thread plus one fresh scoped worker through
 //! the hidden Rust runtime seam; they are neither `malloc`/`free`
 //! interposition symbols nor a production backend-selection mechanism.
@@ -20,9 +20,15 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroPageAllocationResult,
-    TicketZeroPageFreeResult, TicketZeroRemoteFreeProducer,
+    TicketZeroPageFreeResult, TicketZeroOwnerExitFreeOutcome,
+    TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitRemoteFreeProducer,
+    TicketZeroOwnerExitReclaimOutcome,
+    TicketZeroOwnerExitReclaimRoute, TicketZeroRemoteFreeProducer,
     TicketZeroRemoteFreeProducerPair, initialize_process,
     ticket_zero_allocate, ticket_zero_free, ticket_zero_later_thread_page_roundtrip,
+    ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish,
+    ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish,
+    ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish,
     ticket_zero_later_thread_persistent_local_workload,
     ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,
 };
@@ -41,6 +47,14 @@ const ADAPTER_RETAINED: u8 = 3;
 // `crabc_mimalloc::runtime_lifecycle`.
 static ADAPTER_STATE: AtomicU8 = AtomicU8::new(ADAPTER_COLD);
 
+// The one existing reclamation export alternates the two already source-valid
+// predecessors. This keeps the C churn seam geometry-neutral: neither the
+// fixture nor its ABI gets a new symbol just because a direct-small source
+// drain differs from the aggregate sole-medium result. The C caller serializes
+// the adapter by contract; the atomic keeps this test-only process state sound
+// if an unexpected observer reads it concurrently.
+static OWNER_EXIT_RECLAIM_PREDECESSOR: AtomicU8 = AtomicU8::new(0);
+
 // Linux/AArch64 musl's opaque `pthread_t` is one pointer-sized value. The
 // adapter never inspects it; it writes exactly one native C ABI value for the
 // create call and gives that unchanged value back to join. This test-only
@@ -51,6 +65,31 @@ type Pthread = *mut c_void;
 struct RemotePublishContext<'owner> {
     producer: Option<TicketZeroRemoteFreeProducer<'owner>>,
     published: bool,
+}
+
+/// Stack-owned C-side publication capability issued inside B's one bounded
+/// post-exit source decision. C can only append its private client to B's
+/// held remote head; neither pthread receives a client address, PageMap, or
+/// collector/release capability.
+struct OwnerExitRemotePublishContext<'owner> {
+    producer: Option<TicketZeroOwnerExitRemoteFreeProducer<'owner>>,
+    published: bool,
+}
+
+/// Stack-owned handoff between A and the joined B that consumes its private
+/// post-exit route. B sees neither a client address nor allocator internals;
+/// it can only return the opaque route outcome to A's runtime callback.
+struct OwnerExitFreeContext<'owner> {
+    route: Option<TicketZeroOwnerExitFreeRoute<'owner>>,
+    outcome: Option<TicketZeroOwnerExitFreeOutcome<'owner>>,
+}
+
+/// Stack-owned handoff between A and a joined B that reclaims one opaque
+/// source-valid mapped-regular route. B sees neither a client address nor the
+/// static process pair; it can only return the typed lifecycle outcome.
+struct OwnerExitReclaimContext {
+    route: Option<TicketZeroOwnerExitReclaimRoute>,
+    outcome: Option<TicketZeroOwnerExitReclaimOutcome>,
 }
 
 unsafe extern "C" {
@@ -140,11 +179,191 @@ unsafe extern "C" fn publish_remote_free_from_pthread(argument: *mut c_void) -> 
     ptr::null_mut()
 }
 
+/// C-side atomic publication issued only after B has claimed the source
+/// abandoned-page low owner bit for its direct post-exit client free.
+unsafe extern "C" fn publish_owner_exit_remote_free_from_pthread(
+    argument: *mut c_void,
+) -> *mut c_void {
+    let context = match unsafe { argument.cast::<OwnerExitRemotePublishContext<'_>>().as_mut() } {
+        Some(context) => context,
+        None => return ptr::null_mut(),
+    };
+    let Some(producer) = context.producer.take() else {
+        return ptr::null_mut();
+    };
+    match producer.publish() {
+        Ok(()) => context.published = true,
+        Err(producer) => context.producer = Some(producer),
+    }
+    ptr::null_mut()
+}
+
+/// B-side source finalizer for A's opaque post-exit route. B first creates and
+/// later finishes its own fresh no-page runtime attachment; it never tries to
+/// finish A's already-detached attachment. The result remains in the joined
+/// stack context so A can consume its terminal proof before it releases A's
+/// lifecycle admission claim.
+unsafe extern "C" fn free_owner_exit_route_from_pthread(argument: *mut c_void) -> *mut c_void {
+    let context = match unsafe { argument.cast::<OwnerExitFreeContext<'_>>().as_mut() } {
+        Some(context) => context,
+        None => return ptr::null_mut(),
+    };
+    let Some(route) = context.route.take() else {
+        return ptr::null_mut();
+    };
+    context.outcome = Some(
+        route.free_remaining_in_fresh_runtime_worker_with_post_exit_publisher(
+            publish_owner_exit_remote_free_in_joined_pthread,
+        ),
+    );
+    ptr::null_mut()
+}
+
+/// B-side source reclamation for A's opaque mapped-regular route. This performs
+/// B's normal attachment/engine teardown only after it has adopted and drained
+/// the exact sole-medium or direct-small page; A's admission proof remains in
+/// the joined stack context.
+unsafe extern "C" fn reclaim_owner_exit_route_from_pthread(argument: *mut c_void) -> *mut c_void {
+    let context = match unsafe { argument.cast::<OwnerExitReclaimContext>().as_mut() } {
+        Some(context) => context,
+        None => return ptr::null_mut(),
+    };
+    let Some(route) = context.route.take() else {
+        return ptr::null_mut();
+    };
+    context.outcome = Some(route.reclaim_and_finish());
+    ptr::null_mut()
+}
+
+/// Moves the exact typed post-exit route into joined B. B returns only a
+/// completed proof, retained route, or poisoned outcome; it cannot receive a
+/// client pointer. Its route method may run the normal finalizer only for B's
+/// own fresh no-page attachment, never for A's detached owner.
+fn free_owner_exit_route_in_joined_pthread<'owner>(
+    route: TicketZeroOwnerExitFreeRoute<'owner>,
+) -> TicketZeroOwnerExitFreeOutcome<'owner> {
+    let mut context = OwnerExitFreeContext {
+        route: Some(route),
+        outcome: None,
+    };
+    let mut thread = ptr::null_mut();
+    if unsafe {
+        pthread_create(
+            &mut thread,
+            ptr::null(),
+            free_owner_exit_route_from_pthread,
+            core::ptr::from_mut(&mut context).cast(),
+        )
+    } != 0
+    {
+        // SAFETY: returning the typed route would be possible in Rust but is
+        // not expressible through this C pthread-create callback boundary.
+        // Stop rather than discard the only terminal-release authority.
+        unsafe { abort() }
+    }
+    let mut ignored_result = ptr::null_mut();
+    if unsafe { pthread_join(thread, &mut ignored_result) } != 0 {
+        // SAFETY: a failed join cannot prove that B stopped accessing the
+        // route context or whether it consumed a final client free.
+        unsafe { abort() }
+    }
+    context
+        .outcome
+        .take()
+        .expect("joined B consumes exactly one opaque post-exit route")
+}
+
+/// Creates and joins C while B holds the source abandoned-page low owner bit
+/// for its direct post-exit free. The callback returns the opaque token on a
+/// clean publication refusal so B's route can retain its exact terminal state;
+/// a failed join cannot prove that C stopped touching the stack context and
+/// therefore stops the test process rather than guessing at ownership.
+fn publish_owner_exit_remote_free_in_joined_pthread<'owner>(
+    producer: TicketZeroOwnerExitRemoteFreeProducer<'owner>,
+) -> Result<(), TicketZeroOwnerExitRemoteFreeProducer<'owner>> {
+    let mut context = OwnerExitRemotePublishContext {
+        producer: Some(producer),
+        published: false,
+    };
+    let mut thread = ptr::null_mut();
+    if unsafe {
+        pthread_create(
+            &mut thread,
+            ptr::null(),
+            publish_owner_exit_remote_free_from_pthread,
+            core::ptr::from_mut(&mut context).cast(),
+        )
+    } != 0
+    {
+        return Err(
+            context
+                .producer
+                .take()
+                .expect("an unstarted C publisher returns its opaque capability"),
+        );
+    }
+    let mut ignored_result = ptr::null_mut();
+    if unsafe { pthread_join(thread, &mut ignored_result) } != 0 {
+        // SAFETY: a failed join cannot prove that C stopped accessing its
+        // callback-local producer or whether it reached the atomic head.
+        unsafe { abort() }
+    }
+    if context.published {
+        debug_assert!(context.producer.is_none());
+        Ok(())
+    } else {
+        Err(
+            context
+                .producer
+                .take()
+                .expect("a joined failed C publisher returns its opaque capability"),
+        )
+    }
+}
+
+/// Moves the exact source-valid post-exit reclamation route into a joined B.
+/// B cannot retain a raw client, route internals, or A's admission token
+/// outside this stack-owned callback context.
+fn reclaim_owner_exit_route_in_joined_pthread(
+    route: TicketZeroOwnerExitReclaimRoute,
+) -> TicketZeroOwnerExitReclaimOutcome {
+    let mut context = OwnerExitReclaimContext {
+        route: Some(route),
+        outcome: None,
+    };
+    let mut thread = ptr::null_mut();
+    if unsafe {
+        pthread_create(
+            &mut thread,
+            ptr::null(),
+            reclaim_owner_exit_route_from_pthread,
+            core::ptr::from_mut(&mut context).cast(),
+        )
+    } != 0
+    {
+        // The source route is linear and the C pthread-create ABI cannot
+        // return it through this callback boundary. Stop rather than discard
+        // the only reclamation/terminal-release authority.
+        unsafe { abort() }
+    }
+    let mut ignored_result = ptr::null_mut();
+    if unsafe { pthread_join(thread, &mut ignored_result) } != 0 {
+        // A failed join cannot prove that B stopped touching the route or
+        // whether it consumed the source route into a retained engine.
+        unsafe { abort() }
+    }
+    context
+        .outcome
+        .take()
+        .expect("joined B consumes exactly one opaque post-exit reclaim route")
+}
+
 /// Creates and joins B/C while A's runtime callback still holds its exclusive
-/// engine borrow. The two source publications may race in their shared atomic
-/// head. Once either pthread starts, a create/join/publication failure has no
-/// safe token-reassembly continuation, so this test-only process stops rather
-/// than guessing at remote ownership.
+/// engine borrow. The two source publications may originate from one page or
+/// two source-distinct pages; they may race in their independent or shared
+/// atomic heads. Once either pthread starts, a create/join/publication failure
+/// has no safe token-reassembly continuation, so this test-only process stops
+/// rather than guessing at remote ownership.
 fn publish_remote_frees_in_joined_pthreads<'owner>(
     producers: TicketZeroRemoteFreeProducerPair<'owner>,
 ) -> Result<(), TicketZeroRemoteFreeProducerPair<'owner>> {
@@ -401,6 +620,89 @@ pub unsafe extern "C" fn crabc_ticket_zero_test_worker_remote_free_roundtrip() -
         return -1;
     }
     match ticket_zero_later_thread_remote_free_roundtrip(publish_remote_frees_in_joined_pthreads) {
+        TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
+        TicketZeroLaterThreadPageResult::AllocationFailed => {
+            set_errno(ENOMEM);
+            -1
+        }
+        TicketZeroLaterThreadPageResult::Unavailable | TicketZeroLaterThreadPageResult::Retained => {
+            set_errno(EBUSY);
+            -1
+        }
+    }
+}
+
+/// Attaches this fresh worker as owner A of a mixed regular Theap, fills two
+/// `BIN_FULL` medium pages, and gives joined B/C one opaque pre-exit remote
+/// free from the first medium plus the sole client from a distinct large page.
+/// Source collection maps the first medium, releases the now-empty large page,
+/// and leaves the second medium source-unmapped. A then transfers the opaque
+/// post-exit route to a second fresh joined B. After B claims the source low
+/// owner bit for its first direct free of that unchanged medium, joined C can
+/// atomically publish only one scoped same-page private client; B's existing
+/// collector consumes both before B releases the route's remaining clients.
+/// B then completes only B's own no-page attachment; its completed proof
+/// returns to A before the runtime releases A's worker-admission claim.
+///
+/// # Safety
+///
+/// The caller must invoke this only on one fresh pthread after init and after
+/// every ticket-zero adapter allocation has freed. The caller sees no client
+/// pointer, route, or admission capability. Success preserves `errno`. This
+/// is a test-only Gate 5C lifecycle witness, not a public allocator route or
+/// libc backend selector.
+#[no_mangle]
+pub unsafe extern "C" fn crabc_ticket_zero_test_worker_owner_exit_roundtrip() -> c_int {
+    let saved_errno = errno_value();
+    if !is_ready() {
+        set_errno(EBUSY);
+        return -1;
+    }
+    match ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
+        publish_remote_frees_in_joined_pthreads,
+        free_owner_exit_route_in_joined_pthread,
+    ) {
+        TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
+        TicketZeroLaterThreadPageResult::AllocationFailed => {
+            set_errno(ENOMEM);
+            -1
+        }
+        TicketZeroLaterThreadPageResult::Unavailable | TicketZeroLaterThreadPageResult::Retained => {
+            set_errno(EBUSY);
+            -1
+        }
+    }
+}
+
+/// Alternates the existing source-valid nonfull-medium and direct-small A
+/// predecessors, then starts and joins B to reclaim and drain that exact
+/// abandoned page before A's admission is released. The direct-small branch
+/// remains its own source drain; this C wrapper only reuses the existing
+/// pointer-private post-exit capability.
+///
+/// # Safety
+///
+/// The caller has the same fresh-worker/process-idle obligations as the
+/// aggregate owner-exit witness. It receives no client pointer or allocator
+/// capability, and this remains a test-only Gate 5C route plus bounded Gate 5D
+/// stability evidence.
+#[no_mangle]
+pub unsafe extern "C" fn crabc_ticket_zero_test_worker_owner_exit_reclaim_roundtrip() -> c_int {
+    let saved_errno = errno_value();
+    if !is_ready() {
+        set_errno(EBUSY);
+        return -1;
+    }
+    let result = if OWNER_EXIT_RECLAIM_PREDECESSOR.fetch_add(1, Ordering::Relaxed) & 1 == 0 {
+        ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish(
+            reclaim_owner_exit_route_in_joined_pthread,
+        )
+    } else {
+        ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish(
+            reclaim_owner_exit_route_in_joined_pthread,
+        )
+    };
+    match result {
         TicketZeroLaterThreadPageResult::Completed => preserve_errno(saved_errno, 0),
         TicketZeroLaterThreadPageResult::AllocationFailed => {
             set_errno(ENOMEM);

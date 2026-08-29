@@ -1388,6 +1388,17 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(inventory["summary"]["test_support_file_count"], 3)
         self.assertEqual(inventory["summary"]["total_inventory_file_count"], 16)
 
+    def test_upstream_test_inventory_records_the_reviewed_m4_adapter_selection(self) -> None:
+        inventory = RUNNER.read_json(RUNNER.UPSTREAM_TEST_CONTRACT)
+        states = {item["path"]: item["status"] for item in inventory["tests"]}
+
+        self.assertEqual(inventory["format"], 2)
+        self.assertEqual(states["test/test-api.c"], "adapted-milestone-4")
+        self.assertEqual(states["test/testhelper.h"], "adapted-milestone-4")
+        self.assertEqual(states["test/main.c"], "blocked-milestone-5-plus")
+        self.assertEqual(inventory["summary"]["adapted_milestone_4_file_count"], 2)
+        self.assertEqual(inventory["summary"]["blocked_milestone_5_plus_count"], 14)
+
     def test_adapted_api_fixture_contract_is_exact_and_reviewed(self) -> None:
         contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
         header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
@@ -1406,7 +1417,122 @@ class ContractTests(unittest.TestCase):
         header = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
         self.assertEqual(
             RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header),
-            {"expected_adapter_symbol_count": 8},
+            {"expected_adapter_symbol_count": 10},
+        )
+
+    def test_runtime_ticket_zero_lifecycle_commands_are_bounded_and_watchdog_ready(self) -> None:
+        fixture = Path("/tmp/runtime-ticket-zero-fixture")
+        self.assertEqual(
+            RUNNER.runtime_ticket_zero_stress_schedule(
+                worker_cycles=128,
+                stress_seed=RUNNER.RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED,
+            ),
+            {
+                "seed": "0xd1b54a32d192ed03",
+                "worker_route_invocation_count": 512,
+                "worker_routes_per_cycle": 4,
+            },
+        )
+        self.assertEqual(
+            RUNNER.runtime_ticket_zero_fixture_command(fixture, worker_cycles=128),
+            [
+                str(fixture),
+                "--worker-cycles",
+                "128",
+                "--stress-seed",
+                "0x9e3779b97f4a7c15",
+            ],
+        )
+        self.assertEqual(
+            RUNNER.runtime_ticket_zero_fixture_command(
+                fixture,
+                worker_cycles=1024,
+                stress_seed=RUNNER.RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED,
+            ),
+            [
+                str(fixture),
+                "--worker-cycles",
+                "1024",
+                "--stress-seed",
+                "0x94d049bb133111eb",
+            ],
+        )
+        self.assertEqual(RUNNER.RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES, 128)
+        self.assertEqual(RUNNER.RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS, 30)
+        self.assertEqual(
+            RUNNER.RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED,
+            0xD1B54A32D192ED03,
+        )
+        self.assertEqual(RUNNER.RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES, 1024)
+        self.assertEqual(RUNNER.RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS, 180)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "worker cycles"):
+            RUNNER.runtime_ticket_zero_fixture_command(fixture, worker_cycles=0)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "worker cycles"):
+            RUNNER.runtime_ticket_zero_fixture_command(fixture, worker_cycles=1025)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "stress seed"):
+            RUNNER.runtime_ticket_zero_fixture_command(fixture, worker_cycles=1, stress_seed=-1)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "stress seed"):
+            RUNNER.runtime_ticket_zero_fixture_command(
+                fixture,
+                worker_cycles=1,
+                stress_seed=1 << 64,
+            )
+
+    def test_m5_gate_contract_names_the_current_full_lane_and_open_gates(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M5_GATE_CONTRACT)
+        summary = RUNNER.validate_m5_gate_contract(contract, RUNNER.load_pin())
+
+        self.assertEqual(summary["gate_count"], 6)
+        self.assertEqual(
+            summary["full_lane"],
+            {
+                "routes_per_cycle": 4,
+                "stress_seed": "0xd1b54a32d192ed03",
+                "watchdog_seconds": 30,
+                "worker_cycles": 128,
+            },
+        )
+        self.assertEqual(
+            summary["gate_ids"],
+            ["m5.base", "m5.5a", "m5.5b", "m5.5c", "m5.5d", "m5.5e"],
+        )
+
+    def test_m5_gate_report_keeps_open_gates_visible_after_bounded_evidence_passes(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M5_GATE_CONTRACT)
+        report = {
+            "compiler_tls_codegen": {"status": "passed"},
+            "m4_test_adapter": {
+                "fixtures": {"adapted_upstream_api": {"summary": {"failed": 0, "succeeded": 33}}}
+            },
+            "remote_free_loom_model": {"status": "passed"},
+            "runtime_ticket_zero_test_adapter": {
+                "fixture": {
+                    "stdout": "runtime ticket-zero allocator ok\n",
+                    "watchdog": {"seconds": 30, "status": "passed"},
+                    "worker_cycles": 128,
+                    "stress_schedule": {
+                        "seed": "0xd1b54a32d192ed03",
+                        "worker_route_invocation_count": 512,
+                        "worker_routes_per_cycle": 4,
+                    },
+                }
+            },
+        }
+
+        gate = RUNNER.m5_gate_report(contract, report)
+
+        self.assertEqual(gate["overall_status"], "unmet")
+        self.assertEqual(gate["unmet_required"], ["m5.5c", "m5.5d", "m5.5e"])
+        self.assertEqual(
+            {entry["id"]: entry["status"] for entry in gate["gates"]},
+            {
+                "m5.base": "passed",
+                "m5.5a": "passed",
+                "m5.5b": "passed",
+                "m5.5c": "blocked",
+                "m5.5d": "blocked",
+                "m5.5e": "blocked",
+            },
         )
 
     def test_adapted_api_fixture_rejects_unexplained_omission_and_symbol_drift(self) -> None:
@@ -1459,13 +1585,11 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(any(item["crabc_libc_exported"] for item in inventory["items"]))
 
     def test_full_and_performance_modes_have_precise_unmet_milestones(self) -> None:
-        full = (
-            "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must complete integrated remote free, abandonment/adoption, thread/TLS lifecycle, remaining Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
-        )
+        full = "allocator --full did not meet Milestone 5: m5.5c: general owner exit remains blocked"
         performance = (
             "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."
         )
-        self.assertIn("passing Milestone 4 adapter lane", full)
+        self.assertIn("m5.5c", full)
         self.assertIn("Milestone 5", full)
         self.assertIn("Milestone 9", performance)
 

@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,8 @@ int main(void)
     small = malloc(4);
     if (small == NULL)
         return fail("malloc");
+    if (malloc_usable_size(small) < 4)
+        return fail("malloc-usable-size");
     small[0] = 1;
     small[1] = 2;
     small[2] = 3;
@@ -44,6 +47,8 @@ int main(void)
     grown = realloc(small, 8192);
     if (grown == NULL || memcmp(grown, "\1\2\3\4", 4) != 0)
         return fail("realloc-grow");
+    if (malloc_usable_size(grown) < 8192)
+        return fail("realloc-usable-size");
     shrunk = realloc(grown, 2);
     if (shrunk == NULL || shrunk[0] != 1 || shrunk[1] != 2)
         return fail("realloc-shrink");
@@ -80,6 +85,8 @@ int main(void)
     aligned = aligned_alloc(64, 65);
     if (aligned == NULL || (unsigned long)aligned % 64 != 0)
         return fail("aligned-alloc");
+    if (malloc_usable_size(aligned) < 65)
+        return fail("aligned-alloc-usable-size");
     free(aligned);
     errno = 0;
     if (aligned_alloc(3, 64) != NULL || errno != EINVAL)

@@ -18,10 +18,11 @@
 //! options, reserve the process-shared arena, initialize pthread/TLS keys, or
 //! own process shutdown. A paired sidecar can retain one caller-selected
 //! source-managed arena mapping. One crate-private ticket-zero static owner or
-//! one sequential later-thread owner may bind that exact pair to the arena's
-//! embedded `pages_main` bitmap for one complete page-engine and
-//! scoped-producer lifetime; concurrent/general later-thread page routing,
-//! owner exit, and runtime allocation routing remain incomplete.
+//! one complete later-thread operation at a time may bind that exact pair to
+//! the arena's embedded `pages_main` bitmap; several later-thread engines may
+//! remain independently parked while the runtime serializes every mutation.
+//! General later-thread page routing, owner exit, and runtime allocation
+//! routing remain incomplete.
 //! Remote-free and one-page abandonment protocols are bounded substrates;
 //! allocation routing and terminal abandoned-page release remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
@@ -60,6 +61,7 @@ mod bootstrap;
 mod config;
 mod compiler_tls;
 mod dynamic_theap;
+mod deferred_free;
 mod free_list;
 mod invariants;
 mod lock;
@@ -109,13 +111,33 @@ pub use test_context::{
 pub mod __crabc_runtime {
     pub use crate::runtime_lifecycle::{
         ThreadAttachResult, ThreadFinishResult, TicketZeroLaterThreadPageResult,
+        TicketZeroOwnerExitFreeConsumer, TicketZeroOwnerExitFreeOutcome,
+        TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitRemoteFreeProducer,
+        TicketZeroOwnerExitRemoteFreePublisher, TicketZeroOwnerExitReclaimConsumer,
+        TicketZeroOwnerExitReclaimOutcome, TicketZeroOwnerExitReclaimRoute,
         TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
+        NativePageAllocationResult, NativePageFreeResult,
         TicketZeroRemoteFreeProducer, TicketZeroRemoteFreeProducerPair,
+        TicketZeroSingleRemoteFreePublisher,
         after_fork_child, after_fork_parent,
         attach_current_thread, before_fork,
-        finish_current_thread_after_user_destructors, initialize_process,
-        process_is_active, ticket_zero_allocate, ticket_zero_free,
+        finish_current_thread_after_user_destructors,
+        finish_current_thread_native_after_user_destructors, initialize_process,
+        process_is_active, prepare_native_later_thread_arena,
+        native_allocate_aligned, native_free, native_reallocate, native_usable_size,
+        ticket_zero_allocate, ticket_zero_free,
+        ticket_zero_allocate_aligned, ticket_zero_usable_size,
+        ticket_zero_later_thread_active_session_rejects_normal_finish,
+        ticket_zero_later_thread_all_free_session_through_normal_finish,
+        ticket_zero_later_thread_retired_then_live_session_owner_exit_through_normal_finish,
+        ticket_zero_later_thread_single_source_published_session_through_normal_finish,
+        ticket_zero_later_thread_source_published_session_through_normal_finish,
         ticket_zero_later_thread_page_roundtrip,
+        ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish,
+        ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish,
+        ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish,
+        ticket_zero_later_thread_session_owner_exit_through_normal_finish,
+        ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish,
         ticket_zero_later_thread_persistent_local_workload,
         ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,
     };

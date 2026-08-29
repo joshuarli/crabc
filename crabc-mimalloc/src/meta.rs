@@ -814,7 +814,25 @@ pub(crate) struct MetaAllocator {
     fail_next_direct_zeroed_size: AtomicUsize,
     #[cfg(test)]
     fail_next_aligned_zeroed_size: AtomicUsize,
+    #[cfg(test)]
+    test_live_allocation_count: AtomicUsize,
+    #[cfg(test)]
+    test_allocation_high_water: AtomicUsize,
     _pin: PhantomPinned,
+}
+
+/// Read-only test audit of caller-visible metadata capabilities.
+///
+/// This deliberately counts only live [`MetaAllocation`] capabilities, not
+/// the detached allocator's own permanent bootstrap mapping or a raw block
+/// inside its reusable page. It lets lifecycle regressions prove that repeated
+/// TLD/Theap construction returns every explicit metadata capability and that
+/// the maximum concurrent capability count plateaus after warmup.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MetaAllocationAudit {
+    pub(crate) live_capability_count: usize,
+    pub(crate) high_water_capability_count: usize,
 }
 
 /// An opaque readiness witness for the detached source metadata route.
@@ -871,6 +889,10 @@ impl MetaAllocator {
             fail_next_direct_zeroed_size: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_aligned_zeroed_size: AtomicUsize::new(0),
+            #[cfg(test)]
+            test_live_allocation_count: AtomicUsize::new(0),
+            #[cfg(test)]
+            test_allocation_high_water: AtomicUsize::new(0),
             _pin: PhantomPinned,
         }
     }
@@ -928,6 +950,19 @@ impl MetaAllocator {
             .then(|| this.page_map.get().addr())
     }
 
+    /// Returns the capability-level metadata lifetime audit used by bounded
+    /// worker-churn regressions. The atomics are diagnostic only: they grant
+    /// no dereference, allocation, or release authority.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_allocation_audit(self: Pin<&'static Self>) -> MetaAllocationAudit {
+        let this = self.get_ref();
+        MetaAllocationAudit {
+            live_capability_count: this.test_live_allocation_count.load(Ordering::Acquire),
+            high_water_capability_count: this.test_allocation_high_water.load(Ordering::Acquire),
+        }
+    }
+
     /// Ensures the detached metadata Theap/image is ready for one selected
     /// source main subprocess without allocating a caller-visible metadata
     /// block. This is the source `mi_process_theap_meta` ordering seam used
@@ -981,12 +1016,15 @@ impl MetaAllocator {
             .allocator()
             .allocate_zeroed(size)
             .ok_or(MetaError::AllocationUnavailable)?;
-        Ok(MetaAllocation::new(
+        let allocation = MetaAllocation::new(
             self,
             pointer,
             size,
             MetaAllocationOrigin::DirectZeroed,
-        ))
+        );
+        #[cfg(test)]
+        self.get_ref().test_note_allocation_created();
+        Ok(allocation)
     }
 
     /// Makes one test-only direct-zeroed request of exactly `size` fail after
@@ -1054,12 +1092,15 @@ impl MetaAllocator {
             .allocator()
             .allocate_aligned_zeroed(size, alignment)
             .ok_or(MetaError::AllocationUnavailable)?;
-        Ok(MetaAllocation::new(
+        let allocation = MetaAllocation::new(
             self,
             pointer,
             size,
             MetaAllocationOrigin::AlignedZeroed,
-        ))
+        );
+        #[cfg(test)]
+        self.get_ref().test_note_allocation_created();
+        Ok(allocation)
     }
 
     /// Replaces a metadata allocation with a zeroed one.
@@ -1117,15 +1158,15 @@ impl MetaAllocator {
                 old.restore_live();
                 return Err(MetaError::AllocationUnavailable);
             };
-            (
-                MetaAllocation::new(
-                    self,
-                    pointer,
-                    new_size,
-                    MetaAllocationOrigin::Replacement,
-                ),
-                new_size.min(old_usable),
-            )
+            let replacement = MetaAllocation::new(
+                self,
+                pointer,
+                new_size,
+                MetaAllocationOrigin::Replacement,
+            );
+            #[cfg(test)]
+            self.get_ref().test_note_allocation_created();
+            (replacement, new_size.min(old_usable))
         };
 
         // SAFETY: `old` is in MOVING state under its exclusive mutable
@@ -1148,11 +1189,19 @@ impl MetaAllocator {
             // unpublishable allocation; both operations remain serialized.
             let mut replacement = replacement;
             replacement.state.store(ALLOCATION_RELEASING, Ordering::Release);
-            let _cleanup = self.release_claimed(&mut replacement);
+            let cleanup = self.release_claimed(&mut replacement);
+            #[cfg(test)]
+            if cleanup.is_ok() {
+                self.get_ref().test_note_allocation_released();
+            }
+            #[cfg(not(test))]
+            let _ = cleanup;
             old.reject();
             return Err(error);
         }
         old.release();
+        #[cfg(test)]
+        self.get_ref().test_note_allocation_released();
         Ok(replacement)
     }
 
@@ -1173,6 +1222,8 @@ impl MetaAllocator {
         match self.release_claimed(allocation) {
             Ok(()) => {
                 allocation.release();
+                #[cfg(test)]
+                self.get_ref().test_note_allocation_released();
                 Ok(())
             }
             Err(error) => {
@@ -1229,6 +1280,38 @@ impl MetaAllocator {
         // SAFETY: the allocation capability is RELEASING or MOVING and the
         // metadata lock excludes every other allocator/page-map mutation.
         unsafe { entry.allocator().free(allocation.pointer) }.map_err(MetaError::Free)
+    }
+
+    #[cfg(test)]
+    fn test_note_allocation_created(&self) {
+        let live = self
+            .test_live_allocation_count
+            .fetch_add(1, Ordering::AcqRel)
+            .checked_add(1)
+            .expect("the test metadata capability count does not overflow");
+        let mut high_water = self.test_allocation_high_water.load(Ordering::Acquire);
+        while live > high_water {
+            match self.test_allocation_high_water.compare_exchange_weak(
+                high_water,
+                live,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => high_water = observed,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn test_note_allocation_released(&self) {
+        let previous = self
+            .test_live_allocation_count
+            .fetch_sub(1, Ordering::AcqRel);
+        assert_ne!(
+            previous, 0,
+            "a successful metadata release must own one live test capability"
+        );
     }
 
     fn initialize(
@@ -1883,6 +1966,58 @@ mod tests {
             .all(|byte| *byte == 0x5a));
         assert_eq!(allocator.free(&mut old), Err(MetaError::ReleasedOrStale));
         allocator.free(&mut replacement).unwrap();
+    }
+
+    #[test]
+    fn metadata_capability_audit_tracks_live_and_warm_high_water() {
+        let allocator = static_allocator();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 0,
+            },
+            "the test fixture begins with no caller-visible metadata capability"
+        );
+
+        let mut first = allocator.zalloc(config(), 32).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 1,
+                high_water_capability_count: 1,
+            },
+            "one direct allocation becomes the first live and high-water capability"
+        );
+        let mut aligned = allocator.zalloc_aligned(config(), 64, 4096).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 2,
+                high_water_capability_count: 2,
+            },
+            "the aligned route contributes one distinct live capability"
+        );
+
+        let mut replacement = allocator.rezalloc(config(), Some(&mut first), 96).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 2,
+                high_water_capability_count: 3,
+            },
+            "rezalloc briefly owns old plus replacement before releasing old"
+        );
+        allocator.free(&mut aligned).unwrap();
+        allocator.free(&mut replacement).unwrap();
+        assert_eq!(
+            allocator.test_allocation_audit(),
+            MetaAllocationAudit {
+                live_capability_count: 0,
+                high_water_capability_count: 3,
+            },
+            "releases return the live count to baseline without erasing warm high-water"
+        );
     }
 
     #[test]

@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "full_lane": {
+    "routes_per_cycle": 4,
+    "stress_seed": "0xd1b54a32d192ed03",
+    "watchdog_seconds": 30,
+    "worker_cycles": 128
+  },
+  "gates": [
+    {
+      "acceptance": "The pinned C oracle, source contracts and ratchet, selected M4 adapter, compiler-TLS codegen judge, and production remote-free Loom model all pass.",
+      "evidence": [
+        "quick-contract-oracle",
+        "m4-adapter",
+        "compiler-tls-codegen",
+        "remote-free-loom"
+      ],
+      "id": "m5.base",
+      "required": true
+    },
+    {
+      "acceptance": "The bounded persistent page-bearing worker route completes under the recorded full-lane schedule without a lifecycle failure.",
+      "evidence": [
+        "runtime-ticket-zero:persistent-local"
+      ],
+      "id": "m5.5a",
+      "required": true
+    },
+    {
+      "acceptance": "The bounded live-owner remote-free route completes under the recorded full-lane schedule and the production remote-free Loom model passes.",
+      "evidence": [
+        "runtime-ticket-zero:live-owner-remote-free",
+        "remote-free-loom"
+      ],
+      "id": "m5.5b",
+      "required": true
+    },
+    {
+      "acceptance": "One general source-shaped owner-exit traversal and terminal-release contract covers the required owner-exit scenarios.",
+      "blocked_by": [
+        "The existing mixed aggregate and mapped-regular reclamation witnesses remain bounded source routes; the complete general owner-exit traversal and terminal-release acceptance has not been established."
+      ],
+      "evidence": [
+        "runtime-ticket-zero:mixed-owner-exit",
+        "runtime-ticket-zero:mapped-regular-reclamation"
+      ],
+      "id": "m5.5c",
+      "required": true
+    },
+    {
+      "acceptance": "Bounded churn, opt-in soak, metadata high-water stability, and applicable upstream stress criteria are accepted for the claimed M5 lifecycle surface.",
+      "blocked_by": [
+        "The full lane runs the bounded 128-cycle development witness, but the required soak, high-water stability acceptance, and applicable upstream stress evidence are still incomplete."
+      ],
+      "evidence": [
+        "runtime-ticket-zero:128-cycle-churn"
+      ],
+      "id": "m5.5d",
+      "required": true
+    },
+    {
+      "acceptance": "The canonical selected native-mimalloc shadow ABI and pthread suite is accepted for the claimed M5 surface.",
+      "blocked_by": [
+        "The selected native-mimalloc shadow lane remains nondefault and bounded; its complete M5 ABI, pthread, differential, and stress acceptance has not been established."
+      ],
+      "evidence": [
+        "canonical:allocator-shadow"
+      ],
+      "id": "m5.5e",
+      "required": true
+    }
+  ],
+  "schema": "crabc-mimalloc-m5-gate",
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

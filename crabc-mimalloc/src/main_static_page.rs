@@ -678,10 +678,56 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
-    /// Allocates one ordinary ticket-zero block, lazily reserving the frozen
-    /// first default arena only after this session needs a fresh page.
-    #[inline]
-    pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+    /// Establishes the one first arena needed before the existing later-main
+    /// page-engine handoff can borrow a dormant process pair.
+    ///
+    /// A never-used ticket-zero owner has no arena identity to lend, while an
+    /// active owner may already contain caller-visible allocations.  This
+    /// helper therefore permits only the empty pre-first-page state: it makes
+    /// and releases one private word-sized allocation, which drives the
+    /// normal source engine through its all-free finish into
+    /// `DormantExistingArena`.  It never touches an active owner, never
+    /// allocates a second arena, and never treats a failed release as a
+    /// retryable handoff.
+    pub(crate) fn prepare_dormant_page_pair(&mut self) -> bool {
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. } => true,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. } => {
+                let Some(block) = self.allocate(WORD_SIZE, false) else {
+                    return false;
+                };
+                // SAFETY: `block` is the exact private allocation made above
+                // while this owner remains exclusively borrowed. Nothing can
+                // publish or alias it before this matching source free.
+                if unsafe { self.free(block) }.is_err() {
+                    return false;
+                }
+                matches!(
+                    &self.state,
+                    MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+                )
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => false,
+        }
+    }
+
+    /// Runs one allocation operation while preserving the permanent
+    /// ticket-zero owner's source arena/page-map transition.
+    ///
+    /// Ordinary and aligned allocation share this lifecycle: a first request
+    /// may reserve exactly one source default arena, a dormant owner may only
+    /// reactivate that same arena, and every active request retains the long
+    /// PageMap lease beside the engine. The operation itself selects only the
+    /// source allocation primitive; it cannot change the owner state machine.
+    fn allocate_with(
+        &mut self,
+        request: usize,
+        allocate: impl FnOnce(
+            &mut PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession>,
+        ) -> Option<NonNull<u8>>,
+    ) -> Option<NonNull<u8>> {
         let state = core::mem::replace(
             &mut self.state,
             MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
@@ -693,7 +739,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 page_map,
                 arena_storage,
             } => {
-                let block = engine.allocate(request, zero);
+                let block = allocate(&mut engine);
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
                     engine,
                     page_map_lifecycle,
@@ -788,7 +834,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         page_map_ref,
                     )
                 };
-                let block = engine.allocate(request, zero);
+                let block = allocate(&mut engine);
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
                     engine,
                     page_map_lifecycle,
@@ -902,7 +948,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         page_map_ref,
                     )
                 };
-                let block = engine.allocate(request, zero);
+                let block = allocate(&mut engine);
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Active {
                     engine,
                     page_map_lifecycle,
@@ -915,6 +961,39 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 unreachable!("a mutable runtime first-arena owner cannot reenter its state transition")
             }
         }
+    }
+
+    /// Allocates one ordinary ticket-zero block, lazily reserving the frozen
+    /// first default arena only after this session needs a fresh page.
+    #[inline]
+    pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+        self.allocate_with(request, |engine| engine.allocate(request, zero))
+    }
+
+    /// Allocates one aligned ticket-zero block through the same permanent
+    /// source owner as [`Self::allocate`].
+    ///
+    /// The page engine retains the pinned in-arena versus OS-aligned
+    /// singleton decision. This wrapper validates alignment before it can
+    /// reserve the first arena, so an invalid C-ABI alignment remains a
+    /// non-mutating allocation refusal.
+    #[inline]
+    pub(crate) fn allocate_aligned(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if !size_class::alignment_is_valid(alignment) {
+            return None;
+        }
+        self.allocate_with(request, |engine| {
+            if zero {
+                engine.allocate_aligned_zeroed(request, alignment)
+            } else {
+                engine.allocate_aligned(request, alignment)
+            }
+        })
     }
 
     /// Reallocates one live ticket-zero runtime allocation.
@@ -935,6 +1014,29 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         match &mut self.state {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active { engine, .. } => {
                 unsafe { engine.reallocate(Some(block), new_size) }
+            }
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+            | MainStaticRuntimeFirstArenaPageAllocatorState::Transition => None,
+        }
+    }
+
+    /// Returns the usable size of one current ticket-zero allocation.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a current allocation of this exact owner and no
+    /// other page operation may concurrently mutate its PageMap entry. The
+    /// runtime invokes this only while its ticket-zero operation guard holds
+    /// the permanent owner exclusively.
+    #[inline]
+    pub(crate) unsafe fn usable_size(&self, block: NonNull<u8>) -> Option<usize> {
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active { engine, .. } => {
+                // SAFETY: forwarded unchanged from this method's current
+                // allocation and exclusive-runtime-owner contract.
+                unsafe { engine.usable_size(block) }
             }
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
             | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }

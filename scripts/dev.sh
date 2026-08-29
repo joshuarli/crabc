@@ -43,8 +43,9 @@ Commands:
   sysroot-smoke <archive>
                       smoke-test one packaged sysroot archive without rebuilding it
   lua [options]       build Lua 5.4 through the owned crabc sysroot
-  allocator --quick|--full
+  allocator --quick|--full|--churn|--soak
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
+  allocator-shadow    run the nondefault native-mimalloc libc ABI/pthread shadow gate
   allocator-tls       prove private initial-exec allocator TLS codegen
   allocator-perf --smoke|--full
                       request allocator comparison evidence (unavailable until its milestone)
@@ -443,16 +444,75 @@ case "$command" in
                 run_in_container python3 compat/allocator/run.py --quick
                 ;;
             --full)
-                # This runner builds the complete Milestone 0 C oracle before
-                # reporting the exact later feature that makes the full matrix
-                # unavailable. It never turns an absent Rust lane into a pass.
+                # This runner builds the complete C-oracle/M4 boundary, runs
+                # the recorded 128-cycle M5 lifecycle lane, and reports each
+                # reviewed unmet M5 gate without turning absent Rust work into
+                # a pass.
                 run_in_container python3 compat/allocator/run.py --full
+                ;;
+            --churn)
+                # This bounded lane repeats the existing mixed local,
+                # remote-free, mixed owner-exit, and sole-reclamation pthread
+                # witnesses under a watchdog; it is not a general allocator pass.
+                run_in_container python3 compat/allocator/run.py --churn
+                ;;
+            --soak)
+                # This opt-in larger lane uses the same pointer-private
+                # witnesses and a longer watchdog. It is lifecycle stability
+                # evidence, not a general allocator pass.
+                run_in_container python3 compat/allocator/run.py --soak
                 ;;
             *)
                 usage >&2
                 exit 2
                 ;;
         esac
+        ;;
+    allocator-shadow)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # C stays the production allocator. Build the ordinary workspace and
+        # owned sysroot first because the C fixtures need the normal loader
+        # and installed aliases, then build the selected shadow libc *last*.
+        # The generic `test` command deliberately rebuilds the default
+        # workspace runtime, so it cannot serve as evidence for this feature.
+        run_in_container cargo build --workspace
+        run_in_container cargo build --workspace --release
+        run_in_container python3 scripts/build_owned_sysroot.py
+        run_in_container cargo build -p crabc-libc --features native-mimalloc-shadow
+        # The direct runtime regressions keep the typed post-exit proof and
+        # live-owner remote-publication boundaries observable without
+        # accidentally selecting the ordinary C allocator artifact. They
+        # cover aggregate, source-proved sole mapped-regular, and parked-A
+        # source remote-free routes before the C ABI fixture exercises the
+        # selected shared object.
+        run_in_container cargo test -p crabc-mimalloc \
+            --test native_post_exit_lifecycle \
+            --test native_sole_post_exit_lifecycle \
+            --test native_two_post_exit_lifecycle \
+            --test native_live_remote_free \
+            -- --test-threads=1
+        run_in_container env RUSTC_WRAPPER="/workspace/scripts/rustc_test_host_tool_wrapper.sh" \
+            python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- cargo test -q -p crabc-libc --features native-mimalloc-shadow \
+            --test allocator \
+            --test native_mimalloc_owner_exit \
+            --test native_mimalloc_two_owner_exit \
+            --test native_mimalloc_aggregate_reclaim \
+            --test native_mimalloc_owner_exit_realloc \
+            --test native_mimalloc_live_remote_free \
+            --test native_mimalloc_initial_remote_free \
+            --test native_mimalloc_parallel_local_workers \
+            --test native_mimalloc_many_local_allocations \
+            --test native_mimalloc_many_owner_exit_allocations \
+            --test native_mimalloc_live_remote_owner_exit \
+                --test pthread_create_join_tls_regression \
+                -- --test-threads=1
         ;;
     allocator-tls)
         ensure_image

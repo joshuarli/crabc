@@ -16,12 +16,14 @@
 
 /*
  * When the selected existing libc fixture is compiled with
- * `-DCRABC_TEST_ADAPTER_REMAP_STDLIB`, include its declarations before the
- * macro remap. That makes an `-include` of this header safe: later standard
- * includes are guarded and cannot have their declarations rewritten.
+ * `-DCRABC_TEST_ADAPTER_REMAP_STDLIB`, include its allocation declarations
+ * before the macro remap. That makes an `-include` of this header safe: later
+ * standard allocation headers are guarded and cannot have their declarations
+ * rewritten.
  */
 #if defined(CRABC_TEST_ADAPTER_REMAP_STDLIB)
 #include <stdlib.h>
+#include <malloc.h>
 #endif
 
 #ifdef __cplusplus
@@ -142,6 +144,7 @@ static inline void *crabc_test_libc_reallocarray(void *p, size_t count, size_t s
 #define realloc(p, size) crabc_test_libc_realloc((p), (size))
 #define reallocarray(p, count, size) \
   crabc_test_libc_reallocarray((p), (count), (size))
+#define malloc_usable_size(p) crabc_test_usable_size((p))
 #define aligned_alloc(alignment, size) crabc_test_malloc_aligned((size), (alignment))
 #define posix_memalign(out, alignment, size) \
   crabc_test_posix_memalign((out), (alignment), (size))

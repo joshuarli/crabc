@@ -13,6 +13,13 @@ crate-type = ["cdylib", "staticlib"]
 test = false
 bench = false
 
+[features]
+default = []
+# Selects the bounded Rust ticket-zero allocator for explicit M5 shadow
+# evidence. The C mimalloc backend remains the default; this feature has no
+# runtime selection or fallback and is not promotion evidence.
+native-mimalloc-shadow = []
+
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64", target_endian = "little"))'.dependencies]
 crabc-core = { path = "../crabc-core" }
 crabc-mimalloc = { path = "../crabc-mimalloc" }
@@ -57,6 +64,47 @@ path = "../tests/advanced_io_exports.rs"
 [[test]]
 name = "allocator"
 path = "../tests/allocator.rs"
+
+
+[[test]]
+name = "native_mimalloc_owner_exit"
+path = "../tests/native_mimalloc_owner_exit.rs"
+
+[[test]]
+name = "native_mimalloc_two_owner_exit"
+path = "../tests/native_mimalloc_two_owner_exit.rs"
+
+[[test]]
+name = "native_mimalloc_aggregate_reclaim"
+path = "../tests/native_mimalloc_aggregate_reclaim.rs"
+
+[[test]]
+name = "native_mimalloc_owner_exit_realloc"
+path = "../tests/native_mimalloc_owner_exit_realloc.rs"
+
+[[test]]
+name = "native_mimalloc_live_remote_free"
+path = "../tests/native_mimalloc_live_remote_free.rs"
+
+[[test]]
+name = "native_mimalloc_initial_remote_free"
+path = "../tests/native_mimalloc_initial_remote_free.rs"
+
+[[test]]
+name = "native_mimalloc_parallel_local_workers"
+path = "../tests/native_mimalloc_parallel_local_workers.rs"
+
+[[test]]
+name = "native_mimalloc_many_local_allocations"
+path = "../tests/native_mimalloc_many_local_allocations.rs"
+
+[[test]]
+name = "native_mimalloc_many_owner_exit_allocations"
+path = "../tests/native_mimalloc_many_owner_exit_allocations.rs"
+
+[[test]]
+name = "native_mimalloc_live_remote_owner_exit"
+path = "../tests/native_mimalloc_live_remote_owner_exit.rs"
 
 
 [[test]]

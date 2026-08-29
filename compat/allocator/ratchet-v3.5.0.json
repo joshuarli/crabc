@@ -8,15 +8,15 @@
   "format": 1,
   "port_map_counts": {
     "differential_verified": 15,
-    "exported": 2,
-    "implemented": 138,
-    "item_count": 134,
+    "exported": 4,
+    "implemented": 145,
+    "item_count": 141,
     "performance_qualified": 0,
     "stress_verified": 1,
     "unit_count": 34,
-    "unit_verified": 138
+    "unit_verified": 145
   },
-  "port_map_sha256": "6831045372c5da105e077a749d4a519918651201177ba7aa453bfd1f5efef601",
+  "port_map_sha256": "3dd086201f15cf466737f48d4ee859ac5769869a12fb317cbed19a77ff5c4476",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -103,6 +103,11 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/alloc-aligned.c:nondefault-crabc-libc-native-mimalloc-shadow-aligned-boundary": [
+      "exported",
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/alloc.c:explicit-default-theap-fundamental-operation-record": [
       "implemented",
       "unit_verified",
@@ -116,6 +121,11 @@
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/alloc.c:nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary": [
+      "exported",
+      "implemented",
+      "unit_verified"
     ],
     "item:src/alloc.c:ordinary-reallocation-decision-and-extents": [
       "implemented",
@@ -152,6 +162,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:external-arena-contiguous-claim-page-metadata-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:later-main-aggregate-last-mapped-regular-post-exit-allocation-adoption": [
       "implemented",
       "unit_verified"
     ],
@@ -224,6 +238,10 @@
       "unit_verified"
     ],
     "item:src/bitmap.h:mi_bitmap_t-dynamic-layout": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/free.c:later-main-bounded-post-exit-same-page-remote-publication": [
       "implemented",
       "unit_verified"
     ],
@@ -343,6 +361,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/page.c:later-main-aggregate-deferred-free-invocation": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/page.c:later-main-one-member-page-area-commit-direct-small-post-exit-allocation-adoption": [
       "implemented",
       "unit_verified"
@@ -352,6 +374,10 @@
       "unit_verified"
     ],
     "item:src/page.c:later-main-one-member-scalar-direct-small-post-exit-allocation-adoption": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page.c:later-main-thread-exit-retired-page-prepass": [
       "implemented",
       "unit_verified"
     ],
@@ -560,6 +586,10 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/theap.c:runtime-active-session-retired-page-prepass-before-opaque-route": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/threadlocal.c:aarch64-versioned-key-and-caller-owned-slot-substrate": [
       "implemented",
       "unit_verified"
@@ -619,7 +649,7 @@
     "unit:src/theap.c": [],
     "unit:src/threadlocal.c": []
   },
-  "upstream_test_contract_sha256": "cff9fc7dda0343add3aada9a8fb1950f9630d74c1e2c7febc619143bea31b28e",
+  "upstream_test_contract_sha256": "14045b7b5fbf537f68d30c55892f9b5334e34349fd1a3fc8b7fe94e24af1134c",
   "upstream_test_inventory_file_count": 16,
   "upstream_test_source_count": 13
 }

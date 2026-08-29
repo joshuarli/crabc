@@ -82,11 +82,14 @@
 // final free. The sole-page process route performs the same mapped publication,
 // then tears down the old Theap/TLD and retains only stable map/arena/Heap facts
 // for linear later client frees. A
-// separate aggregate transition source-traverses every live nonfull
-// regular small, medium, or large arena page when no other page shape remains,
-// releases pages
-// made empty by force collection, and registers surviving mapped pages without
-// retaining a raw former-Theap page list. When the completed traversal itself
+// separate aggregate transition source-traverses every live nonfull regular
+// small, medium, or large arena page together with exact joined-remote full
+// regular candidates and unchanged live arena/OS singletons, releases
+// force-empty arena and OS singletons, and registers survivors without retaining a raw
+// former-Theap page list. Regular members retain mapped or source-unmapped
+// bitmap state as appropriate; a live arena singleton keeps its raw terminal
+// PageMap tail while a live OS singleton keeps its source private-list and
+// clipped-mapping tail. When the completed traversal itself
 // leaves exactly one initially-nonfull medium page with an immediate head, it
 // yields the established one-page route before a registry exists. One explicit
 // consumer can reclaim only that one-page mapped nonfull medium route or four direct-small source shapes
@@ -100,8 +103,13 @@
 // free-list mutation or performs the source mapped reabandon tail for a
 // same-candidate retry. It is not a production option or generic
 // allocation-time policy.
-// Small/direct, full, multi-member aggregate, and all automatic allocation-time
-// routes remain absent.
+// Small/direct and full source origins, every aggregate that still has more
+// than one PageMap member, and all automatic allocation-time routes remain
+// absent. Once sequential client frees leave exactly one mapped regular member
+// and no singleton tail, one explicit consuming edge may select that member
+// through an opaque current client, claim it through the source bitmap, and
+// requeue it in one fresh later-main engine. It is neither a raw-page cache nor
+// a multi-member scan, fallback, or concurrent reclamation route.
 // A bounded false-force collector runs in
 // the source regular candidate scan and in the non-abandoning full-page pass.
 // `RemoteFreeProducer` is one private linear, scoped route to create that
@@ -124,6 +132,9 @@ use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
+#[cfg(test)]
+use core::ffi::c_void;
+
 use crate::abandoned::{self, AbandonError, AbandonResult, RetainedAdoptFailure};
 use crate::arena::{ArenaId, ArenaView, MainArenaMappedAbandonedPage, release_arena_slices};
 use crate::{aligned, alloc, support};
@@ -135,6 +146,8 @@ use crate::dynamic_theap::{
     DynamicPostExitArenaOwnerTransitionState, DynamicTheapError,
     DynamicTheapPageDrainSession, DynamicTheapPageSession,
 };
+#[cfg(test)]
+use crate::deferred_free::DeferredFreeTestCallback;
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession,
     MainHeapThreadPageSession,
@@ -501,6 +514,54 @@ impl<'owner> RemoteFreeProducerPair<'owner> {
     }
 }
 
+/// One synchronous post-exit publication into a regular page whose direct
+/// freeing thread has already claimed `xthread_free`'s low owner bit.
+///
+/// This is deliberately narrower than [`RemoteFreeProducer`]. It cannot
+/// create a collector, reclaim a page, or outlive the direct source decision:
+/// its higher-ranked callback boundary permits only one joined publisher to
+/// append an already-proved private client while the route owner is paused
+/// between `mi_free_block_mt`'s successful claim and
+/// `mi_free_try_collect_mt`. The direct owner then collects the published
+/// client through the ordinary `mi_abandoned_page_unown_from_free` loop.
+#[must_use = "a post-exit remote publisher must publish before its direct source owner resumes"]
+pub(crate) struct ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route> {
+    page: NonNull<Page>,
+    canonical_block: NonNull<u8>,
+    // The callback is higher-ranked, so no caller can name this lifetime to
+    // retain the token after the direct source decision returns. This real
+    // borrow, rather than a lifetime-only marker, ties the capability to the
+    // direct owner's synchronous callback without handing the publisher a
+    // route or PageMap reference.
+    _scope: &'route mut (),
+    _not_sync: PhantomData<Cell<()>>,
+}
+
+// SAFETY: construction occurs only inside the direct post-exit source route
+// after it has pinned the PageMap entry and before it invokes the synchronous
+// callback. Moving this token to one joined worker grants only the atomic
+// `push_abandoned` publication. The direct owner retains every ordinary-page,
+// PageMap, bitmap, and terminal-release decision and cannot resume until the
+// higher-ranked callback has returned.
+unsafe impl Send for ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'_> {}
+
+impl<'route> ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route> {
+    /// Publishes the exact private client to the direct source owner's held
+    /// abandoned remote head.
+    ///
+    /// A successful callback must observe the existing low owner bit. Seeing
+    /// an unowned page means the direct owner no longer holds the source
+    /// decision and is therefore retained by the outer route instead of
+    /// treating this producer as a replacement collector.
+    #[inline]
+    pub(crate) fn publish(self) -> Result<(), Self> {
+        match unsafe { remote_free::push_abandoned(self.page, self.canonical_block) } {
+            Ok(remote_free::AbandonedRemotePush::PublishedToExistingOwner) => Ok(()),
+            Ok(remote_free::AbandonedRemotePush::ClaimedUnownedPage) | Err(_) => Err(self),
+        }
+    }
+}
+
 /// Generic private ordinary-allocation engine over one narrow page owner.
 ///
 /// This value owns either the static [`ExclusiveTheapSession`], a ticket-zero
@@ -534,6 +595,18 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
     // recovery exists because a real failure can have ambiguous ownership.
     #[cfg(test)]
     page_free_collect_failure_once: PageCollectFailureInjection,
+    // This models a terminal release failure after the source has detached
+    // the page from its queue and removed its PageMap span. It is deliberately
+    // separate from collection injection: a release failure can leave a
+    // source owner with no safe retry even when collection itself succeeded.
+    #[cfg(test)]
+    page_release_after_page_map_unregister_failure_once: bool,
+    // Models a source aggregate traversal that fails after queue/direct-cache
+    // and Theap page-count detachment but before mapped-abandoned
+    // publication. The PageMap span remains live, so an accidental all-free
+    // finalizer would be especially unsafe.
+    #[cfg(test)]
+    aggregate_abandon_after_queue_detach_failure_once: bool,
     // Records a source `mi_page_to_full` enqueue for focused dynamic-mode
     // evidence even when the immediately following full collector unfulls an
     // otherwise unchanged page before the public allocation returns.
@@ -562,7 +635,7 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
 /// thread-exit transition from manufacturing a second PageMap/arena/OS-owner
 /// capability while it replaces `DynamicTheapPageSession` with its narrower
 /// post-TLS drain session.
-struct PageAllocatorEngineState<'arena, 'map> {
+pub(crate) struct PageAllocatorEngineState<'arena, 'map> {
     arena: ArenaView<'arena>,
     requested_arena: ArenaId,
     page_map: &'map PageMap,
@@ -1416,20 +1489,60 @@ pub(crate) type ThreadExitFullDirectSmallPostExitParts<'main, 'arena> =
 pub(crate) type ThreadExitFullDirectSmallPostExitTeardownTerminal<'attachment, 'main, 'arena> =
     ThreadExitFullRegularPostExitTeardownTerminal<'attachment, 'main, 'arena>;
 
-/// Every mapped regular arena page detached by one source-order
+/// Every regular arena page detached by one source-order
 /// `_mi_theap_collect_abandon` traversal, before the former later Theap/TLD
-/// is torn down.
+/// is torn down. Initial nonfull pages are mapped-abandoned; unchanged full
+/// regular pages retain source-unmapped abandonment until a later free.
 ///
 /// The page membership registry is deliberately not a Rust list of raw
-/// pointers. Each member remains registered in the process PageMap and in its
-/// exact static-main `pages_abandoned[bin]` bitmap/count pair; the returned
-/// parts re-resolve a page only while holding the short process-map route.
-/// That preserves upstream's lookup/bitmap registries without retaining a
-/// borrow of the departing Theap or creating an allocator-owned collection.
-#[must_use = "detached mapped regular pages must become one process route or remain terminally retained"]
+/// pointers. Each member remains registered in the process PageMap. A mapped
+/// member also owns its exact static-main `pages_abandoned[bin]` bitmap/count
+/// pair; a source-unmapped full member has no such publication until its later
+/// free crosses the source predicate. The returned parts re-resolve a page
+/// only while holding the short process-map route. That preserves upstream's
+/// lookup/bitmap registries without retaining a borrow of the departing Theap
+/// or creating an allocator-owned collection.
+#[must_use = "detached regular pages must become one process route or remain terminally retained"]
 pub(crate) struct ThreadExitMappedRegularPagesPostExitDetach<'attachment, 'main, 'arena> {
     session: MainHeapThreadPageDrainSession<'attachment, 'main>,
     parts: ThreadExitMappedRegularPagesPostExitParts<'main, 'arena>,
+}
+
+/// One-shot proof that every pre-existing member of the static main Heap's
+/// private `os_abandoned_pages` list remains owned by a live bounded
+/// post-exit route.
+///
+/// The token grants no list, page, client, or allocator access. It only lets
+/// the source-shaped aggregate owner-exit preflight accept those already
+/// routed OS members before it appends this drain's exact OS singleton. The
+/// resulting route still owns and removes only the member it inserted. A
+/// normal source drain cannot construct this proof, so its conservative
+/// empty-list entry check remains the default.
+#[must_use = "a known post-exit OS-list proof must be consumed by one aggregate source traversal"]
+pub(crate) struct ThreadExitKnownPostExitOsAbandonedList {
+    // This proof is meaningful only while the current thread owns its source
+    // drain. It must not become a cross-worker list capability.
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl ThreadExitKnownPostExitOsAbandonedList {
+    /// Creates the one-shot source preflight proof for a bounded higher-level
+    /// post-exit router.
+    ///
+    /// # Safety
+    ///
+    /// Every current private OS-list member must remain owned by one active
+    /// typed post-exit route whose exact terminal free will unlink that same
+    /// member before its mapping release. The caller must also hold a bounded
+    /// route admission for the source traversal that consumes this proof.
+    /// This does not authorize a list walk, foreign-member removal, a normal
+    /// allocator engine, or a no-page finalizer after source abandonment.
+    #[inline]
+    pub(crate) unsafe fn from_bounded_post_exit_router() -> Self {
+        Self {
+            _not_send_or_sync: PhantomData,
+        }
+    }
 }
 
 /// One source-local witness that a completed aggregate traversal has exactly
@@ -1452,16 +1565,40 @@ struct ThreadExitMappedRegularAggregateSoleImmediateMedium {
 /// The typed process-lifetime registry for one linear aggregate post-exit
 /// route. `remaining_pages` counts only spans that remain PageMap-registered;
 /// it is decremented after each complete PageMap -> ordinary-bit -> metadata
-/// -> arena-slice terminal release. It stores no former-Theap pointer and no
-/// raw page list. Except for the separately typed source outcome that proves
-/// exactly one initially-nonfull immediate medium survivor before this
-/// registry exists, allocation-time adoption, reclaim/requeue, and general
-/// concurrent routing remain outside this bounded owner.
+/// -> arena-slice terminal release. A source-unmapped full regular member does
+/// not have the ordinary abandoned bitmap publication until a later client
+/// free. A live arena singleton retains its separate raw terminal tail: it
+/// never owns a regular bitmap/count pair, but remains in the same PageMap
+/// membership and terminal count. A live OS-aligned singleton similarly owns
+/// its source private-list and clipped-mapping terminal tail. This route
+/// stores no former-Theap pointer or raw page list. The separately typed
+/// source outcome that proves exactly one initially-nonfull immediate medium
+/// survivor before this registry exists remains available. Once ordinary
+/// sequential frees later reduce a registry to exactly one mapped regular
+/// member with no singleton subregistry, one explicit consuming handoff can
+/// transfer that member into a fresh later-main engine through the source
+/// bitmap claim. Allocation scans, a raw member cache, fresh fallback, and
+/// general concurrent routing remain outside this bounded owner.
 #[must_use = "aggregate post-exit page facts must remain coupled to PageMap access until every span is released"]
 pub(crate) struct ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
     arena: ArenaView<'arena>,
     main_heap: MainStaticHeapLease<'main>,
+    /// The source `BIN_HUGE` singleton tail is sealed separately because it
+    /// cannot select a static-main regular bitmap. Each client still resolves
+    /// its PageMap identity; this stores no singleton pointer or client alias.
+    singletons: Option<ThreadExitFullSingletonPagesPostExitParts<'arena>>,
+    /// A live OS singleton first links through the main Heap's private
+    /// non-arena list, then unlinks exactly that PageMap member before its
+    /// clipped mapping release. The nested facts own a failed-`munmap`
+    /// terminal token but retain neither a raw member pointer nor client alias.
+    os_singletons: Option<ThreadExitFullOsSingletonPagesPostExitParts<'main>>,
     remaining_pages: usize,
+    // This only exists to prove that once the source bitmap/low-owner claim
+    // has crossed into a fresh target, even a later invariant failure retains
+    // that target rather than reopening the short aggregate route. Production
+    // has no recovery seam after that consuming transition.
+    #[cfg(test)]
+    aggregate_last_member_post_claim_failure_once: bool,
     // The route is movable but intentionally not shareable. Its consuming
     // free API plus the post-exit PageMap guard serialize the source owner-bit
     // decision; a shared reference would falsely suggest concurrent routing.
@@ -1469,10 +1606,10 @@ pub(crate) struct ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
 }
 
 /// A post-detach failure while tearing down the old later Theap/TLD after an
-/// aggregate mapped regular-page traversal. The registry remains retained,
-/// but the long PageMap lifecycle has not crossed to a short process route, so
-/// the caller must keep this terminal owner rather than treating exit as
-/// complete.
+/// aggregate regular-page traversal. The registry remains retained, including
+/// any source-unmapped full member, but the long PageMap lifecycle has not
+/// crossed to a short process route, so the caller must keep this terminal
+/// owner rather than treating exit as complete.
 #[must_use = "a failed aggregate post-exit teardown retains every detached page state"]
 pub(crate) struct ThreadExitMappedRegularPagesPostExitTeardownTerminal<'attachment, 'main, 'arena> {
     parts: ThreadExitMappedRegularPagesPostExitParts<'main, 'arena>,
@@ -1586,6 +1723,9 @@ pub(crate) enum ThreadExitMappedOneBlockAbandonError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadExitMappedRegularPostExitAbandonError {
     Collection,
+    /// The source Theap/TLD pairing rejected `_mi_deferred_free` before the
+    /// one-page continuation inspected or detached any page state.
+    DeferredFree(MainHeapThreadAttachmentError),
     Unmapped,
     ForeignPage,
     NonArena,
@@ -1698,6 +1838,45 @@ pub(crate) enum ThreadExitMappedRegularPostExitFreeError {
     ConcurrentOwner,
     Abandon(AbandonError),
     Release,
+}
+
+/// A source-boundary refusal or retained terminal state while the final mapped
+/// regular member of an aggregate post-exit registry transfers into a fresh
+/// later-main Theap.
+///
+/// The aggregate path deliberately names a client only as an exact selection
+/// witness. The pinned allocation path still finds the corresponding bitmap
+/// member through `mi_bitmap_try_find_and_claim`, claims its low owner bit,
+/// drains it while abandoned, and then runs `_mi_theap_page_reclaim` before
+/// queue-tail insertion. It does not turn a residual multi-member registry
+/// into concurrent allocation-time routing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadExitMappedRegularPagesPostExitAdoptError {
+    /// A short aggregate route can become one long target engine only after
+    /// all but one PageMap-registered member have terminally released.
+    AdditionalMembers,
+    /// The target request cannot name one non-singleton regular source bin.
+    Request,
+    /// The supplied opaque selection client was no longer mapped after the
+    /// route's short access had already crossed to the long target lifecycle.
+    Unmapped,
+    /// The selected bitmap member was not claimable. The caller has already
+    /// consumed short PageMap access into its target engine, so it must retain
+    /// that owner instead of reopening the aggregate route or allocating a
+    /// replacement page.
+    Pending,
+    TargetArenaMismatch,
+    TargetMainHeapMismatch,
+    MissingMainArenaPages,
+    MissingTargetThread,
+    Claimed(RetainedAdoptFailure),
+    /// Test-only proof that a failure after source bitmap/owner claim retains
+    /// the fresh target lifecycle rather than reconstructing short access.
+    #[cfg(test)]
+    InjectedPostClaim,
+    ReclaimedPageMismatch,
+    ReclaimedPageState,
+    Queue,
 }
 
 /// The bounded outcome while one explicit post-exit mapped regular route is
@@ -2894,16 +3073,39 @@ pub(crate) enum ThreadExitFullLargePagesPostExitFreeError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadExitMappedRegularPagesPostExitAbandonError {
     Collection,
+    /// The old source Theap/TLD did not satisfy the typed deferred-free
+    /// invocation boundary before any retirement or queue traversal began.
+    DeferredFree(MainHeapThreadAttachmentError),
     ForeignPage,
     NonArena,
     NotMappedRegular,
     MissingMainArenaPages,
     Queue,
     Release,
+    /// The ordinary entrance found a pre-existing source main-Heap private
+    /// non-arena member. It cannot take ownership of an unrelated abandoned
+    /// member; only the separate bounded-router entrance can prove that every
+    /// such member remains owned by another live typed route.
+    OsAbandonedListNotEmpty,
+    MainHeap(MainStaticHeapLeaseError),
+    OsAbandonedList(HeapOsAbandonedPageListError),
     RouteCountOverflow,
     PostDetachState,
     UnexpectedAbandonOutcome(AbandonResult),
     Abandon(AbandonError),
+}
+
+/// One source `_mi_theap_collect_retired(theap, true)` failure before a
+/// later-thread `MI_ABANDON` page traversal.
+///
+/// This phase belongs to both the aggregate route and the all-free drain, so
+/// it deliberately reports only the source queue/release boundary. Each
+/// consuming caller maps the failure into its own retained post-fast-slot
+/// authority rather than reusing an aggregate-only error outside that route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThreadExitRetiredPagePrepassError {
+    Queue,
+    Release,
 }
 
 /// The retained source owner after an aggregate mapped regular-page
@@ -2970,6 +3172,8 @@ pub(crate) enum ThreadExitMappedRegularPagesPostExitFreeOutcome {
 pub(crate) enum ThreadExitMappedRegularPagesPostExitFreeError {
     Unmapped,
     MainHeap(MainStaticHeapLeaseError),
+    Singleton(ThreadExitFullSingletonPagesPostExitFreeError),
+    OsSingleton(ThreadExitFullOsSingletonPagesPostExitFreeError),
     ConcurrentOwner,
     Abandon(AbandonError),
     Release,
@@ -5066,6 +5270,10 @@ impl<'bootstrap, 'arena, 'map>
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
@@ -5099,6 +5307,10 @@ impl<'bootstrap, 'arena, 'map>
             page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
@@ -5134,6 +5346,10 @@ impl<'attach, 'heap, 'arena, 'map>
             page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
@@ -5475,6 +5691,10 @@ impl<'arena, 'map, Session: MainStaticTheapPageSession>
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
@@ -5519,6 +5739,10 @@ impl<'attachment, 'main, 'arena, 'map>
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
@@ -5556,6 +5780,51 @@ impl<'attachment, 'main, 'arena, 'map>
         self.page_area_commit_lease = Some(pair);
     }
 
+    /// Suspends this engine's Rust borrow of its later-thread attachment
+    /// while preserving every source page, arena, PageMap, collector, and OS
+    /// release fact in one typed state token.
+    ///
+    /// This is a storage transition, not a source allocator operation.  It
+    /// exists so compiler TLS can own both `MainHeapThreadAttachment` and the
+    /// long-lived engine state without a self-reference.  The session first
+    /// records the attachment-local suspended marker; only then is the
+    /// Drop-bearing engine split.  A marker failure reconstructs the exact
+    /// engine, so callers cannot lose a live page state by attempting to
+    /// pause it.
+    pub(crate) fn suspend_persistent_later_main_thread(
+        self,
+    ) -> Result<PageAllocatorEngineState<'arena, 'map>, (Self, MainHeapThreadAttachmentError)> {
+        let (mut session, state) = self.into_session_and_state();
+        match session.suspend_persistent() {
+            Ok(()) => {
+                drop(session);
+                Ok(state)
+            }
+            Err(error) => Err((
+                PageAllocatorEngine::<MainHeapThreadPageSession<'attachment, 'main>>::from_session_and_state(
+                    session, state,
+                ),
+                error,
+            )),
+        }
+    }
+
+    /// Reassembles the one engine previously split by
+    /// [`Self::suspend_persistent_later_main_thread`].
+    ///
+    /// `session` may only come from
+    /// [`MainHeapThreadPageSession::resume_persistent`], which consumes the
+    /// matching attachment marker after it revalidates the source roots and
+    /// ownership lists.  Keeping this constructor sibling-private prevents a
+    /// normal fresh session from claiming an arbitrary suspended state.
+    #[inline]
+    pub(crate) fn resume_persistent_later_main_thread(
+        session: MainHeapThreadPageSession<'attachment, 'main>,
+        state: PageAllocatorEngineState<'arena, 'map>,
+    ) -> Self {
+        Self::from_session_and_state(session, state)
+    }
+
     /// Selects one source `commit == false` fresh-regular-page branch for a
     /// focused test fixture. The production configuration has no mutable
     /// page-on-demand option; this exists only to construct one real reserved
@@ -5572,6 +5841,25 @@ impl<'attachment, 'main, 'arena, 'map>
             "the test-only commitment choice requires paired direct mapping authority"
         );
         self.page_commit_on_demand = true;
+    }
+
+    /// Installs the private source-order deferred-free observer on the exact
+    /// live attachment behind this page engine.
+    ///
+    /// # Safety
+    ///
+    /// Forwarded to [`MainHeapThreadPageSession::test_install_deferred_free_observer`].
+    #[cfg(test)]
+    pub(crate) unsafe fn test_install_deferred_free_observer(
+        &mut self,
+        callback: DeferredFreeTestCallback,
+        context: NonNull<c_void>,
+    ) -> bool {
+        // SAFETY: forwarded unchanged to the attachment-local test seam.
+        unsafe {
+            self.session
+                .test_install_deferred_free_observer(callback, context)
+        }
     }
 
     /// Consumes one ordinary later-main page engine into the source
@@ -5613,6 +5901,24 @@ impl<'attachment, 'main, 'arena, 'map>
 impl<'attachment, 'main, 'arena, 'map>
     PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>
 {
+    /// Returns whether a source-mutated post-exit route has already retained
+    /// this exact post-fast-slot attachment as terminal. The normal all-free
+    /// finisher must not infer completion from an empty old queue after a
+    /// failed queue-detach -> process-route transition.
+    #[inline]
+    pub(crate) fn thread_exit_route_is_terminal(&self) -> bool {
+        self.session.owner_exit_is_terminal()
+    }
+
+    /// Latches a failed source-mutated post-exit transition before its
+    /// retained drain can be handed back to the higher lifecycle layer. The
+    /// attached Theap may have lost queue/count ownership while a page remains
+    /// PageMap-live, so only terminal retention is sound.
+    #[inline]
+    pub(crate) fn retain_terminal_thread_exit_route(&mut self) {
+        self.session.retain_terminal_owner_exit();
+    }
+
     /// Completes the first bounded later-main source owner-exit traversal.
     ///
     /// Source `_mi_theap_collect_abandon` force-collects every ordinary and
@@ -5621,11 +5927,41 @@ impl<'attachment, 'main, 'arena, 'map>
     /// every queue and force-appends joined remote/local frees, releases each
     /// page that reaches zero use through the existing PageMap -> `pages_main`
     /// -> metadata -> arena-slice order, and retains this drain if any page
-    /// remains live. General regular/unmapped/huge abandonment, deferred
-    /// callbacks, arena collection, and later free/reclaim routing remain
-    /// outside this capability.
+    /// remains live. General regular/unmapped/huge abandonment, public
+    /// deferred-callback registration/re-entry, arena collection, and later
+    /// free/reclaim routing remain outside this capability.
     pub(crate) fn finish_after_all_free_thread_exit(mut self) -> Result<(), Self> {
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.thread_exit_route_is_terminal()
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+        {
+            return Err(self);
+        }
+
+        // `_mi_theap_collect_ex(MI_ABANDON)` invokes `_mi_deferred_free`
+        // before it walks either retired or ordinary queues. This all-free
+        // continuation has no aggregate route to supply that source phase, so
+        // execute it before the first page inspection and retain the exact
+        // post-fast-slot drain on a broken metadata pairing.
+        if self
+            .session
+            .collect_deferred_free_before_page_collection(true)
+            .is_err()
+        {
+            return Err(self);
+        }
+
+        // Source `mi_theap_collect_ex(MI_ABANDON)` runs
+        // `_mi_theap_collect_retired(theap, true)` before its generic page
+        // visitor. An already-empty retired page is released directly by
+        // `_mi_page_try_retire`; it must not instead consume the generic
+        // `_mi_page_free_collect` phase below. The same prepass resets the
+        // Theap's source retirement bounds before this drain checks every
+        // remaining queue.
+        if self
+            .collect_retired_before_thread_exit_page_traversal()
+            .is_err()
+        {
             return Err(self);
         }
 
@@ -5891,10 +6227,28 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.thread_exit_route_is_terminal()
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+        {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
+            ));
+        }
+
+        // This specialized one-page continuation still begins at the source
+        // `_mi_theap_collect_ex(MI_ABANDON)` boundary. Run its deferred phase
+        // before inspecting the selected page, so direct-small and medium
+        // routes cannot skip the heartbeat/callback ordering preserved by the
+        // aggregate traversal.
+        if let Err(error) = self
+            .session
+            .collect_deferred_free_before_page_collection(true)
+        {
+            return Err(reject(
+                self,
+                ThreadExitMappedRegularPostExitAbandonError::DeferredFree(error),
             ));
         }
 
@@ -11408,29 +11762,26 @@ impl<'attachment, 'main, 'arena, 'map>
     }
 
     /// Ports the retired-page portion of
-    /// `src/page.c:_mi_theap_collect_retired(theap, true)` that precedes the
-    /// aggregate mapped regular-pages route's normal page traversal.
+    /// `src/page.c:_mi_theap_collect_retired(theap, true)` that precedes a
+    /// later-main `MI_ABANDON` generic page traversal.
     ///
-    /// The source `MI_ABANDON` path runs this pass after deferred callbacks
-    /// and before it visits ordinary/full queues. This bounded route has no
-    /// deferred-callback capability, but it must still force-release an
-    /// already-empty, locally retired regular page before deciding which live
-    /// pages enter its process registry. The shared-main later Theap is
-    /// constructed in the normal `allow_page_abandon` mode, so the source's
-    /// non-abandoning full-queue branch is unreachable here; running the
-    /// generic [`Self::collect_retired`] helper would incorrectly add its
-    /// arena-purge work to an `MI_ABANDON` transition.
+    /// The source `MI_ABANDON` path runs this pass after the typed
+    /// deferred-free phase and before it visits ordinary/full queues. It must
+    /// force-release an already-empty, locally retired regular page before
+    /// generic traversal decides whether a live page is released, retained,
+    /// or enters a process route. The shared-main later Theap is constructed
+    /// in the normal `allow_page_abandon` mode, so the source's non-abandoning
+    /// full-queue branch is unreachable here; running the generic
+    /// [`Self::collect_retired`] helper would incorrectly add its arena-purge
+    /// work to an `MI_ABANDON` transition.
     ///
-    /// The caller first proves the entire queue image has only the supported
-    /// regular small, medium, or large shape, permitting an empty member only
-    /// when its source retirement countdown is nonzero. Direct small pages
-    /// additionally retain `free.c`'s `reserved >= 16` partial-collection
-    /// prerequisite. Therefore a prepass release failure retains this
-    /// post-fast-slot drain rather than mutating an otherwise rejected mixed
-    /// page-class image.
-    fn collect_retired_before_mapped_regular_route(
+    /// This is shared by the aggregate's validated registry and the all-free
+    /// drain. It visits only source-tracked regular bins and directly releases
+    /// an empty member; a caller retains its exact post-fast-slot owner if the
+    /// queue or release boundary is malformed or fails.
+    fn collect_retired_before_thread_exit_page_traversal(
         &mut self,
-    ) -> Result<(), ThreadExitMappedRegularPagesPostExitAbandonError> {
+    ) -> Result<(), ThreadExitRetiredPagePrepassError> {
         debug_assert!(
             self.session.theap().allows_page_abandon(),
             "the shared-main later Theap has the source abandoning option image"
@@ -11445,14 +11796,14 @@ impl<'attachment, 'main, 'arena, 'map>
         for bin in minimum..=maximum {
             let mut page = match self.session.queue(bin) {
                 Some(queue) => queue.first(),
-                None => return Err(ThreadExitMappedRegularPagesPostExitAbandonError::Queue),
+                None => return Err(ThreadExitRetiredPagePrepassError::Queue),
             };
             let mut visited = 0usize;
             while !page.is_null() && visited < RETIRE_MAX_PAGES {
                 visited += 1;
                 let page_nonnull = match NonNull::new(page) {
                     Some(page) => page,
-                    None => return Err(ThreadExitMappedRegularPagesPostExitAbandonError::Queue),
+                    None => return Err(ThreadExitRetiredPagePrepassError::Queue),
                 };
                 // SAFETY: the structural preflight retains exclusive queue
                 // ownership. Preserve the successor before source release can
@@ -11467,7 +11818,17 @@ impl<'attachment, 'main, 'arena, 'map>
                     // forced source branch immediately frees the page.
                     unsafe { (*page_nonnull.as_ptr()).set_retire_expire(expire - 1) };
                     if !self.release_page(bin, page_nonnull.as_ptr()) {
-                        return Err(ThreadExitMappedRegularPagesPostExitAbandonError::Release);
+                        // `release_page` can fail after it has removed this
+                        // page from its queue and PageMap. The shared prepass
+                        // cannot expose a drain that might retry that
+                        // irreversible source transition through a later
+                        // aggregate or all-free continuation.
+                        self.retain_page_collect_poison(
+                            page_nonnull,
+                            PageCollectError::Lifecycle,
+                            None,
+                        );
+                        return Err(ThreadExitRetiredPagePrepassError::Release);
                     }
                 } else {
                     // A page revived before this source pass is no longer
@@ -11481,20 +11842,27 @@ impl<'attachment, 'main, 'arena, 'map>
         Ok(())
     }
 
-    /// Traverses every live mapped regular small, medium, or large page of
-    /// this post-fast-slot later owner in the same source order as
+    /// Traverses every live mapped regular small, medium, or large page and
+    /// live arena or OS-aligned singleton of this post-fast-slot later owner
+    /// in the same source order as
     /// `_mi_theap_collect_abandon`.
     ///
     /// A complete non-mutating structural preflight requires every current
-    /// queue member to be a nonfull regular arena page that can use the
-    /// static main Heap's exact bitmap/count pairing. A populated direct-small
-    /// cache is valid only when its complete image matches the source queue
-    /// heads. It admits an empty member only when that page is source-retired.
-    /// The source retired-page prepass then releases those spans before the
-    /// normal traversal force-collects, false-collects and detaches each
-    /// remaining live page for mapped-abandoned publication. The aggregate
-    /// process route is a typed registry over those source PageMap and bitmap
-    /// entries, not a local list of raw page pointers.
+    /// queue member to be either a nonfull regular arena page that can use
+    /// the static main Heap's exact bitmap/count pairing, or a full regular
+    /// arena page whose source-unmapped tail remains in the same typed route
+    /// until a client free either crosses the mostly-used mapping boundary or
+    /// terminally releases it. A live full arena singleton is also admitted,
+    /// but retains only its source raw terminal tail. A joined remote free can
+    /// instead make a full page nonfull or force-empty a singleton during
+    /// collection. A populated direct-small cache is valid only when its
+    /// complete image matches the source queue heads. It admits an empty
+    /// regular member only when that page is source-retired. The source
+    /// retired-page prepass then releases those spans before the normal
+    /// traversal force-collects, false-collects and detaches each remaining
+    /// live page. The aggregate process route is a typed registry over those
+    /// source PageMap and bitmap entries, not a local list of raw page
+    /// pointers.
     ///
     /// It deliberately has no allocation-time claim, reclaim/requeue, or
     /// concurrent client-free policy. The caller must retain its linear route
@@ -11510,30 +11878,99 @@ impl<'attachment, 'main, 'arena, 'map>
     /// no former-Theap dereference is valid after the returned detach tears it
     /// down.
     pub(crate) unsafe fn abandon_mapped_regular_pages_to_process_route(
-        mut self,
+        self,
     ) -> Result<
         ThreadExitMappedRegularPagesPostExitAbandonOutcome<'attachment, 'main, 'arena, 'map>,
         ThreadExitMappedRegularPagesPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
     > {
+        // SAFETY: this public entry preserves the ordinary source contract:
+        // a live OS singleton may start only with an empty private list.
+        unsafe { self.abandon_mapped_regular_pages_to_process_route_inner(None) }
+    }
+
+    /// Runs the aggregate source traversal when a bounded higher-level
+    /// post-exit router has proved that any existing private OS-list members
+    /// remain owned by its own live typed routes.
+    ///
+    /// This is deliberately distinct from
+    /// [`Self::abandon_mapped_regular_pages_to_process_route`]. The ordinary
+    /// entry keeps its empty-list preflight, while this one-shot proof permits
+    /// only insertion beside known post-exit members. It does not expose a
+    /// list traversal, a foreign-member free, or allocation-time access.
+    ///
+    /// # Safety
+    ///
+    /// In addition to the ordinary aggregate source-drain obligations, the
+    /// caller must hold `known_os_abandoned_members` only after proving every
+    /// current private OS-list member is retained by a live typed post-exit
+    /// route that will unlink its exact member before mapping release.
+    pub(crate) unsafe fn abandon_mapped_regular_pages_to_process_route_with_known_os_abandoned_members(
+        self,
+        known_os_abandoned_members: ThreadExitKnownPostExitOsAbandonedList,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitAbandonOutcome<'attachment, 'main, 'arena, 'map>,
+        ThreadExitMappedRegularPagesPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
+    > {
+        // SAFETY: forwarded unchanged to the one source traversal that
+        // consumes this one-shot list-membership proof.
+        unsafe {
+            self.abandon_mapped_regular_pages_to_process_route_inner(Some(
+                known_os_abandoned_members,
+            ))
+        }
+    }
+
+    /// Shared implementation for the conservative and explicitly proven
+    /// private-OS-list aggregate entrances.
+    unsafe fn abandon_mapped_regular_pages_to_process_route_inner(
+        mut self,
+        known_os_abandoned_members: Option<ThreadExitKnownPostExitOsAbandonedList>,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitAbandonOutcome<'attachment, 'main, 'arena, 'map>,
+        ThreadExitMappedRegularPagesPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
+    > {
+        let permits_known_os_abandoned_members = known_os_abandoned_members.is_some();
         let reject = |engine, error| {
             ThreadExitMappedRegularPagesPostExitAbandonFailure::Rejected { engine, error }
         };
         let retained = |engine, error| {
             ThreadExitMappedRegularPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.thread_exit_route_is_terminal()
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+        {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPagesPostExitAbandonError::Collection,
             ));
         }
 
+        // Preserve `_mi_theap_collect_ex(MI_ABANDON)` order: while the old
+        // Theap and TLD are still attached and the fast slot is already clear,
+        // advance its heartbeat and invoke the non-recursive deferred-free
+        // boundary before retirement or any queue preflight/traversal. A
+        // pairing failure has not touched page state, so this remains a
+        // rejected drain rather than a terminal collector mutation.
+        if let Err(error) = self
+            .session
+            .collect_deferred_free_before_page_collection(true)
+        {
+            return Err(reject(
+                self,
+                ThreadExitMappedRegularPagesPostExitAbandonError::DeferredFree(error),
+            ));
+        }
+
         // Before source retirement or force collection can change local
         // ownership, prove that *every* page has the one bounded
-        // mapped regular-pages route. This is the aggregate registry
-        // boundary: it rejects full/singleton/OS pages and malformed queue
-        // images without partially detaching an earlier member. In
-        // particular, prove each
+        // regular-pages route. This is the aggregate registry boundary: it
+        // accepts exact full Medium/Large and direct/non-direct Small source
+        // states, whether a joined remote free will normalize them to mapped
+        // or they remain source-unmapped, plus live arena/OS singleton and
+        // force-empty arena/OS singleton states. A live OS singleton first
+        // proves the private non-arena list is empty; malformed queue images reject
+        // without partially detaching an earlier member. In particular, prove each
         // queue's empty endpoints, head predecessor, every predecessor link,
         // terminal successor, and tail before the later unsafe remove kernel
         // relies on that complete doubly linked image. A zero-used member is
@@ -11542,6 +11979,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // live routing.
         let expected_page_count = self.session.theap().page_count();
         let mut observed_page_count = 0usize;
+        let mut observed_live_os_singleton = false;
         for queue_bin in 0..BIN_COUNT {
             let Some(queue) = self.session.queue(queue_bin) else {
                 return Err(reject(
@@ -11585,45 +12023,138 @@ impl<'attachment, 'main, 'arena, 'map>
                         ThreadExitMappedRegularPagesPostExitAbandonError::ForeignPage,
                     ));
                 }
-                if page_ref.memid().kind() != MemoryKind::Arena {
-                    return Err(reject(
-                        self,
-                        ThreadExitMappedRegularPagesPostExitAbandonError::NonArena,
-                    ));
-                }
                 let Some(bin) = size_class::bin(page_ref.block_size()) else {
                     return Err(reject(
                         self,
                         ThreadExitMappedRegularPagesPostExitAbandonError::NotMappedRegular,
                     ));
                 };
-                if queue_bin != bin
-                    || !matches!(
-                        size_class::page_kind_for_block_size(page_ref.block_size()),
-                        Some(PageKind::Small | PageKind::Medium | PageKind::Large)
-                    )
-                    || bin >= ARENA_BIN_COUNT
-                    || bin == BIN_FULL
-                    || page_ref.reserved() <= 1
-                    || (page_ref.block_size() <= SMALL_SIZE_MAX && page_ref.reserved() < 16)
-                    || (page_ref.used() == 0 && page_ref.retire_expire() == 0)
-                    || page_ref.used() >= usize::from(page_ref.reserved())
-                    || page_is_in_full(page_ref)
+                let kind = size_class::page_kind_for_block_size(page_ref.block_size());
+                let memory_kind = page_ref.memid().kind();
+                let is_nonfull_regular = memory_kind == MemoryKind::Arena
+                    && queue_bin == bin
+                    && matches!(kind, Some(PageKind::Small | PageKind::Medium | PageKind::Large))
+                    && bin < ARENA_BIN_COUNT
+                    && bin != BIN_FULL
+                    && page_ref.reserved() > 1
+                    && (page_ref.block_size() > SMALL_SIZE_MAX || page_ref.reserved() >= 16)
+                    && !(page_ref.used() == 0 && page_ref.retire_expire() == 0)
+                    && page_ref.used() < usize::from(page_ref.reserved())
+                    && !page_is_in_full(page_ref);
+                // `mi_theap_collect_ex(MI_ABANDON)` keeps a full Medium or
+                // Large page in BIN_FULL through force collection. A joined
+                // remote free can normalize it to mapped; otherwise it enters
+                // this route's source-unmapped regular tail.
+                let is_full_medium_or_large = memory_kind == MemoryKind::Arena
+                    && queue_bin == BIN_FULL
+                    && matches!(kind, Some(PageKind::Medium | PageKind::Large))
+                    && bin < ARENA_BIN_COUNT
+                    && bin != BIN_FULL
+                    && page_ref.reserved() > 1
+                    && page_ref.used() == usize::from(page_ref.reserved())
+                    && page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null();
+                // A full Small page stays in its ordinary size bin, even
+                // while source force collection owns an optional joined
+                // remote free. Direct small additionally retains its complete
+                // rounded cache image, which the aggregate preflight and
+                // later queue-removal repair validate independently. Both
+                // small classes share the source-unmapped tail when unchanged.
+                let is_full_small = memory_kind == MemoryKind::Arena
+                    && queue_bin == bin
+                    && kind == Some(PageKind::Small)
+                    && bin < ARENA_BIN_COUNT
+                    && bin != BIN_FULL
+                    && page_ref.reserved() > 1
+                    && (page_ref.block_size() > SMALL_SIZE_MAX || page_ref.reserved() >= 16)
+                    && page_ref.used() == usize::from(page_ref.reserved())
+                    && !page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null();
+                // An unchanged arena singleton follows `BIN_HUGE`'s raw
+                // source-unmapped terminal tail. It cannot publish a regular
+                // static-main bitmap/count pair, but its complete PageMap
+                // span can remain in this general traversal beside ordinary
+                // regular members. A joined remote free instead takes the
+                // force-empty path below and never becomes a registry member.
+                let is_live_arena_singleton = memory_kind == MemoryKind::Arena
+                    && queue_bin == BIN_FULL
+                    && kind == Some(PageKind::Singleton)
+                    && bin == BIN_HUGE
+                    && page_ref.reserved() == 1
+                    && page_ref.used() == 1
+                    && page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null()
+                    && !page_ref.has_published_remote_free();
+                // The source non-arena branch also begins full in BIN_FULL,
+                // but must retain its `MemoryKind::Os` identity rather than
+                // normalizing through arena page-kind selection. Its one
+                // later free needs the main Heap's private OS list and the
+                // clipped mapping release tail, so an unchanged member is
+                // distinct from both regular pages and an arena singleton.
+                let is_live_os_singleton = memory_kind == MemoryKind::Os
+                    && queue_bin == BIN_FULL
+                    && page_ref.reserved() == 1
+                    && page_ref.used() == 1
+                    && page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null()
+                    && !page_ref.has_published_remote_free();
+                // A force-empty source singleton never joins the post-exit
+                // registry: the source force pass consumes its only remote
+                // client and follows the ordinary queue/map/backing release
+                // before another regular page is detached. Arena singletons
+                // use `BIN_HUGE`/`PageKind::Singleton`; an OS-aligned
+                // singleton deliberately keeps its `MemoryKind::Os` identity
+                // even when its block size would otherwise look small.
+                let is_force_empty_singleton_candidate = queue_bin == BIN_FULL
+                    && page_ref.reserved() == 1
+                    && page_ref.used() == 1
+                    && page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null()
+                    && page_ref.has_published_remote_free()
+                    && match memory_kind {
+                        MemoryKind::Arena => {
+                            kind == Some(PageKind::Singleton) && bin == BIN_HUGE
+                        }
+                        MemoryKind::Os => true,
+                        _ => false,
+                    };
+                if !(is_nonfull_regular
+                    || is_full_medium_or_large
+                    || is_full_small
+                    || is_live_arena_singleton
+                    || is_live_os_singleton
+                    || is_force_empty_singleton_candidate)
                 {
                     return Err(reject(
                         self,
                         ThreadExitMappedRegularPagesPostExitAbandonError::NotMappedRegular,
                     ));
                 }
-                if queue.block_size() != page_ref.block_size()
-                    || !matches!(self.release_span(page_nonnull.as_ptr()), Some(ReleaseSpan::Arena { .. }))
+                let has_supported_release_span = match self.release_span(page_nonnull.as_ptr()) {
+                    Some(ReleaseSpan::Arena { .. }) => true,
+                    Some(ReleaseSpan::Os(_)) => {
+                        is_live_os_singleton || is_force_empty_singleton_candidate
+                    }
+                    None => false,
+                };
+                if (queue_bin != BIN_FULL && queue.block_size() != page_ref.block_size())
+                    || !has_supported_release_span
                 {
                     return Err(reject(
                         self,
                         ThreadExitMappedRegularPagesPostExitAbandonError::NotMappedRegular,
                     ));
                 }
-                if self.main_heap_abandoned_page(bin).is_none() {
+                if !is_force_empty_singleton_candidate
+                    && !is_live_arena_singleton
+                    && !is_live_os_singleton
+                    && self.main_heap_abandoned_page(bin).is_none()
+                {
                     return Err(reject(
                         self,
                         ThreadExitMappedRegularPagesPostExitAbandonError::MissingMainArenaPages,
@@ -11638,6 +12169,7 @@ impl<'attachment, 'main, 'arena, 'map>
                         ));
                     }
                 };
+                observed_live_os_singleton |= is_live_os_singleton;
                 // SAFETY: the queue is exclusively stable during this
                 // preflight; bounded `remaining` makes a malformed cycle
                 // reject through the final tail check rather than loop.
@@ -11658,6 +12190,53 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitMappedRegularPagesPostExitAbandonError::Queue,
             ));
         }
+        // `_mi_arenas_page_abandon` links a live non-arena singleton into
+        // `heap->os_abandoned_pages` before common unown. The ordinary
+        // entrance owns only members it inserts, so it rejects a pre-existing
+        // private list before any source collector, queue mutation, or list
+        // insertion can occur. A higher-level bounded router may instead
+        // consume `ThreadExitKnownPostExitOsAbandonedList`: its existing
+        // members remain owned by separate typed routes, and this traversal
+        // still appends/removes only its exact member under the same private
+        // Heap list lock.
+        if observed_live_os_singleton {
+            let main_heap = self.session.main_heap_lease();
+            let mut heap = match main_heap.lock_heap() {
+                Ok(heap) => heap,
+                Err(error) => {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::MainHeap(error),
+                    ));
+                }
+            };
+            let is_empty = heap.heap_mut().os_abandoned_pages_are_empty();
+            let unlock = heap.unlock();
+            match (is_empty, unlock) {
+                (Ok(true), Ok(())) => {}
+                (Ok(false), Ok(())) if !permits_known_os_abandoned_members => {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::OsAbandonedListNotEmpty,
+                    ));
+                }
+                (Ok(false), Ok(())) => {}
+                (Ok(_), Err(error)) | (Err(_), Err(error)) => {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::MainHeap(
+                            MainStaticHeapLeaseError::Lock(error),
+                        ),
+                    ));
+                }
+                (Err(error), Ok(())) => {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::OsAbandonedList(error),
+                    ));
+                }
+            }
+        }
         if !self.direct_cache_matches_source_queue_heads() {
             return Err(reject(
                 self,
@@ -11670,11 +12249,21 @@ impl<'attachment, 'main, 'arena, 'map>
         // this separate from `collect_retired`: abandoning a later owner must
         // not run its generic arena-purge pass. A failed release may already
         // have changed queue/map/arena ownership, so retain this drain.
-        if let Err(error) = self.collect_retired_before_mapped_regular_route() {
+        if let Err(error) = self.collect_retired_before_thread_exit_page_traversal() {
+            let error = match error {
+                ThreadExitRetiredPagePrepassError::Queue => {
+                    ThreadExitMappedRegularPagesPostExitAbandonError::Queue
+                }
+                ThreadExitRetiredPagePrepassError::Release => {
+                    ThreadExitMappedRegularPagesPostExitAbandonError::Release
+                }
+            };
             return Err(retained(self, error));
         }
 
         let mut detached_pages = 0usize;
+        let mut detached_singletons = 0usize;
+        let mut detached_os_singletons = 0usize;
         let mut sole_immediate_medium = None;
         for bin in 0..BIN_COUNT {
             let mut page = match self.session.queue(bin) {
@@ -11711,6 +12300,15 @@ impl<'attachment, 'main, 'arena, 'map>
                 }
                 if unsafe { page_nonnull.as_ref().used() } == 0 {
                     if !self.release_page(bin, page_nonnull.as_ptr()) {
+                        // A release failure may follow queue/count and
+                        // PageMap detachment. Keep the old owner terminally
+                        // poisoned instead of exposing a second aggregate
+                        // traversal over a partially released page.
+                        self.retain_page_collect_poison(
+                            page_nonnull,
+                            PageCollectError::Lifecycle,
+                            None,
+                        );
                         return Err(retained(
                             self,
                             ThreadExitMappedRegularPagesPostExitAbandonError::Release,
@@ -11732,6 +12330,13 @@ impl<'attachment, 'main, 'arena, 'map>
                 }
                 if unsafe { page_nonnull.as_ref().used() } == 0 {
                     if !self.release_page(bin, page_nonnull.as_ptr()) {
+                        // This false-collection release shares the same
+                        // terminal post-detach boundary as the force path.
+                        self.retain_page_collect_poison(
+                            page_nonnull,
+                            PageCollectError::Lifecycle,
+                            None,
+                        );
                         return Err(retained(
                             self,
                             ThreadExitMappedRegularPagesPostExitAbandonError::Release,
@@ -11742,24 +12347,68 @@ impl<'attachment, 'main, 'arena, 'map>
                 }
 
                 // The non-mutating preflight proved this shape before the
-                // source collectors. Recheck the ordinary geometry after the
-                // collectors before queue ownership crosses the boundary.
+                // source collectors. Recheck the regular or singleton
+                // geometry after collection before queue ownership crosses
+                // the boundary. A source-full Medium or Large page remains
+                // physically linked to BIN_FULL until removal clears its full
+                // flag below; a full Small page remains in its ordinary size
+                // queue. A live arena singleton stays in BIN_FULL and a live
+                // OS singleton remains source-full there; each takes its
+                // source-specific terminal tail instead of a regular bitmap.
                 // SAFETY: both collectors completed under this exclusive
                 // owner; the page remains linked until the remove below.
                 let page_ref = unsafe { page_nonnull.as_ref() };
-                if !matches!(
-                    size_class::page_kind_for_block_size(page_ref.block_size()),
+                let Some(mapped_bin) = size_class::bin(page_ref.block_size()) else {
+                    return Err(retained(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::NotMappedRegular,
+                    ));
+                };
+                let kind = size_class::page_kind_for_block_size(page_ref.block_size());
+                let used = page_ref.used();
+                let reserved = usize::from(page_ref.reserved());
+                let regular_queue_shape = if bin == BIN_FULL {
+                    matches!(kind, Some(PageKind::Medium | PageKind::Large))
+                        && page_is_in_full(page_ref)
+                } else {
+                    mapped_bin == bin && !page_is_in_full(page_ref)
+                };
+                let source_full_regular = (bin == BIN_FULL
+                    && matches!(kind, Some(PageKind::Medium | PageKind::Large))
+                    && page_is_in_full(page_ref))
+                    || (bin != BIN_FULL
+                        && kind == Some(PageKind::Small)
+                        && mapped_bin == bin
+                        && !page_is_in_full(page_ref)
+                        && used == reserved);
+                let is_supported_regular = matches!(
+                    kind,
                     Some(PageKind::Small | PageKind::Medium | PageKind::Large)
-                )
-                    || size_class::bin(page_ref.block_size()) != Some(bin)
-                    || bin >= ARENA_BIN_COUNT
-                    || bin == BIN_FULL
-                    || page_ref.reserved() <= 1
-                    || (page_ref.block_size() <= SMALL_SIZE_MAX && page_ref.reserved() < 16)
-                    || page_ref.used() == 0
-                    || page_ref.used() >= usize::from(page_ref.reserved())
-                    || page_is_in_full(page_ref)
-                {
+                ) && mapped_bin < ARENA_BIN_COUNT
+                    && mapped_bin != BIN_FULL
+                    && page_ref.reserved() > 1
+                    && (page_ref.block_size() > SMALL_SIZE_MAX || page_ref.reserved() >= 16)
+                    && used != 0
+                    && used <= reserved
+                    && regular_queue_shape
+                    && (used != reserved || source_full_regular);
+                let is_live_arena_singleton = page_ref.memid().kind() == MemoryKind::Arena
+                    && bin == BIN_FULL
+                    && kind == Some(PageKind::Singleton)
+                    && mapped_bin == BIN_HUGE
+                    && page_ref.reserved() == 1
+                    && used == 1
+                    && page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null();
+                let is_live_os_singleton = page_ref.memid().kind() == MemoryKind::Os
+                    && bin == BIN_FULL
+                    && page_ref.reserved() == 1
+                    && used == 1
+                    && page_is_in_full(page_ref)
+                    && page_ref.retire_expire() == 0
+                    && page_ref.free_list_head().is_null();
+                if !is_supported_regular && !is_live_arena_singleton && !is_live_os_singleton {
                     return Err(retained(
                         self,
                         ThreadExitMappedRegularPagesPostExitAbandonError::NotMappedRegular,
@@ -11771,7 +12420,8 @@ impl<'attachment, 'main, 'arena, 'map>
                 // exact candidate only for the initial medium/immediate
                 // shape. A later mapped survivor clears it below, and an
                 // all-free page never becomes a registry member at all.
-                let immediate_medium = if detached_pages == 0
+                let immediate_medium = if bin != BIN_FULL
+                    && detached_pages == 0
                     && size_class::page_kind_for_block_size(page_ref.block_size())
                         == Some(PageKind::Medium)
                     && !page_ref.free_list_head().is_null()
@@ -11793,7 +12443,7 @@ impl<'attachment, 'main, 'arena, 'map>
                             memory,
                             slice_start,
                             size,
-                            bin,
+                            bin: mapped_bin,
                         }),
                         Some(ReleaseSpan::Arena { .. }) | Some(ReleaseSpan::Os(_)) | None => None,
                     }
@@ -11818,7 +12468,9 @@ impl<'attachment, 'main, 'arena, 'map>
                 // `theap->page_count`. That ordering matters when two pages
                 // share a direct bin: removing the head must publish the next
                 // queue head before the count says the old page is gone.
-                self.update_direct_cache(bin);
+                if bin != BIN_FULL {
+                    self.update_direct_cache(bin);
+                }
                 if !self.session.note_page_removed() {
                     return Err(retained(
                         self,
@@ -11826,22 +12478,59 @@ impl<'attachment, 'main, 'arena, 'map>
                     ));
                 }
 
-                let abandoned = match self.main_heap_abandoned_page(bin) {
-                    Some(map) => {
-                        // Source order is force -> false -> queue/count
-                        // detach -> mapped identity/bit/count -> unown. The
-                        // returned process registry owns the later free.
-                        unsafe { abandoned::abandon_after_collect(page_nonnull, Some(&map)) }
+                #[cfg(test)]
+                if self.consume_aggregate_abandon_after_queue_detach_failure() {
+                    return Err(retained(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::PostDetachState,
+                    ));
+                }
+
+                if is_live_os_singleton {
+                    // Preserve `_mi_arenas_page_abandon`'s non-arena order:
+                    // after source queue/count detachment but before common
+                    // unown, link this exact page through the static main
+                    // Heap's private OS-abandoned list. A later failed list
+                    // operation has no safe rollback after detachment, so
+                    // retain the only drain terminally.
+                    if let Err(error) = self
+                        .push_os_abandoned_page_to_main_heap_for_mapped_regular_route(page_nonnull)
+                    {
+                        self.retain_page_collect_poison(
+                            page_nonnull,
+                            PageCollectError::Lifecycle,
+                            None,
+                        );
+                        return Err(retained(self, error));
                     }
-                    None => {
-                        return Err(retained(
-                            self,
-                            ThreadExitMappedRegularPagesPostExitAbandonError::MissingMainArenaPages,
-                        ));
+                }
+
+                let abandoned = if is_live_arena_singleton || is_live_os_singleton || used == reserved {
+                    // Full regular pages deliberately bypass
+                    // `pages_abandoned[bin]` at owner exit. A live arena
+                    // singleton has no regular bitmap at all. Both retain
+                    // their PageMap span and take their source-specific later
+                    // client-free tail.
+                    unsafe { abandoned::abandon_unmappable_after_collect(page_nonnull) }
+                } else {
+                    match self.main_heap_abandoned_page(mapped_bin) {
+                        Some(map) => {
+                            // Source order is force -> false -> queue/count
+                            // detach -> mapped identity/bit/count -> unown.
+                            // The returned process registry owns the later
+                            // free.
+                            unsafe { abandoned::abandon_after_collect(page_nonnull, Some(&map)) }
+                        }
+                        None => {
+                            return Err(retained(
+                                self,
+                                ThreadExitMappedRegularPagesPostExitAbandonError::MissingMainArenaPages,
+                            ));
+                        }
                     }
                 };
                 match abandoned {
-                    Ok(AbandonResult::UnownedMapped) => {
+                    Ok(AbandonResult::UnownedMapped | AbandonResult::UnownedUnmapped) => {
                         detached_pages = match detached_pages.checked_add(1) {
                             Some(count) => count,
                             None => {
@@ -11851,6 +12540,28 @@ impl<'attachment, 'main, 'arena, 'map>
                                 ));
                             }
                         };
+                        if is_live_arena_singleton {
+                            detached_singletons = match detached_singletons.checked_add(1) {
+                                Some(count) => count,
+                                None => {
+                                    return Err(retained(
+                                        self,
+                                        ThreadExitMappedRegularPagesPostExitAbandonError::RouteCountOverflow,
+                                    ));
+                                }
+                            };
+                        }
+                        if is_live_os_singleton {
+                            detached_os_singletons = match detached_os_singletons.checked_add(1) {
+                                Some(count) => count,
+                                None => {
+                                    return Err(retained(
+                                        self,
+                                        ThreadExitMappedRegularPagesPostExitAbandonError::RouteCountOverflow,
+                                    ));
+                                }
+                            };
+                        }
                         sole_immediate_medium = if detached_pages == 1 {
                             immediate_medium
                         } else {
@@ -11907,6 +12618,48 @@ impl<'attachment, 'main, 'arena, 'map>
                 ));
             }
         }
+        if detached_os_singletons != 0 {
+            // Each source OS member inserted above must remain linked until
+            // its exact later failed-reclaim free. If this observation cannot
+            // prove that private ownership, preserve the draining engine as
+            // the only terminal owner rather than exposing a route that could
+            // release an unrelated mapping.
+            let main_heap = self.session.main_heap_lease();
+            let mut heap = match main_heap.lock_heap() {
+                Ok(heap) => heap,
+                Err(error) => {
+                    return Err(retained(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::MainHeap(error),
+                    ));
+                }
+            };
+            let is_empty = heap.heap_mut().os_abandoned_pages_are_empty();
+            let unlock = heap.unlock();
+            match (is_empty, unlock) {
+                (Ok(false), Ok(())) => {}
+                (Ok(true), Ok(())) => {
+                    return Err(retained(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::PostDetachState,
+                    ));
+                }
+                (Ok(_), Err(error)) | (Err(_), Err(error)) => {
+                    return Err(retained(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::MainHeap(
+                            MainStaticHeapLeaseError::Lock(error),
+                        ),
+                    ));
+                }
+                (Err(error), Ok(())) => {
+                    return Err(retained(
+                        self,
+                        ThreadExitMappedRegularPagesPostExitAbandonError::OsAbandonedList(error),
+                    ));
+                }
+            }
+        }
 
         if detached_pages == 0 {
             return Ok(ThreadExitMappedRegularPagesPostExitAbandonOutcome::Drained(self));
@@ -11941,6 +12694,7 @@ impl<'attachment, 'main, 'arena, 'map>
 
         if let Some(sole) = sole_immediate_medium {
             debug_assert_eq!(detached_pages, 1);
+            debug_assert_eq!(detached_singletons, 0);
             return Ok(
                 ThreadExitMappedRegularPagesPostExitAbandonOutcome::SoleImmediateMedium(
                     ThreadExitMappedRegularPostExitDetach {
@@ -11962,13 +12716,50 @@ impl<'attachment, 'main, 'arena, 'map>
             );
         }
 
+        let singletons = if detached_singletons == 0 {
+            None
+        } else {
+            // SAFETY: `arena` remains registry-published for the detached
+            // process route. The singleton subregistry is a non-owning view
+            // over the same exact arena; it carries only the source terminal
+            // count and never exposes a member pointer.
+            let singleton_arena = unsafe {
+                ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut())
+            }
+            .expect("a live general-route arena always remains viewable");
+            Some(ThreadExitFullSingletonPagesPostExitParts {
+                arena: singleton_arena,
+                remaining_pages: detached_singletons,
+                _not_sync: PhantomData,
+            })
+        };
+        let os_singletons = if detached_os_singletons == 0 {
+            None
+        } else {
+            // The source queue/list transition completed before old-Theap
+            // teardown. This nested registry keeps only the static main Heap
+            // lease, count, and failed-`munmap` terminal token; each client
+            // free still re-resolves its exact PageMap member.
+            Some(ThreadExitFullOsSingletonPagesPostExitParts {
+                main_heap,
+                remaining_pages: detached_os_singletons,
+                pending_os_release: None,
+                terminal: false,
+                _not_sync: PhantomData,
+            })
+        };
+
         Ok(ThreadExitMappedRegularPagesPostExitAbandonOutcome::Detached(
             ThreadExitMappedRegularPagesPostExitDetach {
                 session,
                 parts: ThreadExitMappedRegularPagesPostExitParts {
                     arena,
                     main_heap,
+                    singletons,
+                    os_singletons,
                     remaining_pages: detached_pages,
+                    #[cfg(test)]
+                    aggregate_last_member_post_claim_failure_once: false,
                     _not_sync: PhantomData,
                 },
             },
@@ -12278,6 +13069,42 @@ impl<'attachment, 'main, 'arena, 'map>
             ),
             (Err(error), Ok(())) => Err(
                 ThreadExitFullOsSingletonPagesPostExitAbandonError::OsAbandonedList(error),
+            ),
+        }
+    }
+
+    /// Links one exact live OS singleton for the general later-main owner-exit
+    /// traversal. The aggregate keeps its own error vocabulary because the
+    /// route can also own arena-backed regular/singleton members; this helper
+    /// is otherwise the same source `_mi_arenas_page_abandon` list-before-
+    /// unown transition as the sealed homogeneous OS route above.
+    fn push_os_abandoned_page_to_main_heap_for_mapped_regular_route(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), ThreadExitMappedRegularPagesPostExitAbandonError> {
+        let main_heap = self.session.main_heap_lease();
+        let mut heap = main_heap
+            .lock_heap()
+            .map_err(ThreadExitMappedRegularPagesPostExitAbandonError::MainHeap)?;
+        // SAFETY: complete aggregate preflight retained this exact live
+        // `MemoryKind::Os` full-queue member and proved that this route owns
+        // an empty private list before its first insertion. Queue/count
+        // detachment is complete, while common abandonment has not yet
+        // cleared the source low owner bit.
+        let linked = unsafe {
+            heap.heap_mut()
+                .push_os_abandoned_page(&mut *page.as_ptr())
+        };
+        let unlock = heap.unlock();
+        match (linked, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) | (Err(_), Err(error)) => Err(
+                ThreadExitMappedRegularPagesPostExitAbandonError::MainHeap(
+                    MainStaticHeapLeaseError::Lock(error),
+                ),
+            ),
+            (Err(error), Ok(())) => Err(
+                ThreadExitMappedRegularPagesPostExitAbandonError::OsAbandonedList(error),
             ),
         }
     }
@@ -13152,9 +13979,10 @@ impl<'attachment, 'main, 'arena>
 impl<'attachment, 'main, 'arena>
     ThreadExitMappedRegularPagesPostExitDetach<'attachment, 'main, 'arena>
 {
-    /// Tears down the old later Theap/TLD only after every surviving
-    /// regular page has crossed into the typed PageMap/bitmap registry.
-    /// The process
+    /// Tears down the old later Theap/TLD only after every surviving regular
+    /// page has crossed into the typed PageMap registry. Initial nonfull
+    /// members already own their bitmap/count publication; a full member may
+    /// retain source-unmapped identity until a later client free. The process
     /// map lease remains outside this transition and can become a short route
     /// only after the old source owner is gone.
     pub(crate) fn finish_thread_owner(
@@ -14797,8 +15625,268 @@ impl<'main, 'arena> ThreadExitFullLargePagesPostExitParts<'main, 'arena> {
     }
 }
 
+/// Mirrors the normal regular allocation dispatch for one explicit
+/// aggregate-last-member adoption request. The returned geometry is only a
+/// target queue selector; it never identifies a source page by itself.
+fn mapped_regular_adoption_request_geometry(
+    request: usize,
+    page_size: usize,
+) -> Option<(usize, usize, PageKind)> {
+    let request = request.max(WORD_SIZE);
+    if !size_class::request_size_is_valid(request) {
+        return None;
+    }
+    let bin = size_class::bin(request)?;
+    if bin >= ARENA_BIN_COUNT || bin == BIN_FULL || bin == BIN_HUGE {
+        return None;
+    }
+    if request <= SMALL_SIZE_MAX {
+        return Some((bin, size_class::bin_size(bin)?, PageKind::Small));
+    }
+    let block_size = size_class::good_size(request, page_size)?;
+    if size_class::bin(block_size) != Some(bin) {
+        return None;
+    }
+    let kind @ (PageKind::Small | PageKind::Medium | PageKind::Large) =
+        size_class::page_kind_for_block_size(block_size)?
+    else {
+        return None;
+    };
+    Some((bin, block_size, kind))
+}
+
 impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
-    /// Handles one source mapped abandoned-page free under one complete short
+    /// Whether this aggregate can transfer its last PageMap-registered
+    /// regular member into one fresh later-main engine.
+    ///
+    /// The aggregate contains no page identity cache. Requiring exactly one
+    /// remaining member and no source-specific singleton subregistry means a
+    /// successful short-to-long PageMap bridge cannot leave a second route
+    /// that could still free, release, or observe the same process map.
+    #[inline]
+    pub(crate) const fn supports_later_main_adoption(&self) -> bool {
+        self.remaining_pages == 1 && self.singletons.is_none() && self.os_singletons.is_none()
+    }
+
+    /// Returns the static-main subprocess selected by this aggregate's
+    /// paired Heap witness. A target attachment and process map/arena pair
+    /// must match it before the aggregate transfers its PageMap access.
+    #[inline]
+    pub(crate) const fn main_heap_subprocess(&self) -> &'static MainSubprocess {
+        self.main_heap.subprocess()
+    }
+
+    /// Returns whether a proposed target arena names this aggregate's exact
+    /// source arena. No source page state is inspected by this identity-only
+    /// preflight.
+    #[inline]
+    pub(crate) fn matches_arena(&self, arena: &ArenaView<'_>) -> bool {
+        core::ptr::eq(self.arena.arena(), arena.arena())
+    }
+
+    /// Returns whether `request` selects one normal regular target queue
+    /// under the supplied immutable process page-size configuration.
+    ///
+    /// This is deliberately a pre-transfer geometry check. It lets the outer
+    /// route reject a malformed, huge, singleton, or full-queue request while
+    /// it still owns short PageMap access, instead of making such a caller
+    /// error look terminal after a long target engine exists.
+    #[inline]
+    pub(crate) fn supports_later_main_adoption_request(
+        &self,
+        request: usize,
+        page_size: usize,
+    ) -> bool {
+        self.supports_later_main_adoption()
+            && mapped_regular_adoption_request_geometry(request, page_size).is_some()
+    }
+
+    /// Reclaims the final mapped regular member of this aggregate into a
+    /// fresh later-main engine and appends it to the target queue tail.
+    ///
+    /// `client` is only an exact opaque selection witness: the pinned
+    /// `arena.c` bitmap search still chooses a source candidate through
+    /// `mi_bitmap_try_find_and_claim`. The resolver keeps every nonmatching
+    /// bitmap bit set, so no stale aggregate member or unrelated abandoned
+    /// page can become an accidental target. This edge is deliberately
+    /// available only once all other aggregate members have terminally
+    /// released; it is not a multi-member allocation scan or concurrent
+    /// reclamation interface.
+    ///
+    /// # Safety
+    ///
+    /// `target` must own the exact process PageMap lifecycle previously held
+    /// by this aggregate, and it must be paired with this aggregate's arena
+    /// and static main Heap. `client` must be one exact current canonical
+    /// allocation of the final mapped regular member, and `request` must be
+    /// the normal allocation request that selected that allocation's queue
+    /// geometry. The caller must retain `target` and this aggregate on every
+    /// error: after a successful bitmap/low-owner claim, source state cannot
+    /// be reconstructed as a short aggregate route.
+    pub(crate) unsafe fn adopt_remaining_mapped_regular_into_later_main<'attachment, 'map>(
+        &mut self,
+        target: &mut PageAllocatorEngine<
+            'arena,
+            'map,
+            MainHeapThreadPageSession<'attachment, 'main>,
+        >,
+        client: NonNull<u8>,
+        request: usize,
+    ) -> Result<(), ThreadExitMappedRegularPagesPostExitAdoptError> {
+        if !self.supports_later_main_adoption() {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::AdditionalMembers);
+        }
+        if !self.matches_arena(&target.arena) {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::TargetArenaMismatch);
+        }
+        if !core::ptr::eq(
+            self.main_heap_subprocess().as_ptr(),
+            target.session.main_heap_lease().subprocess().as_ptr(),
+        ) {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::TargetMainHeapMismatch);
+        }
+
+        // Mirror the normal target allocation dispatch before the bitmap
+        // claim. This avoids treating a raw client address as a substitute
+        // for the requested queue geometry, and rejects huge/singleton or
+        // full-queue targets before the aggregate's short map access moves.
+        let page_size = target.page_map.memory_config().page_size().bytes();
+        let Some((bin, block_size, kind)) =
+            mapped_regular_adoption_request_geometry(request, page_size)
+        else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::Request);
+        };
+
+        // SAFETY: the caller's long PageMap lifecycle excludes another map
+        // mutation. This raw lookup records only the expected identity; no
+        // ordinary page field is inspected before `try_adopt_retained` wins
+        // the selected page's low owner bit.
+        let expected_page = NonNull::new(unsafe { target.page_map.checked_lookup(client.as_ptr()) })
+            .ok_or(ThreadExitMappedRegularPagesPostExitAdoptError::Unmapped)?;
+        let target_theap = NonNull::from(target.session.theap());
+        let Some(target_thread) = target.session.thread_id() else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::MissingTargetThread);
+        };
+        let target_thread_sequence = target.thread_sequence;
+        let result = {
+            let Some(map) = target.main_heap_abandoned_page(bin) else {
+                return Err(ThreadExitMappedRegularPagesPostExitAdoptError::MissingMainArenaPages);
+            };
+            let target_arena = &target.arena;
+            let page_map = target.page_map;
+            // SAFETY: `map` binds the target static-main bitmap/count pair,
+            // and the closure accepts only the PageMap identity selected by
+            // the caller's opaque client. A nonmatching source candidate is
+            // restored by the bitmap visitor before that visitor continues.
+            unsafe {
+                abandoned::try_adopt_retained(
+                    &map,
+                    target_thread_sequence,
+                    target_theap,
+                    target_thread,
+                    |slice_index| {
+                        let start = target_arena.slice_start(slice_index)?;
+                        let resolved = NonNull::new(page_map.checked_lookup(start))?;
+                        (resolved == expected_page).then_some(resolved)
+                    },
+                )
+            }
+        };
+        let page = match result {
+            Ok(Some(adopted)) if adopted.page() == expected_page => adopted.page(),
+            Ok(Some(_)) => {
+                return Err(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageMismatch);
+            }
+            Ok(None) => return Err(ThreadExitMappedRegularPagesPostExitAdoptError::Pending),
+            Err(error) => {
+                return Err(ThreadExitMappedRegularPagesPostExitAdoptError::Claimed(error));
+            }
+        };
+
+        #[cfg(test)]
+        if self.aggregate_last_member_post_claim_failure_once {
+            self.aggregate_last_member_post_claim_failure_once = false;
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::InjectedPostClaim);
+        }
+
+        // The low-owner claim permits ordinary-state projection. Reuse the
+        // engine's complete PageMap/span proof and then constrain it to the
+        // normal regular geometry implied by the target request.
+        let span = target
+            .release_span(page.as_ptr())
+            .ok_or(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageState)?;
+        let ReleaseSpan::Arena {
+            memory,
+            slice_start,
+            size,
+        } = span
+        else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageState);
+        };
+        let Some(actual_memory) = memory.arena_memory() else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageState);
+        };
+        let Some(expected_slice_count) = page::regular_page_slice_count(kind) else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::Request);
+        };
+        let Some(expected_size) = expected_slice_count.checked_mul(ARENA_SLICE_SIZE) else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageState);
+        };
+        if actual_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut()
+            || actual_memory.slice_count as usize != expected_slice_count
+            || size != expected_size
+            || self.arena.slice_start(actual_memory.slice_index as usize) != Some(slice_start)
+        {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageMismatch);
+        }
+        // SAFETY: successful source reassociation makes this exact page
+        // target-owned until queue-tail insertion below publishes it to the
+        // ordinary allocator path.
+        let page_ref = unsafe { page.as_ref() };
+        if !target.owns_page(page_ref)
+            || page_ref.heap() != target.session.theap().heap()
+            || page_ref.block_size() != block_size
+            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(kind)
+            || size_class::bin(page_ref.block_size()) != Some(bin)
+            || page_ref.reserved() <= 1
+            || (kind == PageKind::Small
+                && block_size <= SMALL_SIZE_MAX
+                && page_ref.reserved() < 16)
+            || page_ref.used() == 0
+            || page_ref.used() >= usize::from(page_ref.reserved())
+            || page_ref.free_list_head().is_null()
+            || page_is_in_full(page_ref)
+            || !page_ref.is_queue_detached()
+            || target.canonical_block_start(page_ref, client) != Some(client)
+        {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::ReclaimedPageState);
+        }
+        let Some(queue) = target.session.queue_mut(bin) else {
+            return Err(ThreadExitMappedRegularPagesPostExitAdoptError::Queue);
+        };
+        // SAFETY: source `_mi_theap_page_reclaim` has already reassociated
+        // the page and completed its false collection. The page is detached,
+        // while the fresh target session exclusively owns the queue tail.
+        unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
+        target.update_direct_cache(bin);
+        target.session.note_page_added();
+        Ok(())
+    }
+
+    /// Arms one test-only failure after the aggregate's source bitmap/owner
+    /// claim has reassociated the exact page with its fresh target. It proves
+    /// the non-reconstructible ownership boundary retains the long target.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn inject_aggregate_last_member_post_claim_failure_once(&mut self) {
+        assert!(
+            !self.aggregate_last_member_post_claim_failure_once,
+            "the aggregate last-member post-claim failure injection is one-shot"
+        );
+        self.aggregate_last_member_post_claim_failure_once = true;
+    }
+
+    /// Handles one source-abandoned regular-page free under one complete short
     /// process PageMap operation.
     ///
     /// # Safety
@@ -14827,6 +15915,195 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         let page = NonNull::new(unsafe { page_map.checked_lookup(block.as_ptr()) })
             .ok_or(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped)?;
 
+        let page_memory_kind = unsafe { page.as_ref() }.memid().kind();
+        // A live OS singleton is the non-arena source tail. It must keep the
+        // static main Heap's private list protocol intact: its sealed
+        // subregistry re-proves the full clipped-mapping geometry, claims the
+        // raw failed-reclaim owner, removes exactly that list member, and only
+        // then releases the mapping. The outer route accounts for the
+        // physical release beside regular and arena-singleton members.
+        if page_memory_kind == MemoryKind::Os {
+            let os_singleton_free = {
+                let Some(os_singletons) = self.os_singletons.as_mut() else {
+                    return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
+                };
+                // SAFETY: `page` came from this exact short PageMap access,
+                // and the enclosing linear route retains the caller's one
+                // client-free authority. The OS subregistry validates all
+                // source-specific list and clipped-release facts before it
+                // mutates the selected member.
+                unsafe { os_singletons.remote_free_after_thread_exit(page_map, block) }
+            };
+            return match os_singleton_free {
+                Ok(ThreadExitFullOsSingletonPagesPostExitFreeOutcome::ReleasedPage) => {
+                    self.note_member_released()
+                }
+                Ok(ThreadExitFullOsSingletonPagesPostExitFreeOutcome::ReleasedAll) => {
+                    self.os_singletons = None;
+                    self.note_member_released()
+                }
+                Err(error) => Err(ThreadExitMappedRegularPagesPostExitFreeError::OsSingleton(error)),
+            };
+        }
+
+        // An arena singleton is the only admitted high-bin arena tail. It
+        // must not borrow the static main Heap merely to discover that
+        // `BIN_HUGE` has no regular bitmap. Its sealed subregistry re-proves
+        // the complete geometry, takes the raw failed-reclaim terminal path,
+        // and leaves this outer route to account for the physical release.
+        if page_memory_kind == MemoryKind::Arena
+            && size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size())
+                == Some(PageKind::Singleton)
+        {
+            let singleton_free = {
+                let Some(singletons) = self.singletons.as_mut() else {
+                    return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
+                };
+                // SAFETY: `page` came from this exact short PageMap access,
+                // and the enclosing linear route retains the caller's one
+                // client-free authority. The singleton subregistry validates
+                // all source-specific arena and span facts before mutation.
+                unsafe { singletons.remote_free_after_thread_exit(page_map, block) }
+            };
+            return match singleton_free {
+                Ok(ThreadExitFullSingletonPagesPostExitFreeOutcome::ReleasedPage) => {
+                    self.note_member_released()
+                }
+                Ok(ThreadExitFullSingletonPagesPostExitFreeOutcome::ReleasedAll) => {
+                    // The nested singleton route has terminally released its
+                    // last PageMap/span member. Keep the outer aggregate's
+                    // remaining-page count and subregistry shape aligned:
+                    // a later final regular-member adoption may proceed only
+                    // when no singleton tail can still observe the shared
+                    // process PageMap lifecycle.
+                    self.singletons = None;
+                    self.note_member_released()
+                }
+                Err(error) => Err(ThreadExitMappedRegularPagesPostExitFreeError::Singleton(error)),
+            };
+        }
+
+        // The ordinary regular tail owns the low-bit claim, bitmap selector,
+        // source collector, and terminal span release. The default linear
+        // route has no nested publisher, so its after-claim boundary simply
+        // continues into that source decision.
+        unsafe {
+            self.remote_free_regular_after_thread_exit_with_after_claim(
+                page_map,
+                page,
+                block,
+                || true,
+            )
+        }
+    }
+
+    /// Routes one direct regular client free while one joined publisher adds a
+    /// second exact client to the same source-abandoned page after the direct
+    /// free has claimed its low owner bit.
+    ///
+    /// This is the source `mi_free_block_mt` -> `mi_free_try_collect_mt`
+    /// interleaving, not a general concurrent aggregate API. The caller must
+    /// synchronously join the callback before it returns; the direct route
+    /// then owns the only ordinary collector and terminal-release decision.
+    /// Both blocks must be distinct current canonical allocations of one
+    /// regular Small, Medium, or Large aggregate member. Neither client
+    /// address becomes visible to the callback.
+    ///
+    /// # Safety
+    ///
+    /// `direct_block` and `published_block` must be distinct exact current
+    /// clients in the same regular page of this route. `publisher` must use
+    /// its token exactly once, join every worker it starts, and return only
+    /// after that atomic publication completes. It must not retain the token
+    /// or access another route/allocator state.
+    pub(crate) unsafe fn remote_free_after_thread_exit_with_same_page_publisher<F>(
+        &mut self,
+        page_map: &PageMap,
+        direct_block: NonNull<u8>,
+        published_block: NonNull<u8>,
+        publisher: F,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitFreeOutcome,
+        ThreadExitMappedRegularPagesPostExitFreeError,
+    >
+    where
+        F: for<'route> FnOnce(
+            ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+        ) -> Result<(), ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>>,
+    {
+        if self.remaining_pages == 0 || direct_block == published_block {
+            return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
+        }
+        // SAFETY: the enclosing short PageMap access pins both exact entries
+        // while this preflight rejects a mixed-page callback before either
+        // source low owner bit has changed.
+        let page = NonNull::new(unsafe { page_map.checked_lookup(direct_block.as_ptr()) })
+            .ok_or(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped)?;
+        let published_page =
+            NonNull::new(unsafe { page_map.checked_lookup(published_block.as_ptr()) })
+                .ok_or(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped)?;
+        if page != published_page {
+            return Err(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped);
+        }
+        // The linear aggregate route is still the only owner at this point,
+        // so this source preflight may classify the same page before it lends
+        // C its atomic-only producer. Reject singleton/non-arena tails before
+        // a callback could publish into a different low-level protocol.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.memid().kind() != MemoryKind::Arena
+            || !matches!(
+                size_class::page_kind_for_block_size(page_ref.block_size()),
+                Some(PageKind::Small | PageKind::Medium | PageKind::Large)
+            )
+        {
+            return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
+        }
+
+        // SAFETY: the direct route retains every ordinary-page and terminal
+        // ownership fact. The higher-ranked publisher can observe only the
+        // page's atomic remote head and returns before this helper resumes
+        // source collection.
+        let mut publisher_scope = ();
+        unsafe {
+            self.remote_free_regular_after_thread_exit_with_after_claim(
+                page_map,
+                page,
+                direct_block,
+                || {
+                    publisher(ThreadExitMappedRegularPagesPostExitRemoteFreeProducer {
+                        page,
+                        canonical_block: published_block,
+                        // Borrow a stack-local scope token so a safe callback
+                        // cannot retain this producer beyond its synchronous
+                        // call. The route itself remains private to the
+                        // direct source owner.
+                        _scope: &mut publisher_scope,
+                        _not_sync: PhantomData,
+                    })
+                    .is_ok()
+                },
+            )
+        }
+    }
+
+    /// Completes the regular branch of the general aggregate route after an
+    /// optional synchronous post-claim publisher has returned. Keeping this
+    /// tail shared makes the normal sequential client free and the bounded
+    /// C-publisher interleaving execute the exact same low-owner, collector,
+    /// bitmap, and terminal-release code.
+    unsafe fn remote_free_regular_after_thread_exit_with_after_claim<H>(
+        &mut self,
+        page_map: &PageMap,
+        page: NonNull<Page>,
+        block: NonNull<u8>,
+        after_claim: H,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitFreeOutcome,
+        ThreadExitMappedRegularPagesPostExitFreeError,
+    >
+    where
+        H: FnOnce() -> bool,
+    {
         // Hold the static main Heap's short projection for the complete raw
         // tail. The map selector runs only after it has acquired the page's
         // abandoned low owner bit, which is the first legal point to inspect
@@ -14836,7 +16113,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
             .lock_heap()
             .map_err(ThreadExitMappedRegularPagesPostExitFreeError::MainHeap)?;
         let result = match unsafe {
-            abandoned::free_mapped_after_failed_reclaim_select_map(
+            abandoned::free_regular_after_failed_reclaim_select_map_with_after_claim(
                 page,
                 block,
                 |memory, block_size| {
@@ -14857,23 +16134,20 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
                         .main_heap_abandoned_page(NonNull::from(heap.heap_mut()), bin)
                         .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
                 },
+                after_claim,
             )
         } {
-            Ok(abandoned::MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped) => {
+            Ok(abandoned::RegularAbandonedFreeAfterFailedReclaimResult::StillLive) => {
                 Ok(ThreadExitMappedRegularPagesPostExitFreeOutcome::StillLive)
             }
-            Ok(abandoned::MappedAbandonedFreeAfterFailedReclaimResult::Empty) => {
+            Ok(abandoned::RegularAbandonedFreeAfterFailedReclaimResult::Empty) => {
                 if !unsafe { self.release_empty_page(page_map, page) } {
                     Err(ThreadExitMappedRegularPagesPostExitFreeError::Release)
-                } else if self.remaining_pages == 1 {
-                    self.remaining_pages = 0;
-                    Ok(ThreadExitMappedRegularPagesPostExitFreeOutcome::ReleasedAll)
                 } else {
-                    self.remaining_pages -= 1;
-                    Ok(ThreadExitMappedRegularPagesPostExitFreeOutcome::ReleasedPage)
+                    self.note_member_released()
                 }
             }
-            Ok(abandoned::MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
+            Ok(abandoned::RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
                 Err(ThreadExitMappedRegularPagesPostExitFreeError::ConcurrentOwner)
             }
             Err(error) => Err(ThreadExitMappedRegularPagesPostExitFreeError::Abandon(error)),
@@ -14887,10 +16161,31 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         }
     }
 
+    /// Records one already-completed physical release. The selected regular
+    /// or singleton tail must have removed its PageMap/span state first; this
+    /// aggregate count is therefore never a source of membership.
+    fn note_member_released(
+        &mut self,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitFreeOutcome,
+        ThreadExitMappedRegularPagesPostExitFreeError,
+    > {
+        if self.remaining_pages == 0 {
+            return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
+        }
+        self.remaining_pages -= 1;
+        if self.remaining_pages == 0 {
+            Ok(ThreadExitMappedRegularPagesPostExitFreeOutcome::ReleasedAll)
+        } else {
+            Ok(ThreadExitMappedRegularPagesPostExitFreeOutcome::ReleasedPage)
+        }
+    }
+
     /// Completes the aggregate route's all-free arena release after the raw
-    /// helper has removed the selected page's mapped identity/bit/count while
-    /// retaining its low owner bit. Re-derive every span fact under the short
-    /// map lock: an aggregate registry intentionally carries no stale page
+    /// helper has removed any selected mapped identity/bit/count while
+    /// retaining its low owner bit. A source-unmapped full member has no such
+    /// publication to clear. Re-derive every span fact under the short map
+    /// lock: an aggregate registry intentionally carries no stale page
     /// pointer, bin, or range cache from the departed Theap.
     unsafe fn release_empty_page(&self, page_map: &PageMap, mut page: NonNull<Page>) -> bool {
         // SAFETY: the raw helper returned `Empty`, so this route owns the
@@ -15002,6 +16297,14 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
     #[cfg(test)]
     pub(crate) const fn test_remaining_pages(&self) -> usize {
         self.remaining_pages
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
+        let mut heap = self.main_heap.lock_heap().ok()?;
+        let count = heap.heap_mut().abandoned_count(bin);
+        heap.unlock().ok()?;
+        count
     }
 }
 
@@ -30899,6 +32202,12 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             #[cfg(test)]
             page_free_collect_failure_once: state.page_free_collect_failure_once,
             #[cfg(test)]
+            // Test injection is never armed across a typed session conversion;
+            // focused release-failure regressions arm the final drain directly.
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
             last_page_to_full: state.last_page_to_full,
             #[cfg(test)]
             page_commit_on_demand: state.page_commit_on_demand,
@@ -30979,6 +32288,59 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // SAFETY: the map-published page remains initialized for this owner
         // read and no producer may concurrently change its non-atomic fields.
         Some(unsafe { page.as_ref().capacity() as usize })
+    }
+
+    /// Returns the fixed reserved client count of one current allocation's
+    /// page without exposing page metadata. Unlike [`Self::current_allocation_page_capacity`],
+    /// this count does not shrink to the currently committed prefix while a
+    /// normal page grows on demand.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be current in this exact engine while its PageMap entry is
+    /// still published. No remote producer may be in flight while the caller
+    /// observes this ordinary page metadata.
+    #[inline]
+    pub(crate) unsafe fn current_allocation_page_reserved(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<usize> {
+        // SAFETY: the caller retains the engine's PageMap lifecycle lease and
+        // proves this exact block remains current and page-mapped.
+        let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
+        // SAFETY: the map-published page remains initialized for this owner
+        // read and no producer may concurrently change its non-atomic fields.
+        Some(unsafe { page.as_ref().reserved() as usize })
+    }
+
+    /// Returns whether one exact current allocation's page will have an
+    /// immediate local free block after source owner-exit force collection.
+    ///
+    /// The runtime records this only as a conservative pre-suspension fact for
+    /// a possible aggregate final-member reclaim. Owner exit force-collects
+    /// `local_free` into `free` before it abandons a live page, so either
+    /// source list is a valid pre-suspension fact here. It never exposes the
+    /// page, a list address, or a post-exit adoption capability. A missing
+    /// fact simply selects the ordinary sequential-free route: attempting the
+    /// long-lifecycle adoption first would claim the abandoned owner bit and
+    /// then fail after the reversible short-route boundary.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be current in this exact engine while its PageMap entry is
+    /// still published. No remote producer may be in flight while the caller
+    /// observes this ordinary page metadata.
+    #[inline]
+    pub(crate) unsafe fn current_allocation_page_has_owner_exit_collectable_local_free(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<bool> {
+        // SAFETY: the caller retains the engine's PageMap lifecycle lease and
+        // proves this exact block remains current and page-mapped.
+        let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
+        // SAFETY: the map-published page remains initialized for this owner
+        // read and no producer may concurrently change its non-atomic fields.
+        Some(unsafe { page.as_ref().has_owner_exit_collectable_local_free() })
     }
 
     /// Looks up one current page while the caller holds this lifecycle's
@@ -32183,6 +33545,72 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         Ok(RemoteFreeProducerPair { first, second })
     }
 
+    /// Publishes one exact C-facing client to a different live owner that is
+    /// currently parked by the runtime scheduler.
+    ///
+    /// This is the source `mi_free_block_mt` producer half, not a second
+    /// allocator or a general pointer table. The caller holds the process
+    /// PageMap mutation lease through a complete non-parkable B operation;
+    /// that lease, together with the runtime's `PARKED -> BUSY -> PARKED`
+    /// transition, keeps A's page mapped and prevents A from collecting,
+    /// retiring, abandoning, or reusing it while this preflight reads its
+    /// ordinary geometry. The atomic push itself then leaves collection to
+    /// A's next ordinary source allocation or thread-exit drain.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be one exact native-shadow client in the separately
+    /// parked owner's still-live page. The caller must keep A parked and the
+    /// PageMap lifecycle exclusively held until this returns, must update A's
+    /// private client ledger only after a successful publication, and must
+    /// finish its B operation before A may resume. This boundary is not valid
+    /// for a local B allocation, an abandoned page, or a detached route.
+    pub(crate) unsafe fn publish_remote_free_to_parked_live_owner(
+        &mut self,
+        block: NonNull<u8>,
+    ) -> Result<(), RemoteFreePreparationError> {
+        if self.is_collection_poisoned() {
+            return Err(RemoteFreePreparationError::CollectionPoisoned);
+        }
+        // SAFETY: the caller's complete B operation owns the long PageMap
+        // lease while the matching A engine is parked, so registration keeps
+        // the looked-up metadata live and A cannot mutate its ordinary page
+        // fields during this source preflight.
+        let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
+        let page = NonNull::new(page).ok_or(RemoteFreePreparationError::Unmapped)?;
+        // SAFETY: see the PageMap/scheduler proof above. The temporary page
+        // projection ends before the atomic source publication below.
+        let page_ref = unsafe { &mut *page.as_ptr() };
+        let canonical_block = self
+            .canonical_block_start(page_ref, block)
+            .ok_or(RemoteFreePreparationError::InvalidBlock(
+                FreeListError::InvalidBlock,
+            ))?;
+        // SAFETY: A is parked and B's long PageMap lease serializes every
+        // ordinary field access. This preflight reads only initialized
+        // geometry and the source `used > 0` lower bound; it neither writes a
+        // list link nor claims any A-side collection authority.
+        let free_list = unsafe { LocalFreeList::from_page(page_ref) }
+            .map_err(RemoteFreePreparationError::InvalidBlock)?;
+        free_list
+            .validate_local_free_preflight(canonical_block)
+            .map_err(RemoteFreePreparationError::InvalidBlock)?;
+        // SAFETY: the same parked-owner proof keeps the page and exact client
+        // live through the atomic source producer. `push` accesses only its
+        // `xthread_id` and `xthread_free` atomics after this preflight.
+        unsafe { remote_free::push(page, canonical_block) }.map_err(|error| match error {
+            RemoteFreeError::NotOwnerAssociated
+            | RemoteFreeError::TooManyRemoteBlocks
+            | RemoteFreeError::UsedCountUnderflow
+            | RemoteFreeError::PartialHeadMismatch => {
+                RemoteFreePreparationError::InvalidOwnerState
+            }
+            RemoteFreeError::UnalignedBlock => {
+                RemoteFreePreparationError::InvalidBlock(FreeListError::InvalidBlock)
+            }
+        })
+    }
+
     /// Shared read-only preflight for one scoped remote producer. The caller
     /// retains the unique owner borrow in the returned zero-sized capability.
     unsafe fn prepare_remote_free<'owner>(
@@ -32576,6 +34004,55 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             "the focused false-collection injection is one-shot"
         );
         self.page_free_collect_failure_once = PageCollectFailureInjection::FalseOnly;
+    }
+
+    /// Arms one exact release failure after its PageMap span is gone.
+    ///
+    /// This is a test-only model of the terminal part of `release_page`: the
+    /// source queue/count and PageMap transitions have already happened, so a
+    /// caller must retain rather than retry its pre-release traversal.
+    #[cfg(test)]
+    pub(crate) fn inject_page_release_after_page_map_unregister_failure_once(&mut self) {
+        assert!(
+            !self.page_release_after_page_map_unregister_failure_once,
+            "the focused release failure injection is one-shot"
+        );
+        self.page_release_after_page_map_unregister_failure_once = true;
+    }
+
+    /// Arms one aggregate owner-exit failure after queue/count detachment but
+    /// before mapped-abandoned publication.
+    ///
+    /// This test-only seam proves that a retained aggregate route cannot be
+    /// mistaken for an all-free drain merely because its old Theap queues are
+    /// empty. The exact page remains PageMap-published at this point.
+    #[cfg(test)]
+    pub(crate) fn inject_aggregate_abandon_after_queue_detach_failure_once(&mut self) {
+        assert!(
+            !self.aggregate_abandon_after_queue_detach_failure_once,
+            "the focused aggregate-detach failure injection is one-shot"
+        );
+        self.aggregate_abandon_after_queue_detach_failure_once = true;
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn consume_page_release_after_page_map_unregister_failure(&mut self) -> bool {
+        if !self.page_release_after_page_map_unregister_failure_once {
+            return false;
+        }
+        self.page_release_after_page_map_unregister_failure_once = false;
+        true
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn consume_aggregate_abandon_after_queue_detach_failure(&mut self) -> bool {
+        if !self.aggregate_abandon_after_queue_detach_failure_once {
+            return false;
+        }
+        self.aggregate_abandon_after_queue_detach_failure_once = false;
+        true
     }
 
     #[cfg(test)]
@@ -33193,6 +34670,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                     self.reinsert_after_release_failure(bin, page);
                     return false;
                 }
+                #[cfg(test)]
+                if self.consume_page_release_after_page_map_unregister_failure() {
+                    return false;
+                }
                 if !self.session.clear_arena_page(&self.arena, memory) {
                     // The map is already clear, so do not release the arena
                     // span on an arena-page registration invariant failure. It
@@ -33226,6 +34707,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 .is_err()
                 {
                     self.reinsert_after_release_failure(bin, page);
+                    return false;
+                }
+                #[cfg(test)]
+                if self.consume_page_release_after_page_map_unregister_failure() {
                     return false;
                 }
                 // SAFETY: page-map lookup is gone before the secondary slots

@@ -563,6 +563,18 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     if ptr.is_null() {
         return 0;
     }
+    #[cfg(feature = "native-mimalloc-shadow")]
+    {
+        // SAFETY: the null case returned above, so this query pointer has the
+        // non-null representation required by the native runtime boundary.
+        let block = unsafe { core::ptr::NonNull::new_unchecked(ptr.cast::<u8>()) };
+        // SAFETY: this public query forwards the selected backend's current
+        // allocation contract. An unknown or unavailable native pointer has
+        // no usable extent rather than falling back to C mimalloc.
+        return unsafe { crabc_mimalloc::__crabc_runtime::native_usable_size(block) }
+            .unwrap_or(0);
+    }
+    #[cfg(not(feature = "native-mimalloc-shadow"))]
     libmimalloc_sys::mi_usable_size(ptr)
 }
 

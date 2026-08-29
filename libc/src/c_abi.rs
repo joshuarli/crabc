@@ -4701,6 +4701,9 @@ unsafe fn finish_mimalloc_thread_lifecycle_after_user_destructors(slot: &mut Thr
     if a_load(&raw const slot.mimalloc_lifecycle) != MIMALLOC_THREAD_LIFECYCLE_ATTACHED {
         return;
     }
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let result = crabc_mimalloc::__crabc_runtime::finish_current_thread_native_after_user_destructors();
+    #[cfg(not(feature = "native-mimalloc-shadow"))]
     let result = crabc_mimalloc::__crabc_runtime::finish_current_thread_after_user_destructors();
     let state = if result == crabc_mimalloc::__crabc_runtime::ThreadFinishResult::Finished {
         MIMALLOC_THREAD_LIFECYCLE_FINISHED
@@ -13852,9 +13855,14 @@ pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_in
     }
 }
 
-// Allocator internals are deliberately delegated to mimalloc. The wrapper
-// below owns only the public musl-compatible C allocation contract.
+// Allocator internals are deliberately kept behind one compile-time backend
+// boundary. The default remains the existing C mimalloc wrapper. The
+// nondefault Rust shadow lane has no runtime selection or C fallback, so a
+// native pointer cannot accidentally cross allocator ownership domains.
+#[cfg(not(feature = "native-mimalloc-shadow"))]
 include!("allocator_mimalloc.rs");
+#[cfg(feature = "native-mimalloc-shadow")]
+include!("allocator_native_mimalloc.rs");
 
 // ============================================================
 // Process: exit / _exit / _Exit
@@ -22154,15 +22162,25 @@ pub unsafe extern "C" fn __libc_start_main(
         unsafe { _exit(127) };
     }
 
-    // The current Rust mimalloc port contributes only a private no-page
-    // lifecycle shadow here. Its ticket-zero owner is retained for this
-    // process before constructors, while public C allocation remains routed
-    // through `libmimalloc-sys`. A failed shadow setup is explicitly inactive
-    // rather than changing the established libc startup failure contract.
+    // The Rust mimalloc runtime installs its private lifecycle foundation
+    // before constructors. The default C allocator remains selected unless
+    // the compile-time native shadow feature below is present; a failed
+    // lifecycle setup is explicitly inactive rather than changing the
+    // established libc startup failure contract.
     let process_page_size =
         unsafe { startup_auxv_value(vectors.auxv, CABI_AT_PAGESZ) }.unwrap_or(0);
     let _mimalloc_lifecycle_active =
         crabc_mimalloc::__crabc_runtime::initialize_process(process_page_size);
+
+    // The nondefault shadow's first later-worker allocation can borrow only
+    // an already-reserved dormant first arena. Prime that exact source state
+    // here, before constructors or pthread creation can produce an observable
+    // C allocation. The helper refuses a live ticket-zero owner and never
+    // selects the C backend as a fallback; worker allocation remains bounded
+    // to the current parked native session until the general M5 router lands.
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let _native_mimalloc_worker_arena_ready = _mimalloc_lifecycle_active
+        && crabc_mimalloc::__crabc_runtime::prepare_native_later_thread_arena();
 
     // Register finalizers before app code can install atexit callbacks. The
     // LIFO chain then gives application callbacks first, executable fini

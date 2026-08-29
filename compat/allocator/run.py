@@ -7,7 +7,9 @@ only allocator source input is the SHA-256-verified upstream archive named in
 `compat/upstreams.toml`.  It records the existing v3.3.2 integration solely
 as migration provenance.
 
-The runner is a source/provenance and C-oracle instrument.  It does not claim
+The runner is a source/provenance and C-oracle instrument. Its `--full` mode
+also records the reviewed Milestone 5 lifecycle gate, distinguishing executed
+bounded evidence from acceptance work that remains blocked. It does not claim
 that a Rust allocator operation, adapter symbol, differential trace, or
 performance comparison exists before its owning implementation milestone.
 """
@@ -61,12 +63,38 @@ RUNTIME_TICKET_ZERO_ADAPTER_HEADER = (
 RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE = (
     RUNTIME_TICKET_ZERO_ADAPTER_ROOT / "runtime-ticket-zero-fixture.c"
 )
+RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES = 3
+RUNTIME_TICKET_ZERO_MAX_WORKER_CYCLES = 1024
+RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES = 128
+RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS = 30
+RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES = 1024
+RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS = 180
+# The native lifecycle fixture visits every currently supported pointer-private
+# worker route once per cycle, but derives that cycle's order from this seed.
+# Keep the development and soak lanes deterministic and distinct so a report
+# can reproduce the exact owner/B/C interleaving it exercised.
+RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED = 0x9E3779B97F4A7C15
+RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED = 0xD1B54A32D192ED03
+RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED = 0x94D049BB133111EB
+RUNTIME_TICKET_ZERO_MAX_STRESS_SEED = (1 << 64) - 1
+RUNTIME_TICKET_ZERO_WORKER_ROUTES_PER_CYCLE = 4
 TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
 TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
 X86_64_TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run-x86_64.py"
 X86_64_TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen-x86_64.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
+M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
+
+M5_GATE_IDS = (
+    "m5.base",
+    "m5.5a",
+    "m5.5b",
+    "m5.5c",
+    "m5.5d",
+    "m5.5e",
+)
+M5_STATIC_BLOCKED_GATE_IDS = frozenset({"m5.5c", "m5.5d", "m5.5e"})
 
 PRODUCTION_RUST_TARGET = "aarch64-unknown-linux-musl"
 X86_64_RUST_TARGET = "x86_64-unknown-linux-musl"
@@ -182,6 +210,27 @@ ORACLE_SOURCES = (
     "src/threadlocal.c",
     "src/prim/prim.c",
     "src/prim/prim-tls.c",
+)
+
+# The M4 adapter is intentionally a reviewed, partial adaptation rather than
+# a claim that every pinned upstream test now runs. Keep its exact source and
+# support input names here, beside the generated inventory, so an inventory
+# refresh cannot regress them back to the historical "adapter absent" state.
+# `adapted-tests-v3.5.0.json` remains the durable selection/omission contract
+# for the 33 selected `test-api.c` checks.
+M4_ADAPTED_UPSTREAM_TEST_PATHS = frozenset(
+    {
+        "test/test-api.c",
+        "test/testhelper.h",
+    }
+)
+M4_ADAPTED_UPSTREAM_TEST_NOTE = (
+    "Milestone 4: selected through the reviewed prefixed Rust test C API adapter; "
+    "the exact selected checks and omissions are in adapted-tests-v3.5.0.json."
+)
+M5_PLUS_UNADAPTED_UPSTREAM_TEST_NOTE = (
+    "Milestone 5+: outside the reviewed M4 adapter selection; this source needs its own "
+    "API, lifecycle, and execution contract before it can run through the Rust adapter."
 )
 
 # These files are translation units included by the sources above, not absent
@@ -1215,6 +1264,238 @@ def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
     return normalized
 
 
+def validate_m5_gate_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Validate the reviewed M5 full-lane contract without claiming a pass.
+
+    The current contract deliberately distinguishes passing bounded evidence
+    from the still-open Gate 5C--5E acceptance work.  Keeping that distinction
+    checked-in prevents `allocator --full` from collapsing real lifecycle
+    work into one permanent synthetic error message.
+    """
+
+    if (
+        contract.get("schema") != "crabc-mimalloc-m5-gate"
+        or contract.get("format") != 1
+    ):
+        raise HarnessError("unsupported M5 allocator gate contract")
+
+    upstream = contract.get("upstream")
+    if not isinstance(upstream, Mapping):
+        raise HarnessError("M5 allocator gate contract lacks upstream identity")
+    if upstream.get("version") != pin["version"] or upstream.get("revision") != pin["revision"]:
+        raise HarnessError("M5 allocator gate upstream identity mismatch")
+
+    full_lane = contract.get("full_lane")
+    if not isinstance(full_lane, Mapping):
+        raise HarnessError("M5 allocator gate contract lacks a full-lane record")
+    expected_full_lane = {
+        "routes_per_cycle": RUNTIME_TICKET_ZERO_WORKER_ROUTES_PER_CYCLE,
+        "stress_seed": f"0x{RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED:016x}",
+        "watchdog_seconds": RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
+        "worker_cycles": RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES,
+    }
+    if dict(full_lane) != expected_full_lane:
+        raise HarnessError("M5 allocator full-lane contract differs from the recorded churn lane")
+
+    gates = contract.get("gates")
+    if not isinstance(gates, list) or len(gates) != len(M5_GATE_IDS):
+        raise HarnessError("M5 allocator gate contract has an unexpected gate inventory")
+
+    gate_ids: list[str] = []
+    for index, gate in enumerate(gates):
+        if not isinstance(gate, Mapping):
+            raise HarnessError(f"M5 allocator gate {index} is not an object")
+        gate_id = gate.get("id")
+        if gate_id != M5_GATE_IDS[index]:
+            raise HarnessError("M5 allocator gate order or identity changed")
+        gate_ids.append(gate_id)
+        if gate.get("required") is not True:
+            raise HarnessError(f"M5 allocator gate {gate_id} must remain required")
+        acceptance = gate.get("acceptance")
+        if not isinstance(acceptance, str) or not acceptance:
+            raise HarnessError(f"M5 allocator gate {gate_id} lacks an acceptance contract")
+        evidence = gate.get("evidence")
+        if (
+            not isinstance(evidence, list)
+            or not evidence
+            or not all(isinstance(entry, str) and entry for entry in evidence)
+            or len(set(evidence)) != len(evidence)
+        ):
+            raise HarnessError(f"M5 allocator gate {gate_id} has an invalid evidence inventory")
+        blockers = gate.get("blocked_by")
+        if gate_id in M5_STATIC_BLOCKED_GATE_IDS:
+            if (
+                not isinstance(blockers, list)
+                or not blockers
+                or not all(isinstance(blocker, str) and blocker for blocker in blockers)
+            ):
+                raise HarnessError(f"M5 allocator gate {gate_id} lacks a current blocker")
+        elif blockers is not None:
+            raise HarnessError(f"M5 allocator gate {gate_id} must not predeclare a blocker")
+
+    return {
+        "full_lane": expected_full_lane,
+        "gate_count": len(gate_ids),
+        "gate_ids": gate_ids,
+    }
+
+
+def _m5_report_mapping(
+    report: Mapping[str, Any], *path: str
+) -> Mapping[str, Any] | None:
+    current: Any = report
+    for key in path:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current if isinstance(current, Mapping) else None
+
+
+def _m5_base_evidence_passed(report: Mapping[str, Any]) -> bool:
+    compiler_tls = _m5_report_mapping(report, "compiler_tls_codegen")
+    loom = _m5_report_mapping(report, "remote_free_loom_model")
+    adapter_summary = _m5_report_mapping(
+        report,
+        "m4_test_adapter",
+        "fixtures",
+        "adapted_upstream_api",
+        "summary",
+    )
+    return (
+        compiler_tls is not None
+        and compiler_tls.get("status") == "passed"
+        and loom is not None
+        and loom.get("status") == "passed"
+        and adapter_summary is not None
+        and adapter_summary.get("failed") == 0
+        and isinstance(adapter_summary.get("succeeded"), int)
+        and adapter_summary["succeeded"] > 0
+    )
+
+
+def _m5_full_lane_evidence_passed(
+    report: Mapping[str, Any], full_lane: Mapping[str, Any]
+) -> bool:
+    fixture = _m5_report_mapping(report, "runtime_ticket_zero_test_adapter", "fixture")
+    if fixture is None:
+        return False
+    watchdog = fixture.get("watchdog")
+    schedule = fixture.get("stress_schedule")
+    if not isinstance(watchdog, Mapping) or not isinstance(schedule, Mapping):
+        return False
+    return (
+        fixture.get("stdout") == "runtime ticket-zero allocator ok\n"
+        and fixture.get("worker_cycles") == full_lane["worker_cycles"]
+        and watchdog.get("status") == "passed"
+        and watchdog.get("seconds") == full_lane["watchdog_seconds"]
+        and schedule.get("seed") == full_lane["stress_seed"]
+        and schedule.get("worker_routes_per_cycle") == full_lane["routes_per_cycle"]
+        and schedule.get("worker_route_invocation_count")
+        == full_lane["worker_cycles"] * full_lane["routes_per_cycle"]
+    )
+
+
+def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> dict[str, Any]:
+    """Classify the full lane from executed evidence and reviewed blockers.
+
+    Operational failures never reach this function: they remain harness errors.
+    A `blocked` result here instead means the bounded evidence passed but the
+    reviewed M5 acceptance contract has not yet been met.
+    """
+
+    summary = validate_m5_gate_contract(contract, load_pin())
+    full_lane = summary["full_lane"]
+    base_passed = _m5_base_evidence_passed(report)
+    full_lane_passed = _m5_full_lane_evidence_passed(report, full_lane)
+    loom = _m5_report_mapping(report, "remote_free_loom_model")
+    remote_free_loom_passed = loom is not None and loom.get("status") == "passed"
+
+    observed_status = {
+        "m5.base": base_passed,
+        "m5.5a": full_lane_passed,
+        "m5.5b": full_lane_passed and remote_free_loom_passed,
+    }
+    observed_evidence = {
+        "m5.base": [
+            "report:/compiler_tls_codegen",
+            "report:/m4_test_adapter/fixtures/adapted_upstream_api/summary",
+            "report:/remote_free_loom_model",
+        ],
+        "m5.5a": ["report:/runtime_ticket_zero_test_adapter/fixture"],
+        "m5.5b": [
+            "report:/runtime_ticket_zero_test_adapter/fixture",
+            "report:/remote_free_loom_model",
+        ],
+    }
+
+    gate_records: list[dict[str, Any]] = []
+    for source_gate in contract["gates"]:
+        assert isinstance(source_gate, Mapping)
+        gate_id = source_gate["id"]
+        assert isinstance(gate_id, str)
+        record: dict[str, Any] = {
+            "acceptance": source_gate["acceptance"],
+            "evidence": list(source_gate["evidence"]),
+            "id": gate_id,
+            "required": source_gate["required"],
+        }
+        if gate_id in observed_status:
+            if observed_status[gate_id]:
+                record["status"] = "passed"
+                record["observed_evidence"] = observed_evidence[gate_id]
+            else:
+                record["status"] = "blocked"
+                record["blocked_by"] = [
+                    "The required full-lane evidence was absent or did not satisfy its checked result."
+                ]
+        else:
+            record["status"] = "blocked"
+            record["blocked_by"] = list(source_gate["blocked_by"])
+        gate_records.append(record)
+
+    unmet_required = [
+        record["id"]
+        for record in gate_records
+        if record["required"] and record["status"] != "passed"
+    ]
+    return {
+        "contract": {
+            "format": contract["format"],
+            "path": relative(M5_GATE_CONTRACT),
+            "schema": contract["schema"],
+            "upstream": dict(contract["upstream"]),
+        },
+        "full_lane": dict(full_lane),
+        "gates": gate_records,
+        "overall_status": "passed" if not unmet_required else "unmet",
+        "unmet_required": unmet_required,
+    }
+
+
+def m5_gate_unmet_message(gate: Mapping[str, Any]) -> str:
+    """Render a concise failure that points to the durable full-gate report."""
+
+    unmet = gate.get("unmet_required")
+    gates = gate.get("gates")
+    if not isinstance(unmet, list) or not unmet or not isinstance(gates, list):
+        return "allocator --full did not meet the reviewed Milestone 5 gate"
+    blockers = {
+        entry.get("id"): entry.get("blocked_by")
+        for entry in gates
+        if isinstance(entry, Mapping)
+    }
+    details: list[str] = []
+    for gate_id in unmet:
+        reasons = blockers.get(gate_id)
+        if isinstance(reasons, list) and reasons and isinstance(reasons[0], str):
+            details.append(f"{gate_id}: {reasons[0]}")
+        else:
+            details.append(f"{gate_id}: required evidence did not pass")
+    return "allocator --full did not meet Milestone 5: " + "; ".join(details)
+
+
 def validate_adapted_test_contract(
     contract: Mapping[str, Any],
     pin: Mapping[str, str],
@@ -2122,22 +2403,35 @@ def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]
     for path in test_sources(source):
         name = path.relative_to(source).as_posix()
         kind = "test-source" if path.suffix in {".c", ".cc", ".cpp"} else "test-support"
+        if name in M4_ADAPTED_UPSTREAM_TEST_PATHS:
+            status = "adapted-milestone-4"
+            status_note = M4_ADAPTED_UPSTREAM_TEST_NOTE
+            status_field = "execution"
+        else:
+            status = "blocked-milestone-5-plus"
+            status_note = M5_PLUS_UNADAPTED_UPSTREAM_TEST_NOTE
+            status_field = "blocked_by"
         items.append(
             {
-                "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
+                status_field: status_note,
                 "kind": kind,
                 "path": name,
                 "sha256": sha256_file(path),
-                "status": "blocked-milestone-4",
+                "status": status,
             }
         )
     return {
-        "format": 1,
+        "format": 2,
         "mimalloc_version": pin["version"],
         "pinned_archive_sha256": pin["sha256"],
         "tests": items,
         "summary": {
-            "blocked_milestone_4_count": sum(item["kind"] == "test-source" for item in items),
+            "adapted_milestone_4_file_count": sum(
+                item["status"] == "adapted-milestone-4" for item in items
+            ),
+            "blocked_milestone_5_plus_count": sum(
+                item["status"] == "blocked-milestone-5-plus" for item in items
+            ),
             "test_source_count": sum(item["kind"] == "test-source" for item in items),
             "test_support_file_count": sum(item["kind"] == "test-support" for item in items),
             "total_inventory_file_count": len(items),
@@ -2440,7 +2734,10 @@ def command_record(
     cwd: Path,
     env: Mapping[str, str] | None = None,
     input_text: str | None = None,
+    timeout_seconds: int = 300,
 ) -> dict[str, Any]:
+    if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+        raise HarnessError("oracle command timeout must be a positive integer number of seconds")
     try:
         completed = subprocess.run(
             list(command),
@@ -2450,7 +2747,7 @@ def command_record(
             text=True,
             capture_output=True,
             check=False,
-            timeout=300,
+            timeout=timeout_seconds,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise HarnessError(f"failed to execute oracle command {' '.join(command)}: {error}") from error
@@ -3291,6 +3588,22 @@ def validate_runtime_ticket_zero_adapter_contract(
         != "compat/allocator/runtime-ticket-zero-adapter/runtime-ticket-zero-fixture.c"
     ):
         raise HarnessError("runtime ticket-zero adapter contract names the wrong fixture")
+    expected_fixture_invocation = {
+        "cycle_argument": "--worker-cycles",
+        "churn_stress_seed": f"0x{RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED:016x}",
+        "churn_watchdog_seconds": RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
+        "churn_worker_cycles": RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES,
+        "default_stress_seed": f"0x{RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED:016x}",
+        "default_worker_cycles": RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES,
+        "maximum_worker_cycles": RUNTIME_TICKET_ZERO_MAX_WORKER_CYCLES,
+        "soak_stress_seed": f"0x{RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED:016x}",
+        "soak_watchdog_seconds": RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS,
+        "soak_worker_cycles": RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES,
+        "stress_seed_argument": "--stress-seed",
+        "worker_routes_per_cycle": RUNTIME_TICKET_ZERO_WORKER_ROUTES_PER_CYCLE,
+    }
+    if contract.get("fixture_invocation") != expected_fixture_invocation:
+        raise HarnessError("runtime ticket-zero fixture invocation contract differs from the native lane")
     expected_symbols = contract.get("expected_adapter_symbols")
     if not isinstance(expected_symbols, list) or not all(
         isinstance(symbol, str) for symbol in expected_symbols
@@ -4576,12 +4889,70 @@ def run_test_adapter_fixtures(
     return result
 
 
+def runtime_ticket_zero_stress_schedule(
+    *,
+    worker_cycles: int,
+    stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
+) -> dict[str, int | str]:
+    """Validate and describe one bounded, reproducible C lifecycle schedule."""
+
+    if (
+        not isinstance(worker_cycles, int)
+        or isinstance(worker_cycles, bool)
+        or not 1 <= worker_cycles <= RUNTIME_TICKET_ZERO_MAX_WORKER_CYCLES
+    ):
+        raise HarnessError(
+            "runtime ticket-zero worker cycles must be an integer in "
+            f"1..{RUNTIME_TICKET_ZERO_MAX_WORKER_CYCLES}"
+        )
+    if (
+        not isinstance(stress_seed, int)
+        or isinstance(stress_seed, bool)
+        or not 0 <= stress_seed <= RUNTIME_TICKET_ZERO_MAX_STRESS_SEED
+    ):
+        raise HarnessError(
+            "runtime ticket-zero stress seed must be an unsigned 64-bit integer"
+        )
+    return {
+        "seed": f"0x{stress_seed:016x}",
+        "worker_route_invocation_count": (
+            worker_cycles * RUNTIME_TICKET_ZERO_WORKER_ROUTES_PER_CYCLE
+        ),
+        "worker_routes_per_cycle": RUNTIME_TICKET_ZERO_WORKER_ROUTES_PER_CYCLE,
+    }
+
+
+def runtime_ticket_zero_fixture_command(
+    fixture_binary: Path,
+    *,
+    worker_cycles: int,
+    stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
+) -> list[str]:
+    """Build one reproducible invocation of the private C lifecycle witness."""
+
+    schedule = runtime_ticket_zero_stress_schedule(
+        worker_cycles=worker_cycles,
+        stress_seed=stress_seed,
+    )
+    return [
+        str(fixture_binary),
+        "--worker-cycles",
+        str(worker_cycles),
+        "--stress-seed",
+        str(schedule["seed"]),
+    ]
+
+
 def run_runtime_ticket_zero_adapter_fixture(
     compiler: str,
     static_library: Path,
     native_libraries: Sequence[str],
+    *,
+    worker_cycles: int = RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES,
+    watchdog_seconds: int = RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
+    stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
 ) -> dict[str, Any]:
-    """Run one fresh process through the permanent ticket-zero C witness."""
+    """Run one fresh process through the bounded, seeded ticket-zero C witness."""
 
     artifact_root = REPORT_ROOT / "runtime-ticket-zero-adapter"
     fixture_binary = artifact_root / "runtime-ticket-zero-fixture"
@@ -4601,9 +4972,28 @@ def run_runtime_ticket_zero_adapter_fixture(
         "-o",
         str(fixture_binary),
     ]
+    stress_schedule = runtime_ticket_zero_stress_schedule(
+        worker_cycles=worker_cycles,
+        stress_seed=stress_seed,
+    )
+    fixture_run_command = runtime_ticket_zero_fixture_command(
+        fixture_binary,
+        worker_cycles=worker_cycles,
+        stress_seed=stress_seed,
+    )
     fixture_build = command_record(fixture_command, cwd=ROOT)
     require_success(fixture_build, "runtime ticket-zero C fixture build")
-    fixture_run = command_record((str(fixture_binary),), cwd=ROOT)
+    if (
+        not isinstance(watchdog_seconds, int)
+        or isinstance(watchdog_seconds, bool)
+        or watchdog_seconds <= 0
+    ):
+        raise HarnessError("runtime ticket-zero fixture watchdog must be a positive integer")
+    fixture_run = command_record(
+        fixture_run_command,
+        cwd=ROOT,
+        timeout_seconds=watchdog_seconds,
+    )
     if (
         fixture_run["status"] != 0
         or fixture_run["stdout"] != "runtime ticket-zero allocator ok\n"
@@ -4616,8 +5006,14 @@ def run_runtime_ticket_zero_adapter_fixture(
     return {
         "artifact": artifact_record(fixture_binary),
         "build_command": fixture_command,
-        "run_command": [str(fixture_binary)],
+        "run_command": fixture_run_command,
         "stdout": str(fixture_run["stdout"]),
+        "watchdog": {
+            "seconds": watchdog_seconds,
+            "status": "passed",
+        },
+        "worker_cycles": worker_cycles,
+        "stress_schedule": stress_schedule,
     }
 
 
@@ -4803,6 +5199,9 @@ def run_milestone0(
     check_only: bool,
     include_test_adapter: bool = False,
     architecture: str = "aarch64",
+    runtime_ticket_zero_worker_cycles: int = RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES,
+    runtime_ticket_zero_watchdog_seconds: int = RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
+    runtime_ticket_zero_stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
 ) -> dict[str, Any]:
     if architecture not in {"aarch64", "x86_64"}:
         raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
@@ -4903,10 +5302,15 @@ def run_milestone0(
             runtime_ticket_zero_contract,
             RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8"),
         )
+        m5_gate_contract = read_json(M5_GATE_CONTRACT)
+        m5_gate_summary = validate_m5_gate_contract(m5_gate_contract, pin)
+        port_map = load_port_map()
+        check_ratchet(port_map)
         if check_only:
             return {
                 "adapted_test_contract": adapted_summary,
                 "adapted_test_patch": adapted_patch,
+                "m5_gate_contract": m5_gate_summary,
                 "runtime_ticket_zero_test_contract": runtime_ticket_zero_summary,
                 "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
                 "port_map": port_map_counts(port_map),
@@ -4941,6 +5345,7 @@ def run_milestone0(
         report["rust_release_layout"] = rust_layout
         report["adapted_test_contract"] = adapted_summary
         report["adapted_test_patch"] = adapted_patch
+        report["m5_gate_contract"] = m5_gate_summary
         report["runtime_ticket_zero_test_contract"] = runtime_ticket_zero_summary
         if include_test_adapter:
             nm = require_tool("nm")
@@ -4968,6 +5373,9 @@ def run_milestone0(
                     compiler,
                     runtime_static_library,
                     runtime_native_libraries,
+                    worker_cycles=runtime_ticket_zero_worker_cycles,
+                    watchdog_seconds=runtime_ticket_zero_watchdog_seconds,
+                    stress_seed=runtime_ticket_zero_stress_seed,
                 ),
             }
         write_json(REPORT_ROOT / "latest.json", report)
@@ -4978,7 +5386,17 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--quick", action="store_true", help="run the Milestone 0 C oracle and deterministic contract gate")
-    mode.add_argument("--full", action="store_true", help="attempt the later full allocator gate")
+    mode.add_argument("--full", action="store_true", help="run the audited Milestone 5 full-lane report")
+    mode.add_argument(
+        "--churn",
+        action="store_true",
+        help="run the bounded ticket-zero pthread churn evidence lane",
+    )
+    mode.add_argument(
+        "--soak",
+        action="store_true",
+        help="run the larger ticket-zero pthread lifecycle soak lane",
+    )
     perf = parser.add_mutually_exclusive_group()
     perf.add_argument("--perf-smoke", action="store_true", help="attempt the later allocator performance smoke gate")
     perf.add_argument("--perf-full", action="store_true", help="attempt the later allocator performance full gate")
@@ -5012,10 +5430,10 @@ def parse_arguments() -> argparse.Namespace:
         )
     )
     arguments = parser.parse_args()
-    if not any((arguments.quick, arguments.full, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
-        parser.error("choose --quick, --full, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
+    if not any((arguments.quick, arguments.full, arguments.churn, arguments.soak, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
+        parser.error("choose --quick, --full, --churn, --soak, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
     if arguments.generate_contracts or arguments.snapshot_ratchet:
-        if arguments.quick or arguments.full or arguments.perf_smoke or arguments.perf_full:
+        if arguments.quick or arguments.full or arguments.churn or arguments.soak or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
         arguments.full
@@ -5054,16 +5472,45 @@ def main() -> int:
             )
             print(json.dumps(result, sort_keys=True))
             return 0
-        run_milestone0(
+        report = run_milestone0(
             offline=arguments.offline,
             generate_contracts=False,
             check_only=False,
-            include_test_adapter=arguments.full,
+            include_test_adapter=arguments.full or arguments.churn or arguments.soak,
+            runtime_ticket_zero_worker_cycles=(
+                RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
+                if arguments.soak
+                else (
+                    RUNTIME_TICKET_ZERO_CHURN_WORKER_CYCLES
+                    if arguments.full or arguments.churn
+                    else RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES
+                )
+            ),
+            runtime_ticket_zero_watchdog_seconds=(
+                RUNTIME_TICKET_ZERO_SOAK_WATCHDOG_SECONDS
+                if arguments.soak
+                else RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS
+            ),
+            runtime_ticket_zero_stress_seed=(
+                RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED
+                if arguments.soak
+                else (
+                    RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED
+                    if arguments.full or arguments.churn
+                    else RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED
+                )
+            ),
             architecture=arguments.architecture,
         )
         if arguments.full:
+            gate = m5_gate_report(read_json(M5_GATE_CONTRACT), report)
+            report["m5_gate"] = gate
+            write_json(REPORT_ROOT / "latest.json", report)
+            if gate["overall_status"] == "passed":
+                print(REPORT_ROOT / "latest.json")
+                return 0
             raise MilestoneUnavailable(
-                "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must complete integrated remote free, lifecycle-safe abandonment/adoption and release, thread/TLS lifecycle, remaining Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
+                m5_gate_unmet_message(gate)
             )
         if arguments.perf_smoke or arguments.perf_full:
             raise MilestoneUnavailable(

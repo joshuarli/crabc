@@ -1055,6 +1055,28 @@ impl ThreadLocalData {
         self.recurse
     }
 
+    /// Enters the source `_mi_deferred_free` callback recursion boundary.
+    ///
+    /// The caller must retain this exact live TLD for one synchronous callback
+    /// and must pair a successful entry with [`Self::end_deferred_callback`]
+    /// before any TLD teardown. Returning `false` preserves the source nested
+    /// callback skip rather than attempting recursive allocator entry.
+    #[inline]
+    pub(crate) fn begin_deferred_callback(&mut self) -> bool {
+        if self.recurse {
+            return false;
+        }
+        self.recurse = true;
+        true
+    }
+
+    /// Leaves the source `_mi_deferred_free` callback recursion boundary.
+    #[inline]
+    pub(crate) fn end_deferred_callback(&mut self) {
+        debug_assert!(self.recurse, "a deferred callback must own the recursion marker");
+        self.recurse = false;
+    }
+
     /// Returns the pinned Unix thread-pool observation.
     #[inline]
     pub(crate) const fn is_in_threadpool(&self) -> bool {
@@ -2389,6 +2411,19 @@ impl Page {
         self.free
     }
 
+    /// Whether the source owner-exit force collector can leave this page with
+    /// an immediately reusable local free block.
+    ///
+    /// Normal local frees first enter `local_free`; `_mi_theap_collect_abandon`
+    /// force-collects that list into `free` before it decides whether a live
+    /// page can be abandoned. This boolean is therefore meaningful only while
+    /// the caller still owns the page's exclusive source lifecycle. It does
+    /// not expose either list address or grant post-exit reclamation authority.
+    #[inline]
+    pub(crate) const fn has_owner_exit_collectable_local_free(&self) -> bool {
+        !self.free.is_null() || !self.local_free.is_null()
+    }
+
     /// Replaces the ordinary free-list head while this page is exclusively
     /// owned by its associated single-thread theap.
     ///
@@ -2675,6 +2710,54 @@ impl Page {
     #[inline]
     pub(crate) fn remote_free_head_is_owner_only(&self) -> bool {
         self.xthread_free.load(Ordering::Acquire) == 1
+    }
+
+    /// Recovers the source free-list block for one exact live client held by
+    /// a remote producer.
+    ///
+    /// Pinned `mi_free_generic_mt` makes this same distinction before it
+    /// calls `mi_free_block_mt`: a page-wide atomic flag says whether a
+    /// client may begin inside its source block, while `page_offset` and
+    /// `block_size` remain fixed for the whole lifetime of that page. This
+    /// raw projection deliberately creates no `Page` reference, so it can be
+    /// used beside an owning thread's ordinary-page mutation and the remote
+    /// producer subsequently retains only the atomic free-head capability.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name initialized metadata for the live page containing
+    /// `client`. `client` must be an exact current allocation from that page,
+    /// and its allocation lifetime must keep the page registered, associated,
+    /// and unreused through the returned block's eventual remote publication.
+    /// The caller may not use this to inspect an arbitrary pointer or a
+    /// detached/abandoned page.
+    #[inline]
+    pub(super) unsafe fn canonical_remote_block_for_live_client_at(
+        page: NonNull<Self>,
+        client: NonNull<u8>,
+    ) -> Option<NonNull<u8>> {
+        let page = page.as_ptr();
+        // SAFETY: the caller keeps the initialized live page stable. This
+        // forms a reference only to the source atomic flag, never to `Page`.
+        let xthread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) };
+        if xthread_id.load(Ordering::Relaxed) & PAGE_HAS_INTERIOR_POINTERS == 0 {
+            return Some(client);
+        }
+
+        // SAFETY: source `mi_free_generic_mt` relies on these immutable page
+        // geometry fields while the exact live client keeps the page from
+        // release or reuse. Derive only the source block-area address and do
+        // not manufacture a shared `Page` reference.
+        let page_offset = unsafe { (*page).page_offset };
+        let block_size = unsafe { (*page).block_size };
+        let page_start = unsafe { page.cast::<u8>().add(page_offset) };
+        let base_address = crate::aligned::recover_block_start(
+            client.as_ptr().addr(),
+            page_start.addr(),
+            block_size,
+        )?;
+        let adjustment = client.as_ptr().addr().checked_sub(base_address)?;
+        NonNull::new(client.as_ptr().wrapping_sub(adjustment))
     }
 
     /// Projects the raw owner fields used after remote detach by the
@@ -3042,6 +3125,20 @@ impl Page {
     #[inline]
     pub(crate) const fn heap(&self) -> *mut Heap {
         self.heap
+    }
+
+    /// Whether a joined producer has published at least one remote block to
+    /// this live page's source `mi_thread_free_t` head.
+    ///
+    /// This reads only the atomic head representation. Callers that use it to
+    /// select an owner-side collection transition must separately prove that
+    /// the page remains live and that no producer can publish concurrently
+    /// with the following non-atomic queue/page mutation.
+    #[inline]
+    pub(crate) fn has_published_remote_free(&self) -> bool {
+        // `mi_thread_free_t` reserves its low bit for ownership; every other
+        // bit is the aligned remote-block address.
+        self.xthread_free.load(Ordering::Acquire) & !1 != 0
     }
 
     /// Returns the next raw queue link for exclusive retired-page traversal.
@@ -3628,6 +3725,26 @@ impl Theap {
     #[inline]
     pub(crate) fn heap(&self) -> *mut Heap {
         self.heap.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Checks the exact TLD pointer saved by source `_mi_theap_init`.
+    ///
+    /// This is intentionally narrower than owner identity matching: the
+    /// deferred-free boundary must not cross a stale Theap/TLD pairing during
+    /// post-exit teardown.
+    #[inline]
+    pub(crate) fn matches_tld_pointer(&self, tld: *mut ThreadLocalData) -> bool {
+        core::ptr::eq(self.tld, tld) && !tld.is_null()
+    }
+
+    /// Advances source `mi_theap_t::heartbeat` for one collector entry.
+    ///
+    /// Pinned C uses an unsigned counter, so overflow is defined modulo the
+    /// field width rather than a debug-only failure.
+    #[inline]
+    pub(crate) fn advance_heartbeat(&mut self) -> u64 {
+        self.heartbeat = self.heartbeat.wrapping_add(1);
+        self.heartbeat
     }
 
     #[cfg(test)]
