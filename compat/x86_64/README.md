@@ -366,6 +366,13 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
+`headers-layouts.toml` is the checked-in contract for the twenty-nine selected
+native header gates. It names each dispatcher command, direct C/C++ probe and
+runner, and only the project headers explicitly included by those probes. It
+does not claim a transitive include closure, complete installed headers,
+archive linkage, runtime completion, or public x86 support; the ledger
+validator rejects a missing, renamed, or reclassified gate.
+
 `header-abi-project` places the project headers first and compile-checks only
 the staged x86 `fenv`, `float`, and fundamental-type declarations, in both SSE
 and x87 evaluation modes. It deliberately has no link step: the declarations

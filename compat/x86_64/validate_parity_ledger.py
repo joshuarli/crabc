@@ -16,10 +16,190 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = ROOT / "compat" / "x86_64" / "parity.toml"
+HEADER_LAYOUT_MANIFEST_PATH = ROOT / "compat" / "x86_64" / "headers-layouts.toml"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
+EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
+
+EXPECTED_HEADER_LAYOUT_PROBES = {
+    "project": "./scripts/dev-x86_64.sh header-abi-project",
+    "sys-reg": "./scripts/dev-x86_64.sh sys-reg-header-abi",
+    "types": "./scripts/dev-x86_64.sh types-header-abi",
+    "stat": "./scripts/dev-x86_64.sh stat-header-abi",
+    "ctype": "./scripts/dev-x86_64.sh ctype-header-abi",
+    "integer-arithmetic": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
+    "integer-parse": "./scripts/dev-x86_64.sh integer-parse-header-abi",
+    "intmax-arithmetic": "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi",
+    "credential-observation": "./scripts/dev-x86_64.sh credential-observation-header-abi",
+    "child-reaping": "./scripts/dev-x86_64.sh child-reaping-header-abi",
+    "immediate-termination": "./scripts/dev-x86_64.sh immediate-termination-header-abi",
+    "callback-algorithms": "./scripts/dev-x86_64.sh callback-algorithms-header-abi",
+    "ffs": "./scripts/dev-x86_64.sh ffs-header-abi",
+    "byte-strings": "./scripts/dev-x86_64.sh byte-strings-header-abi",
+    "memory-search": "./scripts/dev-x86_64.sh memory-search-header-abi",
+    "string-copy": "./scripts/dev-x86_64.sh string-copy-header-abi",
+    "random-entropy": "./scripts/dev-x86_64.sh random-entropy-header-abi",
+    "time": "./scripts/dev-x86_64.sh time-header-abi",
+    "poll": "./scripts/dev-x86_64.sh poll-header-abi",
+    "select": "./scripts/dev-x86_64.sh select-header-abi",
+    "fcntl": "./scripts/dev-x86_64.sh fcntl-header-abi",
+    "unistd": "./scripts/dev-x86_64.sh unistd-header-abi",
+    "system": "./scripts/dev-x86_64.sh system-header-abi",
+    "syscall": "./scripts/dev-x86_64.sh syscall-header-abi",
+    "signal": "./scripts/dev-x86_64.sh signal-header-abi",
+    "termios": "./scripts/dev-x86_64.sh termios-header-abi",
+    "mman": "./scripts/dev-x86_64.sh mman-header-abi",
+    "resource": "./scripts/dev-x86_64.sh resource-header-abi",
+    "socket": "./scripts/dev-x86_64.sh socket-header-abi",
+}
+
+EXPECTED_HEADER_LAYOUT_SOURCES = {
+    "project": (
+        "compat/x86_64/project_header_abi_probe.c",
+        "compat/x86_64/run_project_header_abi.sh",
+    ),
+    "sys-reg": (
+        "compat/x86_64/sys_reg_header_abi_probe.c",
+        "compat/x86_64/run_sys_reg_header_abi.sh",
+    ),
+    "types": (
+        "compat/x86_64/types_header_abi_probe.c",
+        "compat/x86_64/types_header_abi_probe.cpp",
+        "compat/x86_64/run_types_header_abi.sh",
+    ),
+    "stat": (
+        "compat/x86_64/stat_header_abi_probe.c",
+        "compat/x86_64/stat_header_abi_probe.cpp",
+        "compat/x86_64/run_stat_header_abi.sh",
+    ),
+    "ctype": (
+        "compat/x86_64/ctype_header_abi_probe.c",
+        "compat/x86_64/ctype_header_abi_probe.cpp",
+        "compat/x86_64/run_ctype_header_abi.sh",
+    ),
+    "integer-arithmetic": (
+        "compat/x86_64/integer_arithmetic_header_abi_probe.c",
+        "compat/x86_64/integer_arithmetic_header_abi_probe.cpp",
+        "compat/x86_64/run_integer_arithmetic_header_abi.sh",
+    ),
+    "integer-parse": (
+        "compat/x86_64/integer_parse_header_abi_probe.c",
+        "compat/x86_64/integer_parse_header_abi_probe.cpp",
+        "compat/x86_64/run_integer_parse_header_abi.sh",
+    ),
+    "intmax-arithmetic": (
+        "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
+        "compat/x86_64/intmax_arithmetic_header_abi_probe.cpp",
+        "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
+    ),
+    "credential-observation": (
+        "compat/x86_64/credential_observation_header_abi_probe.c",
+        "compat/x86_64/credential_observation_header_abi_probe.cpp",
+        "compat/x86_64/run_credential_observation_header_abi.sh",
+    ),
+    "child-reaping": (
+        "compat/x86_64/child_reaping_header_abi_probe.c",
+        "compat/x86_64/child_reaping_header_abi_probe.cpp",
+        "compat/x86_64/run_child_reaping_header_abi.sh",
+    ),
+    "immediate-termination": (
+        "compat/x86_64/immediate_termination_header_abi_probe.c",
+        "compat/x86_64/immediate_termination_header_abi_probe.cpp",
+        "compat/x86_64/run_immediate_termination_header_abi.sh",
+    ),
+    "callback-algorithms": (
+        "compat/x86_64/callback_algorithms_header_abi_probe.c",
+        "compat/x86_64/callback_algorithms_header_abi_probe.cpp",
+        "compat/x86_64/run_callback_algorithms_header_abi.sh",
+    ),
+    "ffs": (
+        "compat/x86_64/ffs_header_abi_probe.c",
+        "compat/x86_64/ffs_header_abi_probe.cpp",
+        "compat/x86_64/run_ffs_header_abi.sh",
+    ),
+    "byte-strings": (
+        "compat/x86_64/byte_strings_header_abi_probe.c",
+        "compat/x86_64/byte_strings_header_abi_probe.cpp",
+        "compat/x86_64/run_byte_strings_header_abi.sh",
+    ),
+    "memory-search": (
+        "compat/x86_64/memory_search_header_abi_probe.c",
+        "compat/x86_64/memory_search_header_abi_probe.cpp",
+        "compat/x86_64/run_memory_search_header_abi.sh",
+    ),
+    "string-copy": (
+        "compat/x86_64/string_copy_header_abi_probe.c",
+        "compat/x86_64/string_copy_header_abi_probe.cpp",
+        "compat/x86_64/run_string_copy_header_abi.sh",
+    ),
+    "random-entropy": (
+        "compat/x86_64/random_entropy_header_abi_probe.c",
+        "compat/x86_64/random_entropy_header_abi_probe.cpp",
+        "compat/x86_64/run_random_entropy_header_abi.sh",
+    ),
+    "time": (
+        "compat/x86_64/time_header_abi_probe.c",
+        "compat/x86_64/time_header_abi_probe.cpp",
+        "compat/x86_64/run_time_header_abi.sh",
+    ),
+    "poll": (
+        "compat/x86_64/poll_header_abi_probe.c",
+        "compat/x86_64/poll_header_abi_probe.cpp",
+        "compat/x86_64/run_poll_header_abi.sh",
+    ),
+    "select": (
+        "compat/x86_64/select_header_abi_probe.c",
+        "compat/x86_64/select_header_abi_probe.cpp",
+        "compat/x86_64/run_select_header_abi.sh",
+    ),
+    "fcntl": (
+        "compat/x86_64/fcntl_header_abi_probe.c",
+        "compat/x86_64/fcntl_header_abi_probe.cpp",
+        "compat/x86_64/run_fcntl_header_abi.sh",
+    ),
+    "unistd": (
+        "compat/x86_64/unistd_header_abi_probe.c",
+        "compat/x86_64/unistd_header_abi_probe.cpp",
+        "compat/x86_64/run_unistd_header_abi.sh",
+    ),
+    "system": (
+        "compat/x86_64/system_header_abi_probe.c",
+        "compat/x86_64/system_header_abi_probe.cpp",
+        "compat/x86_64/run_system_header_abi.sh",
+    ),
+    "syscall": (
+        "compat/x86_64/x86_syscall_header_probe.c",
+        "compat/x86_64/run_x86_syscall_header.sh",
+    ),
+    "signal": (
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/signal_header_posix_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+    ),
+    "termios": (
+        "compat/x86_64/termios_header_abi_probe.c",
+        "compat/x86_64/termios_header_abi_probe.cpp",
+        "compat/x86_64/run_termios_header_abi.sh",
+    ),
+    "mman": (
+        "compat/x86_64/mman_header_abi_probe.c",
+        "compat/x86_64/mman_header_abi_probe.cpp",
+        "compat/x86_64/run_mman_header_abi.sh",
+    ),
+    "resource": (
+        "compat/x86_64/resource_header_abi_probe.c",
+        "compat/x86_64/resource_header_abi_probe.cpp",
+        "compat/x86_64/run_resource_header_abi.sh",
+    ),
+    "socket": (
+        "compat/x86_64/socket_header_abi_probe.c",
+        "compat/x86_64/socket_header_abi_probe.cpp",
+        "compat/x86_64/socket_header_ipv6_macro_probe.c",
+        "compat/x86_64/run_socket_header_abi.sh",
+    ),
+}
 
 EXPECTED_FAMILIES = (
     "oracle.musl-toolchain",
@@ -225,6 +405,220 @@ def repository_path(path_text: str, location: str) -> Path:
         raise LedgerError(f"{location} escapes the repository: {path_text}") from error
     require(resolved.exists(), f"{location} does not exist: {path_text}")
     return resolved
+
+
+def direct_project_headers(source: Path) -> set[str]:
+    """Return explicit angle-bracket includes from one C or C++ probe source."""
+    headers: set[str] = set()
+    for line in source.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#include <"):
+            continue
+        header = stripped.removeprefix("#include <").split(">", maxsplit=1)[0]
+        if header:
+            headers.add(f"include/{header}")
+    return headers
+
+
+def validate_header_layout_manifest(
+    family: Mapping[str, Any], manifest: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Keep selected native header evidence explicit without promoting it.
+
+    The manifest is intentionally an index of direct probe includes only. It
+    is not a transitive-include inventory or an assertion that an installed
+    header, archive, or runtime is complete.
+    """
+    require(isinstance(manifest, Mapping), "header-layout manifest must be a table")
+    expected_manifest_keys = {
+        "schema",
+        "family",
+        "target",
+        "platform",
+        "kernel_msrv",
+        "status",
+        "oracle",
+        "policy",
+        "probe",
+    }
+    require(
+        set(manifest) == expected_manifest_keys,
+        "header-layout manifest top-level keys drifted",
+    )
+    require(
+        manifest["schema"] == EXPECTED_HEADER_LAYOUT_SCHEMA,
+        "unexpected header-layout manifest schema",
+    )
+    require(manifest["family"] == "libc.headers-layouts", "header-layout manifest family drifted")
+    require(manifest["target"] == EXPECTED_TARGET, "header-layout manifest target drifted")
+    require(manifest["platform"] == EXPECTED_PLATFORM, "header-layout manifest platform drifted")
+    require(
+        manifest["kernel_msrv"] == EXPECTED_KERNEL_MSRV,
+        "header-layout manifest kernel MSRV drifted",
+    )
+    require(manifest["status"] == "planned", "header-layout manifest must remain planned")
+    require(manifest["oracle"] == "Pinned musl 1.2.6", "header-layout manifest oracle drifted")
+
+    policy = manifest["policy"]
+    require(isinstance(policy, Mapping), "header-layout manifest policy must be a table")
+    require(
+        dict(policy)
+        == {
+            "native_execution_only": True,
+            "project_headers_first": True,
+            "direct_header_inventory": True,
+            "transitive_include_closure": False,
+            "aggregate_family_completion": False,
+            "public_support": False,
+        },
+        "header-layout manifest policy drifted",
+    )
+
+    require(
+        family.get("status") == "planned",
+        "libc.headers-layouts must remain planned while its manifest is partial",
+    )
+    require(
+        family.get("capabilities") == [],
+        "libc.headers-layouts manifest must not claim baseline capabilities",
+    )
+    manifest_path = repository_path(
+        str(family.get("header_manifest", "")),
+        "family[libc.headers-layouts].header_manifest",
+    )
+    require(
+        manifest_path == HEADER_LAYOUT_MANIFEST_PATH,
+        "libc.headers-layouts must use the checked-in header-layout manifest",
+    )
+    source_owners = nonempty_strings(
+        family["source_owners"], "family[libc.headers-layouts].source_owners"
+    )
+    require(
+        "compat/x86_64/headers-layouts.toml" in source_owners,
+        "libc.headers-layouts must own its header-layout manifest",
+    )
+    require(
+        "include" not in source_owners,
+        "libc.headers-layouts must not hide header scope behind the include directory",
+    )
+
+    evidence = family["native_evidence"]
+    assert isinstance(evidence, list)
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        tuple(EXPECTED_HEADER_LAYOUT_SOURCES) == tuple(EXPECTED_HEADER_LAYOUT_PROBES),
+        "header-layout validator source roster drifted",
+    )
+    probes = manifest["probe"]
+    require(isinstance(probes, list) and probes, "header-layout manifest probe must be a non-empty array")
+    require(
+        len(probes) == len(EXPECTED_HEADER_LAYOUT_PROBES),
+        "header-layout manifest probe count drifted",
+    )
+
+    probe_ids: list[str] = []
+    for index, entry in enumerate(probes):
+        location = f"header-layout manifest probe[{index}]"
+        require(isinstance(entry, Mapping), f"{location} must be a table")
+        require(
+            set(entry) == {"id", "command", "state", "kind", "sources", "headers"},
+            f"{location} keys drifted",
+        )
+        identifier = entry["id"]
+        require(isinstance(identifier, str) and identifier, f"{location}.id is empty")
+        require(
+            identifier == identifier.lower()
+            and not identifier.startswith("-")
+            and not identifier.endswith("-")
+            and all(character in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in identifier),
+            f"{location}.id must be lowercase kebab-case",
+        )
+        require(identifier in EXPECTED_HEADER_LAYOUT_PROBES, f"{location}.id is not a selected header gate")
+        command = entry["command"]
+        require(isinstance(command, str) and command, f"{location}.command is empty")
+        require(
+            command == EXPECTED_HEADER_LAYOUT_PROBES[identifier],
+            f"{location}.command drifted from its selected header gate",
+        )
+        require(entry["state"] == "required", f"{location}.state must remain required")
+        expected_kind = "macro-runtime" if identifier == "socket" else "compile-only"
+        require(entry["kind"] == expected_kind, f"{location}.kind drifted")
+
+        source_names = nonempty_strings(entry["sources"], f"{location}.sources")
+        require(
+            len(source_names) == len(set(source_names)),
+            f"{location}.sources contains a duplicate",
+        )
+        require(
+            tuple(source_names) == EXPECTED_HEADER_LAYOUT_SOURCES[identifier],
+            f"{location}.sources drifted from its selected header gate",
+        )
+        source_paths: list[Path] = []
+        for source_index, source_name in enumerate(source_names):
+            source_path = repository_path(source_name, f"{location}.sources[{source_index}]")
+            require(source_path.is_file(), f"{location}.sources[{source_index}] is not a file")
+            require(
+                source_name.startswith("compat/x86_64/"),
+                f"{location}.sources[{source_index}] must stay in compat/x86_64",
+            )
+            require(
+                source_name in source_owners,
+                f"{location}.sources[{source_index}] is not a family source owner",
+            )
+            source_paths.append(source_path)
+        c_sources = [path for path in source_paths if path.suffix in {".c", ".cpp"}]
+        runner_sources = [path for path in source_paths if path.suffix == ".sh"]
+        require(c_sources, f"{location}.sources must include a C or C++ probe")
+        require(len(runner_sources) == 1, f"{location}.sources must include exactly one runner")
+
+        header_names = nonempty_strings(entry["headers"], f"{location}.headers")
+        require(
+            len(header_names) == len(set(header_names)),
+            f"{location}.headers contains a duplicate",
+        )
+        for header_index, header_name in enumerate(header_names):
+            header_path = repository_path(header_name, f"{location}.headers[{header_index}]")
+            require(header_path.is_file(), f"{location}.headers[{header_index}] is not a file")
+            require(
+                header_name.startswith("include/") and header_name.endswith(".h"),
+                f"{location}.headers[{header_index}] must be an installed header",
+            )
+            require(
+                header_name in source_owners,
+                f"{location}.headers[{header_index}] is not a family source owner",
+            )
+        direct_headers = set().union(*(direct_project_headers(path) for path in c_sources))
+        require(
+            set(header_names) == direct_headers,
+            f"{location}.headers must exactly match its direct C/C++ includes",
+        )
+
+        evidence_matches = [
+            record
+            for record in evidence
+            if isinstance(record, Mapping) and record.get("command") == command
+        ]
+        require(
+            len(evidence_matches) == 1 and evidence_matches[0].get("state") == "required",
+            f"{location}.command must map to one required family evidence record",
+        )
+        subcommand = command.removeprefix("./scripts/dev-x86_64.sh ")
+        require(
+            subcommand != command
+            and (
+                f"    {subcommand})" in dispatch_source
+                or f"    {subcommand}|" in dispatch_source
+                or f"|{subcommand})" in dispatch_source
+            ),
+            f"{location}.command is absent from the native dispatcher",
+        )
+        probe_ids.append(identifier)
+
+    require(
+        tuple(probe_ids) == tuple(EXPECTED_HEADER_LAYOUT_PROBES),
+        "header-layout manifest probe order or roster drifted",
+    )
+    return {"probe_count": len(probe_ids)}
 
 
 def require_evidence_state(
@@ -1242,7 +1636,9 @@ def has_musl_oracle(family: Mapping[str, Any]) -> bool:
     )
 
 
-def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
+def validate_ledger(
+    data: Mapping[str, Any], *, header_layout_manifest: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     require(data.get("schema") == EXPECTED_SCHEMA, "unexpected x86 parity ledger schema")
     require(data.get("target") == EXPECTED_TARGET, "unexpected x86 parity target")
     require(data.get("platform") == EXPECTED_PLATFORM, "unexpected x86 parity platform")
@@ -1394,6 +1790,12 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
     require(orders == sorted(orders) and len(orders) == len(set(orders)), "family order values must be unique and ascending")
     require(ids == set(EXPECTED_FAMILIES), "family coverage does not match promotion roster")
 
+    if header_layout_manifest is None:
+        header_layout_manifest = load_toml(HEADER_LAYOUT_MANIFEST_PATH)
+    header_layout_report = validate_header_layout_manifest(
+        by_id["libc.headers-layouts"], header_layout_manifest
+    )
+
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
@@ -1476,6 +1878,7 @@ def validate_ledger(data: Mapping[str, Any]) -> dict[str, Any]:
         "status_counts": status_counts,
         "verified_slice_count": len(verified_slice_ids),
         "verified_artifact_count": len(verified_artifact_ids),
+        "header_layout_probe_count": header_layout_report["probe_count"],
         "promotion_ready": all(family["status"] == "foundation-verified" for family in families),
         "public_support": policy["public_support"],
     }

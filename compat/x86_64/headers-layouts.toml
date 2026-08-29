@@ -1,0 +1,375 @@
+# Selected native x86-64 header/layout evidence, not an installed-header
+# completion claim. Each `headers` list records only headers explicitly
+# included by that probe's source; it intentionally does not assert the
+# transitive include closure, archive linkage, or public x86 support.
+schema = "crabc.x86_64-headers-layouts/v1"
+family = "libc.headers-layouts"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+kernel_msrv = "5.10"
+status = "planned"
+oracle = "Pinned musl 1.2.6"
+
+[policy]
+native_execution_only = true
+project_headers_first = true
+direct_header_inventory = true
+transitive_include_closure = false
+aggregate_family_completion = false
+public_support = false
+
+[[probe]]
+id = "project"
+command = "./scripts/dev-x86_64.sh header-abi-project"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/project_header_abi_probe.c",
+  "compat/x86_64/run_project_header_abi.sh",
+]
+headers = ["include/bits/alltypes.h", "include/fenv.h", "include/float.h"]
+
+[[probe]]
+id = "sys-reg"
+command = "./scripts/dev-x86_64.sh sys-reg-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/sys_reg_header_abi_probe.c",
+  "compat/x86_64/run_sys_reg_header_abi.sh",
+]
+headers = ["include/sys/reg.h"]
+
+[[probe]]
+id = "types"
+command = "./scripts/dev-x86_64.sh types-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/types_header_abi_probe.c",
+  "compat/x86_64/types_header_abi_probe.cpp",
+  "compat/x86_64/run_types_header_abi.sh",
+]
+headers = ["include/bits/alltypes.h", "include/sys/types.h"]
+
+[[probe]]
+id = "stat"
+command = "./scripts/dev-x86_64.sh stat-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/stat_header_abi_probe.c",
+  "compat/x86_64/stat_header_abi_probe.cpp",
+  "compat/x86_64/run_stat_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/sys/stat.h"]
+
+[[probe]]
+id = "ctype"
+command = "./scripts/dev-x86_64.sh ctype-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/ctype_header_abi_probe.c",
+  "compat/x86_64/ctype_header_abi_probe.cpp",
+  "compat/x86_64/run_ctype_header_abi.sh",
+]
+headers = ["include/ctype.h"]
+
+[[probe]]
+id = "integer-arithmetic"
+command = "./scripts/dev-x86_64.sh integer-arithmetic-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/integer_arithmetic_header_abi_probe.c",
+  "compat/x86_64/integer_arithmetic_header_abi_probe.cpp",
+  "compat/x86_64/run_integer_arithmetic_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/stdlib.h"]
+
+[[probe]]
+id = "integer-parse"
+command = "./scripts/dev-x86_64.sh integer-parse-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/integer_parse_header_abi_probe.c",
+  "compat/x86_64/integer_parse_header_abi_probe.cpp",
+  "compat/x86_64/run_integer_parse_header_abi.sh",
+]
+headers = ["include/inttypes.h", "include/stdlib.h"]
+
+[[probe]]
+id = "intmax-arithmetic"
+command = "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
+  "compat/x86_64/intmax_arithmetic_header_abi_probe.cpp",
+  "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/inttypes.h"]
+
+[[probe]]
+id = "credential-observation"
+command = "./scripts/dev-x86_64.sh credential-observation-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/credential_observation_header_abi_probe.c",
+  "compat/x86_64/credential_observation_header_abi_probe.cpp",
+  "compat/x86_64/run_credential_observation_header_abi.sh",
+]
+headers = ["include/unistd.h"]
+
+[[probe]]
+id = "child-reaping"
+command = "./scripts/dev-x86_64.sh child-reaping-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/child_reaping_header_abi_probe.c",
+  "compat/x86_64/child_reaping_header_abi_probe.cpp",
+  "compat/x86_64/run_child_reaping_header_abi.sh",
+]
+headers = ["include/sys/wait.h"]
+
+[[probe]]
+id = "immediate-termination"
+command = "./scripts/dev-x86_64.sh immediate-termination-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/immediate_termination_header_abi_probe.c",
+  "compat/x86_64/immediate_termination_header_abi_probe.cpp",
+  "compat/x86_64/run_immediate_termination_header_abi.sh",
+]
+headers = ["include/stdlib.h"]
+
+[[probe]]
+id = "callback-algorithms"
+command = "./scripts/dev-x86_64.sh callback-algorithms-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/callback_algorithms_header_abi_probe.c",
+  "compat/x86_64/callback_algorithms_header_abi_probe.cpp",
+  "compat/x86_64/run_callback_algorithms_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/stdlib.h"]
+
+[[probe]]
+id = "ffs"
+command = "./scripts/dev-x86_64.sh ffs-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/ffs_header_abi_probe.c",
+  "compat/x86_64/ffs_header_abi_probe.cpp",
+  "compat/x86_64/run_ffs_header_abi.sh",
+]
+headers = ["include/strings.h"]
+
+[[probe]]
+id = "byte-strings"
+command = "./scripts/dev-x86_64.sh byte-strings-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/byte_strings_header_abi_probe.c",
+  "compat/x86_64/byte_strings_header_abi_probe.cpp",
+  "compat/x86_64/run_byte_strings_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/string.h", "include/strings.h"]
+
+[[probe]]
+id = "memory-search"
+command = "./scripts/dev-x86_64.sh memory-search-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/memory_search_header_abi_probe.c",
+  "compat/x86_64/memory_search_header_abi_probe.cpp",
+  "compat/x86_64/run_memory_search_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/string.h"]
+
+[[probe]]
+id = "string-copy"
+command = "./scripts/dev-x86_64.sh string-copy-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/string_copy_header_abi_probe.c",
+  "compat/x86_64/string_copy_header_abi_probe.cpp",
+  "compat/x86_64/run_string_copy_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/string.h"]
+
+[[probe]]
+id = "random-entropy"
+command = "./scripts/dev-x86_64.sh random-entropy-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/random_entropy_header_abi_probe.c",
+  "compat/x86_64/random_entropy_header_abi_probe.cpp",
+  "compat/x86_64/run_random_entropy_header_abi.sh",
+]
+headers = [
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/random.h",
+  "include/unistd.h",
+]
+
+[[probe]]
+id = "time"
+command = "./scripts/dev-x86_64.sh time-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/time_header_abi_probe.c",
+  "compat/x86_64/time_header_abi_probe.cpp",
+  "compat/x86_64/run_time_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/time.h"]
+
+[[probe]]
+id = "poll"
+command = "./scripts/dev-x86_64.sh poll-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/poll_header_abi_probe.c",
+  "compat/x86_64/poll_header_abi_probe.cpp",
+  "compat/x86_64/run_poll_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/poll.h"]
+
+[[probe]]
+id = "select"
+command = "./scripts/dev-x86_64.sh select-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/select_header_abi_probe.c",
+  "compat/x86_64/select_header_abi_probe.cpp",
+  "compat/x86_64/run_select_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/sys/select.h"]
+
+[[probe]]
+id = "fcntl"
+command = "./scripts/dev-x86_64.sh fcntl-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/fcntl_header_abi_probe.c",
+  "compat/x86_64/fcntl_header_abi_probe.cpp",
+  "compat/x86_64/run_fcntl_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/fcntl.h"]
+
+[[probe]]
+id = "unistd"
+command = "./scripts/dev-x86_64.sh unistd-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/unistd_header_abi_probe.c",
+  "compat/x86_64/unistd_header_abi_probe.cpp",
+  "compat/x86_64/run_unistd_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/stdint.h", "include/unistd.h"]
+
+[[probe]]
+id = "system"
+command = "./scripts/dev-x86_64.sh system-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/system_header_abi_probe.c",
+  "compat/x86_64/system_header_abi_probe.cpp",
+  "compat/x86_64/run_system_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/sys/sysinfo.h", "include/sys/utsname.h"]
+
+[[probe]]
+id = "syscall"
+command = "./scripts/dev-x86_64.sh syscall-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/x86_syscall_header_probe.c",
+  "compat/x86_64/run_x86_syscall_header.sh",
+]
+headers = ["include/sys/syscall.h"]
+
+[[probe]]
+id = "signal"
+command = "./scripts/dev-x86_64.sh signal-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/signal_header_abi_probe.c",
+  "compat/x86_64/signal_header_posix_abi_probe.c",
+  "compat/x86_64/run_signal_header_abi.sh",
+]
+headers = ["include/signal.h", "include/stddef.h"]
+
+[[probe]]
+id = "termios"
+command = "./scripts/dev-x86_64.sh termios-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/termios_header_abi_probe.c",
+  "compat/x86_64/termios_header_abi_probe.cpp",
+  "compat/x86_64/run_termios_header_abi.sh",
+]
+headers = ["include/stddef.h", "include/termios.h"]
+
+[[probe]]
+id = "mman"
+command = "./scripts/dev-x86_64.sh mman-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/mman_header_abi_probe.c",
+  "compat/x86_64/mman_header_abi_probe.cpp",
+  "compat/x86_64/run_mman_header_abi.sh",
+]
+headers = ["include/sys/mman.h"]
+
+[[probe]]
+id = "resource"
+command = "./scripts/dev-x86_64.sh resource-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/resource_header_abi_probe.c",
+  "compat/x86_64/resource_header_abi_probe.cpp",
+  "compat/x86_64/run_resource_header_abi.sh",
+]
+headers = [
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/resource.h",
+  "include/unistd.h",
+]
+
+[[probe]]
+id = "socket"
+command = "./scripts/dev-x86_64.sh socket-header-abi"
+state = "required"
+kind = "macro-runtime"
+sources = [
+  "compat/x86_64/socket_header_abi_probe.c",
+  "compat/x86_64/socket_header_abi_probe.cpp",
+  "compat/x86_64/socket_header_ipv6_macro_probe.c",
+  "compat/x86_64/run_socket_header_abi.sh",
+]
+headers = ["include/netinet/in.h", "include/stddef.h", "include/sys/socket.h"]

@@ -24,6 +24,9 @@ class X86ParityLedgerTests(unittest.TestCase):
     def data(self) -> dict[str, object]:
         return copy.deepcopy(ledger.load_toml(ledger.LEDGER_PATH))
 
+    def header_manifest(self) -> dict[str, object]:
+        return copy.deepcopy(ledger.load_toml(ledger.HEADER_LAYOUT_MANIFEST_PATH))
+
     @staticmethod
     def family(data: dict[str, object], identifier: str) -> dict[str, object]:
         entries = data["family"]
@@ -43,8 +46,86 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 26)
         self.assertEqual(report["verified_artifact_count"], 28)
+        self.assertEqual(report["header_layout_probe_count"], 29)
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
+
+    def test_header_layout_manifest_is_a_closed_direct_probe_inventory(self) -> None:
+        data = self.data()
+        manifest = self.header_manifest()
+        report = ledger.validate_ledger(data, header_layout_manifest=manifest)
+        headers_layouts = self.family(data, "libc.headers-layouts")
+
+        self.assertEqual(report["header_layout_probe_count"], 29)
+        self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
+        self.assertEqual(manifest["status"], "planned")
+        self.assertEqual(manifest["family"], "libc.headers-layouts")
+        self.assertEqual(
+            headers_layouts["header_manifest"],
+            "compat/x86_64/headers-layouts.toml",
+        )
+        self.assertIn(
+            "compat/x86_64/headers-layouts.toml", headers_layouts["source_owners"]
+        )
+        self.assertNotIn("include", headers_layouts["source_owners"])
+
+        probes = manifest["probe"]
+        assert isinstance(probes, list)
+        self.assertEqual(
+            [probe["id"] for probe in probes],
+            list(ledger.EXPECTED_HEADER_LAYOUT_PROBES),
+        )
+        socket = next(probe for probe in probes if probe["id"] == "socket")
+        assert isinstance(socket, dict)
+        self.assertEqual(socket["kind"], "macro-runtime")
+        self.assertEqual(
+            socket["sources"],
+            [
+                "compat/x86_64/socket_header_abi_probe.c",
+                "compat/x86_64/socket_header_abi_probe.cpp",
+                "compat/x86_64/socket_header_ipv6_macro_probe.c",
+                "compat/x86_64/run_socket_header_abi.sh",
+            ],
+        )
+
+    def test_header_layout_manifest_rejects_scope_or_probe_drift(self) -> None:
+        data = self.data()
+        manifest = self.header_manifest()
+        manifest["status"] = "foundation-verified"
+        with self.assertRaisesRegex(ledger.LedgerError, "must remain planned"):
+            ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_manifest()
+        probes = manifest["probe"]
+        assert isinstance(probes, list)
+        probes.pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "probe count drifted"):
+            ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_manifest()
+        probes = manifest["probe"]
+        assert isinstance(probes, list) and isinstance(probes[0], dict)
+        probes[0]["headers"] = ["include/time.h"]
+        with self.assertRaisesRegex(ledger.LedgerError, "direct C/C\\+\\+ includes"):
+            ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_manifest()
+        probes = manifest["probe"]
+        assert isinstance(probes, list) and isinstance(probes[0], dict)
+        probes[0]["sources"][-1] = "compat/x86_64/run_time_header_abi.sh"
+        with self.assertRaisesRegex(ledger.LedgerError, "sources drifted"):
+            ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_manifest()
+        probes = manifest["probe"]
+        assert isinstance(probes, list) and isinstance(probes[0], dict)
+        probes[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
+        with self.assertRaisesRegex(ledger.LedgerError, "command drifted"):
+            ledger.validate_ledger(data, header_layout_manifest=manifest)
 
     def test_foundations_remain_narrow_and_source_or_artifact_scoped(self) -> None:
         data = self.data()
