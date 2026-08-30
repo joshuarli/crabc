@@ -891,7 +891,12 @@ companion `native_mimalloc_initial_live_parallel_workers` regression holds two
 independently parked later local sessions beside the same parked ticket-zero
 engine, releases them one at a time, and proves ticket zero resumes only after
 both ordinary all-free finishes. It adds no concurrent map mutation or
-cross-thread client authority.
+cross-thread client authority. A third
+`native_mimalloc_initial_live_owner_exit` companion keeps that initial client
+parked across a later A's existing mixed owner-exit route; a fresh B
+terminally frees the aggregate and completes its ordinary finish before ticket
+zero can reassemble, query, reallocate, and free its own client. It neither
+hands the initial client to A/B nor creates concurrent map authority.
 Separately,
 the lower later-main engine boundary has a Rust-only persistent storage form:
 `MainHeapThreadProcessPageAllocator::suspend_persistent` splits the exact

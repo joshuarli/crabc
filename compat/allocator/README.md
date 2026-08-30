@@ -2039,7 +2039,12 @@ a concurrent allocator or general pointer handoff. Its companion
 later local sessions beside that same initial client, releases and joins them
 one at a time, and proves ticket zero resumes only after both all-free thread
 finishes. It likewise admits no concurrent PageMap mutation or pointer
-handoff. In the
+handoff. The `native_mimalloc_initial_live_owner_exit` companion keeps that
+same initial client parked while a later A leaves the existing mixed
+owner-exit aggregate; fresh B terminally frees its exact C inputs and finishes
+normally before ticket zero resumes to query, reallocate, validate, and free
+its own client. It does not hand A or B the initial client or admit concurrent
+PageMap mutation. In the
 owner-exit fixture A leaves a
 direct-small block, a non-direct-small block, a medium block, a regular-large
 block, an unaligned arena singleton, and an OS-aligned singleton live; a fresh

@@ -185,7 +185,10 @@ At this checkpoint:
   worker allocator or a pointer handoff. Its companion
   `native_mimalloc_initial_live_parallel_workers` fixture parks two later
   local sessions beside that same initial owner, releases them one at a time,
-  and permits ticket zero to resume only after both ordinary all-free finishes;
+  and permits ticket zero to resume only after both ordinary all-free finishes.
+  A third `native_mimalloc_initial_live_owner_exit` companion keeps the same
+  initial client parked across a later A's existing mixed aggregate route;
+  fresh B terminally frees that route and finishes before ticket zero resumes;
 * Gates 5A and 5B use one private typed A-side runtime operation, and the private scheduler now admits distinct independently parked normal engines while serializing each PageMap mutation. The selected shadow proves both that a second C worker can retain a local private session while a live A route is active and that two independently parked A routes can each accept an exact B-side query/free; neither witness gives later workers a public, cross-pointer, or general persistent allocator route;
 * the worker runtime seam deliberately prevents client pointers from crossing its bounded witnesses: the Gate 5B B/C threads receive only opaque publication capabilities, and Gate 5C gives B/C/D only a scoped same-page atomic producer pair plus an opaque B-side route;
 * native-shadow worker pointers remain local to their parked owner session
@@ -1268,6 +1271,7 @@ thread parks only its own PageMap exclusion before a child performs and frees
 one local allocation, then resumes to query, reallocate, validate, free, and
 reuse that initial client; two later local sessions parked beside that same
 initial owner and released one at a time before ticket zero resumes; bounded
+initial-live/mixed-owner-exit/terminal-B-finish/initial-reuse; bounded
 worker-local allocation/free with all-free post-destructor
 finish; one live-C-block aggregate where A exits with direct-small and
 non-direct-small blocks, a medium block, a regular-large block, an unaligned

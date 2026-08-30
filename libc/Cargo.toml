@@ -111,6 +111,10 @@ name = "native_mimalloc_initial_live_local_worker"
 path = "../tests/native_mimalloc_initial_live_local_worker.rs"
 
 [[test]]
+name = "native_mimalloc_initial_live_owner_exit"
+path = "../tests/native_mimalloc_initial_live_owner_exit.rs"
+
+[[test]]
 name = "native_mimalloc_initial_live_parallel_workers"
 path = "../tests/native_mimalloc_initial_live_parallel_workers.rs"
 
