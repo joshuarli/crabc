@@ -642,6 +642,14 @@ portability layer. [`COMPATIBILITY.md`](COMPATIBILITY.md) remains the generated
 record of current compatibility evidence and measurements; it is not edited by
 hand.
 
+Within that allocator program, the direct native-engine owner-exit lifecycle
+Gate 5C is complete: `allocator --full` executes the reviewed
+[`native-owner-exit-lifecycle-v3.5.0.json`](compat/allocator/native-owner-exit-lifecycle-v3.5.0.json)
+suite and records its source-shaped traversal/terminal-release evidence as
+passed. Milestone 5 remains open because Gate 5D churn/stability and Gate 5E
+selected shadow-ABI acceptance are still blocked; the C allocator remains the
+default backend.
+
 The Rust-owned Linux/AArch64 application CRT/sysroot is also complete current
 evidence. `./scripts/dev.sh sysroot` produces two clean reproducible installed
 trees with `crabc-cc`, Rust CRT objects, Rust compiler helpers, the canonical

@@ -956,16 +956,24 @@ no pthread; heaps, subprocesses, large-object mode, and the libc allocator
 path hard-fail at compile time. It is therefore recorded as preliminary
 source-derived stress evidence, not a cross-thread, remote-free, or
 thread-recreation acceptance claim. `allocator --churn` and `--soak` do not
-silently run that distinct full-lane witness. `allocator --full` then runs the
-same 128-cycle, 30-second, seed
+silently run that distinct full-lane witness. `allocator --full` also executes
+the reviewed
+[`native-owner-exit-lifecycle-v3.5.0.json`](native-owner-exit-lifecycle-v3.5.0.json)
+suite: twelve focused direct `crabc-mimalloc` checks spanning the mixed runtime
+route, source publication before and after exit, aggregate final-member
+reclamation, failed OS terminal release, terminal finish ordering, and source
+traversal filters. It records Gate 5C as passed only when that complete checked
+record is present; the suite is direct-engine lifecycle evidence, not a
+shadow-ABI or general concurrent-routing claim. It then runs the same 128-cycle,
+30-second, seed
 `0xd1b54a32d192ed03` ticket-zero lifecycle schedule as `allocator --churn`
 and writes a versioned [`m5-gate-v3.5.0.json`](m5-gate-v3.5.0.json) result to
 `compat/reports/allocator/latest.json`. The report records the bounded base,
-persistent-worker, and live-owner remote-free evidence as passed only when its
-executed checks pass. It records Gate 5C (general owner exit), Gate 5D (soak,
-stability, and upstream stress), and Gate 5E (selected native-shadow
-acceptance) as explicit blockers until their documented acceptance criteria are
-met. Consequently `allocator --full` still exits 3 today, but its failure is
+persistent-worker, live-owner remote-free, and owner-exit evidence as passed
+only when their executed checks pass. It records Gate 5D (soak, stability, and
+upstream stress) and Gate 5E (selected native-shadow acceptance) as explicit
+blockers until their documented acceptance criteria are met. Consequently
+`allocator --full` still exits 3 today, but its failure is
 the named reviewed gate state rather than a synthetic post-run placeholder.
 
 `allocator --churn` uses that same prefixed evidence adapter but succeeds only
@@ -1933,6 +1941,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `adapted/test-stress-creating-thread.patch` | Minimal source adaptation of the exact upstream stress fixture; it keeps the source workload but intentionally excludes every unsupported scheduler or allocator mode rather than copying a C fork. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, eleven-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus retained narrow, persistent mixed-local, live-owner remote-free, a fresh-B mixed post-exit owner route, and alternating sole-medium/direct-small reclamation worker round trips through one existing export. |
+| `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, twelve focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
 | `m5-gate-v3.5.0.json` | Versioned full-lane contract for the 128-cycle lifecycle schedule and its current Gate 5A--5E acceptance/blocker classification. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |

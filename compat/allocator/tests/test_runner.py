@@ -1549,7 +1549,110 @@ class ContractTests(unittest.TestCase):
             ["m5.base", "m5.5a", "m5.5b", "m5.5c", "m5.5d", "m5.5e"],
         )
 
-    def test_m5_gate_report_keeps_open_gates_visible_after_bounded_evidence_passes(self) -> None:
+    def test_native_owner_exit_lifecycle_contract_covers_every_reviewed_condition(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+        summary = RUNNER.validate_native_owner_exit_lifecycle_contract(
+            contract,
+            RUNNER.load_pin(),
+        )
+
+        self.assertEqual(summary["check_count"], 12)
+        self.assertEqual(
+            summary["scenario_coverage"],
+            sorted(RUNNER.NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS),
+        )
+        self.assertEqual(
+            RUNNER.native_owner_exit_lifecycle_command(
+                summary["execution"],
+                summary["checks"][0],
+            ),
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--features",
+                "native-runtime-test-audit,native-runtime-test-fault,native-runtime-test-published-source",
+                "--locked",
+                "--test",
+                "native_post_exit_lifecycle",
+                "--",
+                "--test-threads=1",
+            ],
+        )
+        self.assertEqual(
+            RUNNER.native_owner_exit_lifecycle_command(
+                summary["execution"],
+                summary["checks"][-1],
+            ),
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--features",
+                "native-runtime-test-audit,native-runtime-test-fault,native-runtime-test-published-source",
+                "--locked",
+                "--lib",
+                "main_heap_page::tests::later_thread_exit_mapped_medium_route_adopts_into_a_fresh_later_owner",
+                "--",
+                "--test-threads=1",
+            ],
+        )
+
+    def test_native_owner_exit_lifecycle_runner_records_every_reviewed_check(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+        result = {
+            "status": 0,
+            "stderr": "",
+            "stdout": (
+                "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+                "0 filtered out; finished in 0.00s\n"
+            ),
+        }
+        with mock.patch.object(RUNNER, "command_record", return_value=result) as command_record:
+            report = RUNNER.run_native_owner_exit_lifecycle(contract, RUNNER.load_pin())
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["check_count"], 12)
+        self.assertEqual(len(report["checks"]), 12)
+        self.assertEqual(command_record.call_count, 12)
+        self.assertTrue(
+            all(call.kwargs["timeout_seconds"] == 300 for call in command_record.call_args_list)
+        )
+
+    def test_m5_owner_exit_evidence_rejects_a_partial_execution_record(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+        summary = RUNNER.validate_native_owner_exit_lifecycle_contract(
+            contract,
+            RUNNER.load_pin(),
+        )
+        report = {
+            "native_owner_exit_lifecycle": {
+                "check_count": summary["check_count"],
+                "checks": [
+                    {
+                        "id": check["id"],
+                        "kind": check["kind"],
+                        "passed_test_count": check["expected_passed_test_count"],
+                        "target": check["target"],
+                    }
+                    for check in summary["checks"]
+                ],
+                "contract": RUNNER.native_owner_exit_lifecycle_contract_record(
+                    contract,
+                    RUNNER.load_pin(),
+                ),
+                "scenario_coverage": summary["scenario_coverage"],
+                "status": "passed",
+            }
+        }
+
+        self.assertTrue(RUNNER._m5_native_owner_exit_lifecycle_evidence_passed(report))
+        report["native_owner_exit_lifecycle"]["checks"].pop()
+        self.assertFalse(RUNNER._m5_native_owner_exit_lifecycle_evidence_passed(report))
+
+    def test_m5_gate_report_accepts_executed_owner_exit_evidence_before_open_later_gates(self) -> None:
         contract = RUNNER.read_json(RUNNER.M5_GATE_CONTRACT)
         report = {
             "compiler_tls_codegen": {"status": "passed"},
@@ -1606,23 +1709,54 @@ class ContractTests(unittest.TestCase):
                 }
             },
         }
+        native_contract = RUNNER.read_json(RUNNER.NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+        native_summary = RUNNER.validate_native_owner_exit_lifecycle_contract(
+            native_contract,
+            RUNNER.load_pin(),
+        )
+        # The native owner-exit suite is deliberately distinct from the
+        # ticket-zero churn witness: its successful direct routes are the
+        # evidence that lets Gate 5C advance while the stress and shadow
+        # gates remain open.
+        report["native_owner_exit_lifecycle"] = {
+            "check_count": native_summary["check_count"],
+            "checks": [
+                {
+                    "id": check["id"],
+                    "kind": check["kind"],
+                    "passed_test_count": check["expected_passed_test_count"],
+                    "target": check["target"],
+                }
+                for check in native_summary["checks"]
+            ],
+            "contract": RUNNER.native_owner_exit_lifecycle_contract_record(
+                native_contract,
+                RUNNER.load_pin(),
+            ),
+            "scenario_coverage": native_summary["scenario_coverage"],
+            "status": "passed",
+        }
 
         gate = RUNNER.m5_gate_report(contract, report)
 
         self.assertEqual(gate["overall_status"], "unmet")
-        self.assertEqual(gate["unmet_required"], ["m5.5c", "m5.5d", "m5.5e"])
+        self.assertEqual(gate["unmet_required"], ["m5.5d", "m5.5e"])
         self.assertEqual(
             {entry["id"]: entry["status"] for entry in gate["gates"]},
             {
                 "m5.base": "passed",
                 "m5.5a": "passed",
                 "m5.5b": "passed",
-                "m5.5c": "blocked",
+                "m5.5c": "passed",
                 "m5.5d": "blocked",
                 "m5.5e": "blocked",
             },
         )
         gate_by_id = {entry["id"]: entry for entry in gate["gates"]}
+        self.assertEqual(
+            gate_by_id["m5.5c"]["observed_evidence"],
+            ["report:/native_owner_exit_lifecycle"],
+        )
         self.assertEqual(
             gate_by_id["m5.5d"]["observed_evidence"],
             ["report:/m5_source_derived_stress_adapter/fixture"],

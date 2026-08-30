@@ -114,6 +114,9 @@ X86_64_TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen-x86_64.
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 M5_GATE_CONTRACT = ALLOCATOR_ROOT / "m5-gate-v3.5.0.json"
+NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT = (
+    ALLOCATOR_ROOT / "native-owner-exit-lifecycle-v3.5.0.json"
+)
 
 M5_GATE_IDS = (
     "m5.base",
@@ -123,7 +126,30 @@ M5_GATE_IDS = (
     "m5.5d",
     "m5.5e",
 )
-M5_STATIC_BLOCKED_GATE_IDS = frozenset({"m5.5c", "m5.5d", "m5.5e"})
+M5_STATIC_BLOCKED_GATE_IDS = frozenset({"m5.5d", "m5.5e"})
+
+# These are the concrete Gate 5C conditions, plus the two acceptance-boundary
+# facts that make the evidence about the one production traversal rather than
+# a collection of special routes. The checked-in behavior contract maps each
+# condition to an executable direct test or source-level focused test filter.
+NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS = frozenset(
+    {
+        "a-exits-b-frees",
+        "empty-during-exit-collection",
+        "failed-os-terminal-release",
+        "general-production-traversal",
+        "live-page-abandonment",
+        "mixed-departing-theap",
+        "multiple-bins-and-page-kinds",
+        "multiple-live-pages",
+        "old-theap-teardown",
+        "remote-free-after-exit",
+        "remote-free-before-exit",
+        "source-permitted-adoption",
+        "terminal-admission-order",
+        "terminal-ownership-release",
+    }
+)
 
 PRODUCTION_RUST_TARGET = "aarch64-unknown-linux-musl"
 X86_64_RUST_TARGET = "x86_64-unknown-linux-musl"
@@ -1378,6 +1404,138 @@ def validate_m5_gate_contract(
     }
 
 
+def validate_native_owner_exit_lifecycle_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Validate the executable owner-exit evidence boundary.
+
+    Gate 5C is intentionally narrower than a generic cross-thread allocator:
+    each checked target proves one source-shaped condition while keeping client
+    addresses and page capabilities private. Requiring both integration
+    targets and focused source filters keeps the acceptance record tied to the
+    runtime boundary and to the general traversal below it.
+    """
+
+    if (
+        contract.get("schema") != "crabc-mimalloc-native-owner-exit-lifecycle"
+        or contract.get("format") != 1
+    ):
+        raise HarnessError("unsupported native owner-exit lifecycle contract")
+
+    upstream = contract.get("upstream")
+    if not isinstance(upstream, Mapping):
+        raise HarnessError("native owner-exit lifecycle contract lacks upstream identity")
+    if upstream.get("version") != pin["version"] or upstream.get("revision") != pin["revision"]:
+        raise HarnessError("native owner-exit lifecycle upstream identity mismatch")
+
+    execution = contract.get("execution")
+    expected_execution = {
+        "features": [
+            "native-runtime-test-audit",
+            "native-runtime-test-fault",
+            "native-runtime-test-published-source",
+        ],
+        "package": "crabc-mimalloc",
+        "test_threads": 1,
+        "timeout_seconds": 300,
+    }
+    if not isinstance(execution, Mapping) or dict(execution) != expected_execution:
+        raise HarnessError("native owner-exit lifecycle execution contract changed")
+
+    raw_checks = contract.get("checks")
+    if not isinstance(raw_checks, list) or not raw_checks:
+        raise HarnessError("native owner-exit lifecycle contract lacks checks")
+
+    checks: list[dict[str, Any]] = []
+    check_ids: set[str] = set()
+    scenario_coverage: set[str] = set()
+    check_kinds: set[str] = set()
+    for index, raw_check in enumerate(raw_checks):
+        if not isinstance(raw_check, Mapping):
+            raise HarnessError(f"native owner-exit lifecycle check {index} is not an object")
+        if set(raw_check) != {
+            "expected_passed_test_count",
+            "id",
+            "kind",
+            "scenarios",
+            "target",
+        }:
+            raise HarnessError(f"native owner-exit lifecycle check {index} has unexpected fields")
+        check_id = raw_check.get("id")
+        if (
+            not isinstance(check_id, str)
+            or not re.fullmatch(r"[a-z][a-z0-9-]*", check_id)
+            or check_id in check_ids
+        ):
+            raise HarnessError(f"native owner-exit lifecycle check {index} has an invalid id")
+        kind = raw_check.get("kind")
+        if kind not in {"integration-test", "unit-test-filter"}:
+            raise HarnessError(f"native owner-exit lifecycle check {check_id} has an invalid kind")
+        target = raw_check.get("target")
+        target_pattern = (
+            r"[a-z][a-z0-9_]*"
+            if kind == "integration-test"
+            else r"[a-z_][a-z0-9_]*(?:::[a-z_][a-z0-9_]*)+"
+        )
+        if not isinstance(target, str) or not re.fullmatch(target_pattern, target):
+            raise HarnessError(f"native owner-exit lifecycle check {check_id} has an invalid target")
+        expected_passed_test_count = raw_check.get("expected_passed_test_count")
+        if (
+            not isinstance(expected_passed_test_count, int)
+            or isinstance(expected_passed_test_count, bool)
+            or expected_passed_test_count <= 0
+        ):
+            raise HarnessError(
+                f"native owner-exit lifecycle check {check_id} has an invalid expected test count"
+            )
+        scenarios = raw_check.get("scenarios")
+        if (
+            not isinstance(scenarios, list)
+            or not scenarios
+            or not all(
+                isinstance(scenario, str)
+                and scenario in NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS
+                for scenario in scenarios
+            )
+            or len(set(scenarios)) != len(scenarios)
+        ):
+            raise HarnessError(f"native owner-exit lifecycle check {check_id} has invalid scenarios")
+        check_ids.add(check_id)
+        check_kinds.add(kind)
+        scenario_coverage.update(scenarios)
+        checks.append(
+            {
+                "expected_passed_test_count": expected_passed_test_count,
+                "id": check_id,
+                "kind": kind,
+                "scenarios": list(scenarios),
+                "target": target,
+            }
+        )
+
+    if check_kinds != {"integration-test", "unit-test-filter"}:
+        raise HarnessError(
+            "native owner-exit lifecycle contract must include integration and source-level checks"
+        )
+    if scenario_coverage != NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS:
+        missing = sorted(NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS - scenario_coverage)
+        unexpected = sorted(scenario_coverage - NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS)
+        details = [
+            *(f"missing {scenario}" for scenario in missing),
+            *(f"unexpected {scenario}" for scenario in unexpected),
+        ]
+        raise HarnessError(
+            "native owner-exit lifecycle scenario coverage differs: " + ", ".join(details)
+        )
+
+    return {
+        "check_count": len(checks),
+        "checks": checks,
+        "execution": expected_execution,
+        "scenario_coverage": sorted(scenario_coverage),
+    }
+
+
 def _m5_report_mapping(
     report: Mapping[str, Any], *path: str
 ) -> Mapping[str, Any] | None:
@@ -1461,6 +1619,54 @@ def _m5_full_lane_evidence_passed(
     )
 
 
+def native_owner_exit_lifecycle_contract_record(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Render the stable contract identity retained in an executed report."""
+
+    return {
+        "format": contract["format"],
+        "path": relative(NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT),
+        "schema": contract["schema"],
+        "upstream": {
+            "revision": pin["revision"],
+            "version": pin["version"],
+        },
+    }
+
+
+def _m5_native_owner_exit_lifecycle_evidence_passed(report: Mapping[str, Any]) -> bool:
+    """Recognize only the complete reviewed Gate 5C execution record."""
+
+    suite = _m5_report_mapping(report, "native_owner_exit_lifecycle")
+    if suite is None or suite.get("status") != "passed":
+        return False
+    pin = load_pin()
+    contract = read_json(NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT)
+    summary = validate_native_owner_exit_lifecycle_contract(contract, pin)
+    if suite.get("contract") != native_owner_exit_lifecycle_contract_record(contract, pin):
+        return False
+    if suite.get("check_count") != summary["check_count"]:
+        return False
+    if suite.get("scenario_coverage") != summary["scenario_coverage"]:
+        return False
+    raw_checks = suite.get("checks")
+    if not isinstance(raw_checks, list) or len(raw_checks) != summary["check_count"]:
+        return False
+    for observed, expected in zip(raw_checks, summary["checks"], strict=True):
+        if not isinstance(observed, Mapping):
+            return False
+        if (
+            observed.get("id") != expected["id"]
+            or observed.get("kind") != expected["kind"]
+            or observed.get("target") != expected["target"]
+            or observed.get("passed_test_count")
+            != expected["expected_passed_test_count"]
+        ):
+            return False
+    return True
+
+
 def _m5_source_derived_stress_evidence_passed(report: Mapping[str, Any]) -> bool:
     """Recognize preliminary M5 stress evidence without promoting Gate 5D."""
 
@@ -1504,6 +1710,7 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
     full_lane = summary["full_lane"]
     base_passed = _m5_base_evidence_passed(report)
     full_lane_passed = _m5_full_lane_evidence_passed(report, full_lane)
+    native_owner_exit_lifecycle_passed = _m5_native_owner_exit_lifecycle_evidence_passed(report)
     loom = _m5_report_mapping(report, "remote_free_loom_model")
     remote_free_loom_passed = loom is not None and loom.get("status") == "passed"
 
@@ -1511,6 +1718,7 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
         "m5.base": base_passed,
         "m5.5a": full_lane_passed,
         "m5.5b": full_lane_passed and remote_free_loom_passed,
+        "m5.5c": native_owner_exit_lifecycle_passed,
     }
     observed_evidence = {
         "m5.base": [
@@ -1523,6 +1731,7 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
             "report:/runtime_ticket_zero_test_adapter/fixture",
             "report:/remote_free_loom_model",
         ],
+        "m5.5c": ["report:/native_owner_exit_lifecycle"],
     }
     source_derived_stress_passed = _m5_source_derived_stress_evidence_passed(report)
 
@@ -3564,6 +3773,76 @@ def parse_rust_test_count(output: str) -> int:
     if len(matches) != 1:
         raise HarnessError("Rust allocator test summary is absent or ambiguous")
     return int(matches[0])
+
+
+def native_owner_exit_lifecycle_command(
+    execution: Mapping[str, Any], check: Mapping[str, Any]
+) -> list[str]:
+    """Build one focused Cargo invocation from the reviewed evidence record."""
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        str(execution["package"]),
+        "--features",
+        ",".join(str(feature) for feature in execution["features"]),
+        "--locked",
+    ]
+    if check["kind"] == "integration-test":
+        command.extend(["--test", str(check["target"])])
+    else:
+        command.extend(["--lib", str(check["target"])])
+    command.extend(["--", f"--test-threads={execution['test_threads']}"])
+    return command
+
+
+def run_native_owner_exit_lifecycle(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, Any]:
+    """Execute the reviewed source-shaped owner-exit lifecycle suite.
+
+    The suite is intentionally direct-engine evidence. It proves Gate 5C's
+    owner-exit traversal and typed terminal-release semantics, but it does
+    not turn the separately nondefault libc shadow lane into accepted ABI or
+    stress evidence.
+    """
+
+    summary = validate_native_owner_exit_lifecycle_contract(contract, pin)
+    execution = summary["execution"]
+    records: list[dict[str, Any]] = []
+    for check in summary["checks"]:
+        command = native_owner_exit_lifecycle_command(execution, check)
+        result = command_record(
+            command,
+            cwd=ROOT,
+            timeout_seconds=execution["timeout_seconds"],
+        )
+        require_success(result, f"native owner-exit lifecycle check {check['id']}")
+        output = str(result["stdout"]) + "\n" + str(result["stderr"])
+        passed_test_count = parse_rust_test_count(output)
+        if passed_test_count != check["expected_passed_test_count"]:
+            raise HarnessError(
+                "native owner-exit lifecycle check "
+                f"{check['id']} passed {passed_test_count} tests; expected "
+                f"{check['expected_passed_test_count']}"
+            )
+        records.append(
+            {
+                "command": command,
+                "id": check["id"],
+                "kind": check["kind"],
+                "passed_test_count": passed_test_count,
+                "target": check["target"],
+            }
+        )
+    return {
+        "check_count": summary["check_count"],
+        "checks": records,
+        "contract": native_owner_exit_lifecycle_contract_record(contract, pin),
+        "scenario_coverage": summary["scenario_coverage"],
+        "status": "passed",
+    }
 
 
 def parse_upstream_api_test_summary(output: str) -> dict[str, int]:
@@ -5823,6 +6102,7 @@ def run_milestone0(
     include_test_adapter: bool = False,
     include_adapted_stress: bool = False,
     architecture: str = "aarch64",
+    include_native_owner_exit_lifecycle: bool = False,
     runtime_ticket_zero_worker_cycles: int = RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES,
     runtime_ticket_zero_watchdog_seconds: int = RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
     runtime_ticket_zero_stress_seed: int = RUNTIME_TICKET_ZERO_DEFAULT_STRESS_SEED,
@@ -5941,6 +6221,13 @@ def run_milestone0(
             runtime_ticket_zero_contract,
             RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8"),
         )
+        native_owner_exit_lifecycle_contract = read_json(
+            NATIVE_OWNER_EXIT_LIFECYCLE_CONTRACT
+        )
+        native_owner_exit_lifecycle_summary = validate_native_owner_exit_lifecycle_contract(
+            native_owner_exit_lifecycle_contract,
+            pin,
+        )
         m5_gate_contract = read_json(M5_GATE_CONTRACT)
         m5_gate_summary = validate_m5_gate_contract(m5_gate_contract, pin)
         port_map = load_port_map()
@@ -5952,6 +6239,7 @@ def run_milestone0(
                 "adapted_stress_test_contract": adapted_stress_summary,
                 "adapted_stress_test_patch": adapted_stress_patch,
                 "m5_gate_contract": m5_gate_summary,
+                "native_owner_exit_lifecycle_contract": native_owner_exit_lifecycle_summary,
                 "runtime_ticket_zero_test_contract": runtime_ticket_zero_summary,
                 "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
                 "port_map": port_map_counts(port_map),
@@ -5989,7 +6277,13 @@ def run_milestone0(
         report["adapted_stress_test_contract"] = adapted_stress_summary
         report["adapted_stress_test_patch"] = adapted_stress_patch
         report["m5_gate_contract"] = m5_gate_summary
+        report["native_owner_exit_lifecycle_contract"] = native_owner_exit_lifecycle_summary
         report["runtime_ticket_zero_test_contract"] = runtime_ticket_zero_summary
+        if include_native_owner_exit_lifecycle:
+            report["native_owner_exit_lifecycle"] = run_native_owner_exit_lifecycle(
+                native_owner_exit_lifecycle_contract,
+                pin,
+            )
         if include_test_adapter:
             nm = require_tool("nm")
             static_library, native_libraries, adapter_build = build_test_adapter(
@@ -6131,6 +6425,7 @@ def main() -> int:
             check_only=False,
             include_test_adapter=arguments.full or arguments.churn or arguments.soak,
             include_adapted_stress=arguments.full,
+            include_native_owner_exit_lifecycle=arguments.full,
             runtime_ticket_zero_worker_cycles=(
                 RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
                 if arguments.soak

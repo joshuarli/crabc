@@ -8,9 +8,17 @@ The project remains a compatibility-engineering project, not allocator research.
 
 ---
 
-## Current checkpoint — 2026-08-29
+## Current checkpoint — 2026-08-30
 
-Current capability checkpoint: Gates 5A and 5B are complete. Gate 5C now has
+Current capability checkpoint: Gates 5A through 5C are complete. Gate 5C's
+accepted direct-engine evidence is the checked
+`compat/allocator/native-owner-exit-lifecycle-v3.5.0.json` contract: it runs
+twelve focused runtime and source-traversal checks through `allocator --full`
+and records `m5.5c` as passed only when every required owner-exit condition is
+observed. This accepts the one source-shaped owner-exit traversal and its
+typed terminal-release boundary; it does not accept general concurrent PageMap
+mutation, a generic pointer domain, the nondefault libc shadow ABI, or the
+still-open Gate 5D churn and Gate 5E shadow criteria. The checked suite has
 a bounded mixed regular-page owner-exit witness: it collects two joined
 pre-exit remote frees, normalizing one full medium while releasing a distinct
 large page made empty during source collection, and keeps a direct-small page,
@@ -123,8 +131,9 @@ before it returns A's admission proof. Neither path stores a client address or
 exposes a generic reclaim surface. The focused held-route integration repeats
 that source eight times, while the deterministic state audit and prefixed-C
 churn witness alternate it with the sole-medium source without widening the C
-ABI. Those are bounded source-specific proofs;
-general owner-exit coverage remains next. Every bounded runtime page-owner
+ABI. Those bounded source-specific proofs are now joined by the reviewed
+runtime and source traversal contract; general concurrent owner-exit routing
+remains outside the claim. Every bounded runtime page-owner
 exit continuation—the aggregate traversal, direct small-or-medium reclaim,
 and all-free drain—now enters the source `_mi_deferred_free` phase before its
 first page work: production advances the Theap heartbeat, while a private
@@ -256,9 +265,10 @@ and finishes them in a different order. Neither form exposes a sibling page or
 client, and ticket zero remains unavailable until the final B completes its
 own no-page lifecycle.
 
-The critical path is now Gate 5C: source-shaped general owner exit with live
-allocations. Do not add another owner-exit shape first; converge the existing
-shape matrix on one validated traversal.
+The critical path is now Gate 5D: lifecycle churn and stability, followed by
+Gate 5E's selected shadow acceptance. Do not add another owner-exit shape
+first; preserve the accepted source traversal while extending evidence only at
+the remaining lifecycle boundaries.
 
 This is no longer primarily a "port another function" problem.
 
@@ -1130,6 +1140,16 @@ Acceptance:
 
 ## Gate 5C — owner exits with live allocations
 
+Status: complete for the direct native-engine lifecycle surface. The reviewed
+[`native-owner-exit-lifecycle-v3.5.0.json`](compat/allocator/native-owner-exit-lifecycle-v3.5.0.json)
+contract executes the mixed detached runtime route, source publication before
+and after exit, mapped-medium publication, aggregate final-member reclamation,
+failed OS release, split terminal finish, and five focused
+`main_heap_page` traversal filters. `allocator --full` accepts this gate only
+when all twelve checks report their exact expected test count. The contract is
+evidence for the source-shaped traversal below; it is not a general concurrent
+free interface or a claim that the nondefault libc shadow lane is complete.
+
 Goal: prove the actual reason mimalloc needs abandonment.
 
 Required scenarios:
@@ -1198,8 +1218,8 @@ medium plus a live arena singleton. It then consumes that same returned drain
 through `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
 tears down the old Theap/TLD, and terminally releases the medium followed by
 the singleton. This demonstrates that the legacy narrow capability is not a
-fallback owner-exit path; it does not by itself satisfy the broader Gate 5C
-acceptance contract.
+fallback owner-exit path. It is one focused source check in the broader Gate
+5C acceptance contract, rather than sufficient evidence by itself.
 
 The default-off direct runtime witness
 `crabc-mimalloc/tests/native_post_exit_failed_os_release.rs` covers scenario
@@ -1216,7 +1236,8 @@ claim counted. Its matching successful aggregate witness observes two claims
 after B attaches and before its terminal free, then zero only after B consumes
 the typed completion. The injection hook is test-feature
 only and exposes no route, client, PageMap, or allocator capability. This is
-bounded failure evidence, not closure of the broader Gate 5C contract.
+the failure-safe member of the broader Gate 5C contract, not a standalone
+completion claim.
 
 Acceptance:
 
@@ -1848,10 +1869,12 @@ Maintain focused commands equivalent to:
 * comprehensive correctness and lifecycle evidence for the **currently claimed milestone**.
 
 During Milestone 5, it runs the checked-in `m5-gate-v3.5.0.json` full lane:
-the pinned C-oracle/M4 adapter/TLS/Loom prerequisites, one full-only
+the pinned C-oracle/M4 adapter/TLS/Loom prerequisites, the twelve-check
+`native-owner-exit-lifecycle-v3.5.0.json` direct-engine suite, one full-only
 source-derived creating-thread `test-stress.c` witness, and a 128-cycle,
-30-second deterministic ticket-zero lifecycle witness. Its report classifies
-executed bounded evidence separately from Gate 5C--5E acceptance blockers.
+30-second deterministic ticket-zero lifecycle witness. Its report records
+Gate 5C as passed only when the owner-exit suite's complete reviewed record is
+present, and keeps the remaining Gate 5D--5E acceptance blockers explicit.
 While the milestone is incomplete it returns a nonzero status, but must name
 the particular unmet gate rather than emit a permanent generic “future
 milestone unavailable” result.
@@ -2106,13 +2129,13 @@ The existing code substantially covers this substrate, although broad production
 
 ## Milestone 5 — integrated concurrency and thread lifecycle
 
-**This is the current critical path.**
+**Gates 5D and 5E are the current critical path.**
 
 Complete Gates:
 
-* 5A persistent page-bearing pthread lifecycle;
-* 5B remote free while owner lives;
-* 5C general owner exit, abandonment, reclamation, and terminal release;
+* 5A persistent page-bearing pthread lifecycle — complete;
+* 5B remote free while owner lives — complete;
+* 5C general owner exit, abandonment, reclamation, and terminal release — complete for the reviewed direct-engine lifecycle contract;
 * 5D churn and metadata stability;
 * 5E minimal crabc-libc Rust shadow backend.
 
@@ -2548,11 +2571,10 @@ wrapper terminally latches every source-mutated `RetainedEngine` before its
 ordinary all-free finisher can run; the retained drain keeps its PageMap
 mutation lease and cannot reach the no-page finalizer.
 
-Extend those proofs to every source-valid route that remains in scope, while
-keeping each terminal failure uniquely retained.
-
-Close Gate 5C only once the complete required source traversal and terminal
-release evidence exists.
+The complete direct-engine source traversal and terminal-release evidence is
+now recorded by `native-owner-exit-lifecycle-v3.5.0.json`. Preserve those
+proofs while extending the remaining churn and shadow boundaries, and keep
+every terminal failure uniquely retained.
 
 ## Step 6 — churn (in progress)
 

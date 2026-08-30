@@ -36,15 +36,10 @@
       "required": true
     },
     {
-      "acceptance": "One general source-shaped owner-exit traversal and terminal-release contract covers the required owner-exit scenarios.",
-      "blocked_by": [
-        "The existing mixed aggregate, its four-fresh-worker serialized exact-release witness, direct-small and mapped-medium B/C/D source-publication groups, and mapped-regular reclamation witnesses remain bounded source routes; the complete general owner-exit traversal and terminal-release acceptance has not been established."
-      ],
+      "acceptance": "The reviewed native owner-exit lifecycle contract executes its direct runtime and focused source-traversal checks for every required owner-exit scenario.",
       "evidence": [
-        "runtime-ticket-zero:mixed-owner-exit",
-        "runtime-ticket-zero:mapped-regular-reclamation",
-        "native-post-exit:failed-os-release",
-        "native-post-exit:terminal-admission-order"
+        "native-owner-exit-lifecycle:direct-runtime",
+        "native-owner-exit-lifecycle:source-traversal"
       ],
       "id": "m5.5c",
       "required": true

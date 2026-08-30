@@ -22,6 +22,17 @@ v3.3.2. It remains the default while the port is paused, but it is not the
 exact v3.5.0 C oracle: the pinned v3.5.0 archive must be built separately for
 the Rust-port differential and performance baseline if work resumes.
 
+Gate 5C—the source-shaped owner-exit traversal with live allocations—is
+accepted for the direct native-engine lifecycle surface. The checked
+[`native-owner-exit-lifecycle-v3.5.0.json`](../../compat/allocator/native-owner-exit-lifecycle-v3.5.0.json)
+contract runs twelve exact direct runtime and focused source-traversal checks:
+mixed page classes, pre/post-exit source publication, empty versus abandoned
+pages, source-permitted final-member adoption, terminal ownership ordering,
+and failed OS release. The terminal proof remains private to the final B
+worker until that worker's normal finish. This does not accept a general
+concurrent pointer/PageMap route, the nondefault libc shadow ABI, or Gates 5D
+and 5E; the C backend remains default.
+
 The workspace now contains the `crabc-mimalloc` crate with source-mapped
 configuration, arithmetic, types, provenance, atomic operations, size classes,
 ordinary and binned caller-owned bitmap views, a live two-level page map,
