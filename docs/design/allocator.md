@@ -2325,6 +2325,31 @@ VM ownership and page-map transitions without broadening production support;
 the pinned toolchain does not currently install Miri itself. No allocator
 readiness or promotion claim follows from this slice.
 
+### Theap collect-abandon queue seam (pending runtime wiring)
+
+Pinned mimalloc v3.5.0 orders a complete abandoning-Theap collection in
+`src/theap.c::{mi_theap_collect_ex,mi_theap_visit_pages,mi_theap_page_collect}`:
+the caller first processes deferred frees, then retired pages, and only then
+visits every queue through `MI_BIN_FULL` for the page-local force/false
+collection and release-or-abandon decision. For each still-current page,
+`src/page-queue.c::{mi_page_queue_remove,mi_theap_queue_first_update}` removes
+queue membership, repairs the rounded direct-small cache from the new queue
+head, and decrements the Theap page count before the page reaches its terminal
+release or abandonment publication.
+
+`crabc-mimalloc/src/page_queue.rs::{theap_collect_abandon_queues,theap_collect_abandon_detach_page,theap_collect_abandon_update_direct_cache}`
+is the narrow, source-shaped coordinator for that queue half. Its owner-exit
+caller must run the deferred-free and retired-page prepass before invoking it;
+for every callback-selected page action, it preserves the exact sequence
+`force/false collection -> queue membership removal -> direct-cache update ->
+Theap page-count decrement -> terminal release or abandonment callback`.
+The callback cannot select a geometry, alter queue state, or reorder the
+terminal transition. This seam does not itself detach the Theap/TLD, publish an
+abandoned bitmap, or release PageMap/backing state. Runtime owner-exit wiring
+to supply those source-specific callbacks remains pending, so this documents a
+production coordinator boundary rather than a claim that general owner exit is
+integrated.
+
 ## Scope boundary
 
 The production integration profile is Linux/AArch64 little-endian, with Linux
