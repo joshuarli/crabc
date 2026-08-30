@@ -866,7 +866,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "vector-io-header-abi",
             "libc-crt1-static-tls",
             "crt-object-bundle",
-            "crt-dynamic-startup",
+            "crt-dynamic-startup|crt-dynamic-link-contract",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "installed-header-tree-closure",

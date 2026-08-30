@@ -5397,6 +5397,123 @@ def require_dynamic_pie_scrt1_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_dynamic_pie_link_contract_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the controlled Rust CRT link boundary private and auditable."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[crt.dynamic-startup].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "dynamic-pie-link-contract"]
+    require(
+        len(matching) == 1,
+        "crt.dynamic-startup must contain exactly one dynamic-pie-link-contract artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "dynamic-pie-link-contract must not promote crt.dynamic-startup",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `crt.dynamic-startup`",
+        "Rust-produced `Scrt1.o`/`crti.o`/`crtn.o`",
+        "`-nostdlib -nostartfiles`",
+        "ambient musl `Scrt1.o`",
+        "crtbegin/crtend",
+        "libgcc",
+        "ET_DYN",
+        "PT_INTERP",
+        "PT_DYNAMIC",
+        "DT_NEEDED=libc.so",
+        "DT_INIT/DT_FINI/DT_INIT_ARRAY/DT_FINI_ARRAY",
+        "Rust `_start`",
+        "`_init`/`_fini`",
+        "`__crabc_x86_64_dynamic_start`",
+        "`__stack_chk_fail`",
+        "musl owns the observed `IMF`",
+        "candidate libc",
+        "crabc-ldso",
+        "installed CRT/sysroot/compiler driver",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"dynamic-pie-link-contract description omits {phrase}",
+        )
+    expected_sources = {
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_Scrt1.rs",
+        "crt/src/x86_64_dynamic_startup.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "crt/fixtures/dynamic_startup_fixture_x86_64.c",
+        "crt/tests/test_x86_64_dynamic_link_contract.py",
+        "crt/x86_64-dynamic-link-contract.md",
+        "compat/x86_64/run_musl_oracle.sh",
+        "docker/Dockerfile.x86_64",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "dynamic-pie-link-contract source owners"))
+        == expected_sources,
+        "dynamic-pie-link-contract source owners drifted",
+    )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "-nostdlib -nostartfiles",
+        "Rust-produced Scrt1.o, crti.o",
+        "crtn.o",
+        "link map rejects",
+        "ET_DYN",
+        "PT_INTERP",
+        "DT_NEEDED libc.so",
+        "_start",
+        "_init",
+        "_fini",
+        "__crabc_x86_64_dynamic_start",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"dynamic-pie-link-contract ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh crt-dynamic-link-contract"},
+        "dynamic-pie-link-contract must use the closed crt-dynamic-link-contract command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "pinned-musl oracle",
+        "-nostdlib/-nostartfiles",
+        "ambient CRT/compiler substitutions",
+        "ET_DYN/PT_INTERP/PT_DYNAMIC/DT_NEEDED",
+        "entry/init/fini/direct-helper",
+        "musl-owned IMF",
+        "candidate libc",
+        "candidate ldso",
+        "installed CRT/sysroot/compiler driver",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"dynamic-pie-link-contract evidence scope omits {phrase}",
+        )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "run_crt_dynamic_link_contract_probe()" in dispatch_source
+        and "run_musl_oracle\n    run_in_container env CRABC_X86_64_DYNAMIC_LINK_CONTRACT_EVIDENCE=native"
+        in dispatch_source,
+        "dynamic-pie-link-contract dispatcher must verify musl before the native test",
+    )
+
+
 def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
     """Keep the closed byte-string artifact identity and scope durable."""
     artifacts = require_verified_artifacts(
@@ -15153,6 +15270,7 @@ def validate_ledger(
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
     require_static_pie_rust_builtins_bundle_artifact(by_id["crt.static-pie"])
+    require_dynamic_pie_link_contract_artifact(by_id["crt.dynamic-startup"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
