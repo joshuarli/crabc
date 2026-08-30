@@ -65,8 +65,9 @@
 //! but does not complete general pthread synchronization. Its TSD sibling
 //! stores only selected-main and
 //! selected-worker values in a bounded private table and runs worker
-//! destructors for at most four clear-before-callback passes; it excludes
-//! cancellation, main process exit, foreign callers, fork, dynamic/loader
+//! destructors for at most four clear-before-callback passes; the selected
+//! deferred pthread-cancellation leaf invokes that phase after its owned LIFO
+//! cleanup handlers. It excludes main process exit, foreign callers, fork, dynamic/loader
 //! TLS, and general TCB/thread-list semantics. Its once sibling maps only
 //! four-byte zero-initialized controls through a private 0/1/2/3 futex state
 //! machine; the C11 lifecycle/sleep siblings likewise
@@ -140,6 +141,8 @@ mod signal_execution;
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
+#[path = "pthread_cancel.rs"]
+mod pthread_cancel;
 #[path = "pthread_tsd.rs"]
 mod pthread_tsd;
 #[path = "pthread_mutex.rs"]

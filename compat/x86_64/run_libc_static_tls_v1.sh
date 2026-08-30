@@ -225,7 +225,7 @@ fi
 # but this final Static Initial TLS v1 candidate must not pull that sibling
 # block merely to establish its template/bootstrap contract.
 for unselected in clone __clone \
-    pthread_cancel pthread_key_create pthread_mutex_init malloc free calloc realloc; do
+    pthread_key_create pthread_mutex_init malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$candidate_symbols"; then
         fail "candidate unexpectedly selects ${unselected}"
     fi

@@ -42,6 +42,8 @@ __sigsetjmp
 __xstat
 _exit
 _longjmp
+_pthread_cleanup_pop
+_pthread_cleanup_push
 _setjmp
 abs
 accept
@@ -280,6 +282,7 @@ pread
 preadv
 prlimit
 pselect
+pthread_cancel
 pthread_cond_broadcast
 pthread_cond_destroy
 pthread_cond_init
@@ -313,7 +316,10 @@ pthread_rwlockattr_getpshared
 pthread_rwlockattr_init
 pthread_rwlockattr_setpshared
 pthread_self
+pthread_setcancelstate
+pthread_setcanceltype
 pthread_setspecific
+pthread_testcancel
 putc
 putchar
 pwrite

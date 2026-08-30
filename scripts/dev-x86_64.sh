@@ -60,6 +60,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
   utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
   pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
+  pthread-cancellation-header-abi  verify staged x86 deferred pthread-cancellation C/C++ header ABI profiles
   stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
   stdio-standard-header-abi  compare selected x86 <stdio.h> standard-stream C/C++ profiles with musl
   ctype-header-abi  compile the staged x86 C/C++ ctype declarations
@@ -210,6 +211,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-c11-plain-sync  run the static x86 crabc-libc C11 plain synchronization slice
   libc-pthread-c11-once  run the static x86 crabc-libc pthread/C11 once slice
   libc-pthread-c11-tsd  run the static x86 crabc-libc pthread-key/C11 TSS lifecycle slice
+  libc-pthread-cancel-deferred  run the static x86 crabc-libc deferred pthread-cancellation slice
   libc-pthread-detach  run the static x86 crabc-libc bounded pthread/C11 detach slice
   libc-thrd-sleep  run the static x86 crabc-libc bounded C11 thrd_sleep slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
@@ -1594,6 +1596,10 @@ run_pthread_c11_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_pthread_c11_header_abi.sh
 }
 
+run_pthread_cancellation_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_pthread_cancellation_header_abi.sh
+}
+
 run_stdlib_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_stdlib_header_abi.sh
 }
@@ -2563,6 +2569,10 @@ run_libc_pthread_c11_tsd_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_c11_tsd.sh
 }
 
+run_libc_pthread_cancel_deferred_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_cancel_deferred.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -2751,7 +2761,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-cancel-deferred|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff) ;;
     inet-address-header-abi) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -2928,6 +2938,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "pthread-c11-header-abi takes no arguments"
         ensure_image
         run_pthread_c11_header_abi
+        ;;
+    pthread-cancellation-header-abi)
+        [ "$#" -eq 0 ] || fail "pthread-cancellation-header-abi takes no arguments"
+        ensure_image
+        run_pthread_cancellation_header_abi
         ;;
     stdlib-header-abi)
         [ "$#" -eq 0 ] || fail "stdlib-header-abi takes no arguments"
@@ -3652,6 +3667,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-c11-tsd takes no arguments"
         ensure_image
         run_libc_pthread_c11_tsd_probe
+        ;;
+    libc-pthread-cancel-deferred)
+        [ "$#" -eq 0 ] || fail "libc-pthread-cancel-deferred takes no arguments"
+        ensure_image
+        run_libc_pthread_cancel_deferred_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

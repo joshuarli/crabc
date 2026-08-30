@@ -120,8 +120,7 @@ for symbol in __errno_location cfgetispeed cfgetospeed cfsetispeed cfsetospeed \
 done
 for unselected in syscall tcdrain tcgetsid tcgetpgrp \
     tcsetpgrp isatty ttyname ttyname_r openpty forkpty login_tty posix_openpt \
-    grantpt unlockpt ptsname ptsname_r malloc free calloc realloc \
-    pthread_cancel; do
+    grantpt unlockpt ptsname ptsname_r malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

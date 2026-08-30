@@ -133,7 +133,7 @@ done
 for unselected in if_nametoindex if_indextoname getaddrinfo freeaddrinfo \
     getnameinfo \
     gethostbyname gethostbyaddr fork _Fork vfork clone execve \
-    pthread_cancel malloc free calloc realloc; do
+    malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

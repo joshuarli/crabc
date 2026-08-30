@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 85)
-        self.assertEqual(report["header_layout_probe_count"], 44)
+        self.assertEqual(report["verified_artifact_count"], 86)
+        self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -292,7 +292,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 44)
+        self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -5895,7 +5895,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_tsd.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Fifteen separately verified static artifacts", pthread_tls["description"]
+            "libc/src/c_abi/x86_64/pthread_cancel.rs", pthread_tls["source_owners"]
+        )
+        self.assertIn(
+            "Sixteen separately verified static artifacts", pthread_tls["description"]
+        )
+        self.assertIn(
+            "sole delivery point is explicit `pthread_testcancel`",
+            pthread_tls["description"],
         )
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
@@ -5913,7 +5920,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 15)
+        self.assertEqual(len(artifacts), 16)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -5933,6 +5940,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-c11-plain-sync",
                 "static-c-pthread-c11-once",
                 "static-c-pthread-c11-tsd",
+                "static-c-pthread-cancel-deferred",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -5950,6 +5958,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         c11_plain_sync = by_id["static-c-c11-plain-sync"]
         once = by_id["static-c-pthread-c11-once"]
         tsd = by_id["static-c-pthread-c11-tsd"]
+        cancellation = by_id["static-c-pthread-cancel-deferred"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         self.assertEqual(
@@ -7001,6 +7010,144 @@ class X86ParityLedgerTests(unittest.TestCase):
             "pthread_create.c::{start,start_c11,__pthread_exit}",
         ):
             self.assertIn(phrase, tsd_oracle["role"])
+        self.assertEqual(
+            cancellation["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-cancel-deferred",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "exactly `pthread_cancel`, `pthread_setcancelstate`, `pthread_setcanceltype`, and `pthread_testcancel`",
+            "default joinable pointer-returning worker",
+            "deferred type is retained",
+            "disables cancellation and publishes that state",
+            "PTHREAD_CANCEL_MASKED",
+            "non-delivering",
+            "re-enabling leaves that request pending",
+            "sole selected delivery point",
+            "PTHREAD_CANCELED",
+            "creator's `errno` pointer and value remain unchanged",
+            "LIFO cleanup handlers",
+            "before selected TSD destructors",
+            "eight-profile project-header/pinned-musl C/C++ matrix",
+            "no cancellation signal, syscall interruption, or implicit cancellation point",
+            "asynchronous cancellation",
+            "blocking-I/O or synchronization-wait cancellation",
+            "C11, detached, main, or foreign-thread cancellation",
+            "general pthread cancellation runtime",
+            "full pthread/TLS or x86-64 parity",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, cancellation["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/pthread_cancel.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "libc/src/c_abi/x86_64/pthread_tsd.rs",
+            "compat/x86_64/libc_pthread_cancel_deferred_probe.c",
+            "compat/x86_64/libc_pthread_cancel_deferred_start.S",
+            "compat/x86_64/run_libc_pthread_cancel_deferred.sh",
+            "compat/x86_64/pthread_cancellation_header_abi_probe.c",
+            "compat/x86_64/pthread_cancellation_header_abi_probe.cpp",
+            "compat/x86_64/run_pthread_cancellation_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, cancellation["source_owners"])
+        cancellation_abi = " ".join(cancellation["x86_abi_prerequisites"])
+        for phrase in (
+            "pthread_cancel.c::{pthread_cancel,__testcancel,__cancel}",
+            "pthread_setcancelstate.c::__pthread_setcancelstate",
+            "pthread_setcanceltype.c::pthread_setcanceltype",
+            "pthread_create.c::{__pthread_exit,__do_cleanup_push,__do_cleanup_pop}",
+            "PTHREAD_CANCEL_ENABLE=0",
+            "PTHREAD_CANCEL_DISABLE=1",
+            "PTHREAD_CANCEL_MASKED=2",
+            "PTHREAD_CANCEL_DEFERRED=0",
+            "PTHREAD_CANCEL_ASYNCHRONOUS=1",
+            "(void *)-1",
+            "MASKED preserves a pending request without delivery",
+            "ASYNCHRONOUS returns ENOTSUP without state or output mutation",
+            "invalid words return EINVAL",
+            "fixed 64-slot selected-worker registry",
+            "only at the target worker's explicit pthread_testcancel",
+            "no signal or syscall-cancellation action",
+            "PTHREAD_CANCELED after LIFO private cleanup handlers and selected TSD destructors",
+            "clone=56",
+            "CLONE_SETTLS",
+            "CLONE_CHILD_CLEARTID",
+            "futex=202",
+            "gettid=186",
+            "SYS_exit=60",
+            "direct local-exec TPOFF errno",
+            "no dynamic-TLS resolver, signal handler, allocator, ambient runtime, or general TCB/thread-list dependency",
+        ):
+            self.assertIn(phrase, cancellation_abi)
+        cancellation_headers = " ".join(cancellation["x86_header_prerequisites"])
+        for phrase in (
+            "project pthread.h, errno.h, stdint.h, bits/alltypes.h, and features.h",
+            "pthread_create/pthread_join",
+            "pthread_cancel/pthread_setcancelstate/pthread_setcanceltype/pthread_testcancel",
+            "PTHREAD_CANCEL_ENABLE/DISABLE/DEFERRED",
+            "PTHREAD_CANCELED",
+            "struct __ptcb",
+            "24-byte align-8",
+            "__f/__x/__next",
+            "_pthread_cleanup_push/_pthread_cleanup_pop",
+            "pthread_cleanup_push/pthread_cleanup_pop",
+            "eight-profile C/C++ cancellation header matrix",
+            "PTHREAD_CANCEL_ENABLE/DISABLE/MASKED",
+            "DEFERRED/ASYNCHRONOUS",
+            "all six exact function-pointer declarations",
+            "unmangled C++ linkage",
+            "does not claim header closure, callable artifact linkage, cancellation behavior, or pthread runtime completion",
+        ):
+            self.assertIn(phrase, cancellation_headers)
+        cancellation_scope = cancellation["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "true dependency-free x86 crabc-libc archive",
+            "`-nostdlib -static` candidate",
+            "disables cancellation",
+            "queues pthread_cancel",
+            "disabled worker remains live",
+            "creator errno pointer/value are unchanged",
+            "re-enables cancellation without delivery",
+            "exactly one explicit pthread_testcancel",
+            "join result is PTHREAD_CANCELED",
+            "PTHREAD_CANCEL_MASKED",
+            "LIFO cleanup",
+            "before selected TSD destructors",
+            "prior type/state values",
+            "six selected cancellation/cleanup exports",
+            "hidden selected-worker clone and Static Initial TLS v1 bootstrap boundaries",
+            "direct errno TPOFF access",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "dynamic TLS resolver, signal handler, allocator, or ambient runtime",
+            "eight-profile C/C++ project-header matrix",
+            "asynchronous cancellation",
+            "cancellation signals",
+            "implicit/blocking-syscall or synchronization-wait points",
+            "C11, detached, main, and foreign-thread cancellation",
+            "general pthread cancellation",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, cancellation_scope)
+        cancellation_oracle = next(
+            entry for entry in cancellation["oracle"] if entry["kind"] == "c-posix"
+        )
+        self.assertEqual(
+            cancellation_oracle["source"],
+            "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        )
+        for phrase in (
+            "src/thread/pthread_cancel.c",
+            "pthread_setcancelstate.c",
+            "pthread_setcanceltype.c",
+            "pthread_create.c",
+            "selected explicit deferred-cancellation route",
+            "selected explicit deferred-cancellation, MASKED-state, cleanup, and TSD-ordering route",
+            "asynchronous, signal, implicit-point, and general pthread cancellation semantics remain unselected",
+        ):
+            self.assertIn(phrase, cancellation_oracle["role"])
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -7268,6 +7415,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-c11-tsd must use the closed libc-pthread-c11-tsd command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_cancellation = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-cancel-deferred"
+        )
+        changed_cancellation["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-cancel-deferred must use the closed libc-pthread-cancel-deferred command",
         ):
             ledger.validate_ledger(changed)
 

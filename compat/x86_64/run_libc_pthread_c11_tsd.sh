@@ -77,7 +77,7 @@ assert_selected_tsd_sources() {
         'TSD_TEAR_DOWN_RUNNING' \
         'run_selected_worker_tsd_destructors' \
         'four ascending-key passes' \
-        'main-thread process-exit destructors' \
+        'process-exit destructors' \
         'dynamic or loader TLS'; do
         grep -Fq "$required" "$tsd_source" ||
             fail "private pthread/C11 TSD source is missing ${required}"
@@ -155,8 +155,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" |
     fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in pthread_cancel pthread_setcancelstate pthread_setcanceltype \
-    pthread_testcancel pthread_mutexattr_init pthread_mutexattr_destroy \
+for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutexattr_gettype pthread_mutex_timedlock \
     pthread_mutex_consistent pthread_condattr_init pthread_condattr_destroy \
     pthread_condattr_setclock pthread_condattr_getclock \

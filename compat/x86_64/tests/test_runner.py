@@ -857,7 +857,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-cancel-deferred|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff",
             "inet-address-header-abi",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -937,6 +937,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-cond-private", source)
         self.assertIn("libc-pthread-c11-once", source)
         self.assertIn("libc-pthread-c11-tsd", source)
+        self.assertIn("pthread-cancellation-header-abi", source)
+        self.assertIn("libc-pthread-cancel-deferred", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -1004,6 +1006,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_utime_header_abi.sh', source)
         self.assertIn('run_pthread_c11_header_abi()', source)
         self.assertIn('compat/x86_64/run_pthread_c11_header_abi.sh', source)
+        self.assertIn('run_pthread_cancellation_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_pthread_cancellation_header_abi.sh', source
+        )
         self.assertIn('run_stdlib_header_abi()', source)
         self.assertIn('compat/x86_64/run_stdlib_header_abi.sh', source)
         self.assertIn('run_stdio_standard_header_abi()', source)
@@ -3866,11 +3872,241 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         for symbol in ("pthread_create", "pthread_exit", "pthread_join", "pthread_detach"):
             self.assertIn(symbol, static_export_names)
-        for forbidden in (
-            "pthread_cancel",
-        ):
-            self.assertNotIn(forbidden, static_export_names)
+        # Deferred cancellation is a separately bounded sibling.  Keep this
+        # create/join artifact focused on its established lifecycle seam;
+        # the cancellation-specific contract below owns its selected exports.
         self.assertIn("libc-pthread-create-join-tls", runner)
+
+    def test_libc_static_c_abi_pthread_cancel_deferred_artifact_stays_bounded(
+        self,
+    ) -> None:
+        """One explicit deferred testcancel route must not select a runtime."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        cancellation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_cancel.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_cancel_deferred_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_cancel_deferred_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_cancel_deferred.sh"
+        )
+        c_header_probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "pthread_cancellation_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "pthread_cancellation_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_pthread_cancellation_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing deferred-cancellation input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_cancel.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_cancel.c::{pthread_cancel,__testcancel,__cancel}",
+            "src/thread/pthread_setcancelstate.c::__pthread_setcancelstate",
+            "src/thread/pthread_setcanceltype.c::pthread_setcanceltype",
+            "SelectedCancellationSlot",
+            "PTHREAD_CANCEL_ENABLE",
+            "PTHREAD_CANCEL_DISABLE",
+            "PTHREAD_CANCEL_MASKED",
+            "PTHREAD_CANCEL_DEFERRED",
+            "PTHREAD_CANCEL_ASYNCHRONOUS",
+            "PTHREAD_CANCELED",
+            "pub unsafe extern \"C\" fn pthread_cancel",
+            "pub unsafe extern \"C\" fn pthread_setcancelstate",
+            "pub unsafe extern \"C\" fn pthread_setcanceltype",
+            "pub unsafe extern \"C\" fn pthread_testcancel",
+            "pub unsafe extern \"C\" fn _pthread_cleanup_push",
+            "pub unsafe extern \"C\" fn _pthread_cleanup_pop",
+            "request_selected_pthread_cancellation",
+            "run_current_selected_pthread_cleanup_handlers",
+            "2 => PTHREAD_CANCEL_MASKED",
+            "ENOTSUP",
+            "no signal handler",
+            "interrupt blocking syscalls",
+            "no implicit cancellation points",
+            "C11 workers, foreign threads, stale handles",
+            "public x86 pthread-runtime claim",
+        ):
+            self.assertIn(required, cancellation)
+        for forbidden in (
+            "SYS_TGKILL",
+            "SYS_RT_TGSIGQUEUEINFO",
+            "__tls_get_addr",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, cancellation)
+
+        for required in (
+            "request_selected_pthread_cancellation",
+            "pthread_cancel::mark_selected_worker_pending",
+            "pthread_cancel::initialize_selected_worker_slot",
+            "pthread_cancel::release_selected_worker_slot",
+            "pthread_cancel::run_current_selected_pthread_cleanup_handlers",
+        ):
+            self.assertIn(required, pthread_create_join)
+        selected_exit = pthread_create_join.split(
+            "unsafe fn exit_selected_worker", 1
+        )[1].split("/// End one selected pthread-mode worker", 1)[0]
+        self.assertLess(
+            selected_exit.index("run_current_selected_pthread_cleanup_handlers"),
+            selected_exit.index("run_selected_worker_tsd_destructors"),
+        )
+        self.assertLess(
+            selected_exit.index("run_selected_worker_tsd_destructors"),
+            selected_exit.index("publish_selected_worker_result"),
+        )
+
+        for required in (
+            "pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED",
+            "pthread_setcancelstate(PTHREAD_CANCEL_DISABLE",
+            "pthread_setcancelstate(PTHREAD_CANCEL_MASKED",
+            "CANCELLATION_PHASE_DISABLED",
+            "pthread_cancel(worker)",
+            "A queued request must remain harmless at this disabled explicit",
+            "pthread_setcancelstate(PTHREAD_CANCEL_ENABLE",
+            "CANCELLATION_PHASE_MASKED_TESTCANCEL_RETURNED",
+            "pthread_testcancel();",
+            "pthread_cleanup_push",
+            "pthread_cleanup_pop",
+            "CANCELLATION_ORDER_TSD",
+            "PTHREAD_CANCELED",
+            "errno != EACCES || __errno_location() != main_errno_location",
+            "CRABC_PTHREAD_CANCEL_DEFERRED_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_cancel_deferred_probe",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "PTHREAD_CANCEL_ENABLE == 0",
+                "PTHREAD_CANCEL_DISABLE == 1",
+                "PTHREAD_CANCEL_MASKED == 2",
+                "PTHREAD_CANCEL_DEFERRED == 0",
+                "PTHREAD_CANCEL_ASYNCHRONOUS == 1",
+                "PTHREAD_CANCELED",
+                "pthread_cancel",
+                "pthread_setcancelstate",
+                "pthread_setcanceltype",
+                "pthread_testcancel",
+                "struct __ptcb",
+                "sizeof(struct __ptcb) == 24",
+                "__ptcb alignment",
+                "__ptcb callback offset",
+                "__ptcb argument offset",
+                "__ptcb link offset",
+                "_pthread_cleanup_push",
+                "_pthread_cleanup_pop",
+                "pthread_cleanup_push",
+                "pthread_cleanup_pop",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "-nostdinc",
+            "-nostdinc++",
+            "c-default c11-gnu cxx17-gnu c11-strict c11-posix-2008 c11-xopen-700 c11-bsd cxx17-strict",
+            "check_cxx_c_linkage",
+            "does not retain C linkage for",
+            "retained a mangled pthread-cancellation reference",
+            "pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel",
+            "_pthread_cleanup_push _pthread_cleanup_pop",
+            "compile-only",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_types_header_abi.sh",
+            "-pthread",
+            "-nostdlib -static",
+            "-DCRABC_PTHREAD_CANCEL_DEFERRED_FREESTANDING",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate does not define ${symbol}",
+            "candidate relocations retain a dynamic TLS model",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        for symbol in (
+            "pthread_cancel",
+            "pthread_setcancelstate",
+            "pthread_setcanceltype",
+            "pthread_testcancel",
+            "_pthread_cleanup_push",
+            "_pthread_cleanup_pop",
+        ):
+            self.assertIn(symbol, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {
+                "pthread_cancel",
+                "pthread_setcancelstate",
+                "pthread_setcanceltype",
+                "pthread_testcancel",
+                "_pthread_cleanup_push",
+                "_pthread_cleanup_pop",
+            }
+            <= static_exports
+        )
+        self.assertIn("run_pthread_cancellation_header_abi()", runner)
+        self.assertIn("run_libc_pthread_cancel_deferred_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_pthread_cancellation_header_abi.sh",
+            runner,
+        )
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_cancel_deferred.sh",
+            runner,
+        )
+        self.assertIn(
+            '    pthread-cancellation-header-abi)\n        [ "$#" -eq 0 ] || fail "pthread-cancellation-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-pthread-cancel-deferred)\n        [ "$#" -eq 0 ] || fail "libc-pthread-cancel-deferred takes no arguments"',
+            runner,
+        )
 
     def test_libc_static_c_abi_pthread_identity_artifact_stays_bounded(self) -> None:
         static_root = (
@@ -5429,15 +5665,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FUTEX_WAKE_PRIVATE",
             "INT_MAX",
             "(call|jmp).*pthread_once",
-            "pthread_cancel",
             "__tls_get_addr",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertTrue({"pthread_once", "call_once"} <= static_exports)
-        self.assertTrue(
-            {"pthread_cancel", "pthread_cond_timedwait"}.isdisjoint(static_exports)
-        )
+        self.assertNotIn("pthread_cond_timedwait", static_exports)
         for header_probe in (c_header_probe, cxx_header_probe):
             for required in (
                 "crabc_once_init_signature",
@@ -5533,7 +5766,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "current_selected_values().is_none()",
             "run_selected_worker_tsd_destructors",
             "clear-before-destructor",
-            "main-thread process-exit destructors",
+            "process-exit destructors",
             "concurrent deletion/destructor interaction",
             "dynamic or loader TLS/DTV",
         ):
@@ -5686,15 +5919,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific",
             "tss_create tss_delete tss_get tss_set",
             "private atomic key-table lock",
-            "pthread_cancel",
             "__tls_get_addr",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertTrue(tsd_exports <= static_exports)
-        self.assertTrue(
-            {"pthread_cancel", "pthread_cond_timedwait"}.isdisjoint(static_exports)
-        )
+        self.assertNotIn("pthread_cond_timedwait", static_exports)
 
         for header_probe in (c_header_probe, cxx_header_probe):
             for required in (
@@ -5882,9 +6112,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {"pthread_detach", "thrd_detach", "pthread_create", "thrd_create"}
             <= static_exports
         )
-        self.assertTrue(
-            {"pthread_cancel", "thrd_yield"}.isdisjoint(static_exports)
-        )
+        self.assertNotIn("thrd_yield", static_exports)
         self.assertIn("run_libc_pthread_detach_probe()", runner)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_pthread_detach.sh", runner

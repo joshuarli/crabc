@@ -154,7 +154,6 @@ done
  # private condition, and TSD lifecycle blocks are deliberately outside this
  # direct sleep adapter.
 for unselected in thrd_yield \
-    pthread_cancel \
     pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \

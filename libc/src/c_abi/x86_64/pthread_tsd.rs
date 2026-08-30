@@ -31,8 +31,9 @@
 //! This is deliberately not musl's general thread-list/TSD implementation.
 //! Key deletion is selected only through this private main-plus-worker table;
 //! foreign threads receive only that fail-closed admission boundary, while
-//! their lifecycle, concurrent deletion/destructor interaction, cancellation,
-//! cleanup handlers, main-thread process-exit destructors, fork/atfork,
+//! their lifecycle, concurrent deletion/destructor interaction, cleanup
+//! ownership beyond the selected deferred-pthread exit ordering, main-thread
+//! process-exit destructors, fork/atfork,
 //! dynamic or loader TLS/DTV, allocator lifecycle ordering, general TCB
 //! layout, and musl's weak/same-address TSD ELF aliases remain outside this
 //! artifact. Invalid/deleted keys and non-selected callers fail closed instead

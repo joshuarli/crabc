@@ -39,7 +39,7 @@ does not select another executable/root, general loader lifecycle or DSO
 finalization, candidate libc, RuntimeV1, dynamic CRT/sysroot, or public x86
 support.
 
-The x86 lane now has fifteen private static artifacts inside still-planned
+The x86 lane now has sixteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -198,7 +198,25 @@ interaction, fork/atfork, detached-thread lifecycle beyond the existing
 selected-worker exit seam, dynamic/loader TLS/DTV, allocator ordering, a
 general TCB or all-thread list, weak/same-address TSD aliases, exact ELF
 parity, general pthread/C11 behavior, full pthread/TLS or x86-64 parity,
-promotion, and public x86 support remain excluded. The CRT-composition artifact,
+promotion, and public x86 support remain excluded.
+
+The sixteenth private static artifact,
+`./scripts/dev-x86_64.sh libc-pthread-cancel-deferred`, selects one
+pointer-returning selected-worker deferred-cancellation route only. A creator
+records `pthread_cancel`; explicit `pthread_testcancel` returns while
+`PTHREAD_CANCEL_DISABLE` or `PTHREAD_CANCEL_MASKED` is active, and re-enabling
+leaves the request pending until the one selected explicit delivery point. On
+delivery, the worker disables cancellation before LIFO cleanup handlers, then
+runs the selected TSD destructor phase before publishing `PTHREAD_CANCELED` to
+the existing clear-child-tid join path. The fixture proves those state
+transitions, errno preservation, cleanup/TSD order, the candidate-only
+asynchronous `ENOTSUP` boundary, and a project-header C/C++ `struct __ptcb` /
+cleanup-macro ABI matrix. It excludes cancellation signals, syscall
+interruption or implicit cancellation points, C11/detached/main/foreign-worker
+cancellation, general pthread cancellation, full pthread/TLS or x86-64 parity,
+promotion, and public x86 support.
+
+The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls

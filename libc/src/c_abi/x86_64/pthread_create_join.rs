@@ -10,10 +10,10 @@
 //!   Linux thread clone flags and the `EAGAIN` translation for allocation or
 //!   clone failure.
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
-//!   result-before-thread-exit ordering. The separate selected TSD leaf now
-//!   inserts its bounded worker destructor phase at that seam; cleanup,
-//!   cancellation, signal, robust-list, thread-list, and last-thread paths
-//!   remain explicitly unselected.
+//!   cleanup-before-TSD-destructor-before-result ordering. The separate
+//!   deferred cancellation leaf owns only active selected-worker cleanup
+//!   records and explicit `pthread_testcancel`; signal, robust-list,
+//!   thread-list, and last-thread paths remain explicitly unselected.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -48,7 +48,8 @@
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. The leaf intentionally does **not** provide attrs,
 //! detached-at-create attributes,
-//! `pthread_exit` cleanup/main-thread behavior, cancellation, general
+//! main-thread `pthread_exit` behavior, signal-driven or implicit-point
+//! cancellation, general
 //! keys/TSD, synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
 //! coordination, thread lists, fork/atfork, custom stacks, guards, or general
 //! pthread semantics. It leaves caller `errno` untouched because pthread APIs
@@ -63,7 +64,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{pthread_identity, pthread_tsd, raw_syscall, static_tls};
+use super::{pthread_cancel, pthread_identity, pthread_tsd, raw_syscall, static_tls};
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -532,6 +533,10 @@ fn release_selected_worker_locked(registry_slot: usize, control: *mut ThreadCont
             )
             .is_ok()
         {
+            // This slot is no longer reachable through the selected worker
+            // registry. Clear the parallel deferred-cancellation record while
+            // the same lock still prevents an ABA reuse of `registry_slot`.
+            pthread_cancel::release_selected_worker_slot(registry_slot);
             slot.thread_pointer.store(0, Ordering::Relaxed);
             slot.control.store(0, Ordering::Release);
             true
@@ -541,6 +546,44 @@ fn release_selected_worker_locked(registry_slot: usize, control: *mut ThreadCont
     } else {
         false
     }
+}
+
+/// Mark one live selected pthread worker for deferred cancellation.
+///
+/// The registry lock covers handle validation and the pending-bit update, so
+/// join withdrawal cannot recycle this private slot between those two steps.
+/// There is intentionally no signal delivery: this static artifact observes a
+/// request only through the target's explicit `pthread_testcancel` call.
+pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool {
+    if thread.is_null() {
+        return false;
+    }
+
+    let thread_pointer = thread as usize;
+    lock_selected_worker_registry();
+    let mut requested = false;
+    for slot in &SELECTED_WORKER_REGISTRY {
+        if slot.thread_pointer.load(Ordering::Acquire) != thread_pointer {
+            continue;
+        }
+        let control = slot.control.load(Ordering::Acquire);
+        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
+            break;
+        }
+        let control = control as *mut ThreadControl;
+        // SAFETY: the registry lock keeps this private control mapping live.
+        // Only pointer-returning pthread workers are in this cancellation
+        // slice; the typed C11 sibling is deliberately not reinterpreted as a
+        // pthread cancellation target.
+        if matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_)) {
+            requested = pthread_cancel::mark_selected_worker_pending(
+                unsafe { (*control).registry_slot },
+            );
+        }
+        break;
+    }
+    unlock_selected_worker_registry();
+    requested
 }
 
 /// Withdraw a selected-worker registry entry without touching its mapping.
@@ -782,6 +825,23 @@ fn current_selected_worker_control() -> Option<*mut ThreadControl> {
     current
 }
 
+/// Return the current selected pthread worker's private registry slot.
+///
+/// This deliberately excludes the typed C11 sibling even though its opaque
+/// handle shares the x86 Variant-II TP representation. The returned slot is
+/// stable until this current worker exits because its positive child-TID keeps
+/// join or detached reaping from withdrawing the control mapping.
+pub(super) fn current_selected_pthread_worker_slot() -> Option<usize> {
+    let control = current_selected_worker_control()?;
+    // SAFETY: current-worker resolution above keeps the mapping live for this
+    // current task. The start mode is immutable after clone publication.
+    if matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_)) {
+        Some(unsafe { (*control).registry_slot })
+    } else {
+        None
+    }
+}
+
 /// Return the current selected worker's bounded TSD table.
 ///
 /// The selected TSD leaf may use this pointer only during the active current
@@ -1021,6 +1081,14 @@ pub(super) unsafe fn create_selected_worker(
         }
     };
 
+    // The cancellation leaf is a parallel fixed table keyed by this already
+    // reserved registry index. It remains private state rather than a TCB or
+    // thread-list extension, and it is initialized before the child can run.
+    pthread_cancel::initialize_selected_worker_slot(
+        registry_slot,
+        matches!(start, SelectedWorkerStart::Pthread(_)),
+    );
+
     // SAFETY: mmap returned a private page-aligned zeroed allocation of the
     // exact fixed control/stack size. Static Initial TLS v1 already copied
     // the final executable's exact initialized and TBSS TLS image and wrote
@@ -1093,10 +1161,10 @@ pub(super) unsafe fn create_selected_worker(
 /// Exit a selected worker and publish its typed result for its admitted joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
-/// null-attribute pthread_create path. It invokes the separate selected
-/// worker-TSD destructor phase, but intentionally omits the rest of musl's
-/// cleanup/detach/thread-list state machine. Outside that worker contract, it
-/// still performs Linux thread exit but claims no broader pthread behavior.
+/// null-attribute pthread_create path. It invokes the selected cleanup and
+/// worker-TSD destructor phases, but intentionally omits the rest of musl's
+/// detach/thread-list state machine. Outside that worker contract, it still
+/// performs Linux thread exit but claims no broader pthread behavior.
 ///
 /// # Safety
 ///
@@ -1106,9 +1174,19 @@ pub(super) unsafe fn create_selected_worker(
 unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     if let Some(control) = current_selected_worker_control() {
         // SAFETY: the matched current selected worker remains live until this
-        // path invokes SYS_exit. Preserve musl's TSD-before-result ordering
-        // without holding the worker-registry lock across user destructors.
+        // path invokes SYS_exit. Preserve musl's cleanup-before-TSD-before-
+        // result ordering without holding the worker-registry lock across user
+        // destructors.
         unsafe {
+            // Pthread cancellation and pthread_exit unwind active cleanup
+            // records before the already-selected TSD destructor phase. The
+            // helper independently admits only a pthread-mode current worker,
+            // so a C11-to-pthread cross-over remains an invalid result rather
+            // than acquiring cleanup ownership.
+            if result.kind() == SelectedWorkerResultKind::Pthread {
+                pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
+                pthread_cancel::run_current_selected_pthread_cleanup_handlers();
+            }
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
             publish_selected_worker_result(control, result);
         }
@@ -1144,10 +1222,10 @@ pub(super) unsafe fn exit_selected_c11_worker(result: c_int) -> ! {
 /// Exit a selected pthread worker and publish its pointer result for its joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
-/// null-attribute pthread_create path. It invokes the separate selected
-/// worker-TSD destructor phase, but intentionally omits the rest of musl's
-/// cleanup/detach/thread-list state machine. Outside that worker contract, it
-/// still performs Linux thread exit but claims no broader pthread behavior.
+/// null-attribute pthread_create path. It invokes the selected cleanup and
+/// worker-TSD destructor phases, but intentionally omits the rest of musl's
+/// detach/thread-list state machine. Outside that worker contract, it still
+/// performs Linux thread exit but claims no broader pthread behavior.
 ///
 /// # Safety
 ///

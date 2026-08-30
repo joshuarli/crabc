@@ -110,6 +110,18 @@ headers = [
 ]
 
 [[probe]]
+id = "pthread-cancellation"
+command = "./scripts/dev-x86_64.sh pthread-cancellation-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/pthread_cancellation_header_abi_probe.c",
+  "compat/x86_64/pthread_cancellation_header_abi_probe.cpp",
+  "compat/x86_64/run_pthread_cancellation_header_abi.sh",
+]
+headers = ["include/pthread.h"]
+
+[[probe]]
 id = "stdio-standard"
 command = "./scripts/dev-x86_64.sh stdio-standard-header-abi"
 state = "required"

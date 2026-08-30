@@ -2295,6 +2295,27 @@ TLS/DTV, allocator ordering, a general TCB/all-thread list,
 weak/same-address TSD aliases, exact ELF parity, general pthread/C11 behavior,
 full pthread/TLS or x86-64 parity, promotion, and public x86 support.
 
+`libc-pthread-cancel-deferred` is a sixteenth separately recorded private
+static `verified_artifact` under that same still-planned `libc.pthread-tls`
+family. Its project-header C body first runs against pinned musl and then
+through a `-nostdlib -static` candidate. It selects one default joinable,
+pointer-returning worker route only: the worker retains deferred type, disables
+cancellation, and publishes that state; its creator records `pthread_cancel`;
+explicit `pthread_testcancel` returns while DISABLE and `PTHREAD_CANCEL_MASKED`
+are non-delivering; re-enabling leaves that request pending; and the worker's
+next explicit `pthread_testcancel` is the sole selected delivery point. The
+exit disables cancellation before it drains LIFO cleanup handlers, then runs
+the selected TSD destructor phase before publishing `PTHREAD_CANCELED`; the
+fixture preserves the creator's errno. The separate project-header/pinned-musl
+C/C++ declaration matrix checks the cancellation constants, sentinel type,
+24-byte `struct __ptcb`, cleanup macro/helper ABI, all six selected signatures,
+and unmangled C++ spellings; it is compile-only and supplies no behavior
+evidence. This does not select asynchronous cancellation delivery,
+cancellation signals; implicit, blocking-syscall, or synchronization-wait
+cancellation points; C11, detached, main, or foreign-thread cancellation; a
+general pthread cancellation runtime; full pthread/TLS or x86-64 parity;
+promotion; or public x86 support.
+
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
 project-header C body first executes through pinned musl and then through a

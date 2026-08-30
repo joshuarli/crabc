@@ -673,6 +673,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "stat": "./scripts/dev-x86_64.sh stat-header-abi",
     "utime": "./scripts/dev-x86_64.sh utime-header-abi",
     "pthread-c11": "./scripts/dev-x86_64.sh pthread-c11-header-abi",
+    "pthread-cancellation": "./scripts/dev-x86_64.sh pthread-cancellation-header-abi",
     "stdio-standard": "./scripts/dev-x86_64.sh stdio-standard-header-abi",
     "ctype": "./scripts/dev-x86_64.sh ctype-header-abi",
     "integer-arithmetic": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
@@ -745,6 +746,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/pthread_c11_header_abi_probe.c",
         "compat/x86_64/pthread_c11_header_abi_probe.cpp",
         "compat/x86_64/run_pthread_c11_header_abi.sh",
+    ),
+    "pthread-cancellation": (
+        "compat/x86_64/pthread_cancellation_header_abi_probe.c",
+        "compat/x86_64/pthread_cancellation_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_cancellation_header_abi.sh",
     ),
     "stdio-standard": (
         "compat/x86_64/stdio_standard_header_abi_probe.c",
@@ -6771,8 +6777,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 15,
-        "libc.pthread-tls must retain exactly fifteen private verified artifacts",
+        len(artifacts) == 16,
+        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -6782,7 +6788,7 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Fifteen separately verified static artifacts",
+        "Sixteen separately verified static artifacts",
         "complete private rwlock/rwlockattr block with private and process-shared futex waits",
         "not pthread/TLS parity",
     ):
@@ -7515,8 +7521,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 15,
-        "libc.pthread-tls must retain exactly fifteen private verified artifacts",
+        len(artifacts) == 16,
+        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -7526,7 +7532,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Fifteen separately verified static artifacts",
+        "Sixteen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -7842,8 +7848,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 15,
-        "libc.pthread-tls must retain exactly fifteen private verified artifacts",
+        len(artifacts) == 16,
+        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -7853,7 +7859,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Fifteen separately verified static artifacts",
+        "Sixteen separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -8192,6 +8198,314 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "static-c-pthread-c11-tsd dispatcher binding is missing",
     )
+
+
+def require_static_pthread_cancel_deferred_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep the explicit deferred-cancellation slice private and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-cancel-deferred"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
+    )
+    require(
+        len(artifacts) == 16,
+        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-cancel-deferred must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Sixteen separately verified static artifacts",
+        "selected-worker deferred-cancellation route",
+        "sole delivery point is explicit `pthread_testcancel`",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after cancellation artifact",
+        )
+    family_sources = string_list(
+        family["source_owners"], "libc.pthread-tls source owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/pthread_cancel.rs",
+        "compat/x86_64/libc_pthread_cancel_deferred_probe.c",
+        "compat/x86_64/libc_pthread_cancel_deferred_start.S",
+        "compat/x86_64/run_libc_pthread_cancel_deferred.sh",
+        "compat/x86_64/pthread_cancellation_header_abi_probe.c",
+        "compat/x86_64/pthread_cancellation_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_cancellation_header_abi.sh",
+    ):
+        require(
+            owner in family_sources,
+            f"libc.pthread-tls source owners omit {owner} after cancellation artifact",
+        )
+    family_header_text = " ".join(
+        string_list(
+            family["x86_header_prerequisites"],
+            "libc.pthread-tls header prerequisites",
+        )
+    )
+    for phrase in (
+        "eight-profile cancellation matrix",
+        "PTHREAD_CANCEL_ENABLE/DISABLE/MASKED",
+        "PTHREAD_CANCELED",
+        "pthread_cancel`/`pthread_setcancelstate`/`pthread_setcanceltype`/`pthread_testcancel",
+    ):
+        require(
+            phrase in family_header_text,
+            f"libc.pthread-tls header prerequisites omit {phrase} after cancellation artifact",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "pthread_cancel",
+        "pthread_setcancelstate",
+        "pthread_setcanceltype",
+        "pthread_testcancel",
+        "default joinable pointer-returning worker route",
+        "PTHREAD_CANCELED",
+        "creator's `errno` pointer and value remain unchanged",
+        "eight-profile project-header/pinned-musl C/C++ matrix",
+        "unmangled C++ linkage",
+        "no cancellation signal, syscall interruption, or implicit cancellation point",
+        "asynchronous cancellation",
+        "blocking-I/O or synchronization-wait cancellation",
+        "LIFO cleanup handlers",
+        "before selected TSD destructors",
+        "C11, detached, main, or foreign-thread cancellation",
+        "general pthread cancellation runtime",
+        "full pthread/TLS or x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-cancel-deferred description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pthread_cancel.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/pthread_tsd.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "include/stdint.h",
+        "compat/x86_64/pthread_cancellation_header_abi_probe.c",
+        "compat/x86_64/pthread_cancellation_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_cancellation_header_abi.sh",
+        "compat/x86_64/run_types_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_cancel_deferred_probe.c",
+        "compat/x86_64/libc_pthread_cancel_deferred_start.S",
+        "compat/x86_64/run_libc_pthread_cancel_deferred.sh",
+        "compat/x86_64/run_libc_static_tls_v1.sh",
+        "compat/x86_64/run_libc_pthread_create_join_tls.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "static-c-pthread-cancel-deferred source owners",
+            )
+        )
+        == expected_sources,
+        "static-c-pthread-cancel-deferred source owners drifted",
+    )
+
+    prerequisites = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "static-c-pthread-cancel-deferred ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "src/thread/pthread_cancel.c::{pthread_cancel,__testcancel,__cancel}",
+        "pthread_setcancelstate.c::__pthread_setcancelstate",
+        "pthread_setcanceltype.c::pthread_setcanceltype",
+        "pthread_create.c::{__pthread_exit,__do_cleanup_push,__do_cleanup_pop}",
+        "PTHREAD_CANCEL_MASKED=2",
+        "PTHREAD_CANCEL_ASYNCHRONOUS=1",
+        "PTHREAD_CANCELED sentinel",
+        "MASKED preserves a pending request without delivery",
+        "ASYNCHRONOUS returns ENOTSUP without state or output mutation",
+        "invalid words return EINVAL",
+        "no signal or syscall-cancellation action",
+        "explicit pthread_testcancel",
+        "PTHREAD_CANCELED after LIFO private cleanup handlers and selected TSD destructors",
+        "clone=56",
+        "CLONE_SETTLS",
+        "CLONE_CHILD_CLEARTID",
+        "futex=202",
+        "SYS_exit=60",
+        "no dynamic-TLS resolver, signal handler, allocator, ambient runtime",
+    ):
+        require(
+            phrase in prerequisites,
+            f"static-c-pthread-cancel-deferred ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = " ".join(
+        string_list(
+            artifact["x86_header_prerequisites"],
+            "static-c-pthread-cancel-deferred header prerequisites",
+        )
+    )
+    for phrase in (
+        "pthread.h",
+        "errno.h",
+        "bits/alltypes.h",
+        "eight-profile C/C++ cancellation header matrix",
+        "PTHREAD_CANCEL_ENABLE/DISABLE/MASKED",
+        "DEFERRED/ASYNCHRONOUS",
+        "PTHREAD_CANCELED type",
+        "struct __ptcb",
+        "24-byte align-8",
+        "_pthread_cleanup_push/_pthread_cleanup_pop",
+        "pthread_cleanup_push/pthread_cleanup_pop",
+        "all six exact function-pointer declarations",
+        "unmangled C++ linkage",
+        "does not claim header closure, callable artifact linkage, cancellation behavior, or pthread runtime completion",
+    ):
+        require(
+            phrase in header_prerequisites,
+            f"static-c-pthread-cancel-deferred header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-cancel-deferred"},
+        "static-c-pthread-cancel-deferred must use the closed libc-pthread-cancel-deferred command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "queues pthread_cancel",
+        "disabled worker remains live",
+        "creator errno pointer/value are unchanged",
+        "re-enables cancellation without delivery",
+        "exactly one explicit pthread_testcancel",
+        "join result is PTHREAD_CANCELED",
+        "PTHREAD_CANCEL_MASKED",
+        "LIFO cleanup",
+        "before selected TSD destructors",
+        "six selected cancellation/cleanup exports",
+        "hidden selected-worker clone and Static Initial TLS v1 bootstrap",
+        "direct errno TPOFF access",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "dynamic TLS resolver, signal handler, allocator, or ambient runtime",
+        "eight-profile C/C++ project-header matrix",
+        "asynchronous cancellation",
+        "implicit/blocking-syscall or synchronization-wait points",
+        "C11, detached, main, and foreign-thread cancellation",
+        "general pthread cancellation",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-cancel-deferred evidence scope omits {phrase}",
+        )
+
+    oracle_entries = artifact["oracle"]
+    assert isinstance(oracle_entries, list)
+    source_oracles = [
+        entry
+        for entry in oracle_entries
+        if isinstance(entry, Mapping) and entry.get("kind") == "c-posix"
+    ]
+    require(
+        len(source_oracles) == 1,
+        "static-c-pthread-cancel-deferred must retain one pinned-musl C/POSIX oracle",
+    )
+    source_oracle = source_oracles[0]
+    require(
+        source_oracle.get("source")
+        == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "static-c-pthread-cancel-deferred musl oracle pin drifted",
+    )
+    role = source_oracle.get("role")
+    require(
+        isinstance(role, str)
+        and "src/thread/pthread_cancel.c" in role
+        and "pthread_setcancelstate.c" in role
+        and "pthread_setcanceltype.c" in role
+        and "pthread_create.c" in role,
+        "static-c-pthread-cancel-deferred musl source mapping omits cancellation provenance",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    selected_exports = {
+        "pthread_cancel",
+        "pthread_setcancelstate",
+        "pthread_setcanceltype",
+        "pthread_testcancel",
+        "_pthread_cleanup_push",
+        "_pthread_cleanup_pop",
+    }
+    require(
+        selected_exports <= static_exports,
+        "static-c-pthread-cancel-deferred must expose its selected cancellation surface",
+    )
+    for unselected in ("__testcancel", "__cancel", "__pthread_exit"):
+        require(
+            unselected not in static_exports,
+            f"static-c-pthread-cancel-deferred must not expose private {unselected}",
+        )
+    dispatcher_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(
+        encoding="utf-8"
+    )
+    for runner in (
+        "run_libc_pthread_cancel_deferred.sh",
+        "run_pthread_cancellation_header_abi.sh",
+    ):
+        require(
+            runner in dispatcher_source,
+            f"static-c-pthread-cancel-deferred dispatcher binding is missing {runner}",
+        )
 
 
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
@@ -14669,6 +14983,7 @@ def validate_ledger(
     require_static_c11_plain_sync_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_once_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_tsd_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_cancel_deferred_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])
