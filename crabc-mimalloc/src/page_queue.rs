@@ -619,6 +619,8 @@ pub(crate) unsafe fn page_queue_is_valid_for_test(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use core::ptr::null_mut;
 
