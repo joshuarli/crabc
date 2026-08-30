@@ -209,6 +209,7 @@ pause
 pipe
 pipe2
 poll
+posix_fadvise
 posix_fallocate
 posix_madvise
 ppoll
@@ -241,6 +242,7 @@ qsort
 qsort_r
 raise
 read
+readahead
 readlink
 recv
 recvfrom

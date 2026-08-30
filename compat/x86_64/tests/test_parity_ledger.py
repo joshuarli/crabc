@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 64)
+        self.assertEqual(report["verified_artifact_count"], 65)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1313,7 +1313,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 43
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 44
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -2428,6 +2428,75 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, posix_fallocate["x86_header_prerequisites"][0])
         self.assertIn(
             "libc/src/c_abi/x86_64/posix_fallocate.rs",
+            posix_runtime["source_owners"],
+        )
+        descriptor_advice = artifacts_by_id["static-c-descriptor-advice"]
+        assert isinstance(descriptor_advice, dict)
+        self.assertNotIn("capabilities", descriptor_advice)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/descriptor_advice.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/fcntl.h",
+            "include/features.h",
+            "include/bits/fcntl.h",
+            "include/stddef.h",
+            "include/stdint.h",
+            "include/sys/types.h",
+            "include/unistd.h",
+            "compat/x86_64/descriptor_advice_header_abi_probe.c",
+            "compat/x86_64/descriptor_advice_header_abi_probe.cpp",
+            "compat/x86_64/run_descriptor_advice_header_abi.sh",
+            "compat/x86_64/run_x86_fs_advice_reference.sh",
+            "compat/x86_64/x86_fs_advice_reference_probe.c",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_descriptor_advice_probe.c",
+            "compat/x86_64/libc_descriptor_advice_start.S",
+            "compat/x86_64/run_libc_descriptor_advice.sh",
+        ):
+            self.assertIn(owner, descriptor_advice["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in descriptor_advice["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-descriptor-advice"},
+        )
+        for phrase in (
+            "descriptor-advice block",
+            "unconditional POSIX `posix_fadvise`",
+            "GNU-only `readahead`",
+            "fadvise64=221",
+            "readahead=187",
+            "positive direct `int`",
+            "initial-TLS `errno`",
+            "all six `POSIX_FADV_*`",
+            "no cache-residency or cache-effect claim",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, descriptor_advice["description"])
+        for phrase in (
+            "strict/no-feature",
+            "GNU-only",
+            "large-file-only",
+            "`ssize_t readahead(int, off_t, size_t)` remains hidden",
+            "posix_fadvise64",
+            "not an archive export",
+            "-H traces",
+        ):
+            self.assertIn(
+                phrase, descriptor_advice["x86_header_prerequisites"][0]
+            )
+        self.assertIn(
+            "src/fcntl/posix_fadvise.c", descriptor_advice["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "src/linux/readahead.c", descriptor_advice["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/descriptor_advice.rs",
             posix_runtime["source_owners"],
         )
         ffs = artifacts_by_id["static-c-ffs"]
@@ -6972,6 +7041,59 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh posix-fallocate-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-posix-fallocate command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_descriptor_advice_artifact_keeps_error_and_cache_scope_boundaries(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-descriptor-advice"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("fadvise64=221", "fadvise64=999")
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "fadvise's direct no-errno ABI"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-descriptor-advice"
+        )
+        description = artifact["description"]
+        assert isinstance(description, str)
+        artifact["description"] = description.replace(
+            "no cache-residency or cache-effect claim", "cache-effect claim"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits no cache-residency"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-descriptor-advice"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh descriptor-advice-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-descriptor-advice command"
         ):
             ledger.validate_ledger(data)
 

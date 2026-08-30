@@ -106,6 +106,58 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, header_runner)
 
+    def test_descriptor_advice_header_profiles_stay_explicit(self) -> None:
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "descriptor_advice_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "descriptor_advice_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_descriptor_advice_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for probe in (c_probe, cxx_probe):
+            for required in (
+                "CRABC_DESCRIPTOR_ADVICE_STRICT",
+                "CRABC_DESCRIPTOR_ADVICE_GNU",
+                "CRABC_DESCRIPTOR_ADVICE_LARGEFILE64",
+                "CRABC_DESCRIPTOR_ADVICE_REQUIRE_READAHEAD_HIDDEN",
+                "POSIX_FADV_NORMAL == 0",
+                "POSIX_FADV_RANDOM == 1",
+                "POSIX_FADV_SEQUENTIAL == 2",
+                "POSIX_FADV_WILLNEED == 3",
+                "POSIX_FADV_DONTNEED == 4",
+                "POSIX_FADV_NOREUSE == 5",
+                "sizeof(off_t) == 8",
+                "posix_fadvise64",
+                "readahead",
+            ):
+                self.assertIn(required, probe)
+        self.assertIn("__builtin_types_compatible_p", c_probe)
+        self.assertIn("readahead_signature", c_probe)
+        self.assertIn("__is_same", cxx_probe)
+        self.assertIn("readahead_signature", cxx_probe)
+        self.assertIn("descriptor_advice_cxx_posix_fadvise64", cxx_probe)
+        self.assertIn("descriptor_advice_cxx_readahead", cxx_probe)
+        for required in (
+            "c11-strict",
+            "cxx17-strict",
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-largefile64",
+            "cxx17-largefile64",
+            "-nostdinc",
+            "-nostdinc++",
+            "expect_readahead_hidden",
+            "hidden readahead diagnostic does not name readahead",
+            "does not retain C linkage for",
+            "retained a mangled descriptor-advice reference",
+            "posix_fadvise64",
+            "features.h",
+        ):
+            self.assertIn(required, runner)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -138,7 +190,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
             "libc-crt1-static-tls",
             "linux-5-10-uapi",
             "candidate-header-closure",
@@ -163,7 +215,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-pthread-identity",
             "libc-pthread-detach",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
         )
@@ -284,6 +336,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_select_header_abi.sh', source)
         self.assertIn('run_fcntl_header_abi()', source)
         self.assertIn('compat/x86_64/run_fcntl_header_abi.sh', source)
+        self.assertIn('run_descriptor_advice_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_descriptor_advice_header_abi.sh', source
+        )
         self.assertIn('run_ioctl_header_abi()', source)
         self.assertIn('compat/x86_64/run_ioctl_header_abi.sh', source)
         self.assertIn('run_unistd_header_abi()', source)
@@ -9196,6 +9252,151 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sendfile)\n        [ "$#" -eq 0 ] || fail "libc-sendfile takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_descriptor_advice_artifact_stays_narrow(self) -> None:
+        """Descriptor advice keeps POSIX and GNU error boundaries distinct."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_advice.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "descriptor_advice_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "descriptor_advice_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_descriptor_advice_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_advice_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_descriptor_advice_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_descriptor_advice.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "descriptor_advice.rs"]', static_root)
+        self.assertIn("SYS_FADVISE64: i64 = 221", syscall)
+        self.assertIn("SYS_READAHEAD: i64 = 187", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/fcntl/posix_fadvise.c",
+            "src/linux/readahead.c",
+            'extern "C" fn posix_fadvise',
+            'extern "C" fn readahead',
+            "raw_syscall::SYS_FADVISE64",
+            "raw_syscall::SYS_READAHEAD",
+            "raw_syscall::syscall4(",
+            "raw_syscall::syscall3(",
+            "posix_status(result)",
+            "c_ssize_status(result)",
+            "rdi/rsi/rdx/r10",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("crabc_core", "crabc_mimalloc", "fn fallocate("):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <fcntl.h>",
+            "POSIX_FADV_NORMAL == 0",
+            "POSIX_FADV_NOREUSE == 5",
+            "posix_fadvise_signature",
+            "readahead_signature",
+            "CRABC_DESCRIPTOR_ADVICE_REQUIRE_READAHEAD_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "#include <fcntl.h>",
+            "decltype(&posix_fadvise)",
+            "decltype(&readahead)",
+            "descriptor_advice_cxx_posix_fadvise64",
+            "descriptor_advice_cxx_readahead",
+        ):
+            self.assertIn(required, header_cpp)
+        for required in (
+            "c11-strict",
+            "cxx17-strict",
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-largefile64",
+            "cxx17-largefile64",
+            "expect_readahead_hidden",
+            "features.h",
+            "retained a mangled descriptor-advice reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "#include <fcntl.h>",
+            "SYS_readahead == 187",
+            "SYS_fadvise64 == 221",
+            "POSIX_FADV_NOREUSE",
+            "posix_fadvise(descriptor, 0, (off_t)-1",
+            "readahead(descriptor, 0, (size_t)-1)",
+            "errno != ERANGE",
+            "errno != EDOM",
+            "file_owned = 1",
+            "if (file_owned && raw1(SYS_unlink",
+            "CRABC_DESCRIPTOR_ADVICE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_descriptor_advice_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_descriptor_advice_header_abi.sh",
+            "run_x86_fs_advice_reference.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_posix_fadvise_syscall_path",
+            "posix_fadvise lacks Linux fadvise64 syscall 221",
+            "assert_readahead_syscall_path",
+            "readahead lacks Linux syscall 187",
+            "assert_fixture_tls_capacity",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        self.assertIn("posix_fadvise", static_export_names)
+        self.assertIn("readahead", static_export_names)
+        self.assertNotIn("posix_fadvise64", static_export_names)
+        self.assertNotIn("readahead64", static_export_names)
+        self.assertIn('id = "static-c-descriptor-advice"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-descriptor-advice"',
+            parity_ledger,
+        )
+        self.assertIn("run_descriptor_advice_header_abi()", runner)
+        self.assertIn("run_libc_descriptor_advice_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_descriptor_advice.sh", runner
+        )
+        self.assertIn(
+            '    libc-descriptor-advice)\n        [ "$#" -eq 0 ] || fail "libc-descriptor-advice takes no arguments"',
             runner,
         )
 

@@ -320,6 +320,10 @@ pub(crate) const SYS_FCNTL: i64 = 72;
 pub(crate) const SYS_SENDFILE: i64 = 40;
 /// Linux x86-64 `fallocate` uses `rdi/rsi/rdx/r10` for its four arguments.
 pub(crate) const SYS_FALLOCATE: i64 = 285;
+/// Linux x86-64 `fadvise64` uses `rdi/rsi/rdx/r10` for its four arguments.
+pub(crate) const SYS_FADVISE64: i64 = 221;
+/// Linux x86-64 `readahead` uses `rdi/rsi/rdx` for its three arguments.
+pub(crate) const SYS_READAHEAD: i64 = 187;
 pub(crate) const SYS_FSYNC: i64 = 74;
 pub(crate) const SYS_TRUNCATE: i64 = 76;
 pub(crate) const SYS_FTRUNCATE: i64 = 77;

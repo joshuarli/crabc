@@ -264,6 +264,20 @@ stale `errno` unchanged. It does not select general `fallocate` flags,
 pathname allocation, filesystem fallback/policy, durability, cancellation,
 family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-descriptor-advice` is a separate private
+`static-c-descriptor-advice` artifact inside the same planned family. Its
+strict/no-feature, GNU-only, and large-file-only project-header C/C++
+`<fcntl.h>` profiles prove unconditional `posix_fadvise`, the six
+`POSIX_FADV_*` values, GNU-only `readahead`, and the LF64-only
+`posix_fadvise64` macro alias to the unmangled base. Its pinned-musl and
+freestanding-static fixture proves only `fadvise64=221` direct positive
+`EINVAL`/`EBADF` returns with stale `errno` unchanged, and `readahead=187`
+`-1`/published-`EINVAL`/`EBADF` behavior, across an unlinked regular file
+with zero-length advice and stable position/size. It makes no cache-residency
+or cache-effect claim. Cache policy/effects, allocation, pathname and
+filesystem policy, durability, cancellation, family/platform parity, and
+public x86 support remain unselected.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

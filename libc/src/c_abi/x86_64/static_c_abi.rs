@@ -18,8 +18,8 @@
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
-//! regular-file sendfile transfer, mode-zero POSIX range allocation, timestamp
-//! updates, descriptor-I/O, and
+//! regular-file sendfile transfer, mode-zero POSIX range allocation,
+//! descriptor advice, timestamp updates, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
@@ -160,6 +160,8 @@ mod flock;
 mod sendfile;
 #[path = "posix_fallocate.rs"]
 mod posix_fallocate;
+#[path = "descriptor_advice.rs"]
+mod descriptor_advice;
 #[path = "ioctl.rs"]
 mod ioctl;
 #[path = "descriptor_io.rs"]

@@ -7748,6 +7748,156 @@ def require_posix_fallocate_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_descriptor_advice_artifact(family: Mapping[str, Any]) -> None:
+    """Keep POSIX/GNU descriptor advice's distinct error paths explicit."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-descriptor-advice"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-descriptor-advice artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "descriptor-advice block",
+        "unconditional POSIX `posix_fadvise`",
+        "GNU-only `readahead`",
+        "fadvise64=221",
+        "readahead=187",
+        "positive direct `int`",
+        "initial-TLS `errno`",
+        "all six `POSIX_FADV_*`",
+        "no cache-residency or cache-effect claim",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-descriptor-advice description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/descriptor_advice.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "include/features.h",
+        "include/bits/fcntl.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "compat/x86_64/descriptor_advice_header_abi_probe.c",
+        "compat/x86_64/descriptor_advice_header_abi_probe.cpp",
+        "compat/x86_64/run_descriptor_advice_header_abi.sh",
+        "compat/x86_64/run_x86_fs_advice_reference.sh",
+        "compat/x86_64/x86_fs_advice_reference_probe.c",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_descriptor_advice_probe.c",
+        "compat/x86_64/libc_descriptor_advice_start.S",
+        "compat/x86_64/run_libc_descriptor_advice.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-descriptor-advice must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "fadvise64=221" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            and "positive direct int error" in item
+            and "does not write" in item
+            and "errno" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-advice must record fadvise's direct no-errno ABI",
+    )
+    require(
+        any(
+            "readahead=187" in item
+            and "rdi/rsi/rdx" in item
+            and "syscall3" in item
+            and "C -1 plus" in item
+            and "errno" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-advice must record readahead's errno ABI",
+    )
+    require(
+        any(
+            "all six POSIX_FADV_NORMAL through POSIX_FADV_NOREUSE" in item
+            and "zero length" in item
+            and "position" in item
+            and "cache residency or cache-effect semantics" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-advice must keep advice/cache-effect scope explicit",
+    )
+    require(
+        any(
+            "src/fcntl/posix_fadvise.c" in item
+            and "src/linux/readahead.c" in item
+            and "errno publication" in item
+            and "cancellation-point" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-advice must record musl's distinct error paths",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list) and isinstance(
+        header_prerequisites[0], str
+    )
+    for phrase in (
+        "strict/no-feature",
+        "GNU-only",
+        "large-file-only",
+        "unconditional `int posix_fadvise(int, off_t, off_t, int)`",
+        "`ssize_t readahead(int, off_t, size_t)` remains hidden",
+        "posix_fadvise64",
+        "not an archive export",
+        "-H traces",
+    ):
+        require(
+            phrase in header_prerequisites[0],
+            f"static-c-descriptor-advice header contract omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-descriptor-advice"},
+        "static-c-descriptor-advice must use the closed libc-descriptor-advice command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "fadvise64=221",
+        "readahead=187",
+        "only posix_fadvise and readahead",
+        "never posix_fadvise64/readahead64",
+        "POSIX positive EINVAL/EBADF",
+        "GNU readahead -1/published-EINVAL/EBADF",
+        "no cache-residency or cache-effect claim",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-descriptor-advice evidence scope omits {phrase}",
+        )
+
+
 def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     """Keep the generic ioctl ABI forwarder bounded despite its broad spelling."""
     artifacts = require_verified_artifacts(
@@ -9684,6 +9834,7 @@ def validate_ledger(
     require_flock_artifact(by_id["libc.posix-runtime"])
     require_sendfile_artifact(by_id["libc.posix-runtime"])
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
+    require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])

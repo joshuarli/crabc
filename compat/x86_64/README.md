@@ -685,6 +685,16 @@ the unconditional base `posix_fallocate` declaration together with its
 `_LARGEFILE64_SOURCE`-only alias spelling. It is source-only header evidence;
 it does not provide descriptor behavior or select `crabc-libc`.
 
+`descriptor-advice-header-abi` compiles isolated project and pinned-musl C/C++
+`<fcntl.h>` profiles for unconditional `posix_fadvise` and
+`POSIX_FADV_NORMAL` through `POSIX_FADV_NOREUSE`, GNU-only
+`readahead(int, off_t, size_t)`, and the LF64-only `posix_fadvise64` macro
+alias. Strict/no-feature and LF64-only profiles prove `readahead` remains
+hidden; C++ object checks prove unmangled base/GNU linkage, while the runner's
+`-H` traces keep the feature/header owners explicit. It is compile-only
+declaration evidence, not cache-effect, descriptor behavior, or public x86
+support.
+
 `flock-header-abi` compiles project and pinned-musl C/C++ `<sys/file.h>`
 declarations, including the direct `flock` signature, x86 operation bits, and
 legacy `L_*` values with unmangled C++ linkage. It is source-only header
@@ -2318,6 +2328,20 @@ position, and the POSIX direct positive `EINVAL`/`EBADF` returns without
 changing `errno`. It does not select general `fallocate` flags, pathname or
 filesystem policy, durability, cancellation, general runtime, or public x86
 support.
+
+`libc-descriptor-advice` is a separately recorded
+`static-c-descriptor-advice` `verified_artifact` gate over the same archive,
+not a descriptor/filesystem capability. Its strict/no-feature, GNU-only, and
+large-file-only C/C++ `<fcntl.h>` profiles run before a pinned-musl and
+`-nostdlib -static` candidate fixture. It proves only unconditional
+`posix_fadvise` and all six `POSIX_FADV_*` values, GNU-only `readahead`, and
+the LF64-only `posix_fadvise64` macro alias to the unmangled base. The fixture
+proves direct `fadvise64=221` positive `EINVAL`/`EBADF` returns without errno
+publication, `readahead=187` `-1`/published-errno behavior, zero-length
+advice, and stable file position/size over an unlinked regular file. It makes
+no cache-residency or cache-effect claim. It does not select cache policy or
+effects, allocation, pathname or filesystem policy, durability, cancellation,
+general runtime, or public x86 support.
 
 `libc-ioctl` is a separately recorded `static-c-generic-ioctl`
 `verified_artifact` gate over the same archive, not generic device support.
