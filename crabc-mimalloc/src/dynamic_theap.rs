@@ -346,6 +346,38 @@ pub(crate) struct PersistentWorkerTheapLocal<'local> {
     thread: LiveThreadId,
 }
 
+/// Stable addresses of the source-local images retained by one attached
+/// worker. These are observations, not dereference authority: callers must
+/// acquire [`PersistentWorkerTheapStorage::with_local`] for local mutation.
+///
+/// The addresses stay valid only while the same pinned storage remains
+/// attached on its originating worker. A later `teardown` removes the source
+/// regular TLS slot and releases these metadata images, so no address may be
+/// retained or dereferenced beyond that boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PersistentWorkerTheapAddresses {
+    heap: usize,
+    tld: usize,
+    theap: usize,
+}
+
+impl PersistentWorkerTheapAddresses {
+    #[inline]
+    pub(crate) const fn heap(self) -> usize {
+        self.heap
+    }
+
+    #[inline]
+    pub(crate) const fn tld(self) -> usize {
+        self.tld
+    }
+
+    #[inline]
+    pub(crate) const fn theap(self) -> usize {
+        self.theap
+    }
+}
+
 impl PersistentWorkerTheapLocal<'_> {
     #[inline]
     pub(crate) const fn thread(&self) -> LiveThreadId {
@@ -429,6 +461,28 @@ impl<'heap> PersistentWorkerTheapStorage<'heap> {
             .local_parts()
             .map_err(PersistentWorkerTheapStorageError::Attachment)?;
         Ok(operation(local))
+    }
+
+    /// Returns the stable in-place source-image addresses for this attached
+    /// worker after checking the same current-thread, compiler-TLS root,
+    /// cached-reference, and list-membership invariants as local work.
+    ///
+    /// This is an observation seam for direct local-operation integration and
+    /// diagnostics. It does not create a global lookup path or a mutable raw
+    /// owner; [`Self::with_local`] remains the only local-operation projection.
+    pub(crate) fn addresses(
+        self: Pin<&mut Self>,
+    ) -> Result<PersistentWorkerTheapAddresses, PersistentWorkerTheapStorageError> {
+        // SAFETY: address observation does not move the pinned storage or
+        // mutate the attached Theap/TLD/Heap state.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        storage.ensure_attached_current()?;
+        storage
+            .attachment
+            .as_mut()
+            .ok_or(PersistentWorkerTheapStorageError::Retained)?
+            .local_addresses()
+            .map_err(PersistentWorkerTheapStorageError::Attachment)
     }
 
     /// Performs source thread teardown after user destructors and after every
@@ -939,6 +993,31 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             theap,
             thread,
         })
+    }
+
+    /// Observes the source-local address triple only after the same complete
+    /// attached-state validation as a direct local operation. The values are
+    /// never inserted into a registry and this method does not lend mutable
+    /// access through them.
+    fn local_addresses(
+        &mut self,
+    ) -> Result<PersistentWorkerTheapAddresses, DynamicTheapError> {
+        self.prevalidate_attached_page_drain(false)?;
+        let heap = core::ptr::from_ref(self.heap_ref()).addr();
+        let tld = self
+            .tld
+            .as_mut()
+            .ok_or(DynamicTheapError::Poisoned)?
+            .current_mut()
+            .map_err(DynamicTheapError::ThreadLocalData)
+            .map(|tld| core::ptr::from_mut(tld).addr())?;
+        let theap = self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(|theap| core::ptr::from_mut(theap).addr())
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        Ok(PersistentWorkerTheapAddresses { heap, tld, theap })
     }
 
     /// Borrows this exact attachment as one non-abandoning page lifecycle.
@@ -22664,9 +22743,7 @@ mod tests {
         #[derive(Clone, Copy, Debug)]
         struct Observation {
             thread: LiveThreadId,
-            heap: usize,
-            tld: usize,
-            theap: usize,
+            addresses: PersistentWorkerTheapAddresses,
         }
 
         let workers = 2;
@@ -22694,48 +22771,53 @@ mod tests {
                 }
                 .expect("the prepared worker attaches one persistent TLD/Theap");
 
-                let first = storage
+                let thread = storage
+                    .as_mut()
+                    .thread()
+                    .expect("the attached worker retains its native identity");
+                let before_first_operation = storage
+                    .as_mut()
+                    .addresses()
+                    .expect("the attached worker exposes its validated in-place images");
+                storage
                     .as_mut()
                     .with_local(|mut local| {
-                        let observation = Observation {
-                            thread: local.thread(),
-                            heap: local.heap() as *mut Heap as usize,
-                            tld: local.tld() as *mut ThreadLocalData as usize,
-                            theap: local.theap() as *mut Theap as usize,
-                        };
+                        assert_eq!(local.thread(), thread);
+                        assert_eq!(
+                            local.heap() as *mut Heap as usize,
+                            before_first_operation.heap()
+                        );
+                        assert_eq!(
+                            local.tld() as *mut ThreadLocalData as usize,
+                            before_first_operation.tld()
+                        );
+                        assert_eq!(
+                            local.theap() as *mut Theap as usize,
+                            before_first_operation.theap()
+                        );
                         assert_eq!(local.theap().page_count(), 0);
                         local.theap().note_page_added();
                         assert_eq!(local.theap().page_count(), 1);
                         assert!(local.theap().note_page_removed());
-                        observation
                     })
                     .expect("the first local operation projects the attached source image");
-                let second = storage
+                let after_first_operation = storage
                     .as_mut()
-                    .with_local(|mut local| Observation {
-                        thread: local.thread(),
-                        heap: local.heap() as *mut Heap as usize,
-                        tld: local.tld() as *mut ThreadLocalData as usize,
-                        theap: local.theap() as *mut Theap as usize,
-                    })
-                    .expect("the second local operation keeps the same source image installed");
-                let third = storage
+                    .addresses()
+                    .expect("the first operation retains the validated in-place images");
+                storage
                     .as_mut()
-                    .with_local(|mut local| Observation {
-                        thread: local.thread(),
-                        heap: local.heap() as *mut Heap as usize,
-                        tld: local.tld() as *mut ThreadLocalData as usize,
-                        theap: local.theap() as *mut Theap as usize,
+                    .with_local(|mut local| {
+                        assert_eq!(local.thread(), thread);
+                        assert_eq!(local.theap().page_count(), 0);
                     })
-                    .expect("the third local operation does not park or replace the attachment");
-                assert_eq!(first.heap, second.heap);
-                assert_eq!(first.tld, second.tld);
-                assert_eq!(first.theap, second.theap);
-                assert_eq!(second.heap, third.heap);
-                assert_eq!(second.tld, third.tld);
-                assert_eq!(second.theap, third.theap);
-                assert_eq!(first.thread, second.thread);
-                assert_eq!(second.thread, third.thread);
+                    .expect("the second local operation keeps the source image installed");
+                let after_second_operation = storage
+                    .as_mut()
+                    .addresses()
+                    .expect("the second operation does not park or replace the attachment");
+                assert_eq!(before_first_operation, after_first_operation);
+                assert_eq!(after_first_operation, after_second_operation);
 
                 barrier.wait();
                 storage
@@ -22743,7 +22825,10 @@ mod tests {
                     .teardown()
                     .expect("the quiescent persistent worker tears down in source order");
                 sender
-                    .send(first)
+                    .send(Observation {
+                        thread,
+                        addresses: after_second_operation,
+                    })
                     .expect("the parent receives the completed worker observation");
             }));
         }
@@ -22761,9 +22846,9 @@ mod tests {
         }
 
         assert_ne!(first.thread, second.thread);
-        assert_ne!(first.heap, second.heap);
-        assert_ne!(first.tld, second.tld);
-        assert_ne!(first.theap, second.theap);
+        assert_ne!(first.addresses.heap(), second.addresses.heap());
+        assert_ne!(first.addresses.tld(), second.addresses.tld());
+        assert_ne!(first.addresses.theap(), second.addresses.theap());
     }
 
     #[test]
@@ -22785,6 +22870,11 @@ mod tests {
             }
             .expect("the prepared worker attaches one persistent TLD/Theap");
 
+            let before_live_page = storage
+                .as_mut()
+                .addresses()
+                .expect("the attached worker exposes its stable source images");
+
             storage
                 .as_mut()
                 .with_local(|mut local| local.theap().note_page_added())
@@ -22795,6 +22885,13 @@ mod tests {
                     DynamicTheapError::PageCountNonZero
                 )),
                 "teardown must retain the TLS/TLD/Theap owner before clearing a live page"
+            );
+            assert_eq!(
+                storage
+                    .as_mut()
+                    .addresses()
+                    .expect("a rejected teardown keeps the in-place source images attached"),
+                before_live_page,
             );
             storage
                 .as_mut()
