@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 94)
+        self.assertEqual(report["verified_artifact_count"], 95)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6187,12 +6187,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_cancel.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Sixteen separately verified static artifacts", pthread_tls["description"]
+            "Seventeen separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
             pthread_tls["description"],
         )
+        self.assertIn("two-worker aggregate", pthread_tls["description"])
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-atomic",
@@ -6209,7 +6210,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 16)
+        self.assertEqual(len(artifacts), 17)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -6230,6 +6231,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-c11-once",
                 "static-c-pthread-c11-tsd",
                 "static-c-pthread-cancel-deferred",
+                "static-c-pthread-tls-aggregate",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -6248,8 +6250,21 @@ class X86ParityLedgerTests(unittest.TestCase):
         once = by_id["static-c-pthread-c11-once"]
         tsd = by_id["static-c-pthread-c11-tsd"]
         cancellation = by_id["static-c-pthread-cancel-deferred"]
+        aggregate = by_id["static-c-pthread-tls-aggregate"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            aggregate["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-tls-aggregate",
+        )
+        for phrase in (
+            "two-worker lifecycle",
+            "writer exclusion",
+            "clear-before-callback TSD destructors",
+            "full pthread/TLS or x86-64 parity",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, aggregate["description"])
         self.assertEqual(
             crt1_handoff["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-crt1-static-tls",

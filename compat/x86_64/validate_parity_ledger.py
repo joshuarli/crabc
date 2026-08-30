@@ -7309,8 +7309,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 16,
-        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
+        len(artifacts) == 17,
+        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -7320,7 +7320,7 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Sixteen separately verified static artifacts",
+        "Seventeen separately verified static artifacts",
         "complete private rwlock/rwlockattr block with private and process-shared futex waits",
         "not pthread/TLS parity",
     ):
@@ -8053,8 +8053,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 16,
-        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
+        len(artifacts) == 17,
+        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -8064,7 +8064,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Sixteen separately verified static artifacts",
+        "Seventeen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -8380,8 +8380,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 16,
-        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
+        len(artifacts) == 17,
+        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -8391,7 +8391,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Sixteen separately verified static artifacts",
+        "Seventeen separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -8751,8 +8751,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 16,
-        "libc.pthread-tls must retain exactly sixteen private verified artifacts",
+        len(artifacts) == 17,
+        "libc.pthread-tls must retain exactly seventeen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -8762,7 +8762,7 @@ def require_static_pthread_cancel_deferred_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Sixteen separately verified static artifacts",
+        "Seventeen separately verified static artifacts",
         "selected-worker deferred-cancellation route",
         "sole delivery point is explicit `pthread_testcancel`",
         "not pthread/TLS parity",
@@ -15464,6 +15464,89 @@ def has_musl_oracle(family: Mapping[str, Any]) -> bool:
     )
 
 
+def require_static_pthread_tls_aggregate_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the composed private worker/TLS proof from implying promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "static-c-pthread-tls-aggregate"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-tls-aggregate artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-tls-aggregate must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "two-worker lifecycle",
+        "Static Initial TLS v1",
+        "normal mutex/condition",
+        "reader/writer lock",
+        "once",
+        "pthread-key/TSD",
+        "writer exclusion",
+        "clear-before-callback TSD destructors",
+        "cancellation",
+        "timed/process-shared synchronization",
+        "dynamic/loader TLS",
+        "full pthread/TLS or x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-tls-aggregate description omits {phrase}",
+        )
+    owners = set(string_list(
+        artifact["source_owners"], "static-c-pthread-tls-aggregate source owners"
+    ))
+    for path in (
+        "compat/x86_64/libc_pthread_tls_aggregate_probe.c",
+        "compat/x86_64/libc_pthread_tls_aggregate_start.S",
+        "compat/x86_64/run_libc_pthread_tls_aggregate.sh",
+        "scripts/dev-x86_64.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(path in owners, f"static-c-pthread-tls-aggregate source owners omit {path}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-tls-aggregate"},
+        "static-c-pthread-tls-aggregate must use the closed aggregate command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "independent initial errno/TLS",
+        "one shared once payload",
+        "simultaneous rwlock readers",
+        "clear-before-callback TSD destructors",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "dynamic TLS resolver",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(phrase in scope, f"static-c-pthread-tls-aggregate evidence scope omits {phrase}")
+    require(
+        "run_libc_pthread_tls_aggregate.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-pthread-tls-aggregate dispatcher binding is missing",
+    )
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -15672,6 +15755,7 @@ def validate_ledger(
     require_static_pthread_c11_once_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_tsd_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_cancel_deferred_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_tls_aggregate_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

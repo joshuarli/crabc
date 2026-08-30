@@ -371,6 +371,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-c11-plain-sync
 ./scripts/dev-x86_64.sh libc-pthread-c11-once
 ./scripts/dev-x86_64.sh libc-pthread-c11-tsd
+./scripts/dev-x86_64.sh libc-pthread-tls-aggregate
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -2354,6 +2355,21 @@ cancellation signals; implicit, blocking-syscall, or synchronization-wait
 cancellation points; C11, detached, main, or foreign-thread cancellation; a
 general pthread cancellation runtime; full pthread/TLS or x86-64 parity;
 promotion; or public x86 support.
+
+`libc-pthread-tls-aggregate` is a seventeenth private static composition
+artifact under the still-planned `libc.pthread-tls` family. Its project-header
+two-worker body first runs against pinned musl and then through the same
+`-nostdlib -static` archive. It composes only the already selected Static
+Initial TLS v1, create/join, normal mutex/condition, rwlock, once, and
+pthread-key/TSD paths: distinct workers hold shared reads, publish through a
+private condition, receive a parent broadcast, and execute clear-before-
+callback destructors before their distinct join results. The parent proves
+writer exclusion while both reads are live and writer acquisition after join.
+It neither exercises nor extends the separate deferred-cancellation route, and
+adds no attributes, timed/process-shared synchronization, C11 adapter,
+detached/foreign-thread, dynamic/loader TLS, CRT/sysroot, pthread/TLS-parity,
+promotion, or public-x86 claim.
+
 
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its

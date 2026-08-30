@@ -216,6 +216,18 @@ interruption or implicit cancellation points, C11/detached/main/foreign-worker
 cancellation, general pthread cancellation, full pthread/TLS or x86-64 parity,
 promotion, and public x86 support.
 
+The separate `./scripts/dev-x86_64.sh libc-pthread-tls-aggregate` artifact is
+a seventeenth private static composition proof in the same planned family. Its
+two selected workers compose only the existing Static Initial TLS v1,
+create/join, normal mutex/condition, rwlock, once, and TSD leaves: both hold
+shared reads and publish through the condition before a parent broadcast, then
+perform clear-before-callback destructors before their distinct join results.
+The parent observes writer exclusion while those reads are live and writer
+acquisition after join. It neither exercises nor extends the separate
+deferred-cancellation route, and adds no attributes, timed/shared
+synchronization, C11 adapter, detached/foreign-thread, dynamic/loader TLS,
+CRT/sysroot, parity, promotion, or public-support claim.
+
 The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
