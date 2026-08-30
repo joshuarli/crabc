@@ -8,7 +8,7 @@
 # C11 immediate termination, callback algorithms, direct clock_gettime,
 # system configuration,
 # nanosleep, and clock_nanosleep,
-# selected descriptor entry, selected filesystem access, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
+# selected descriptor entry, selected filesystem access, selected fcntl status control and nonblocking record locks, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # SysV semaphore operations,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
@@ -204,6 +204,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-descriptor-lifecycle  run the static x86 crabc-libc descriptor lifecycle composition
   libc-timestamp-updates  run the static x86 rcrt1/libc timestamp-update block
   libc-fcntl-status-control  run the static x86 crabc-libc fcntl status-control slice
+  libc-fcntl-record-locks  run the static x86 crabc-libc fcntl record-lock slice
   libc-ioctl  run the static x86 crabc-libc generic ioctl slice
   libc-sysv-semaphore  run the static x86 crabc-libc SysV semaphore slice
   libc-sysv-message-shared-memory  run the static x86 crabc-libc SysV message/shared-memory slice
@@ -421,6 +422,13 @@ fixture after its equivalent pinned-musl run. It selects only musl's fixed
 page calculations, including the child-local affinity-error CPU-zero fallback.
 It does not select load observation, affinity control, topology, general
 `sysconf`, dynamic libc, or application startup.
+`libc-fcntl-record-locks` exercises a separate freestanding project-header C
+fixture after its equivalent pinned-musl run. It selects only pointer-bearing
+nonblocking `fcntl(F_GETLK)`/`fcntl(F_SETLK)` record locks: an unlocked query,
+a child observation/conflict against a parent lock, release, stale `errno` on
+success, and direct kernel errors. It does not select `F_SETLKW` cancellation,
+OFD locks, `lockf`, `flock`, generic fcntl, dynamic libc, or application
+startup.
 `libc-uts-identity` exercises the same archive through a freestanding
 project-header C fixture after an equivalent pinned-musl run. Each fixture arm
 creates a fresh UTS namespace before it mutates hostname/domain-name state; the
@@ -1045,11 +1053,13 @@ project-header C fixture after an equivalent pinned-musl run. It selects only
 the public `fcntl` status/descriptor-flag commands `F_GETFD`, `F_SETFD`,
 `F_GETFL`, and `F_SETFL`: legal absent-vararg and scalar-vararg dispatch,
 musl's O_LARGEFILE rule, descriptor-local CLOEXEC, shared status state, and
-direct errno results. Every other command returns the explicit selected-profile
-`EINVAL` result without reading a vararg or issuing a syscall. It does not
-provide generic fcntl, locking, descriptor lifecycle, filesystem policy,
-cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
-support.
+direct errno results. The shared dispatcher routes the separately selected
+pointer-bearing `F_GETLK`/`F_SETLK` forms to their sibling; every other command
+returns the explicit selected-profile `EINVAL` result without reading a vararg
+or issuing a syscall. It does not provide generic fcntl, locking beyond that
+separate nonblocking record-lock boundary, descriptor lifecycle, filesystem
+policy, cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or
+public x86 support.
 `libc-ioctl` links that archive into a separate freestanding project-header C
 fixture after an equivalent pinned-musl run. It selects only generic
 `ioctl=16` forwarding for one pointer input, one pointer output, and the two
@@ -1107,6 +1117,13 @@ physical/free-plus-buffer page calculations, preserving stale `errno` and the
 CPU-zero fallback in a child-local affinity-error regression. It does not
 provide load observation, affinity control, CPU topology, general `sysconf`,
 dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+`libc-fcntl-record-locks` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+pointer-bearing nonblocking `F_GETLK`/`F_SETLK` record locks: the public
+`struct flock` query/mutation ABI, child-observed parent conflict, release,
+stale `errno`, and direct kernel errors. It does not provide `F_SETLKW`
+cancellation, OFD locks, `lockf`, `flock`, generic fcntl, dynamic libc,
+CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-thread-pointer` compiles only the private musl-shaped `%fs:0` identity
 leaf and a pinned-musl C fixture. It establishes neither a C runtime artifact,
 public C ABI, pthread/TLS lifecycle, loader TLS, nor an FS-base setup path.
@@ -2328,6 +2345,10 @@ run_libc_system_information_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_system_information.sh
 }
 
+run_libc_fcntl_record_locks_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_fcntl_record_locks.sh
+}
+
 run_libc_uts_identity_probe() {
     run_in_uts_cap_container bash /workspace/compat/x86_64/run_libc_uts_identity.sh
 }
@@ -2423,7 +2444,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
     *)
@@ -3292,6 +3313,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-system-information takes no arguments"
         ensure_image
         run_libc_system_information_probe
+        ;;
+    libc-fcntl-record-locks)
+        [ "$#" -eq 0 ] || fail "libc-fcntl-record-locks takes no arguments"
+        ensure_image
+        run_libc_fcntl_record_locks_probe
         ;;
     libc-uts-identity)
         [ "$#" -eq 0 ] || fail "libc-uts-identity takes no arguments"

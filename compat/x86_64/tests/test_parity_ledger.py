@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 60)
+        self.assertEqual(report["verified_artifact_count"], 61)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1313,7 +1313,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 39
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 40
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -2210,6 +2210,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/upstreams.toml",
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/descriptor_control.rs",
+            "libc/src/c_abi/x86_64/record_locks.rs",
             "libc/src/c_abi/x86_64/errno.rs",
             "include/fcntl.h",
             "include/bits/fcntl.h",
@@ -2247,6 +2248,49 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/descriptor_control.rs",
+            posix_runtime["source_owners"],
+        )
+        record_locks = artifacts_by_id["static-c-fcntl-record-locks"]
+        assert isinstance(record_locks, dict)
+        self.assertNotIn("capabilities", record_locks)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/descriptor_control.rs",
+            "libc/src/c_abi/x86_64/record_locks.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "include/fcntl.h",
+            "include/bits/fcntl.h",
+            "include/unistd.h",
+            "compat/x86_64/fcntl_header_abi_probe.c",
+            "compat/x86_64/fcntl_header_abi_probe.cpp",
+            "compat/x86_64/run_fcntl_header_abi.sh",
+            "compat/x86_64/run_x86_fcntl_getlk_reference.sh",
+            "compat/x86_64/x86_fcntl_getlk_reference_probe.c",
+            "compat/x86_64/libc_fcntl_record_locks_probe.c",
+            "compat/x86_64/libc_fcntl_record_locks_start.S",
+            "compat/x86_64/run_libc_fcntl_record_locks.sh",
+        ):
+            self.assertIn(owner, record_locks["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in record_locks["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-fcntl-record-locks"},
+        )
+        for phrase in (
+            "nonblocking fcntl record-lock block",
+            "F_GETLK",
+            "F_SETLK",
+            "32-byte",
+            "EACCES/EAGAIN",
+            "F_SETLKW cancellation",
+            "does not select F_SETLKW cancellation",
+        ):
+            self.assertIn(phrase, record_locks["description"])
+        self.assertIn(
+            "src/fcntl/fcntl.c", record_locks["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/record_locks.rs",
             posix_runtime["source_owners"],
         )
         ffs = artifacts_by_id["static-c-ffs"]
@@ -6669,6 +6713,39 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-status-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-fcntl-status-control command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_fcntl_record_locks_artifact_keeps_its_pointer_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fcntl-record-locks"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("fcntl=72", "fcntl=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "pointer-vararg register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-fcntl-record-locks"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh fcntl-record-locks-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-fcntl-record-locks command"
         ):
             ledger.validate_ledger(data)
 

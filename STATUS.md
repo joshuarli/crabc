@@ -223,6 +223,16 @@ path. This is not processor-affinity control, topology, general `sysconf`,
 load observation, a general system-information capability, C-runtime/family
 parity, AArch64 parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
+`static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
+Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove
+only pointer-bearing nonblocking `fcntl(F_GETLK)`/`fcntl(F_SETLK)` over the
+public 32-byte `struct flock`: unlocked query, child-observed parent conflict
+and PID, release, stale `errno`, and direct `EBADF`/`EINVAL` outcomes. It does
+not select `F_SETLKW` cancellation, OFD locks, `lockf`, `flock`, generic
+`fcntl`, descriptor/filesystem policy, family/platform parity, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

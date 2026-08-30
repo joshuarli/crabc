@@ -75,7 +75,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-pthread-identity",
             "libc-pthread-detach",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
         )
@@ -126,6 +126,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
         self.assertIn("libc-system-information", source)
+        self.assertIn("libc-fcntl-record-locks", source)
         self.assertIn("libc-uts-identity", source)
         self.assertIn('run_musl_oracle()', source)
         self.assertIn('compat/x86_64/run_musl_oracle.sh', source)
@@ -8739,6 +8740,120 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-fcntl-status-control)\n        [ "$#" -eq 0 ] || fail "libc-fcntl-status-control takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_fcntl_record_locks_artifact_stays_narrow(
+        self,
+    ) -> None:
+        """The selected pointer fcntl forms retain their bounded lock ABI."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        descriptor_control = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "descriptor_control.rs"
+        ).read_text(encoding="utf-8")
+        record_locks = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "record_locks.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_fcntl_record_locks_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_fcntl_record_locks_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_fcntl_record_locks.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "record_locks.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/fcntl/fcntl.c",
+            "F_GETLK",
+            "F_SETLK",
+            "F_SETLKW",
+            "raw_syscall::SYS_FCNTL",
+            "raw_syscall::syscall3(",
+            "c_status(result)",
+            "rdi/rsi/rdx",
+            "fcntl_record_lock",
+        ):
+            self.assertIn(required, record_locks)
+        for forbidden in (
+            "fn lockf(",
+            "fn flock(",
+            "F_OFD_",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, record_locks)
+        for required in (
+            "record_locks::fcntl_record_lock",
+            "cmp esi, 5",
+            "cmp esi, 6",
+            "F_SETLKW",
+            "pointer helper",
+        ):
+            self.assertIn(required, descriptor_control)
+        for required in (
+            "#include <fcntl.h>",
+            "sizeof(struct flock) == 32",
+            "offsetof(struct flock, l_pid) == 24",
+            "F_GETLK == 5 && F_SETLK == 6 && F_SETLKW == 7",
+            "check_unlocked_query",
+            "child_observes_parent_lock",
+            "check_selected_record_lock_lifecycle",
+            "check_unselected_blocking_form",
+            "F_UNLCK",
+            "EACCES && errno != EAGAIN",
+            "CRABC_FCNTL_RECORD_LOCKS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_fcntl_record_locks_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_fcntl_header_abi.sh",
+            "run_x86_fcntl_getlk_reference.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_fcntl_record_lock_path",
+            "fcntl_record_lock",
+            "F_GETLK/F_SETLK",
+            "assert_fixture_tls_capacity",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("fcntl", static_export_names)
+        self.assertNotIn("flock", static_export_names)
+        self.assertNotIn("lockf", static_export_names)
+        self.assertIn('id = "static-c-fcntl-record-locks"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-fcntl-record-locks"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_fcntl_record_locks_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_fcntl_record_locks.sh", runner
+        )
+        self.assertIn(
+            '    libc-fcntl-record-locks)\n        [ "$#" -eq 0 ] || fail "libc-fcntl-record-locks takes no arguments"',
             runner,
         )
 

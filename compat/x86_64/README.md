@@ -361,6 +361,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-descriptor-entry
 ./scripts/dev-x86_64.sh libc-access
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
+./scripts/dev-x86_64.sh libc-fcntl-record-locks
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
@@ -2246,13 +2247,27 @@ the two setters use the scalar third word. The fixture's raw setup/teardown
 keeps the candidate independent of the C open/dup/close artifacts; it proves
 descriptor-local `FD_CLOEXEC`, shared open-file-description status flags over
 a raw duplicate, the musl `F_SETFL` `O_LARGEFILE` rule, stale errno on all
-four successful calls, and direct `EBADF` errors. Every other public C
-command, including `F_GETLK`, `F_GETOWN`, `F_DUPFD*`, record/OFD locks,
+four successful calls, and direct `EBADF` errors. The shared dispatcher routes
+the separately selected `F_GETLK`/`F_SETLK` pointer forms to their sibling;
+every remaining public C command, including `F_GETOWN`, `F_DUPFD*`, OFD locks,
 ownership, leases, and seals, deliberately returns `-1`/`EINVAL` before a
 vararg is observed or a syscall runs. The broader header declarations and the
-separate direct Rust `F_GETLK`/status/seal slices do not widen this C
-artifact. It excludes `lockf`/`flock`, cancellation, generic descriptor or
-filesystem policy, general runtime, and public x86 support.
+separate direct Rust `F_GETLK`/status/seal slices do not widen this C artifact.
+It excludes `lockf`/`flock`, cancellation, generic descriptor or filesystem
+policy, general runtime, and public x86 support.
+
+`libc-fcntl-record-locks` is a separately recorded
+`static-c-fcntl-record-locks` `verified_artifact` gate over the same archive,
+not a descriptor/filesystem capability or generic C `fcntl` implementation.
+Its project-header C body runs through pinned musl and then a
+`-nostdlib -static` candidate for only pointer-bearing nonblocking
+`F_GETLK`/`F_SETLK` calls. The shared dispatcher preserves the caller's
+`struct flock *` in `rdx`; the fixture proves the public x86 record layout,
+unlocked query, child-observed parent lock/PID and conflict, release, stale
+errno on success, and direct `EBADF`/`EINVAL` failures. It does not select
+`F_SETLKW` cancellation, OFD locks, `lockf`, `flock`, generic `fcntl`, lock
+ownership/signalling policy, descriptor/pathname policy, general runtime, or
+public x86 support.
 
 `libc-ioctl` is a separately recorded `static-c-generic-ioctl`
 `verified_artifact` gate over the same archive, not generic device support.
@@ -2922,6 +2937,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-descriptor-entry`,
 `libc-access`,
 `libc-fcntl-status-control`,
+`libc-fcntl-record-locks`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,

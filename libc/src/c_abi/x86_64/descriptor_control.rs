@@ -1,13 +1,15 @@
 //! Selected static Linux/x86-64 C descriptor-control boundary.
 //!
-//! This leaf owns exactly the status and descriptor-flag forms of public C
-//! `fcntl`: `F_GETFD`, `F_SETFD`, `F_GETFL`, and `F_SETFL`. It composes the
-//! raw Linux syscall register boundary with the selected initial-TLS C
-//! `errno` publisher. It is not generic C `fcntl`, duplication, record/OFD
-//! locks, ownership/signalling control, leases, seals, `lockf`, descriptor
-//! pathname policy, vector I/O, a filesystem capability, stdio, a general
-//! C/POSIX runtime, libc.so, CRT, thread lifecycle, dynamic TLS, loader,
-//! sysroot, allocator, or public x86 support.
+//! This module owns the shared public `fcntl` assembly dispatch for two
+//! separate selected static artifacts: descriptor/status flags (`F_GETFD`,
+//! `F_SETFD`, `F_GETFL`, and `F_SETFL`) and the sibling nonblocking
+//! record-lock forms (`F_GETLK` and `F_SETLK`). It composes the raw Linux
+//! syscall register boundary with the selected initial-TLS C `errno`
+//! publisher. It is not generic C `fcntl`, duplication, blocking `F_SETLKW`
+//! cancellation, OFD locks, ownership/signalling control, leases, seals,
+//! `lockf`, descriptor pathname policy, vector I/O, a filesystem capability,
+//! stdio, a general C/POSIX runtime, libc.so, CRT, thread lifecycle, dynamic
+//! TLS, loader, sysroot, allocator, or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -16,8 +18,9 @@
 //!
 //! Musl passes a raw third word to Linux `fcntl=72`, ORs `O_LARGEFILE` into a
 //! `F_SETFL` request, and uses a cancellation-point route only for
-//! `F_SETLKW`. The selected direct Linux-5.10 leaf retains the status-control
-//! route and `O_LARGEFILE` rule. It deliberately does not select the blocking
+//! `F_SETLKW`. The selected direct Linux-5.10 leaves retain the status-control
+//! route, `O_LARGEFILE` rule, and the sibling direct nonblocking record-lock
+//! pointer forms. They deliberately do not select the blocking
 //! lock/cancellation path, musl's `F_GETOWN` translation, or its historical
 //! `F_DUPFD_CLOEXEC` fallback.
 //!
@@ -25,14 +28,15 @@
 //! two fixed C words, so an ordinary three-argument Rust entry would have an
 //! invalid ABI for them. The public assembly shim therefore routes these two
 //! commands to a two-word helper that explicitly supplies Linux rdx=0,
-//! routes `F_SETFD`/`F_SETFL` to a three-word scalar helper, and rejects every
-//! other command before touching rdx. SysV AMD64 places fd/cmd/the first
-//! scalar vararg in rdi/rsi/rdx, which is also Linux `fcntl`'s three-word
-//! register order.
+//! routes `F_SETFD`/`F_SETFL` to a three-word scalar helper, routes the two
+//! selected record commands to their pointer helper, and rejects every other
+//! command before touching rdx. SysV AMD64 places fd/cmd/the first variadic
+//! word in rdi/rsi/rdx, which is also Linux `fcntl`'s three-word register
+//! order.
 
 use core::ffi::c_int;
 
-use super::{c_status, errno, raw_syscall};
+use super::{c_status, errno, raw_syscall, record_locks};
 
 const EINVAL: c_int = 22;
 const F_GETFD: c_int = 1;
@@ -62,6 +66,10 @@ fcntl:
     je {scalar}
     cmp esi, 4
     je {scalar}
+    cmp esi, 5
+    je {record_lock}
+    cmp esi, 6
+    je {record_lock}
     jmp {unsupported}
     .size fcntl, .-fcntl
 
@@ -69,6 +77,7 @@ fcntl:
 "#,
     no_argument = sym fcntl_no_argument,
     scalar = sym fcntl_scalar,
+    record_lock = sym record_locks::fcntl_record_lock,
     unsupported = sym fcntl_unsupported,
 );
 

@@ -16,8 +16,9 @@
 //! private Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
-//! descriptor-entry, selected filesystem-access, bounded fcntl status-control,
-//! timestamp updates, descriptor-I/O, and
+//! descriptor-entry, selected filesystem-access, bounded fcntl status-control
+//! and nonblocking record-lock boundaries, timestamp updates, descriptor-I/O,
+//! and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
@@ -150,6 +151,8 @@ mod descriptor_entry;
 mod filesystem_access;
 #[path = "descriptor_control.rs"]
 mod descriptor_control;
+#[path = "record_locks.rs"]
+mod record_locks;
 #[path = "ioctl.rs"]
 mod ioctl;
 #[path = "descriptor_io.rs"]

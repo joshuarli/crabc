@@ -7322,6 +7322,111 @@ def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_fcntl_record_locks_artifact(family: Mapping[str, Any]) -> None:
+    """Keep selected pointer-bearing fcntl record locks separate and bounded."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-fcntl-record-locks"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-fcntl-record-locks artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "nonblocking fcntl record-lock block",
+        "F_GETLK",
+        "F_SETLK",
+        "32-byte x86 `struct flock`",
+        "EACCES/EAGAIN",
+        "F_SETLKW cancellation",
+        "OFD locks",
+        "lockf",
+        "flock",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-fcntl-record-locks description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/descriptor_control.rs",
+        "libc/src/c_abi/x86_64/record_locks.rs",
+        "compat/x86_64/fcntl_header_abi_probe.c",
+        "compat/x86_64/fcntl_header_abi_probe.cpp",
+        "compat/x86_64/run_fcntl_header_abi.sh",
+        "compat/x86_64/run_x86_fcntl_getlk_reference.sh",
+        "compat/x86_64/x86_fcntl_getlk_reference_probe.c",
+        "compat/x86_64/libc_fcntl_record_locks_probe.c",
+        "compat/x86_64/libc_fcntl_record_locks_start.S",
+        "compat/x86_64/run_libc_fcntl_record_locks.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-fcntl-record-locks must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "fcntl=72" in item
+            and "rdi/rsi/rdx" in item
+            and "F_GETLK=5" in item
+            and "F_SETLK=6" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-record-locks must record its pointer-vararg register ABI",
+    )
+    require(
+        any(
+            "32-byte align-8" in item
+            and "offsets 0/2" in item
+            and "F_UNLCK" in item
+            and "EACCES or EAGAIN" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-record-locks must record the x86 flock layout and conflict boundary",
+    )
+    require(
+        any(
+            "src/fcntl/fcntl.c" in item
+            and "F_SETLKW" in item
+            and "__syscall_cp" in item
+            for item in prerequisites
+        ),
+        "static-c-fcntl-record-locks must record its musl cancellation exclusion",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-fcntl-record-locks"},
+        "static-c-fcntl-record-locks must use the closed libc-fcntl-record-locks command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "F_GETLK=5/F_SETLK=6",
+        "fcntl=72",
+        "parent-write-lock child observation",
+        "EACCES/EAGAIN",
+        "F_SETLKW cancellation",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-fcntl-record-locks evidence scope omits {phrase}",
+        )
+
+
 def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     """Keep the generic ioctl ABI forwarder bounded despite its broad spelling."""
     artifacts = require_verified_artifacts(
@@ -9254,6 +9359,7 @@ def validate_ledger(
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
+    require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
