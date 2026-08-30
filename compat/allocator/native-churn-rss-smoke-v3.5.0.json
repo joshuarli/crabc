@@ -1,0 +1,96 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-native-churn-rss-smoke",
+  "upstream": {
+    "project": "microsoft/mimalloc",
+    "version": "3.5.0",
+    "tag": "v3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "role": "fixed C allocator oracle; this crabc-authored fixture uses only the selected production shadow C ABI"
+  },
+  "fixture": {
+    "path": "compat/allocator/native-churn-rss-smoke.c",
+    "sha256": "af3d4512c82db62da5221a78727fdb9cd0f112342ebd3d0341a4c861093c0755",
+    "license": "crabc-authored C11 evidence fixture"
+  },
+  "execution": {
+    "allocator_feature": "native-mimalloc-shadow",
+    "compiler": "crabc-cc from CRABC_TEST_SYSROOT/bin",
+    "language": "C11",
+    "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
+    "compile_flags": [
+      "-O2",
+      "-DNDEBUG",
+      "-fPIE",
+      "-pie",
+      "-ftls-model=initial-exec",
+      "-pthread"
+    ],
+    "link_flags": [
+      "-Wl,--allow-shlib-undefined"
+    ],
+    "link_libraries": [
+      "-lc"
+    ],
+    "expected_dynamic_dependencies": [
+      "libc.so"
+    ],
+    "seed": 1511506142,
+    "cycles": 8,
+    "process_epochs": 4,
+    "watchdog_seconds": 30
+  },
+  "production_shadow_boundary": {
+    "allowed_allocation_apis": [
+      "malloc",
+      "free",
+      "posix_memalign",
+      "malloc_usable_size"
+    ],
+    "forbidden_allocator_identifiers": [
+      "mi_",
+      "libmimalloc",
+      "native_allocate",
+      "native_free",
+      "__crabc_runtime"
+    ],
+    "allocator_private_hooks": false,
+    "c_backend_fallback": false,
+    "ownership_contract": [
+      "A fresh helper frees one selected ordinary C address while the allocating worker remains live.",
+      "Every owner returns normally with six ordinary C blocks still live.",
+      "After pthread_join confirms that owner exit, the initial thread validates malloc_usable_size and frees every surviving C address in a seed-derived order.",
+      "The fixture never transfers an allocator-private pointer, page, heap, route, or metadata capability."
+    ]
+  },
+  "state_observation": {
+    "rss": "sampled-from-/proc/self/status-VmRSS",
+    "workload_liveness": [
+      "requested_bytes_live_high_water",
+      "usable_bytes_live_high_water",
+      "live_blocks_high_water"
+    ],
+    "allocator_metadata": "not-exposed-by-production-shadow-c-api",
+    "metadata_high_water_bytes": null,
+    "reason": "This selected C ABI has no allocator-statistics or debug-state API. The smoke records null rather than deriving metadata from Rust internals, a C fallback, or an unsupported proxy."
+  },
+  "report": {
+    "path": "compat/reports/allocator/native-churn-rss-smoke-latest.json",
+    "schema": "crabc-mimalloc-native-churn-rss-smoke-report-v1",
+    "required_high_water": [
+      "rss_bytes",
+      "requested_live_bytes",
+      "usable_live_bytes",
+      "live_blocks",
+      "allocator_metadata.high_water_bytes"
+    ]
+  },
+  "scope": {
+    "classification": "C ABI compatibility machinery and native allocator evidence",
+    "non_claims": [
+      "This bounded smoke is not a general owner-exit, allocator metadata, PageMap, arena, or selected-shadow promotion proof.",
+      "It does not infer a metadata plateau from RSS or workload liveness.",
+      "It does not replace the separately owned upstream stress, differential, state-auditor, soak, performance, or architecture-ratchet evidence."
+    ]
+  }
+}
