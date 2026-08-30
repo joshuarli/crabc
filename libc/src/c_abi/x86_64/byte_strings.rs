@@ -1,13 +1,13 @@
 //! Selected static Linux/x86-64 C byte-string observation/search boundary.
 //!
 //! This leaf owns exactly one stateless, allocation-free C byte-string block:
-//! `index`, `rindex`, `strchr`, `strchrnul`, `strcmp`, `strcspn`, `strlen`,
-//! `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr`. It
-//! shares no syscall, `errno`, TLS, allocator, locale, or mutable tokenizer
-//! state. It is not byte-string copying or concatenation, tokenization,
-//! case-insensitive or locale-aware comparison, wide/multibyte text, stdio,
-//! a general C runtime, libc.so, CRT, dynamic TLS, loader, sysroot, or public
-//! x86 support.
+//! `index`, `rindex`, `strchr`, `strchrnul`, `strcmp`, GNU `strverscmp`,
+//! `strcspn`, `strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`,
+//! and `strstr`. It shares no syscall, `errno`, TLS, allocator, locale, or
+//! mutable tokenizer state. It is not byte-string copying or concatenation,
+//! tokenization, case-insensitive or locale-aware comparison, wide/multibyte
+//! text, stdio, a general C runtime, libc.so, CRT, dynamic TLS, loader,
+//! sysroot, or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -17,8 +17,10 @@
 //!   `src/string/strcspn.c`, `src/string/strlen.c`,
 //!   `src/string/strncmp.c`, `src/string/strnlen.c`,
 //!   `src/string/strpbrk.c`, `src/string/strrchr.c`,
-//!   `src/string/strspn.c`, and `src/string/strstr.c` map respectively to
-//!   the named public C entries below.
+//!   `src/string/strspn.c`, `src/string/strstr.c`, and
+//!   `src/string/strverscmp.c` map respectively to the named public C entries
+//!   below. The selected `dirent` `versionsort` callback reuses the latter
+//!   rather than carrying a second comparison state machine.
 //! - Musl's hidden `__strchrnul` and `__memrchr`, and the `memchr` calls from
 //!   `strnlen` and `strstr`, map to private helpers in this leaf. The complete
 //!   musl library weak-aliases some of those helpers to wider public symbols;
@@ -198,6 +200,84 @@ pub unsafe extern "C" fn strcmp(left: *const c_char, right: *const c_char) -> c_
         // SAFETY: equal non-NUL bytes prove both following C-string bytes.
         right = unsafe { right.add(1) };
     }
+}
+
+#[inline]
+fn is_decimal_digit(byte: u8) -> bool {
+    byte.wrapping_sub(b'0') < 10
+}
+
+/// Literal musl `strverscmp` state machine for the selected C entry.
+///
+/// # Safety
+///
+/// `left` and `right` must each designate a readable NUL-terminated byte
+/// sequence. Neither pointer may be null. A shared all-zero numeric prefix
+/// sorts digit continuation before non-digits; two nonzero numeric runs sort
+/// by length before their first unequal byte.
+#[inline]
+unsafe fn version_name_compare(left: *const u8, right: *const u8) -> c_int {
+    let mut index = 0usize;
+    let mut digit_prefix = 0usize;
+    let mut all_zero = true;
+
+    // Find the maximal equal prefix, retaining the start of its final digit
+    // run and whether that run contains only zeros.
+    while unsafe { left.add(index).read() } == unsafe { right.add(index).read() } {
+        let byte = unsafe { left.add(index).read() };
+        if byte == 0 {
+            return 0;
+        }
+        if !is_decimal_digit(byte) {
+            digit_prefix = index + 1;
+            all_zero = true;
+        } else if byte != b'0' {
+            all_zero = false;
+        }
+        index += 1;
+    }
+
+    if unsafe { left.add(digit_prefix).read().wrapping_sub(b'1') } < 9
+        && unsafe { right.add(digit_prefix).read().wrapping_sub(b'1') } < 9
+    {
+        // Non-degenerate digit strings which both begin nonzero sort by
+        // numeric-run length before the first unequal byte.
+        let mut scan = index;
+        while is_decimal_digit(unsafe { left.add(scan).read() }) {
+            if !is_decimal_digit(unsafe { right.add(scan).read() }) {
+                return 1;
+            }
+            scan += 1;
+        }
+        if is_decimal_digit(unsafe { right.add(scan).read() }) {
+            return -1;
+        }
+    } else if all_zero
+        && digit_prefix < index
+        && (is_decimal_digit(unsafe { left.add(index).read() })
+            || is_decimal_digit(unsafe { right.add(index).read() }))
+    {
+        // A shared all-zero prefix sorts digit continuation before a
+        // non-digit/terminator, preserving musl's leading-zero behavior.
+        return i32::from(unsafe { left.add(index).read().wrapping_sub(b'0') })
+            - i32::from(unsafe { right.add(index).read().wrapping_sub(b'0') });
+    }
+
+    i32::from(unsafe { left.add(index).read() })
+        - i32::from(unsafe { right.add(index).read() })
+}
+
+/// Compare two C strings with musl's GNU `strverscmp` state machine.
+///
+/// # Safety
+///
+/// `left` and `right` must each designate a readable NUL-terminated byte
+/// sequence. Neither pointer may be null.
+#[no_mangle]
+pub unsafe extern "C" fn strverscmp(left: *const c_char, right: *const c_char) -> c_int {
+    // SAFETY: the C entry retains exactly the helper's two readable
+    // NUL-terminated byte-string obligations.
+    unsafe { version_name_compare(left.cast(), right.cast()) }
 }
 
 /// Compare at most `count` C-string bytes with unsigned-byte differences.

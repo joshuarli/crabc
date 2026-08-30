@@ -4,8 +4,9 @@
 # The project-header fixture first runs against pinned musl 1.2.6, then as a
 # `-nostdlib -static` executable linked solely through the selected crabc
 # archive. The closed surface is exactly index, rindex, strchr, strchrnul,
-# strcmp, strcspn, strlen, strncmp, strnlen, strpbrk, strrchr, strspn, and
-# strstr. It excludes copy, token, locale, allocation, and stateful APIs.
+# strcmp, strverscmp, strcspn, strlen, strncmp, strnlen, strpbrk, strrchr,
+# strspn, and strstr. It excludes copy, token, locale, allocation, and
+# stateful APIs.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -108,7 +109,7 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 
-for symbol in index rindex strchr strchrnul strcmp strcspn strlen strncmp \
+for symbol in index rindex strchr strchrnul strcmp strverscmp strcspn strlen strncmp \
     strnlen strpbrk strrchr strspn strstr; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
@@ -136,7 +137,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in index rindex strchr strchrnul strcmp strcspn strlen strncmp \
+for symbol in index rindex strchr strchrnul strcmp strverscmp strcspn strlen strncmp \
     strnlen strpbrk strrchr strspn strstr; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"

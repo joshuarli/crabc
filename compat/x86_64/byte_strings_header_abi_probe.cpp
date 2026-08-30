@@ -31,6 +31,8 @@ static_assert(__is_same(decltype(&strstr), char *(*)(const char *, const char *)
               "strstr declaration");
 
 #if defined(CRABC_EXPECT_GNU)
+static_assert(__is_same(decltype(&strverscmp), compare_signature),
+              "strverscmp GNU declaration");
 static_assert(__is_same(decltype(&strchrnul), char_search_signature),
               "strchrnul GNU declaration");
 #endif
@@ -42,6 +44,10 @@ static_assert(__is_same(decltype(&rindex), char_search_signature), "rindex decla
 
 #if defined(CRABC_REQUIRE_STRCHRNUL)
 static char_search_signature required_strchrnul_signature = strchrnul;
+#endif
+
+#if defined(CRABC_REQUIRE_STRVERSCMP)
+static compare_signature required_strverscmp_signature = strverscmp;
 #endif
 
 int crabc_x86_64_byte_strings_header_abi_probe_cpp()

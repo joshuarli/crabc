@@ -534,11 +534,10 @@ candidate, covering only `opendir`, `fdopendir`, `closedir`, `dirfd`,
 `getdents64=217`, and `lseek=8` paths plus close-on-exec descriptor transfer,
 255-byte names, cursor/EOF behavior, raw record framing, `ENOTDIR`, and
 nonzero-flag `EOPNOTSUPP`. Its `DIR` state owns one private anonymous mapping,
-not a C allocator. GNU `versionsort` retains musl's scalar digit/leading-zero
-order privately, without selecting public `strverscmp` or a general string
-ABI. `scandir`, directory walking, broader locale collation, cancellation,
-full C runtime/POSIX parity, family promotion, and public x86 support remain
-excluded.
+not a C allocator. GNU `versionsort` delegates musl's scalar digit/leading-zero
+order to the selected public `strverscmp` byte-string leaf. `scandir`,
+directory walking, broader locale collation, cancellation, full C runtime/POSIX
+parity, family promotion, and public x86 support remain excluded.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete
@@ -705,10 +704,10 @@ general bit operations, or `crabc-libc`.
 
 `byte-strings-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for the closed byte-string set: `index`, `rindex`,
-`strchr`, GNU-gated `strchrnul`, `strcmp`, `strcspn`, `strlen`, `strncmp`,
-`strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr`. A strict POSIX C pass
-expects `strchrnul` to remain hidden, matching musl; C++ remains GNU-selected
-by its driver. This is compile-only
+`strchr`, GNU-gated `strchrnul`, `strcmp`, GNU `strverscmp`, `strcspn`,
+`strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr`.
+A strict POSIX C pass expects both GNU `strverscmp` and `strchrnul` to remain
+hidden, matching musl; C++ remains GNU-selected by its driver. This is compile-only
 header evidence; it does not select C string behavior or `crabc-libc`.
 
 `memory-search-header-abi` compiles project-first and pinned-musl C/C++
@@ -2757,13 +2756,14 @@ full x86-64 parity, and public x86 support.
 promotion of the Rust-subsumed text capabilities. Its project-header C body
 first executes through pinned musl and then through a `-nostdlib -static`
 candidate. It selects only `index`/`rindex`, `strchr`/`strchrnul`, `strcmp`,
-`strcspn`, `strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and
-`strstr`. Musl's public `index` and `rindex` entries are forwarding wrappers
-mapped to `strchr` and `strrchr`; its private `__strchrnul` and `__memrchr`
-helpers remain internal, while scalar fallback behavior is retained as an
-intentional implementation boundary. The artifact excludes stateful string,
-locale, allocation, vectorized, dynamic-runtime, and public-x86-support
-claims.
+GNU `strverscmp`, `strcspn`, `strlen`, `strncmp`, `strnlen`, `strpbrk`,
+`strrchr`, `strspn`, and `strstr`. Musl's public `index` and `rindex` entries
+are forwarding wrappers mapped to `strchr` and `strrchr`; its private
+`__strchrnul` and `__memrchr` helpers remain internal, while GNU `strverscmp`
+retains musl's scalar digit/leading-zero comparison state machine and scalar
+fallback behavior as intentional implementation boundaries. The artifact
+excludes stateful string, locale, allocation, vectorized, dynamic-runtime,
+and public-x86-support claims.
 
 `libc-random-entropy` is a separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a

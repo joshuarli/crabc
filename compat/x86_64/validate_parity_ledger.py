@@ -934,6 +934,7 @@ BYTE_STRING_SYMBOLS = (
     "strchr",
     "strchrnul",
     "strcmp",
+    "strverscmp",
     "strcspn",
     "strlen",
     "strncmp",
@@ -1183,7 +1184,6 @@ DIRECTORY_STREAM_UNSELECTED_SYMBOLS = (
     "malloc",
     "realloc",
     "scandir",
-    "strverscmp",
 )
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -4603,6 +4603,7 @@ def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
     for symbol in BYTE_STRING_SYMBOLS:
         require(symbol in description, f"static-c-byte-strings description omits {symbol}")
     for phrase in (
+        "GNU `strverscmp`",
         "public `index` and `rindex` forwarding wrappers",
         "private `__strchrnul`/`__memrchr` helpers",
         "scalar fallback",
@@ -4613,6 +4614,25 @@ def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
     require(
         {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-byte-strings"},
         "static-c-byte-strings must use the closed libc-byte-strings command",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-byte-strings.x86_header_prerequisites",
+    )
+    require(
+        any("GNU-gated `strverscmp`" in item for item in headers),
+        "static-c-byte-strings must retain GNU strverscmp header gating",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and isinstance(entry.get("role"), str)
+            and "src/string/strverscmp.c" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-byte-strings must retain strverscmp source provenance",
     )
 
 

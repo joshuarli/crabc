@@ -2,7 +2,7 @@
  *
  * The project-header C body first runs against pinned musl 1.2.6 and then as
  * a freestanding executable linked only with the selected crabc archive. It
- * deliberately closes over the 13 byte-string entry points below. The test
+ * deliberately closes over the 14 byte-string entry points below. The test
  * cases pin byte (rather than signed-char) ordering, bounded zero-length
  * calls, high-bit data, returned pointer offsets, set scans, and substring
  * edge cases. Raw mapping syscalls are fixture plumbing for the page-edge
@@ -40,6 +40,8 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&strchrnul),
     char *(*)(const char *, int)), "strchrnul declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&strcmp),
     int (*)(const char *, const char *)), "strcmp declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&strverscmp),
+    int (*)(const char *, const char *)), "strverscmp declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&strcspn),
     size_t (*)(const char *, const char *)), "strcspn declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&strlen),
@@ -133,6 +135,45 @@ static int check_order_and_bounds(void)
         strnlen("crabc", 3) != 3 ||
         strnlen("crabc", 20) != 5)
         return 3;
+    return 0;
+}
+
+static int comparison_has_sign(int result, int expected_sign)
+{
+    if (expected_sign < 0)
+        return result < 0;
+    if (expected_sign > 0)
+        return result > 0;
+    return result == 0;
+}
+
+static int check_version_comparison(void)
+{
+    static const struct {
+        const char *left;
+        const char *right;
+        int expected_sign;
+    } cases[] = {
+        { "", "", 0 },
+        { "a", "b", -1 },
+        { "000", "00", -1 },
+        { "00", "01", -1 },
+        { "1.2", "1.10", -1 },
+        { "foobar-1.1.2", "foobar-1.01.3", 1 },
+        { "foo", "foo~", -1 },
+    };
+    size_t index;
+
+    for (index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        if (!comparison_has_sign(
+                strverscmp(cases[index].left, cases[index].right),
+                cases[index].expected_sign) ||
+            !comparison_has_sign(
+                strverscmp(cases[index].right, cases[index].left),
+                -cases[index].expected_sign)) {
+            return (int)index + 1;
+        }
+    }
     return 0;
 }
 
@@ -328,6 +369,9 @@ int crabc_x86_64_byte_strings_probe(void)
     status = check_order_and_bounds();
     if (status != 0)
         return 10 + status;
+    status = check_version_comparison();
+    if (status != 0)
+        return 70 + status;
     status = check_search_offsets_and_high_bytes();
     if (status != 0)
         return 20 + status;

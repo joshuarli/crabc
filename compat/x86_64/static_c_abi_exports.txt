@@ -359,6 +359,7 @@ strtoll
 strtoul
 strtoull
 strtoumax
+strverscmp
 symlink
 sysconf
 sysinfo

@@ -2069,6 +2069,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/byte_strings.rs",
             "include/string.h",
+            "include/strverscmp.h",
             "include/strings.h",
             "compat/x86_64/byte_strings_header_abi_probe.c",
             "compat/x86_64/byte_strings_header_abi_probe.cpp",
@@ -2085,9 +2086,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("public `index` and `rindex` forwarding wrappers", byte_strings["description"])
         self.assertIn("private `__strchrnul`/`__memrchr`", byte_strings["description"])
+        self.assertIn("GNU `strverscmp`", byte_strings["description"])
         self.assertIn("scalar fallback", byte_strings["description"])
-        self.assertIn("GNU-gated", byte_strings["x86_header_prerequisites"][0])
+        self.assertIn("GNU-gated `strverscmp`", byte_strings["x86_header_prerequisites"][0])
         self.assertIn("src/string/index.c", byte_strings["oracle"][0]["role"])
+        self.assertIn("src/string/strverscmp.c", byte_strings["oracle"][0]["role"])
         self.assertIn(
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             posix_runtime["source_owners"],
@@ -6774,6 +6777,19 @@ class X86ParityLedgerTests(unittest.TestCase):
             entry for entry in artifacts
             if isinstance(entry, dict) and entry["id"] == "static-c-byte-strings"
         )
+        artifact["description"] = artifact["description"].replace(
+            "GNU `strverscmp`", "GNU version comparison `strverscmp`"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "GNU `strverscmp`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-byte-strings"
+        )
         evidence = artifact["native_evidence"]
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
@@ -8974,7 +8990,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             }
             <= exports
         )
-        self.assertFalse(exports & {"scandir", "strverscmp", "malloc", "free"})
+        self.assertIn("strverscmp", exports)
+        self.assertFalse(exports & {"scandir", "malloc", "free"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)

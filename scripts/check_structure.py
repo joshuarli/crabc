@@ -6288,6 +6288,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "src/string/strchr.c",
         "src/string/strchrnul.c",
         "src/string/strcmp.c",
+        "src/string/strverscmp.c",
         "src/string/strcspn.c",
         "src/string/strlen.c",
         "src/string/strncmp.c",
@@ -6298,6 +6299,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "src/string/strstr.c",
         "scalar fallback",
         "strchrnul",
+        "strverscmp",
     ):
         if required not in byte_strings_text:
             errors.append(
@@ -6316,6 +6318,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "strchr",
         "strchrnul",
         "strcmp",
+        "strverscmp",
         "strcspn",
         "strlen",
         "strncmp",
@@ -7115,6 +7118,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "strchr",
         "strchrnul",
         "strcmp",
+        "strverscmp",
         "strcspn",
         "strlen",
         "strncmp",

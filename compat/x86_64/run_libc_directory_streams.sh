@@ -135,7 +135,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap opendir fdopendi
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in scandir strverscmp malloc free calloc realloc __tls_get_addr; do
+for unselected in scandir malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi

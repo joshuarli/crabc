@@ -11210,6 +11210,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, static_export_names)
         for forbidden in ("fn scandir", "fn malloc", "fn free"):
             self.assertNotIn(forbidden, implementation)
+        self.assertIn("byte_strings::strverscmp", implementation)
+        self.assertIn("strverscmp", static_export_names)
         self.assertFalse(
             static_export_names & {"scandir", "malloc", "free"}
         )
@@ -11253,7 +11255,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_named_syscall seekdir 8",
             "assert_named_syscall getdents d9",
             "assert_named_syscall posix_getdents d9",
-            "scandir strverscmp malloc free calloc realloc",
+            "scandir malloc free calloc realloc",
             "unowned runtime dependency",
         ):
             self.assertIn(required, artifact_runner)

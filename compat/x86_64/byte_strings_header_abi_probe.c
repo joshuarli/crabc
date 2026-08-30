@@ -29,6 +29,7 @@ static char *(*strpbrk_signature)(const char *, const char *) = strpbrk;
 static char *(*strstr_signature)(const char *, const char *) = strstr;
 
 #if defined(CRABC_EXPECT_GNU)
+static compare_signature strverscmp_signature = strverscmp;
 static char_search_signature strchrnul_signature = strchrnul;
 #endif
 
@@ -40,6 +41,11 @@ static char_search_signature rindex_signature = rindex;
 /* This opt-in reference is expected to fail under strict POSIX selectors. */
 #if defined(CRABC_REQUIRE_STRCHRNUL)
 static char_search_signature required_strchrnul_signature = strchrnul;
+#endif
+
+/* This opt-in reference is expected to fail under strict POSIX selectors. */
+#if defined(CRABC_REQUIRE_STRVERSCMP)
+static compare_signature required_strverscmp_signature = strverscmp;
 #endif
 
 int crabc_x86_64_byte_strings_header_abi_probe(void)
@@ -55,6 +61,7 @@ int crabc_x86_64_byte_strings_header_abi_probe(void)
     (void)strpbrk_signature;
     (void)strstr_signature;
 #if defined(CRABC_EXPECT_GNU)
+    (void)strverscmp_signature;
     (void)strchrnul_signature;
 #endif
 #if defined(CRABC_EXPECT_ALIASES)
@@ -63,6 +70,9 @@ int crabc_x86_64_byte_strings_header_abi_probe(void)
 #endif
 #if defined(CRABC_REQUIRE_STRCHRNUL)
     (void)required_strchrnul_signature;
+#endif
+#if defined(CRABC_REQUIRE_STRVERSCMP)
+    (void)required_strverscmp_signature;
 #endif
     return 0;
 }

@@ -38,6 +38,7 @@ char *strpbrk(const char *, const char *);
 char *strstr(const char *, const char *);
 
 #ifdef _GNU_SOURCE
+int strverscmp(const char *, const char *);
 char *strchrnul(const char *, int);
 #endif
 

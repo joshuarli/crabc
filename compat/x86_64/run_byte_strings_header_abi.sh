@@ -3,7 +3,7 @@
 #
 # Pinned musl 1.2.6 is the declaration oracle. The candidate pass places the
 # project headers first; neither pass links or selects crabc-libc. GNU-only
-# strchrnul is checked explicitly against both header trees.
+# strverscmp and strchrnul are checked explicitly against both header trees.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -52,15 +52,16 @@ grep -Fq "$ROOT_DIR/include/strings.h" "$header_trace" || {
     -I "$ROOT_DIR/include" -fsyntax-only "$cxx_probe"
 
 # Under strict POSIX selectors, musl exposes the ordinary byte-string set but
-# keeps the GNU strchrnul declaration hidden. A successful opt-in C reference
-# is therefore a header-gating regression in either oracle or candidate headers.
-strict_definitions=(-D_POSIX_C_SOURCE=200809L -DCRABC_REQUIRE_STRCHRNUL)
+# keeps the GNU strverscmp and strchrnul declarations hidden. A successful
+# opt-in C reference is therefore a header-gating regression in either oracle
+# or candidate headers.
+strict_definitions=(-D_POSIX_C_SOURCE=200809L -DCRABC_REQUIRE_STRCHRNUL -DCRABC_REQUIRE_STRVERSCMP)
 if "$ORACLE_CC" -std=c11 "${strict_definitions[@]}" -fsyntax-only "$c_probe" \
     >/dev/null 2>"$work_dir/oracle-strict-errors"; then
-    fail "pinned musl exposes strchrnul outside _GNU_SOURCE"
+    fail "pinned musl exposes GNU byte-string declarations outside _GNU_SOURCE"
 fi
 if "$ORACLE_CC" -std=c11 "${strict_definitions[@]}" -I "$ROOT_DIR/include" \
     -fsyntax-only "$c_probe" >/dev/null 2>"$work_dir/project-strict-errors"; then
-    fail "project string.h exposes strchrnul outside _GNU_SOURCE"
+    fail "project string.h exposes GNU byte-string declarations outside _GNU_SOURCE"
 fi
 printf 'x86 pinned-musl C/C++ <string.h> byte-string ABI: PASS\n'
