@@ -9584,16 +9584,39 @@ impl CurrentThreadPageOwnerSessionHandle {
         }
     }
 
-    /// Runs one C-facing local operation after any bounded competing native
-    /// PageMap operation has republished its parked state.
+    /// Runs one owner-local C operation against the current source Theap.
     ///
-    /// The retry is deliberately internal to one current-thread session. It
-    /// does not retry rejected source transitions, stale handles, allocation
-    /// failures, or terminal ownership; it only waits through the short
-    /// scheduler/map handoff that another already-admitted native worker is
-    /// completing. This lets an A local `free` and B's all-free pthread exit
-    /// serialize instead of turning their valid order into a C fail-stop.
-    fn with_native_active_operation<R>(
+    /// This is the replacement seam for ordinary local `free` and `realloc`.
+    /// The current runtime can only store a parked engine in compiler TLS, so
+    /// it delegates to the compatibility bridge below. Once persistent TLS
+    /// owns an active source-shaped TLD/Theap, this method must call that
+    /// owner directly; it must not reintroduce a scheduler claim, PageMap
+    /// lease, or park/resume pair around an already-owned page operation.
+    ///
+    /// The parked bridge remains necessary until that TLS ownership is
+    /// installed because the live-owner registry may otherwise borrow this
+    /// session's raw TLS slot for a remote publication. Keeping the fallback
+    /// below this narrow boundary makes its deletion independent of pointer
+    /// routing and owner-exit control flow.
+    fn with_native_owner_local_operation<R>(
+        &self,
+        operation: impl FnMut(
+            &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+            &mut PreparedOwnerExitClients,
+        ) -> R,
+    ) -> Result<R, CurrentThreadPageOwnerSessionError> {
+        self.with_native_parked_compatibility_operation(operation)
+    }
+
+    /// Runs one C-facing operation through the temporary parked-session
+    /// bridge after any competing native PageMap operation republished its
+    /// state.
+    ///
+    /// This bridge is intentionally not the owner-local operation boundary.
+    /// It preserves the existing retry semantics only while a session moves
+    /// out of TLS and resumes its parked engine for every call. Persistent
+    /// TLD/Theap storage removes this whole bridge from ordinary local calls.
+    fn with_native_parked_compatibility_operation<R>(
         &self,
         mut operation: impl FnMut(
             &mut MainHeapThreadProcessPageAllocator<'_, '_>,
@@ -9606,6 +9629,24 @@ impl CurrentThreadPageOwnerSessionHandle {
                 result => return result,
             }
         }
+    }
+
+    /// Compatibility spelling for routes that have not yet reached the
+    /// owner-local persistent-TLS seam.
+    ///
+    /// New ordinary local free/realloc callers must use
+    /// [`Self::with_native_owner_local_operation`] instead. Existing
+    /// allocation and scoped remote-publication routes stay here until their
+    /// separate source ownership and pointer-dispatch transitions land.
+    #[inline]
+    fn with_native_active_operation<R>(
+        &self,
+        operation: impl FnMut(
+            &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+            &mut PreparedOwnerExitClients,
+        ) -> R,
+    ) -> Result<R, CurrentThreadPageOwnerSessionError> {
+        self.with_native_parked_compatibility_operation(operation)
     }
 
     /// Runs one C-facing B operation while the caller holds an exact foreign
@@ -9847,7 +9888,7 @@ impl CurrentThreadPageOwnerSessionHandle {
         &mut self,
         block: core::ptr::NonNull<u8>,
     ) -> Result<(), CurrentThreadPageOwnerSessionError> {
-        match self.with_native_active_operation(|allocator, clients| {
+        match self.with_native_owner_local_operation(|allocator, clients| {
             clients.free_native_block(allocator, block)
         }) {
             Ok(Ok(())) => Ok(()),
@@ -9898,7 +9939,7 @@ impl CurrentThreadPageOwnerSessionHandle {
         block: core::ptr::NonNull<u8>,
         new_size: usize,
     ) -> Result<core::ptr::NonNull<u8>, CurrentThreadPageOwnerSessionError> {
-        match self.with_native_active_operation(|allocator, clients| {
+        match self.with_native_owner_local_operation(|allocator, clients| {
             clients.reallocate_native_block(allocator, block, new_size)
         }) {
             Ok(result) => result.map_err(CurrentThreadPageOwnerSessionError::Preparation),
