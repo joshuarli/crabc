@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 76)
-        self.assertEqual(report["header_layout_probe_count"], 39)
+        self.assertEqual(report["verified_artifact_count"], 77)
+        self.assertEqual(report["header_layout_probe_count"], 40)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -63,6 +63,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             report["header_foundation_event_descriptors_header_profile_matrix_row_count"],
             16,
+        )
+        self.assertEqual(
+            report["header_foundation_dirent_header_profile_matrix_row_count"],
+            11,
         )
         self.assertEqual(
             report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
@@ -79,7 +83,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 19)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 20)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -280,7 +284,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 39)
+        self.assertEqual(report["header_layout_probe_count"], 40)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -458,6 +462,20 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/run_event_descriptors_header_abi.sh",
             ],
         )
+        dirent = next(probe for probe in probes if probe["id"] == "dirent")
+        assert isinstance(dirent, dict)
+        self.assertEqual(dirent["kind"], "compile-only")
+        self.assertEqual(
+            dirent["headers"], ["include/dirent.h", "include/stddef.h"]
+        )
+        self.assertEqual(
+            dirent["sources"],
+            [
+                "compat/x86_64/dirent_header_abi_probe.c",
+                "compat/x86_64/dirent_header_abi_probe.cpp",
+                "compat/x86_64/run_dirent_header_abi.sh",
+            ],
+        )
 
     def test_header_layout_manifest_rejects_scope_or_probe_drift(self) -> None:
         data = self.data()
@@ -524,6 +542,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/tests/test_event_descriptors_header_abi.py",
             headers_layouts["source_owners"],
         )
+        self.assertIn(
+            "compat/x86_64/tests/test_dirent_header_abi.py",
+            headers_layouts["source_owners"],
+        )
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
@@ -532,6 +554,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             report["header_foundation_event_descriptors_header_profile_matrix_row_count"],
             16,
+        )
+        self.assertEqual(
+            report["header_foundation_dirent_header_profile_matrix_row_count"],
+            11,
         )
         self.assertEqual(
             report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
@@ -770,6 +796,59 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for row in event_descriptor_rows
             )
         )
+        dirent_matrix = manifest["dirent_header_profile_matrix"]
+        assert isinstance(dirent_matrix, dict)
+        self.assertEqual(dirent_matrix["id"], "x86-dirent-header-profile-matrix")
+        self.assertEqual(dirent_matrix["state"], "partial-verified")
+        self.assertEqual(dirent_matrix["required_result"], "pass")
+        self.assertEqual(
+            dirent_matrix["command"], "./scripts/dev-x86_64.sh dirent-header-abi"
+        )
+        self.assertEqual(dirent_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(dirent_matrix["subject_header"], "dirent.h")
+        self.assertEqual(
+            dirent_matrix["base_profiles"],
+            list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_BASE_PROFILES),
+        )
+        self.assertEqual(
+            dirent_matrix["largefile64_profiles"],
+            list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_LARGEFILE64_PROFILES),
+        )
+        self.assertEqual(
+            dirent_matrix["seek_tell_visible_profiles"],
+            list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_SEEK_TELL_VISIBLE_PROFILES),
+        )
+        self.assertEqual(
+            dirent_matrix["getdents_type_macros_visible_profiles"],
+            list(
+                ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_GETDENTS_TYPE_MACROS_VISIBLE_PROFILES
+            ),
+        )
+        self.assertEqual(
+            dirent_matrix["versionsort_visible_profiles"],
+            list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_VERSIONSORT_VISIBLE_PROFILES),
+        )
+        self.assertEqual(
+            dirent_matrix["largefile64_alias_visible_profiles"],
+            list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_LARGEFILE64_PROFILES),
+        )
+        self.assertEqual(dirent_matrix["row_count"], 11)
+        dirent_rows = dirent_matrix["row"]
+        assert isinstance(dirent_rows, list)
+        self.assertEqual(
+            [row["profile"] for row in dirent_rows if isinstance(row, dict)],
+            list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_BASE_PROFILES)
+            + list(ledger.EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_LARGEFILE64_PROFILES),
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in dirent_rows
+            )
+        )
         timeval_matrix = manifest["timeval_transitive_header_profile_matrix"]
         assert isinstance(timeval_matrix, dict)
         self.assertEqual(
@@ -898,6 +977,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(completion["ioctl_header_profile_matrix_slice"])
         self.assertTrue(completion["epoll_header_profile_matrix_slice"])
         self.assertTrue(completion["event_descriptors_header_profile_matrix_slice"])
+        self.assertTrue(completion["dirent_header_profile_matrix_slice"])
         self.assertTrue(completion["timeval_transitive_header_profile_matrix_slice"])
         self.assertTrue(completion["sys_time_direct_header_profile_matrix_slice"])
         self.assertTrue(completion["access_header_profile_matrix_slice"])
@@ -1092,6 +1172,28 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         data = self.data()
         manifest = self.header_foundation_manifest()
+        dirent_matrix = manifest["dirent_header_profile_matrix"]
+        assert isinstance(dirent_matrix, dict)
+        dirent_rows = dirent_matrix["row"]
+        assert isinstance(dirent_rows, list)
+        dirent_rows.pop()
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "dirent header matrix row roster drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        dirent_matrix = manifest["dirent_header_profile_matrix"]
+        assert isinstance(dirent_matrix, dict)
+        dirent_matrix["getdents_type_macros_visible_profiles"] = ["c11-gnu"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "getdents_type_macros_visible_profiles drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
         timeval_matrix = manifest["timeval_transitive_header_profile_matrix"]
         assert isinstance(timeval_matrix, dict)
         timeval_rows = timeval_matrix["row"]
@@ -1258,7 +1360,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts
@@ -1311,7 +1413,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         matching = [
             entry
             for entry in artifacts
@@ -1376,7 +1478,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts
@@ -3194,7 +3296,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(socket_header_evidence["state"], "required")
         self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         bootstrap = next(
             entry
             for entry in artifacts
@@ -6626,7 +6728,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts
@@ -6640,7 +6742,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 5
+        assert isinstance(artifacts, list) and len(artifacts) == 6
         artifact = next(
             entry
             for entry in artifacts

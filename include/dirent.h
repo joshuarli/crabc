@@ -1,6 +1,10 @@
 #ifndef _DIRENT_H
 #define _DIRENT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 #include <sys/types.h>
 
@@ -15,6 +19,8 @@ struct dirent {
 };
 
 typedef unsigned short reclen_t;
+
+#define d_fileno d_ino
 
 struct posix_dent {
     ino_t d_ino;
@@ -39,7 +45,7 @@ struct posix_dent {
 #endif
 
 int alphasort(const struct dirent **, const struct dirent **);
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#ifdef _GNU_SOURCE
 int versionsort(const struct dirent **, const struct dirent **);
 #endif
 int closedir(DIR *);
@@ -59,6 +65,22 @@ ssize_t posix_getdents(int, void *, size_t, int);
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int getdents(int, struct dirent *, size_t);
+#endif
+
+#if defined(_LARGEFILE64_SOURCE)
+#define dirent64 dirent
+#define readdir64 readdir
+#define readdir64_r readdir_r
+#define scandir64 scandir
+#define alphasort64 alphasort
+#define versionsort64 versionsort
+#define off64_t off_t
+#define ino64_t ino_t
+#define getdents64 getdents
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

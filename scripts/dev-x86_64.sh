@@ -45,6 +45,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
   event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
+  dirent-header-abi  verify selected x86 dirent C/C++ ABI and feature profiles
   pathname-lifecycle-header-abi  verify selected x86 pathname-lifecycle C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
@@ -1520,6 +1521,10 @@ run_event_descriptors_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_event_descriptors_header_abi.sh
 }
 
+run_dirent_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_dirent_header_abi.sh
+}
+
 run_pathname_lifecycle_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_pathname_lifecycle_header_abi.sh
 }
@@ -2711,6 +2716,7 @@ case "$command" in
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
     event-descriptors-header-abi) ;;
+    dirent-header-abi) ;;
     pathname-lifecycle-header-abi) ;;
     timeval-transitive-header-abi) ;;
     sys-time-direct-header-abi) ;;
@@ -2793,6 +2799,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "event-descriptors-header-abi takes no arguments"
         ensure_image
         run_event_descriptors_header_abi
+        ;;
+    dirent-header-abi)
+        [ "$#" -eq 0 ] || fail "dirent-header-abi takes no arguments"
+        ensure_image
+        run_dirent_header_abi
         ;;
     pathname-lifecycle-header-abi)
         [ "$#" -eq 0 ] || fail "pathname-lifecycle-header-abi takes no arguments"

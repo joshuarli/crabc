@@ -39,6 +39,7 @@ EPOLL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_epoll_header_ab
 EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_event_descriptors_header_abi.sh"
 )
+DIRENT_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_dirent_header_abi.sh"
 TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_timeval_transitive_header_abi.sh"
 )
@@ -108,6 +109,46 @@ EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_HIDDEN_PROFILES =
     "cxx17-strict",
 )
 EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ROW_COUNT = 16
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ID = "x86-dirent-header-profile-matrix"
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh dirent-header-abi"
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "dirent.h"
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_BASE_PROFILES = (
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-bsd",
+    "cxx17-strict",
+)
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_LARGEFILE64_PROFILES = (
+    "c11-gnu-largefile64",
+    "cxx17-gnu-largefile64",
+    "c11-strict-largefile64",
+    "cxx17-strict-largefile64",
+)
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_SEEK_TELL_VISIBLE_PROFILES = (
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-xopen-700",
+    "c11-bsd",
+    "c11-gnu-largefile64",
+    "cxx17-gnu-largefile64",
+)
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_GETDENTS_TYPE_MACROS_VISIBLE_PROFILES = (
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-bsd",
+    "c11-gnu-largefile64",
+    "cxx17-gnu-largefile64",
+)
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_VERSIONSORT_VISIBLE_PROFILES = (
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-gnu-largefile64",
+    "cxx17-gnu-largefile64",
+)
+EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ROW_COUNT = 11
 EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID = (
     "x86-timeval-transitive-header-profile-matrix"
 )
@@ -243,6 +284,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "ioctl-header-profile-matrix",
         "epoll-header-profile-matrix",
         "event-descriptors-header-profile-matrix",
+        "dirent-header-profile-matrix",
         "timeval-transitive-header-profile-matrix",
         "sys-time-direct-header-profile-matrix",
         "access-header-profile-matrix",
@@ -465,6 +507,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         (EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ID,),
     ),
+    "dirent-header-profile-matrix": (
+        "partial-verified",
+        "dirent.h selected declaration layout large-file alias feature gate and C++ requested C-linkage subset",
+        "libc.headers-layouts",
+        (EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "timeval-transitive-header-profile-matrix": (
         "partial-verified",
         "sys/time.h plus utmpx.h, utmp.h, lastlog.h, and sys/timex.h timeval transitive layout subset",
@@ -606,6 +654,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "access-header": "./scripts/dev-x86_64.sh access-header-abi",
     "machine-context": "./scripts/dev-x86_64.sh machine-context-header-abi",
     "event-descriptors": "./scripts/dev-x86_64.sh event-descriptors-header-abi",
+    "dirent": "./scripts/dev-x86_64.sh dirent-header-abi",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -801,6 +850,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/event_descriptors_header_abi_probe.c",
         "compat/x86_64/event_descriptors_header_abi_probe.cpp",
         "compat/x86_64/run_event_descriptors_header_abi.sh",
+    ),
+    "dirent": (
+        "compat/x86_64/dirent_header_abi_probe.c",
+        "compat/x86_64/dirent_header_abi_probe.cpp",
+        "compat/x86_64/run_dirent_header_abi.sh",
     ),
 }
 
@@ -1455,6 +1509,7 @@ def validate_header_layout_foundation_manifest(
         "ioctl_header_profile_matrix",
         "epoll_header_profile_matrix",
         "event_descriptors_header_profile_matrix",
+        "dirent_header_profile_matrix",
         "timeval_transitive_header_profile_matrix",
         "sys_time_direct_header_profile_matrix",
         "access_header_profile_matrix",
@@ -1521,6 +1576,7 @@ def validate_header_layout_foundation_manifest(
             "ioctl_header_profile_matrix_slice": True,
             "epoll_header_profile_matrix_slice": True,
             "event_descriptors_header_profile_matrix_slice": True,
+            "dirent_header_profile_matrix_slice": True,
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
             "access_header_profile_matrix_slice": True,
@@ -1600,6 +1656,9 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_epoll_header_abi.sh",
         "compat/x86_64/epoll_header_abi_probe.c",
         "compat/x86_64/epoll_header_abi_probe.cpp",
+        "compat/x86_64/run_dirent_header_abi.sh",
+        "compat/x86_64/dirent_header_abi_probe.c",
+        "compat/x86_64/dirent_header_abi_probe.cpp",
         "compat/x86_64/run_timeval_transitive_header_abi.sh",
         "compat/x86_64/timeval_transitive_header_abi_probe.c",
         "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
@@ -2427,6 +2486,190 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts event-descriptor header matrix evidence must retain its narrow non-completion boundary",
     )
 
+    dirent_header_profile_matrix = manifest["dirent_header_profile_matrix"]
+    require(
+        isinstance(dirent_header_profile_matrix, Mapping),
+        "header-foundation dirent header matrix must be a table",
+    )
+    require(
+        set(dirent_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_header",
+            "base_profiles",
+            "largefile64_profiles",
+            "seek_tell_visible_profiles",
+            "getdents_type_macros_visible_profiles",
+            "versionsort_visible_profiles",
+            "largefile64_alias_visible_profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation dirent header matrix keys drifted",
+    )
+    require(
+        dirent_header_profile_matrix["id"] == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation dirent header matrix id drifted",
+    )
+    require(
+        dirent_header_profile_matrix["state"] == "partial-verified"
+        and dirent_header_profile_matrix["required_result"] == "pass",
+        "header-foundation dirent header matrix must remain partial verified evidence",
+    )
+    require(
+        dirent_header_profile_matrix["command"] == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation dirent header matrix command drifted",
+    )
+    require(
+        dirent_header_profile_matrix["header_class"] == "pinned-non-uapi"
+        and dirent_header_profile_matrix["subject_header"]
+        == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_SUBJECT_HEADER,
+        "header-foundation dirent header matrix subject scope drifted",
+    )
+    dirent_base_profiles = string_list(
+        dirent_header_profile_matrix["base_profiles"],
+        "header-foundation dirent base profiles",
+    )
+    dirent_largefile64_profiles = string_list(
+        dirent_header_profile_matrix["largefile64_profiles"],
+        "header-foundation dirent large-file profiles",
+    )
+    require(
+        tuple(dirent_base_profiles) == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_BASE_PROFILES
+        and tuple(dirent_largefile64_profiles)
+        == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_LARGEFILE64_PROFILES,
+        "header-foundation dirent profile roster drifted",
+    )
+    for key, expected in (
+        (
+            "seek_tell_visible_profiles",
+            EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_SEEK_TELL_VISIBLE_PROFILES,
+        ),
+        (
+            "getdents_type_macros_visible_profiles",
+            EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_GETDENTS_TYPE_MACROS_VISIBLE_PROFILES,
+        ),
+        (
+            "versionsort_visible_profiles",
+            EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_VERSIONSORT_VISIBLE_PROFILES,
+        ),
+        (
+            "largefile64_alias_visible_profiles",
+            EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_LARGEFILE64_PROFILES,
+        ),
+    ):
+        require(
+            tuple(string_list(dirent_header_profile_matrix[key], f"header-foundation dirent {key}"))
+            == expected,
+            f"header-foundation dirent {key} drifted",
+        )
+    dirent_profiles = tuple(dirent_base_profiles + dirent_largefile64_profiles)
+    require(
+        dirent_header_profile_matrix["row_count"]
+        == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and dirent_header_profile_matrix["row_count"] == len(dirent_profiles),
+        "header-foundation dirent header matrix row count drifted",
+    )
+    dirent_scope = dirent_header_profile_matrix["scope"]
+    require(
+        isinstance(dirent_scope, str)
+        and all(
+            phrase in dirent_scope
+            for phrase in (
+                "struct dirent",
+                "struct posix_dent",
+                "GNU-or-BSD IFTODT/DTTOIF/getdents",
+                "GNU-only versionsort",
+                "unmangled C spellings",
+                "actual callable artifact linkage",
+                "directory-stream/getdents runtime behavior",
+                "archive linkage",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation dirent header matrix scope must retain its narrow non-completion boundary",
+    )
+    dirent_rows = dirent_header_profile_matrix["row"]
+    require(
+        isinstance(dirent_rows, list)
+        and len(dirent_rows) == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation dirent header matrix row roster drifted",
+    )
+    observed_dirent_rows: list[str] = []
+    for index, row in enumerate(dirent_rows):
+        location = f"header-foundation dirent_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(
+            isinstance(profile, str) and profile in dirent_profiles,
+            f"{location} profile is not a declared dirent header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_dirent_rows.append(profile)
+    require(
+        tuple(observed_dirent_rows) == dirent_profiles,
+        "header-foundation dirent header matrix row order or roster drifted",
+    )
+    require(
+        DIRENT_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation dirent header matrix runner is missing",
+    )
+    require(
+        "dirent-header-abi)" in dispatch_source,
+        "dirent-header-abi is absent from the native dispatcher",
+    )
+    dirent_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(dirent_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one dirent header matrix evidence command",
+    )
+    require(
+        dirent_matrix_evidence[0].get("state") == "required"
+        and isinstance(dirent_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in dirent_matrix_evidence[0]["scope"]
+            for phrase in (
+                "11-row `dirent.h` C/C++",
+                "struct dirent",
+                "struct posix_dent",
+                "seven base plus four GNU/strict `_LARGEFILE64_SOURCE`",
+                "GNU-or-BSD IFTODT/DTTOIF/getdents",
+                "GNU-only versionsort",
+                "unmangled C spellings",
+                "actual callable artifact linkage",
+                "directory-stream/getdents runtime behavior",
+                "archive linkage",
+                "all-header closure",
+                "runtime completion",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts dirent header matrix evidence must retain its narrow non-completion boundary",
+    )
+
     ioctl_header_profile_matrix = manifest["ioctl_header_profile_matrix"]
     require(
         isinstance(ioctl_header_profile_matrix, Mapping),
@@ -3068,6 +3311,10 @@ def validate_header_layout_foundation_manifest(
         in pinned_path_set - uapi_header_set,
         "header-foundation event-descriptor subjects and immediate feature header must remain pinned non-UAPI headers",
     )
+    require(
+        dirent_header_profile_matrix["subject_header"] in pinned_path_set - uapi_header_set,
+        "header-foundation dirent subject must remain a pinned non-UAPI header",
+    )
     project_only_paths = tuple(sorted(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY))
     project_only_set = set(project_only_paths)
     class_expected_paths = {
@@ -3371,6 +3618,7 @@ def validate_header_layout_foundation_manifest(
         "event_descriptors_header_profile_matrix_row_count": len(
             observed_event_descriptor_rows
         ),
+        "dirent_header_profile_matrix_row_count": len(observed_dirent_rows),
         "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
         "access_header_profile_matrix_row_count": len(observed_access_header_rows),
@@ -3776,6 +4024,138 @@ def require_installed_header_tree_closure_artifact(
             phrase in runner,
             f"installed-header-tree-closure runner omits {phrase}",
         )
+
+
+def require_dirent_header_profile_matrix_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the private dirent declaration matrix below family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "dirent-header-profile-matrix"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one dirent-header-profile-matrix artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "seven base plus four GNU/strict `_LARGEFILE64_SOURCE`",
+        "`struct dirent`",
+        "`struct posix_dent`",
+        "GNU-or-BSD IFTODT/DTTOIF/getdents",
+        "GNU-only versionsort",
+        "large-file aliases",
+        "unmangled C++ C spellings",
+        "actual callable artifact linkage",
+        "directory-stream/getdents runtime behavior",
+        "archive linkage",
+        "all-header closure",
+        "runtime completion",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"dirent-header-profile-matrix description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "compat/x86_64/headers-layouts.toml",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/dirent_header_abi_probe.c",
+        "compat/x86_64/dirent_header_abi_probe.cpp",
+        "compat/x86_64/run_dirent_header_abi.sh",
+        "compat/x86_64/tests/test_dirent_header_abi.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "include/dirent.h",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"dirent-header-profile-matrix must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "280-byte align-8" in item
+            and "24-byte align-8" in item
+            and "0/8/16/18/19" in item
+            for item in prerequisites
+        ),
+        "dirent-header-profile-matrix must retain its x86 LP64 record contract",
+    )
+    require(
+        any(
+            "Pinned musl 1.2.6" in item
+            and "GNU/BSD" in item
+            and "GNU-only" in item
+            and "strict-LFS" in item
+            for item in prerequisites
+        ),
+        "dirent-header-profile-matrix must retain its feature-gate oracle contract",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any("-nostdinc" in item and "nm" in item for item in header_prerequisites),
+        "dirent-header-profile-matrix must retain its isolated C++ spelling boundary",
+    )
+    require(
+        any(
+            "directory-stream/getdents runtime behavior" in item
+            and "family promotion" in item
+            and "public x86 support" in item
+            for item in header_prerequisites
+        ),
+        "dirent-header-profile-matrix must retain its non-promotion boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        len(evidence) == 1
+        and evidence[0].get("state") == "verified"
+        and evidence[0].get("command") == EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_COMMAND,
+        "dirent-header-profile-matrix must use the closed verified dirent-header-abi command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "11-profile dirent.h C/C++ compile-only matrix",
+                "seven base plus four GNU/strict _LARGEFILE64_SOURCE",
+                "strict-LFS aliases without strict GNU declaration admission",
+                "nm-requested unmangled C++ C spellings",
+                "candidate archive",
+                "callable linkage",
+                "directory-stream/getdents runtime behavior",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "dirent-header-profile-matrix evidence must retain its header-only boundary",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        len(oracle) == 1
+        and oracle[0].get("kind") == "c-posix"
+        and oracle[0].get("source") == "Pinned musl 1.2.6 x86 dirent.h"
+        and isinstance(oracle[0].get("role"), str)
+        and "requested C++ C-linkage spelling" in oracle[0]["role"],
+        "dirent-header-profile-matrix must retain its pinned-musl oracle contract",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "dirent-header-abi)" in dispatch_source,
+        "dirent-header-abi is absent from the native dispatcher",
+    )
 
 
 def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
@@ -11327,6 +11707,7 @@ def validate_ledger(
         header_layout_manifest,
         header_layout_foundation_manifest,
     )
+    require_dirent_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
@@ -11476,6 +11857,9 @@ def validate_ledger(
         ],
         "header_foundation_event_descriptors_header_profile_matrix_row_count": header_layout_foundation_report[
             "event_descriptors_header_profile_matrix_row_count"
+        ],
+        "header_foundation_dirent_header_profile_matrix_row_count": header_layout_foundation_report[
+            "dirent_header_profile_matrix_row_count"
         ],
         "header_foundation_timeval_transitive_header_profile_matrix_row_count": header_layout_foundation_report[
             "timeval_transitive_header_profile_matrix_row_count"

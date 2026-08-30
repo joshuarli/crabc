@@ -542,6 +542,22 @@ header-requested C++ C-linkage spelling. Both headers immediately include
 `fcntl.h`, so it also records only `AT_EMPTY_PATH` as
 GNU/BSD/default-C-visible and strict/POSIX/XOPEN-hidden, including macro-free
 C++17; this leaves the global feature-visibility facet planned. Its separate
+private `dirent-header-abi` matrix
+(`./scripts/dev-x86_64.sh dirent-header-abi`) compares the project-header-first
+candidate with pinned musl 1.2.6 across seven base C11/C++17 profiles and
+four `_LARGEFILE64_SOURCE` profiles: GNU and strict C11/C++17. It checks only
+selected `<dirent.h>` declarations, feature visibility, x86 LP64 `dirent` and
+`posix_dent` layouts, and the C spellings requested by C++ declarations. The
+fixed boundary includes C++ `extern "C"` declaration spelling, the `d_fileno`
+compatibility spelling, GNU-only `versionsort`, and the large-file aliases:
+strict LFS exposes the aliases without exposing `seekdir`/`telldir`, `getdents`,
+or `versionsort`. `IFTODT`, `DTTOIF`, and `getdents` are GNU-or-BSD-visible,
+while `versionsort` is GNU-only. The C++ `nm` inspection proves only
+header-requested unmangled C names. This compile-only header slice excludes
+actual archive linkage, directory-stream runtime behavior, header-family
+completion or promotion, and public x86 support; full x86-64 parity remains
+the stated promotion goal.
+Its separate
 35-row `timeval-transitive-header-abi` matrix
 checks five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`, and
 `sys/timex.h`) across seven isolated C11/C++17 profiles for complete

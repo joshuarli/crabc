@@ -3524,6 +3524,69 @@ def check_x86_installed_header_tree_closure(errors: list[str]) -> None:
             )
 
 
+def check_x86_dirent_header_abi(errors: list[str]) -> None:
+    """Keep the dirent C++ fence and feature matrix below runtime selection."""
+
+    header_path = ROOT / "include" / "dirent.h"
+    c_probe_path = ROOT / "compat" / "x86_64" / "dirent_header_abi_probe.c"
+    cxx_probe_path = ROOT / "compat" / "x86_64" / "dirent_header_abi_probe.cpp"
+    runner_path = ROOT / "compat" / "x86_64" / "run_dirent_header_abi.sh"
+    test_path = ROOT / "compat" / "x86_64" / "tests" / "test_dirent_header_abi.py"
+    for path in (header_path, c_probe_path, cxx_probe_path, runner_path, test_path):
+        if not path.is_file():
+            errors.append(f"x86 dirent header ABI is missing {path.relative_to(ROOT)}")
+            return
+
+    header = header_path.read_text(errors="replace")
+    for required in (
+        "#ifdef __cplusplus\nextern \"C\" {\n#endif",
+        "#define d_fileno d_ino",
+        "#ifdef _GNU_SOURCE\nint versionsort",
+        "#if defined(_LARGEFILE64_SOURCE)",
+        "#define dirent64 dirent",
+        "#define readdir64 readdir",
+        "#define versionsort64 versionsort",
+        "#define getdents64 getdents",
+        "#ifdef __cplusplus\n}\n#endif",
+    ):
+        if required not in header:
+            errors.append(
+                "include/dirent.h: x86 dirent header ABI contract is missing "
+                f"{required!r}"
+            )
+    if "defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\nint versionsort" in header:
+        errors.append(
+            "include/dirent.h: versionsort must remain GNU-only in the pinned-musl contract"
+        )
+
+    runner = runner_path.read_text(errors="replace")
+    for required in (
+        "readonly EXPECTED_BASE_PROFILE_COUNT=7",
+        "readonly EXPECTED_LARGEFILE64_PROFILE_COUNT=4",
+        "SEEK_TELL_VISIBLE_PROFILES=(c11-gnu cxx17-gnu c11-xopen-700 c11-bsd)",
+        "GETDENTS_VISIBLE_PROFILES=(c11-gnu cxx17-gnu c11-bsd)",
+        "VERSIONSORT_VISIBLE_PROFILES=(c11-gnu cxx17-gnu)",
+        "c11-gnu-largefile64 cxx17-gnu-largefile64 c11-strict-largefile64 cxx17-strict-largefile64",
+        "-nostdinc",
+        "-nostdinc++",
+        "nm --undefined-only",
+        "retained a mangled dirent reference",
+        "header-requested C spellings",
+        "does not claim x86 directory-stream runtime or archive linkage support",
+    ):
+        if required not in runner:
+            errors.append(
+                "compat/x86_64/run_dirent_header_abi.sh: x86 dirent profile "
+                f"matrix is missing {required!r}"
+            )
+    for forbidden in ("-nostdlib", "libc-directory-streams", "--report-only"):
+        if forbidden in runner:
+            errors.append(
+                "compat/x86_64/run_dirent_header_abi.sh: compile-only header "
+                f"matrix must not contain {forbidden!r}"
+            )
+
+
 def check_x86_crt_libc_static_tls_handoff(errors: list[str]) -> None:
     """Keep first-thread TLS ownership in libc and the rcrt1 static-link edge."""
 
@@ -7362,6 +7425,7 @@ def main() -> int:
     check_x86_terminal_boundary(errors)
     check_x86_header_layouts_baseline(errors)
     check_x86_installed_header_tree_closure(errors)
+    check_x86_dirent_header_abi(errors)
     check_x86_crt_libc_static_tls_handoff(errors)
     check_x86_libc_static_c_abi_boundary(errors)
     check_x86_rr_interval_boundary(errors)

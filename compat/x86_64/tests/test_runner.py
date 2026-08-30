@@ -627,6 +627,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    linux-5-10-uapi) ;;", source)
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
+        self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    math-complex-header-abi)", source)
         self.assertIn("    libc-math-complex)", source)
         preflight = source.split('case "$command" in\n', 1)[1].split(
@@ -652,6 +653,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "uapi-wrapper-matrix",
             "epoll-header-abi",
             "event-descriptors-header-abi",
+            "dirent-header-abi",
             "pathname-lifecycle-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",
@@ -747,6 +749,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn(
             'compat/x86_64/run_event_descriptors_header_abi.sh', source
         )
+        self.assertIn('run_dirent_header_abi()', source)
+        self.assertIn('compat/x86_64/run_dirent_header_abi.sh', source)
         self.assertIn('run_pathname_lifecycle_header_abi()', source)
         self.assertIn(
             'compat/x86_64/run_pathname_lifecycle_header_abi.sh', source

@@ -1491,7 +1491,7 @@ id = "libc.headers-layouts"
 order = 60
 depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
-description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row epoll, 16-row event-descriptor, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header ABI slices, and a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The event-descriptor slice records its direct unconditional surface and one immediate `fcntl.h` profile boundary; global feature visibility, declaration/layout, linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact. `headers-layouts.toml` records the bounded direct-header probe inventory; `headers-layouts-foundation.toml` accounts for the full public-path, fixed Linux 5.10 UAPI input, selected 21-row wrapper, seven-row ioctl, seven-row epoll, 16-row event-descriptor, 11-row dirent, 35-row timeval-transitive, seven-row direct sys/time, eight-row access-header ABI slices, and a verified seven-profile 1,337-row empty-TU consumer closure with two explicit pinned-musl aio.h strict-profile non-applicability rows. The dirent slice records selected `dirent`/`posix_dent` layouts, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, narrow feature partitions, and requested unmangled C++ spellings; global feature visibility, declaration/layout, linkage, runtime, language/profile, ABI-facet, and ownership closure remain required. None is installed-header completion."
 aarch64_gates = ["abi-probe", "build", "test"]
 source_owners = [
   "docker/Dockerfile.x86_64",
@@ -1510,6 +1510,9 @@ source_owners = [
   "compat/x86_64/run_epoll_header_abi.sh",
   "compat/x86_64/epoll_header_abi_probe.c",
   "compat/x86_64/epoll_header_abi_probe.cpp",
+  "compat/x86_64/run_dirent_header_abi.sh",
+  "compat/x86_64/dirent_header_abi_probe.c",
+  "compat/x86_64/dirent_header_abi_probe.cpp",
   "compat/x86_64/run_timeval_transitive_header_abi.sh",
   "compat/x86_64/timeval_transitive_header_abi_probe.c",
   "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
@@ -1526,6 +1529,7 @@ source_owners = [
   "compat/x86_64/tests/test_uapi_wrapper_matrix.py",
   "compat/x86_64/tests/test_ioctl_header_abi.py",
   "compat/x86_64/tests/test_epoll_header_abi.py",
+  "compat/x86_64/tests/test_dirent_header_abi.py",
   "compat/x86_64/tests/test_event_descriptors_header_abi.py",
   "compat/x86_64/tests/test_timeval_transitive_header_abi.py",
   "compat/x86_64/tests/test_sys_time_direct_header_abi.py",
@@ -1550,6 +1554,7 @@ source_owners = [
   "include/bits/user.h",
   "include/ctype.h",
   "include/complex.h",
+  "include/dirent.h",
   "include/features.h",
   "include/arpa/inet.h",
   "include/inttypes.h",
@@ -1802,6 +1807,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh sys-reg-header-abi", scope = "This compile-only ptrace register-index slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh machine-context-header-abi", scope = "This isolated raw-GCC project-header-first/pinned-musl-reference seven-profile C/C++ compile matrix checks selected x86 `sys/auxv.h`, `sys/ptrace.h`, `sys/reg.h`, `sys/user.h`, `sys/procfs.h`, and `sys/ucontext.h` declaration/layout, feature-visibility, architecture-namespace, and C++ C-linkage facts. It rejects AArch64 HWCAP and register-name leaks. It does not select aux-vector, ptrace, or context-switch runtime behavior, callable/archive linkage, all-header closure, runtime completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh event-descriptors-header-abi", scope = "This isolated raw-GCC project-header-first/pinned-musl-reference eight-profile C/C++ compile matrix checks the selected direct `sys/eventfd.h` and `sys/inotify.h` surface is unconditional, x86 LP64 `eventfd_t`/`inotify_event` layouts, selected direct flags, and header-requested unmangled C++ C-linkage spelling by nm. Because both headers immediately include fcntl.h, it also checks only the `AT_EMPTY_PATH` GNU/BSD/default-C-visible versus strict/POSIX/XOPEN-hidden boundary, including macro-free C++17. It checks header-requested external symbol spelling only, not actual callable artifact linkage. It does not select event-descriptor runtime behavior, all-header closure, runtime completion, family completion, or public support." },
+  { state = "required", command = "./scripts/dev-x86_64.sh dirent-header-abi", scope = "This isolated raw-GCC project-header-first/pinned-musl-reference 11-row `dirent.h` C/C++ compile matrix checks selected x86 LP64 `struct dirent` and `struct posix_dent` layouts, base declarations and values, seven base plus four GNU/strict `_LARGEFILE64_SOURCE` profiles, GNU-or-BSD IFTODT/DTTOIF/getdents visibility, GNU-only versionsort visibility, seekdir/telldir visibility, and all nine large-file aliases. Its C++ objects are inspected by nm only for header-requested unmangled C spellings. It checks header declarations only, not actual callable artifact linkage, directory-stream/getdents runtime behavior, archive linkage, all-header closure, runtime completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh types-header-abi", scope = "This compile-only C/C++ public type and opaque pthread-layout slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh stat-header-abi", scope = "This compile-only C/C++ sys/stat layout and declaration slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh utime-header-abi", scope = "This compile-only C/C++ utime.h record, declaration, and C-linkage slice is partial evidence; it does not select callable archive linkage, timestamp runtime behavior, header-family completion, or public support." },
@@ -1919,6 +1925,32 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh installed-header-tree-closure", scope = "Native materialized temporary usr/include seven-profile header-tree closure. It requires source-tree manifest equality, 191 candidate/183 pinned-musl headers, 1,337 rows, exactly the two aio strict oracle-not-applicable rows after candidate compilation, and source/ambient/path-leak rejection with the hash-pinned Linux 5.10 UAPI input. It is header-tree closure only; not declaration/layout parity, callable linkage, archive/runtime, CRT, loader, driver, sysroot, family promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Pinned public-header pathname and isolated C/C++ consumer applicability oracle; its two strict aio.h rows are explicitly oracle-not-applicable." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 UAPI headers", role = "Hash-pinned UAPI include input for the isolated materialized installed-tree candidate." }]
+
+[[family.verified_artifact]]
+id = "dirent-header-profile-matrix"
+description = "Private native x86 `dirent.h` header-profile artifact within still-planned `libc.headers-layouts`. It compares pinned musl 1.2.6 with raw-GCC project-header-first C/C++ compilation across seven base plus four GNU/strict `_LARGEFILE64_SOURCE` profiles. It proves only selected LP64 `struct dirent` and `struct posix_dent` layouts, the named base declarations and d_type values, seekdir/telldir visibility, GNU-or-BSD IFTODT/DTTOIF/getdents visibility, GNU-only versionsort visibility, large-file aliases, and header-requested unmangled C++ C spellings. It is not actual callable artifact linkage, directory-stream/getdents runtime behavior, archive linkage, all-header closure, runtime completion, family promotion, or public x86 support."
+source_owners = [
+  "compat/x86_64/headers-layouts.toml",
+  "compat/x86_64/headers-layouts-foundation.toml",
+  "compat/x86_64/dirent_header_abi_probe.c",
+  "compat/x86_64/dirent_header_abi_probe.cpp",
+  "compat/x86_64/run_dirent_header_abi.sh",
+  "compat/x86_64/tests/test_dirent_header_abi.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "include/dirent.h",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Linux x86-64 little-endian LP64 fixes unsigned 64-bit ino_t, signed 64-bit off_t, unsigned 16-bit reclen_t, and the selected `struct dirent` 280-byte align-8 d_ino/d_off/d_reclen/d_type/d_name offsets 0/8/16/18/19 plus `struct posix_dent` 24-byte align-8 prefix layout.",
+  "Pinned musl 1.2.6 is the declaration, feature-gate, layout, and requested C++ C-linkage oracle. GNU/BSD exposes IFTODT/DTTOIF/getdents; versionsort is GNU-only; `_LARGEFILE64_SOURCE` exposes the nine selected alias macros in GNU and strict C/C++ profiles without making strict-LFS underlying GNU-only declarations visible.",
+]
+x86_header_prerequisites = [
+  "The runner uses -nostdinc and compares pinned-musl headers with raw-GCC project-header-first headers, allowing only each declared header root and compiler builtin headers. C++ nm inspection proves requested unmangled C spellings only; it never links an archive.",
+  "This is a selected direct dirent.h declaration/layout profile, not directory-stream/getdents runtime behavior, archive or callable linkage, a complete header family, family promotion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh dirent-header-abi", scope = "Native x86 pinned-musl/raw-GCC project-header-first 11-profile dirent.h C/C++ compile-only matrix. It checks selected dirent/posix_dent LP64 layouts, seven base plus four GNU/strict _LARGEFILE64_SOURCE profiles, the named GNU-or-BSD and GNU-only feature partitions, strict-LFS aliases without strict GNU declaration admission, and nm-requested unmangled C++ C spellings. It does not link a candidate archive or select callable linkage, directory-stream/getdents runtime behavior, all-header closure, runtime completion, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 dirent.h", role = "Selected dirent/posix_dent declaration, feature-gate, x86 LP64 layout, large-file alias, and requested C++ C-linkage spelling oracle." }]
 
 [[family.verified_artifact]]
 id = "static-c-header-layouts-baseline"

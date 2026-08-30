@@ -509,6 +509,21 @@ linkage. This is an explicit narrow foundation facet; global feature
 visibility remains planned. Together with the retained `epoll-header-abi`
 matrix, it is artifact-local header evidence and not general
 descriptor-header completion or event-descriptor runtime evidence.
+
+The separate private `dirent-header-abi` gate
+(`./scripts/dev-x86_64.sh dirent-header-abi`) compares project-header-first
+raw-GCC and pinned-musl 1.2.6 `<dirent.h>` declarations, feature selection,
+x86 LP64 layouts, and the C spellings requested by C++ declarations. Its seven
+base C11/C++17 profiles plus four `_LARGEFILE64_SOURCE` profiles—GNU and strict
+C11/C++17—fix the selected `struct dirent`/`struct posix_dent` records,
+`d_fileno` compatibility spelling, C++ `extern "C"` declaration boundary,
+GNU-only `versionsort`, and the LFS aliases. The strict LFS profiles expose
+the aliases but keep `seekdir`/`telldir`, `getdents`, and `versionsort` hidden.
+`IFTODT`, `DTTOIF`, and `getdents` are GNU-or-BSD-visible; `versionsort`
+remains GNU-only. The C++ `nm` check proves only header-requested unmangled C
+names. It is compile-only evidence: it does not prove actual archive linkage,
+directory-stream runtime behavior, directory/header-family promotion, or
+public x86 support. Full x86-64 parity remains the separate promotion goal.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete

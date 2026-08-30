@@ -1,7 +1,7 @@
 # Forward-looking native x86-64 header/layout foundation contract.
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
-# `headers-layouts.toml` remains the v1 inventory of thirty-nine direct probes.
+# `headers-layouts.toml` remains the v1 inventory of forty direct probes.
 # This v8 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, epoll, event-descriptor,
@@ -53,6 +53,7 @@ uapi_wrapper_profile_matrix_slice = true
 ioctl_header_profile_matrix_slice = true
 epoll_header_profile_matrix_slice = true
 event_descriptors_header_profile_matrix_slice = true
+dirent_header_profile_matrix_slice = true
 timeval_transitive_header_profile_matrix_slice = true
 sys_time_direct_header_profile_matrix_slice = true
 access_header_profile_matrix_slice = true
@@ -528,6 +529,93 @@ applicability = "applicable"
 [[event_descriptors_header_profile_matrix.row]]
 header = "sys/inotify.h"
 profile = "cxx17-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+# This fixed dirent.h slice covers the selected direct C/C++ declarations,
+# Linux x86-64 LP64 dirent/posix_dent records, and the narrowly named feature
+# partitions.  It records the seven ordinary language profiles plus GNU and
+# strict C/C++ `_LARGEFILE64_SOURCE` profiles; the large-file rows are not a
+# claim that every GNU declaration becomes visible under strict LFS.
+[dirent_header_profile_matrix]
+id = "x86-dirent-header-profile-matrix"
+state = "partial-verified"
+command = "./scripts/dev-x86_64.sh dirent-header-abi"
+required_result = "pass"
+header_class = "pinned-non-uapi"
+subject_header = "dirent.h"
+base_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+largefile64_profiles = ["c11-gnu-largefile64", "cxx17-gnu-largefile64", "c11-strict-largefile64", "cxx17-strict-largefile64"]
+seek_tell_visible_profiles = ["c11-gnu", "cxx17-gnu", "c11-xopen-700", "c11-bsd", "c11-gnu-largefile64", "cxx17-gnu-largefile64"]
+getdents_type_macros_visible_profiles = ["c11-gnu", "cxx17-gnu", "c11-bsd", "c11-gnu-largefile64", "cxx17-gnu-largefile64"]
+versionsort_visible_profiles = ["c11-gnu", "cxx17-gnu", "c11-gnu-largefile64", "cxx17-gnu-largefile64"]
+largefile64_alias_visible_profiles = ["c11-gnu-largefile64", "cxx17-gnu-largefile64", "c11-strict-largefile64", "cxx17-strict-largefile64"]
+row_count = 11
+scope = "One fixed pinned non-UAPI dirent.h header across seven base C11/C++17 profiles and four GNU/strict `_LARGEFILE64_SOURCE` C/C++ profiles, compiled through pinned musl and raw-GCC project-header-first roots. It proves selected x86 LP64 `struct dirent` and `struct posix_dent` layouts; the named baseline directory declarations and values; GNU-or-BSD IFTODT/DTTOIF/getdents visibility; GNU-only versionsort visibility; seekdir/telldir visibility; large-file alias macro visibility; and C++ header-requested unmangled C spellings checked by nm. It excludes actual callable artifact linkage, directory-stream/getdents runtime behavior, archive linkage, all-header closure, runtime completion, family promotion, and public support."
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-gnu"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "cxx17-gnu"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-posix-2008"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-xopen-700"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-bsd"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "cxx17-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-gnu-largefile64"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "cxx17-gnu-largefile64"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "c11-strict-largefile64"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[dirent_header_profile_matrix.row]]
+profile = "cxx17-strict-largefile64"
 reference = "compile-ok"
 candidate = "compile-ok"
 applicability = "applicable"
@@ -1146,7 +1234,7 @@ excluded_paths = ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"]
 expected_count = 180
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
-abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
+abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
 [[header_class]]
@@ -1239,6 +1327,14 @@ scope = "sys/eventfd.h and sys/inotify.h unconditional declaration layout macro 
 owner = "libc.headers-layouts"
 evidence = ["x86-event-descriptors-header-profile-matrix"]
 description = "The selected sys/eventfd.h and sys/inotify.h C/C++ matrix proves their direct selected surface is unconditional across eight profiles, with x86 LP64 eventfd_t/inotify_event layouts, selected direct constants, and unmangled C++ declaration references. It also proves only their immediate fcntl.h AT_EMPTY_PATH GNU/BSD/default-C-visible versus strict/POSIX/XOPEN-hidden boundary; it excludes unselected event-descriptor/fcntl.h surface, actual callable artifact linkage, runtime behavior, all-header closure, and header-family promotion."
+
+[[abi_facet]]
+id = "dirent-header-profile-matrix"
+state = "partial-verified"
+scope = "dirent.h selected declaration layout large-file alias feature gate and C++ requested C-linkage subset"
+owner = "libc.headers-layouts"
+evidence = ["x86-dirent-header-profile-matrix"]
+description = "The selected dirent.h C/C++ matrix proves seven base and four GNU/strict _LARGEFILE64_SOURCE rows for named x86 LP64 dirent/posix_dent layouts, the narrow seek/tell, GNU-or-BSD getdents/type-macro, GNU-only versionsort, and large-file alias feature partitions, plus requested unmangled C++ spellings only. It excludes callable/archive linkage, directory-stream runtime behavior, all-header closure, and header-family promotion."
 
 [[abi_facet]]
 id = "timeval-transitive-header-profile-matrix"
@@ -1334,8 +1430,8 @@ state = "partial-verified"
 scope = "v1-direct-probe-union"
 owner = "libc.headers-layouts"
 evidence = ["headers-layouts.toml"]
-legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "ctype", "integer-arithmetic", "integer-parse", "intmax-arithmetic", "credential-observation", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "machine-context", "event-descriptors"]
-description = "The existing thirty-nine direct gates remain required inputs and retain their bounded declaration/layout scopes."
+legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "ctype", "integer-arithmetic", "integer-parse", "intmax-arithmetic", "credential-observation", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "machine-context", "event-descriptors", "dirent"]
+description = "The existing forty direct gates remain required inputs and retain their bounded declaration/layout scopes."
 
 [[abi_facet]]
 id = "static-c-cxx-composition"
