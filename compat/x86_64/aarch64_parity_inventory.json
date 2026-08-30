@@ -1,0 +1,2023 @@
+{
+  "baseline": {
+    "aarch64_dynamic_export_count": 1673,
+    "aarch64_public_header_count": 183,
+    "capability_count": 223,
+    "platform": "Linux/AArch64 little-endian"
+  },
+  "capabilities": [
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "catalog.gettext",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "crypto.crypt",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "crypto.crypt-helpers",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "error.reporting-termination",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "error.termination.abort",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "event.pause",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.access-advice",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.access-check",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.allocate-range",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.anonymous-temporary-file",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.canonicalize",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.capacity-metadata",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.create-file",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.cwd",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.cwd-mutation",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.cwd-timestamps",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.descriptor-range-copy",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.descriptor-transfer",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "filesystem.directory",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.directory-position",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.directory-relative-access-check",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.directory-relative-timestamps",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.directory-stream",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.effective-access",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.extended-metadata",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "filesystem.extensions",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.fd-timestamps",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.global-sync",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "filesystem.lchmod-unsupported",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.memory-file",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.named-temporary-file",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.ownership",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.path-core",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.path-metadata",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.pathname-truncate",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.posix-allocate-range",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.raw-directory",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.readahead",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.remove-dispatch",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.seal-mutation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.seal-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.second-resolution-timestamps",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.special-nodes",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "selected-private",
+      "id": "filesystem.stat-compat",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.symlink-timestamps",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.temporary-directory",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "filesystem.xattr",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.advisory-flock",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.basic-descriptor",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.descriptor",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.file-position",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.positioned",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.positioned-vectored",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.positioned-vectored-flags",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.range-sync",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.readiness",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.readiness-epoll",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.readiness-eventfd",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.readiness-eventfd-counter",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.readiness-poll",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.readiness-ppoll",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.status-flags",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "io.syncfs",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.typed-ioctl",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "io.vectored",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "ipc",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "ipc.posix-shm",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "legacy.misc",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "missing",
+      "id": "loader.dlfcn-basic",
+      "x86_family": "ldso.dynamic-runtime"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "missing",
+      "id": "loader.dlfcn-introspection",
+      "x86_family": "ldso.dynamic-runtime"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "locale.core",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "math.complex",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "math.elementary",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "math.elementary-fenv-sensitive",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "math.elementary-long-double",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "math.fenv",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "math.special",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.advice",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "scope-exception",
+      "contract_state": "missing",
+      "id": "memory.allocator-basic",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "scope-exception",
+      "contract_state": "missing",
+      "id": "memory.allocator-observability",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "memory.bytes-basic",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.bytes-special",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.mapping",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.mapping-locking",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.mapping-remap",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.mapping-sync",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.residency",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "memory.vm",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "mount.basic",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.byte-order",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.connected-socket",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.datagram-addressed",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.ethernet-codec",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "network.ethernet-database",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "network.interface-addresses",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.interface-enumeration",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.interface-index",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.interface-name",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.ip-address-types",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.ip-codec",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.ipv4-classful",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.ipv4-legacy-codec",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "network.ipv6-constants",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "network.multimessage",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "network.netdb",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "network.resolver",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.resolver-transport",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-at-mark",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-bind-local-address",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-connect",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-create-shutdown",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-listen-accept",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-acceptconn",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-broadcast",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-cookie",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-domain",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-oobinline",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-protocol",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-reuseaddr",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-option-type",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.socket-peer-address",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "network.vectored-message",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "numeric.parse-float-locale",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "numeric.parse-integer",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "numeric.qsort-helper",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "numeric.scalar-basic",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "numeric.scalar-legacy-callback",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "pattern.fnmatch",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "pattern.glob",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "pattern.regex",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "pattern.wordexp",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "pipe.basic",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "pipe.capacity-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "pipe.tee",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "process.atfork-exit-hooks",
+      "x86_family": "libc.pthread-tls"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "process.child-ownership",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "process.control",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "selected-private",
+      "id": "process.credentials",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "process.environment-mutation",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.fcntl-lock-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "process.fs-credentials",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "process.globals",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.identity",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.identity-triples",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.pid-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.pidfd-open",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.resource-limit-mutation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.resource-limits",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.resource-limits-targeted",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.resource-usage",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.root-change",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.scheduler-priority-bounds",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.scheduling-priority",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.scheduling-priority-mutation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.session-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "process.signal",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.supplementary-groups",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.thread-kill",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "process.umask",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "random.getentropy",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "random.state",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "internal-runtime",
+      "contract_state": "implemented-foundation",
+      "id": "runtime.compiler-abi",
+      "x86_family": "core.architecture"
+    },
+    {
+      "aarch64_classification": "internal-runtime",
+      "contract_state": "missing",
+      "id": "runtime.loader",
+      "x86_family": "ldso.dynamic-runtime"
+    },
+    {
+      "aarch64_classification": "internal-runtime",
+      "contract_state": "missing",
+      "id": "runtime.private-facades",
+      "x86_family": "ldso.dynamic-runtime"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "missing",
+      "id": "search.hash-table",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "search.tree-intrusive",
+      "x86_family": "libc.c-abi-compat"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "stdio.fopen64-alias",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "stdio.format-bounded",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "stdio.format-output",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "stdio.format-scan",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "stdio.memory-stream",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "stdio.path-stream",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "stdio.position-buffering",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "stdio.stream-io",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "system.auxv",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "system.identity-info",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "system.inotify",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "system.kernel-admin",
+      "x86_family": "libc.posix-runtime"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "system.load-average",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "system.name-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.exclusive-mode",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.pty-basic",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.pty-session",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.special-codes",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.termios-control",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.termios-queue",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.tty-basic",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "terminal.tty-path",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "text.byte-strings-basic",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "text.byte-strings-stateful",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "text.ctype",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "text.encoding-basic",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "text.iconv",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "text.wide-multibyte",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.cpu-affinity-mutation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.cpu-affinity-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.cpu-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.credentials-res",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.futex-basic",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.identity",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "thread.pthread-c11",
+      "x86_family": "libc.pthread-tls"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "thread.scheduler-rr-interval",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.calendar-utc",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "time.clock-calendar",
+      "x86_family": "libc.text-math-locale-stdio"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.clock-process-id",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.clock-query",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.clock-set",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.clock-sleep",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.interval-timer-query",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.local-calendar",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "abi-only",
+      "contract_state": "missing",
+      "id": "time.posix-timer-thread-notify",
+      "x86_family": "libc.pthread-tls"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.posix-timers",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.process-accounting",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.process-cpu-observation",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-unsafe",
+      "contract_state": "implemented-foundation",
+      "id": "time.process-interval-control",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.realtime-millis",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.relative-sleep",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "rust-subsumed",
+      "contract_state": "implemented-foundation",
+      "id": "time.sleep-aliases",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.timerfd",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.timespec-get",
+      "x86_family": "facade.direct"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.timezone-rules",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-safe",
+      "contract_state": "implemented-foundation",
+      "id": "time.wall-clock",
+      "x86_family": "facade.record-owning"
+    },
+    {
+      "aarch64_classification": "native-higher-level",
+      "contract_state": "implemented-foundation",
+      "id": "users.databases",
+      "x86_family": "facade.record-owning"
+    }
+  ],
+  "capability_state_counts": {
+    "implemented-foundation": 180,
+    "missing": 41,
+    "selected-private": 2
+  },
+  "families": [
+    {
+      "aarch64_gates": [
+        "symbols"
+      ],
+      "capability_count": 0,
+      "contract_state": "implemented-foundation",
+      "id": "oracle.musl-toolchain",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "crabc-rs"
+      ],
+      "capability_count": 1,
+      "contract_state": "implemented-foundation",
+      "id": "core.architecture",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "crabc-rs"
+      ],
+      "capability_count": 135,
+      "contract_state": "implemented-foundation",
+      "id": "facade.direct",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 2
+    },
+    {
+      "aarch64_gates": [
+        "crabc-rs"
+      ],
+      "capability_count": 44,
+      "contract_state": "implemented-foundation",
+      "id": "facade.record-owning",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 24
+    },
+    {
+      "aarch64_gates": [
+        "build",
+        "test"
+      ],
+      "capability_count": 0,
+      "contract_state": "implemented-foundation",
+      "id": "libc.raw-syscall",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "pthread-stress",
+        "static-pthread-tls"
+      ],
+      "capability_count": 0,
+      "contract_state": "implemented-foundation",
+      "id": "libc.errno-tls",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "abi-probe",
+        "build",
+        "test"
+      ],
+      "capability_count": 0,
+      "contract_state": "selected-private",
+      "id": "libc.headers-layouts",
+      "verified_artifact_count": 7,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "differential",
+        "os-test",
+        "signal-process",
+        "libc-test"
+      ],
+      "capability_count": 9,
+      "contract_state": "selected-private",
+      "id": "libc.posix-runtime",
+      "verified_artifact_count": 53,
+      "verified_slice_count": 2
+    },
+    {
+      "aarch64_gates": [
+        "pthread-stress",
+        "static-pthread-tls",
+        "signal-process",
+        "libc-test"
+      ],
+      "capability_count": 3,
+      "contract_state": "selected-private",
+      "id": "libc.pthread-tls",
+      "verified_artifact_count": 15,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "libc-test",
+        "differential",
+        "os-test"
+      ],
+      "capability_count": 16,
+      "contract_state": "selected-private",
+      "id": "libc.text-math-locale-stdio",
+      "verified_artifact_count": 4,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "resolver-network",
+        "libc-test"
+      ],
+      "capability_count": 0,
+      "contract_state": "selected-private",
+      "id": "libc.resolver",
+      "verified_artifact_count": 1,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "libc-test",
+        "differential",
+        "compat"
+      ],
+      "capability_count": 11,
+      "contract_state": "missing",
+      "id": "libc.c-abi-compat",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "ldso"
+      ],
+      "capability_count": 0,
+      "contract_state": "implemented-foundation",
+      "id": "ldso.relative-relocation",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "ldso",
+        "loader-inventory",
+        "rust-std",
+        "lto"
+      ],
+      "capability_count": 4,
+      "contract_state": "selected-private",
+      "id": "ldso.dynamic-runtime",
+      "verified_artifact_count": 4,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "sysroot",
+        "lto"
+      ],
+      "capability_count": 0,
+      "contract_state": "implemented-foundation",
+      "id": "crt.static-pie",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "sysroot",
+        "lto",
+        "rust-std"
+      ],
+      "capability_count": 0,
+      "contract_state": "selected-private",
+      "id": "crt.dynamic-startup",
+      "verified_artifact_count": 1,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "static-pthread-tls",
+        "sysroot"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "sysroot.static-tls",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "sysroot",
+        "sysroot-dist",
+        "sysroot-smoke"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "sysroot.owned-artifact",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "abi-probe",
+        "symbols",
+        "compat",
+        "differential"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "compat.abi-differential",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "os-test",
+        "libc-test",
+        "pthread-stress",
+        "signal-process"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "compat.posix-process",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "resolver-network"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "compat.resolver-network",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "ldso",
+        "loader-inventory",
+        "corpus"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "compat.loader-corpus",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "rust-std",
+        "rust-std-dependent",
+        "lto",
+        "lto-native-facade"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "consumer.rust-std-lto",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "lua"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "consumer.source-build",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "crabc-rs",
+        "compat",
+        "dashboard"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "capability.accounting",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    },
+    {
+      "aarch64_gates": [
+        "perf",
+        "perf-native"
+      ],
+      "capability_count": 0,
+      "contract_state": "missing",
+      "id": "performance.release",
+      "verified_artifact_count": 0,
+      "verified_slice_count": 0
+    }
+  ],
+  "family_state_counts": {
+    "implemented-foundation": 8,
+    "missing": 11,
+    "selected-private": 7
+  },
+  "purpose": "Derived AArch64-to-x86 runtime contract inventory; evidence accounting only, never a promotion decision.",
+  "schema": "crabc.x86_64-aarch64-parity-inventory/v1",
+  "selected_private_artifacts": [
+    {
+      "family": "crt.dynamic-startup",
+      "id": "dynamic-pie-scrt1-startup"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
+      "id": "ldso-initial-graph"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
+      "id": "ldso-initial-tls"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
+      "id": "ldso-owned-crt-handoff-publication"
+    },
+    {
+      "family": "ldso.dynamic-runtime",
+      "id": "ldso-owned-crt-handoff-wire"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "dirent-header-profile-matrix"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "installed-header-tree-closure"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "public-header-c-consumability"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "public-header-profile-consumability"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "static-c-bootstrap-primitives"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "static-c-header-layouts-baseline"
+    },
+    {
+      "family": "libc.headers-layouts",
+      "id": "stdlib-header-profile-matrix"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-byte-strings"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-callback-algorithms"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-child-reaping"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-clock-gettime"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-clock-nanosleep"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-credential-observation"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-ctype"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-descriptor-advice"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-descriptor-entry"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-descriptor-io"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-descriptor-lifecycle"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-directory-streams"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-event-descriptors"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-extended-attributes"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-fcntl-record-locks"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-fcntl-status-control"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-ffs"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-filesystem-access"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-filesystem-capacity"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-flock"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-generic-ioctl"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-immediate-termination"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-integer-arithmetic"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-integer-parse"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-intmax-arithmetic"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-memfd-create"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-memory-locking"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-memory-search"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-memory-sync"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-mman-mapping-core"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-nanosleep"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-pathname-lifecycle"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-posix-fallocate"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-process-context"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-process-resources"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-process-signal-execution"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-random-entropy"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-readiness-signal-waits"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-sendfile"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-signal-control"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-socket-messages"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-socket-transport"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-string-copy"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-system-configuration"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-system-information"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-system-observation"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-sysv-message-shared-memory"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-sysv-semaphore"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-termios-control"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-time-observation"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-timestamp-updates"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-uts-identity"
+    },
+    {
+      "family": "libc.posix-runtime",
+      "id": "static-c-vector-io"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-c11-lifecycle"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-c11-plain-sync"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-crt-initial-tls-handoff"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-crt1-initial-tls-handoff"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-initial-tls-v1"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-c11-detach"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-c11-once"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-c11-tsd"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-cond-private"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-create-join-tls"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-explicit-exit-tls"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-identity"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-normal-mutex"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-pthread-rwlock"
+    },
+    {
+      "family": "libc.pthread-tls",
+      "id": "static-c-thrd-sleep"
+    },
+    {
+      "family": "libc.resolver",
+      "id": "static-c-inet-address-codecs"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-float-parse"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-math-complex-foundation"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-named-locale-multibyte"
+    },
+    {
+      "family": "libc.text-math-locale-stdio",
+      "id": "static-c-stdio-standard-streams"
+    }
+  ],
+  "source_digests": {
+    "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
+    "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
+    "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
+    "x86_parity_ledger": "4b84add54c8bdcfe14c65a7d39407b724a9d09a262bdf71a915e45e929477f1d",
+    "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
+    "x86_static_c_exports": "9ae5227bd65326fec4ad95ad701cd88b387370d27999870d343e7920be0efe2f"
+  },
+  "unsupported_contracts": [
+    {
+      "id": "allocator.mimalloc-private",
+      "reason": "Private fixed-allocator evidence is neither crabc-libc integration nor x86 runtime/platform support."
+    }
+  ],
+  "x86_boundary": {
+    "promotion_family_count": 26,
+    "promotion_ready": false,
+    "public_support": false,
+    "selected_static_export_count": 468,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 456
+  }
+}

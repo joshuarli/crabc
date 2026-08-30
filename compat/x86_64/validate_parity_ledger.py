@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import tomllib
 from pathlib import Path
 from typing import Any, Mapping
@@ -50,6 +51,9 @@ SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH = (
 ACCESS_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_access_header_abi.sh"
 XATTR_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_xattr_header_abi.sh"
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
+AARCH64_PARITY_INVENTORY_VALIDATOR_PATH = (
+    ROOT / "compat" / "x86_64" / "aarch64_parity_inventory.py"
+)
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
@@ -1436,6 +1440,34 @@ def repository_path(path_text: str, location: str) -> Path:
         raise LedgerError(f"{location} escapes the repository: {path_text}") from error
     require(resolved.exists(), f"{location} does not exist: {path_text}")
     return resolved
+
+
+def require_aarch64_parity_inventory() -> None:
+    """Run the checked derived AArch64-to-x86 inventory beside this ledger."""
+    require(
+        AARCH64_PARITY_INVENTORY_VALIDATOR_PATH.is_file(),
+        "checked AArch64 parity inventory validator is missing",
+    )
+    specification = importlib.util.spec_from_file_location(
+        "_checked_x86_aarch64_parity_inventory",
+        AARCH64_PARITY_INVENTORY_VALIDATOR_PATH,
+    )
+    require(
+        specification is not None and specification.loader is not None,
+        "cannot load checked AArch64 parity inventory validator",
+    )
+    module = importlib.util.module_from_spec(specification)
+    try:
+        specification.loader.exec_module(module)
+        validate = getattr(module, "validate_inventory")
+        report = validate()
+    except Exception as error:  # Recast a nested evidence failure at this boundary.
+        raise LedgerError(f"AArch64 parity inventory failed: {error}") from error
+    require(isinstance(report, Mapping), "AArch64 parity inventory report is invalid")
+    boundary = report.get("x86_boundary")
+    require(isinstance(boundary, Mapping), "AArch64 parity inventory x86 boundary is invalid")
+    require(boundary.get("promotion_ready") is False, "AArch64 parity inventory must retain promotion_ready=false")
+    require(boundary.get("public_support") is False, "AArch64 parity inventory must retain public_support=false")
 
 
 def direct_project_headers(source: Path) -> set[str]:
@@ -15086,6 +15118,7 @@ def validate_ledger(
     used_gates = {gate for family in families for gate in family["aarch64_gates"]}
     missing_dispatch = sorted(gate for gate in used_gates if f"    {gate})" not in dispatch_source and f"    {gate}|" not in dispatch_source)
     require(not missing_dispatch, f"AArch64 gate dispatch does not contain: {', '.join(missing_dispatch)}")
+    require_aarch64_parity_inventory()
 
     return {
         "schema": EXPECTED_SCHEMA,

@@ -1,10 +1,20 @@
 # Native x86_64 foundation evidence
 
 This closed, native Linux/x86_64 lane is foundation evidence named by
-[`x86-64.md`](../../x86-64.md). It runs the fixed `crabc-core` lib suite and
-the separately admitted direct `crabc-rs` subset for the
-`x86_64-unknown-linux-musl` target, including only the proved `fs::flock`
-whole-file advisory locking, `fs::sendfile` descriptor transfer,
+[`x86-64.md`](../../x86-64.md).
+
+The checked [`AArch64-to-x86 contract inventory`](../../docs/evidence/x86-aarch64-parity-inventory.md)
+derives its snapshot from the AArch64 capability/header oracle and this lane's
+ledger, public-header inventory, and static-export ratchet. It reports the
+currently implemented foundation, selected private, and still-missing contract
+states without treating any count as a parity or support claim. Run
+`python3 compat/x86_64/aarch64_parity_inventory.py`; it requires
+`promotion_ready=false` and `public_support=false`.
+
+This lane runs the fixed `crabc-core` lib suite and the separately admitted
+direct `crabc-rs` subset for the `x86_64-unknown-linux-musl` target, including
+only the proved `fs::flock` whole-file advisory locking, `fs::sendfile`
+descriptor transfer,
 `fs::copy_file_range` descriptor-range copying,
 `fs::posix_fallocate` fixed-mode descriptor-range allocation,
 `fs::fallocate` closed-mode descriptor-range allocation,
