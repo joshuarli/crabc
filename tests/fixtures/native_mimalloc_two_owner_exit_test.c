@@ -126,7 +126,20 @@ int main(void)
     pthread_t owner;
     pthread_t releaser;
     void *result = (void *)(uintptr_t)1;
+    unsigned char *initial;
+    unsigned char *bookkeeping;
     unsigned char *after;
+
+    /* Keep one ticket-zero client live while both A routes arrive.  The
+     * creating thread must still be able to free this exact private client
+     * after the second joined owner has parked, without settling either
+     * worker-admission claim.  This is the lifecycle point used by upstream
+     * `run_os_threads` when it drops its own callback bookkeeping. */
+    initial = malloc(79);
+    if (initial == NULL)
+        return 1;
+    initial[0] = 0x21;
+    initial[78] = 0x22;
 
     /* Joining A1 does not release its native worker-admission proof: its
      * typed route remains live until its fresh B finishes. A2 must therefore
@@ -138,30 +151,48 @@ int main(void)
         return 2;
     result = (void *)(uintptr_t)3;
     if (pthread_create(&owner, NULL, owner_worker, &second) != 0)
-        return 3;
-    if (pthread_join(owner, &result) != 0 || result != NULL)
         return 4;
+    if (pthread_join(owner, &result) != 0 || result != NULL)
+        return 5;
+
+    if (initial[0] != 0x21 || initial[78] != 0x22
+            || malloc_usable_size(initial) < 79)
+        return 6;
+    free(initial);
+
+    /* A detached route keeps its admission token, but it does not own ticket
+     * zero's next source operation. The creating thread can therefore create
+     * and release the next bookkeeping object while both exact B routes still
+     * await their terminal release. */
+    bookkeeping = calloc(2, sizeof(*bookkeeping));
+    if (bookkeeping == NULL)
+        return 7;
+    bookkeeping[0] = 0x23;
+    bookkeeping[1] = 0x24;
+    if (bookkeeping[0] != 0x23 || bookkeeping[1] != 0x24)
+        return 8;
+    free(bookkeeping);
 
     if (pthread_create(&releaser, NULL, release_worker, &first) != 0)
-        return 5;
+        return 9;
     result = (void *)(uintptr_t)6;
     if (pthread_join(releaser, &result) != 0 || result != NULL)
-        return 6;
+        return 10;
     if (pthread_create(&releaser, NULL, release_worker, &second) != 0)
-        return 7;
+        return 11;
     result = (void *)(uintptr_t)8;
     if (pthread_join(releaser, &result) != 0 || result != NULL)
-        return 8;
+        return 12;
 
     /* Both typed terminal completions have now reached their own B no-page
      * finish, so the initial worker may use the dormant ticket-zero pair. */
     after = malloc(53);
     if (after == NULL)
-        return 9;
+        return 13;
     after[0] = 0x71;
     after[52] = 0x72;
     if (after[0] != 0x71 || after[52] != 0x72)
-        return 10;
+        return 14;
     free(after);
 
     puts("native mimalloc two owner exit ok");

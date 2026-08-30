@@ -131,6 +131,10 @@ name = "native_mimalloc_parallel_local_workers"
 path = "../tests/native_mimalloc_parallel_local_workers.rs"
 
 [[test]]
+name = "native_mimalloc_concurrent_session_start"
+path = "../tests/native_mimalloc_concurrent_session_start.rs"
+
+[[test]]
 name = "native_mimalloc_many_local_allocations"
 path = "../tests/native_mimalloc_many_local_allocations.rs"
 
@@ -141,6 +145,10 @@ path = "../tests/native_mimalloc_initial_live_local_worker.rs"
 [[test]]
 name = "native_mimalloc_initial_live_owner_exit"
 path = "../tests/native_mimalloc_initial_live_owner_exit.rs"
+
+[[test]]
+name = "native_mimalloc_initial_free_while_owner_exit"
+path = "../tests/native_mimalloc_initial_free_while_owner_exit.rs"
 
 [[test]]
 name = "native_mimalloc_initial_live_parallel_workers"

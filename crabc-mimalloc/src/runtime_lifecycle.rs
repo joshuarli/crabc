@@ -146,6 +146,18 @@ const fn page_owner_transition_is_retryable(state: usize) -> bool {
         || matches!(page_owner_parked_count(state), Some(parked_count) if parked_count > 0)
 }
 
+/// A worker creating its first session has not yet contributed a parked token.
+/// If it misses the scheduler CAS while a peer completes, the next stable
+/// observation may therefore be `READY`: that is an admission state for a
+/// new engine, not evidence that this worker's ownership was lost. Existing
+/// parked-session callers must continue to use
+/// [`page_owner_transition_is_retryable`], which deliberately excludes
+/// `READY` because their own token must remain represented by a nonzero count.
+#[inline]
+const fn page_owner_session_begin_is_retryable(state: usize) -> bool {
+    state == PAGE_OWNER_BUSY || page_owner_parked_count(state).is_some()
+}
+
 // The native libc shadow keeps detached post-exit routes in a metadata-backed
 // process registry. It is not a general allocator lock: each active entry
 // owns one already-detached A route and serializes only that route's private
@@ -3033,6 +3045,13 @@ impl RuntimeProcessStorage {
 
     /// Runs one non-reentrant operation on the ticket-zero native owner.
     ///
+    /// Ticket zero may temporarily resume its *own* parked engine while one
+    /// or more typed later-owner routes remain parked. Its operation still
+    /// claims the one `BUSY` mutation slot, and on return it restores every
+    /// other parked token exactly. If the operation becomes all-free, only
+    /// ticket zero's own token disappears; a detached route remains parked
+    /// until its matched B-side terminal finish proves it may release.
+    ///
     /// Returning `None` means this private route is inactive or recursively
     /// busy; it never asks the C allocator to interpret a native pointer.
     fn with_ticket_zero_page_owner<R>(
@@ -3052,7 +3071,7 @@ impl RuntimeProcessStorage {
         }
         let observed = loop {
             let observed = self.page_owner_state.load(Ordering::Acquire);
-            if observed != PAGE_OWNER_READY && observed != PAGE_OWNER_PARKED {
+            if page_owner_parked_count(observed).is_none() {
                 return None;
             }
             if self
@@ -3073,29 +3092,36 @@ impl RuntimeProcessStorage {
         // before its first Release publication, and the current TPIDR check
         // prevents a pthread worker from borrowing the ticket-zero engine.
         let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
-        if observed == PAGE_OWNER_PARKED && !owner.has_parked_live_engine() {
-            // A later worker may have the only parked token while ticket zero
-            // itself is source-dormant. Preserve that exact worker state;
-            // this bounded initial-owner handoff may resume only its own
-            // parked engine, never a generic parked scheduler slot.
-            self.page_owner_state.store(observed, Ordering::Release);
-            return None;
-        }
+        let parked_count = page_owner_parked_count(observed)
+            .expect("the ticket-zero scheduler admitted only ready or parked states");
+        let ticket_zero_was_parked = owner.has_parked_live_engine();
         let result = operation(owner);
         if owner.is_retained() {
             self.retain();
             self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
         } else {
-            let next_state = if owner.has_parked_live_engine() {
-                if observed == PAGE_OWNER_READY {
-                    PAGE_OWNER_PARKED
-                } else {
-                    observed
-                }
-            } else if observed == PAGE_OWNER_PARKED {
-                PAGE_OWNER_READY
-            } else {
-                PAGE_OWNER_READY
+            let ticket_zero_is_parked = owner.has_parked_live_engine();
+            let next_state = match (ticket_zero_was_parked, ticket_zero_is_parked) {
+                // A dormant ticket zero has explicitly parked a fresh private
+                // source engine while one or more detached routes retain
+                // their own admission claims. That new parked engine adds
+                // exactly one token; it never reuses or releases a route
+                // token.
+                (false, true) => page_owner_parked_state(parked_count + 1)
+                    .expect("adding ticket zero to the representable parked count stays representable"),
+                // A normal ticket-zero operation runs only under this call's
+                // transient BUSY state and leaves no separately parked source
+                // engine. It may allocate and free its own permanent-owner
+                // clients, but every foreign parked route remains unchanged.
+                (false, false) => observed,
+                // Ticket zero resumed and re-parked its already-counted
+                // engine, restoring the exact foreign/peer count it found.
+                (true, true) => observed,
+                // Ticket zero's own parked engine became all-free. Keep every
+                // foreign route/engine represented until its matched typed
+                // terminal finish releases that separate admission token.
+                (true, false) => page_owner_parked_state(parked_count - 1)
+                    .expect("removing ticket zero from a nonzero parked count stays representable"),
             };
             self.page_owner_state.store(next_state, Ordering::Release);
         }
@@ -9205,15 +9231,31 @@ fn begin_current_thread_page_owner_session(
                 return Err(CurrentThreadPageOwnerSessionError::Retained);
             }
         };
-        let engine = match RUNTIME_PROCESS.begin_persistent_later_engine(attachment) {
-            Ok(engine) => engine,
-            Err(RuntimePersistentPageEngineBeginError::Unavailable) => {
-                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
-            }
-            Err(RuntimePersistentPageEngineBeginError::Attachment(_)) => {
-                slot.state = ThreadLifecycleState::Retained;
-                RUNTIME_PROCESS.retain_page_owner();
-                return Err(CurrentThreadPageOwnerSessionError::Retained);
+        let engine = loop {
+            match RUNTIME_PROCESS.begin_persistent_later_engine(attachment) {
+                Ok(engine) => break engine,
+                Err(RuntimePersistentPageEngineBeginError::Unavailable)
+                    if page_owner_session_begin_is_retryable(
+                        RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                    ) =>
+                {
+                    // A peer may hold the serialized PageMap operation while
+                    // it creates or resumes its own ordinary native session.
+                    // This first C allocation has no parked session of its
+                    // own yet, but the source allocator's concurrent malloc
+                    // path must wait for that bounded internal handoff rather
+                    // than returning a spurious null to caller code that is
+                    // about to establish its normal owner.
+                    core::hint::spin_loop();
+                }
+                Err(RuntimePersistentPageEngineBeginError::Unavailable) => {
+                    return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+                }
+                Err(RuntimePersistentPageEngineBeginError::Attachment(_)) => {
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
             }
         };
         match engine.suspend() {
@@ -13609,6 +13651,168 @@ mod tests {
         })
         .join()
         .expect("the isolated runtime page-owner fixture remains ticket-zero local");
+    }
+
+    #[test]
+    fn ticket_zero_starts_private_operation_while_detached_routes_remain_parked() {
+        thread::spawn(|| {
+            let process_storage = ProcessMainInitializationStorage::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let page_map_storage = ProcessPageMapStorage::test_static_owner();
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let runtime: &'static RuntimeProcessStorage =
+                std::boxed::Box::leak(std::boxed::Box::new(RuntimeProcessStorage::new()));
+            let owner = unsafe {
+                process_storage.initialize_with_test_components(
+                    memory_config(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the isolated runtime fixture constructs ticket zero");
+            // SAFETY: this test supplies the one final runtime publication and
+            // keeps every source/process owner alive through its assertions.
+            unsafe { publish_test_owner(runtime, owner) };
+
+            let initial = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(79, false)
+                })
+                .flatten()
+                .expect("ticket zero creates its live client before A exits");
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        owner.prepare_live_engine_for_later_thread()
+                    })
+                    .is_some_and(|prepared| prepared),
+                "ticket zero parks only its own live engine before the later owner starts"
+            );
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_PARKED,
+                "ticket zero contributes the first parked scheduler token"
+            );
+
+            // This models two typed A routes after source teardown has
+            // converted each active operation into a detached parked token.
+            // The test intentionally holds no route client address: only the
+            // tokens' lifecycle effect is relevant to ticket-zero scheduling.
+            assert_eq!(
+                runtime.page_owner_state.compare_exchange(
+                    PAGE_OWNER_PARKED,
+                    page_owner_parked_state(3)
+                        .expect("three parked owners remain representable"),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ),
+                Ok(PAGE_OWNER_PARKED),
+                "two synthetic detached routes join ticket zero's parked token"
+            );
+            let first_route = RuntimeParkedPostExitRoute {
+                runtime,
+                active: true,
+            };
+            let second_route = RuntimeParkedPostExitRoute {
+                runtime,
+                active: true,
+            };
+
+            let usable = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| unsafe {
+                    // SAFETY: `initial` is ticket zero's exact still-live client.
+                    owner.usable_size(initial)
+                })
+                .flatten()
+                .expect("ticket zero may inspect its own client while A remains parked");
+            assert!(usable >= 79);
+            let initial_free = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    // SAFETY: `initial` remains the exact ticket-zero client
+                    // and is consumed once by this operation.
+                    unsafe { owner.free(initial) }
+                })
+                .expect("ticket zero keeps its own parked engine callable beside A's route");
+            assert!(
+                initial_free.is_ok(),
+                "ticket zero frees its own client without taking A's route"
+            );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(2),
+                "ticket zero's all-free transition removes only its own token"
+            );
+            let bookkeeping = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(97, true)
+                })
+                .flatten()
+                .expect(
+                    "ticket zero starts its next private source operation while detached routes retain admission",
+                );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(2),
+                "ticket zero's ordinary private operation leaves both detached tokens intact"
+            );
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        // SAFETY: `bookkeeping` is ticket zero's exact fresh client.
+                        unsafe { owner.free(bookkeeping) }
+                    })
+                    .expect("ticket zero keeps its new private engine callable beside detached routes")
+                    .is_ok(),
+                "ticket zero settles only its own renewed engine"
+            );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(2),
+                "both detached route claims remain after ticket zero finishes its private operation"
+            );
+
+            assert!(
+                first_route.finish_after_b().is_ok(),
+                "the first B terminal finish removes only its matching detached token"
+            );
+            assert_eq!(
+                page_owner_parked_count(runtime.page_owner_state.load(Ordering::Acquire)),
+                Some(1),
+                "the second detached route retains its worker-admission claim"
+            );
+            assert!(
+                second_route.finish_after_b().is_ok(),
+                "only the second matched B terminal finish releases the final detached token"
+            );
+            assert_eq!(
+                runtime.page_owner_state.load(Ordering::Acquire),
+                PAGE_OWNER_READY,
+                "both terminal proofs restore the dormant scheduler"
+            );
+
+            let after = runtime
+                .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                    owner.allocate(53, false)
+                })
+                .flatten()
+                .expect("ticket zero remains usable after both terminal route releases");
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        // SAFETY: `after` is ticket zero's exact fresh client.
+                        unsafe { owner.free(after) }
+                    })
+                    .expect("ticket zero remains callable after A's route release")
+                    .is_ok(),
+                "the resumed initial owner returns to its dormant state"
+            );
+        })
+        .join()
+        .expect("the isolated runtime keeps ticket zero and detached routes distinct");
     }
 
     #[test]
