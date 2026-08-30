@@ -18,6 +18,7 @@
 //! system-information leaf uses `sysinfo` and the fixed-size
 //! `sched_getaffinity` CPU mask here; its public processor helper deliberately
 //! ignores a raw affinity failure in the musl-defined CPU-0 fallback case.
+//! The separately selected bounded `flock` leaf uses direct `flock=73`.
 //! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
@@ -393,6 +394,7 @@ pub(crate) const SYS_GETRANDOM: i64 = 318;
 pub(crate) const SYS_STATFS: i64 = 137;
 pub(crate) const SYS_FSTATFS: i64 = 138;
 pub(crate) const SYS_FDATASYNC: i64 = 75;
+pub(crate) const SYS_FLOCK: i64 = 73;
 pub(crate) const SYS_GETPID: i64 = 39;
 pub(crate) const SYS_EXIT: i64 = 60;
 pub(crate) const SYS_GETPPID: i64 = 110;

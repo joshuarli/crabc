@@ -17,8 +17,8 @@
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control
-//! and nonblocking record-lock boundaries, timestamp updates, descriptor-I/O,
-//! and
+//! and nonblocking record-lock boundaries, advisory whole-file flock, timestamp
+//! updates, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
@@ -153,6 +153,8 @@ mod filesystem_access;
 mod descriptor_control;
 #[path = "record_locks.rs"]
 mod record_locks;
+#[path = "flock.rs"]
+mod flock;
 #[path = "ioctl.rs"]
 mod ioctl;
 #[path = "descriptor_io.rs"]

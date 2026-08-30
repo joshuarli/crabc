@@ -233,6 +233,16 @@ not select `F_SETLKW` cancellation, OFD locks, `lockf`, `flock`, generic
 `fcntl`, descriptor/filesystem policy, family/platform parity, or public x86
 support.
 
+`./scripts/dev-x86_64.sh libc-flock` is a separate private `static-c-flock`
+artifact inside planned `libc.posix-runtime`. Its project-header C/C++ gate and
+pinned-musl/freestanding-static fixture prove only direct nonblocking
+`flock`: public operation bits, duplicate open-file-description release state,
+a separately opened child conflict and later exclusive reacquisition, stale
+`errno`, and direct `EWOULDBLOCK`/`EAGAIN`, `EBADF`, and `EINVAL` outcomes. It
+does not select `fcntl` record-lock interaction, `lockf`, descriptor/pathname
+policy, network/distributed-filesystem semantics, family/platform parity, or
+public x86 support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

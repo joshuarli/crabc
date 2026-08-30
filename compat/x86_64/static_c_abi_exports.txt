@@ -107,6 +107,7 @@ feupdateenv
 ffs
 ffsl
 ffsll
+flock
 fpathconf
 fstat
 fstatat

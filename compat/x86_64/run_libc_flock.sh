@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc fcntl record-lock evidence.
+# Native Linux/x86-64 selected static crabc-libc flock evidence.
 #
 # The same project-header C fixture first runs through pinned musl, then as a
-# true `-nostdlib -static` executable linked solely through the selected
-# crabc archive. It proves only pointer-bearing F_GETLK/F_SETLK record locks:
-# an unlocked query, a child observation/conflict against a parent lock,
-# release, stale errno on success, and direct Linux errors. Fixture setup uses
-# raw Linux syscalls, so no C descriptor lifecycle symbols are pulled in. This
-# is not F_SETLKW cancellation, OFD locks, lockf, flock, generic fcntl, CRT,
-# pthread/TLS lifecycle, loader, sysroot, or public x86 support.
+# true -nostdlib -static candidate linked solely through the selected crabc
+# archive. It proves only nonblocking OFD flock behavior: distinct open
+# descriptions, shared/exclusive conflict and release, stale errno on
+# success, and direct EINVAL/EBADF errors. Fixture setup uses raw Linux
+# syscalls, so no unrelated C lifecycle API is pulled in. This is not fcntl
+# record locking, lockf, generic C, CRT, pthread/TLS lifecycle, loader,
+# sysroot, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -18,7 +18,7 @@ readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
 fail() {
-    printf 'ERROR: x86 static libc fcntl record locks: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc flock: %s\n' "$*" >&2
     exit 1
 }
 
@@ -41,8 +41,6 @@ assert_selected_c_abi_surface() {
     local members_path="$work_dir/selected-c-abi-members"
     local -a members
 
-    # Inspect only crate-owned C object members. Compiler-builtins remains
-    # toolchain support rather than a selected C ABI export surface.
     mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
     [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
     mkdir "$members_path"
@@ -58,43 +56,6 @@ assert_selected_c_abi_surface() {
         diff -u "$expected_path" "$symbols_path" >&2 || true
         fail "selected static C ABI export surface drifted"
     fi
-}
-
-helper_symbol() {
-    local fragment="$1"
-    local symbols="$work_dir/${fragment}-symbols"
-
-    nm --defined-only --format=posix "$candidate" |
-        awk -v fragment="$fragment" '$1 ~ /^_R/ && index($1, fragment) && $2 ~ /^[Tt]$/ { print $1 }' \
-        >"$symbols"
-    [ "$(wc -l <"$symbols")" -eq 1 ] || {
-        cat "$symbols" >&2
-        fail "expected exactly one ${fragment} helper symbol"
-    }
-    cat "$symbols"
-}
-
-assert_fcntl_record_lock_path() {
-    local dispatcher="$work_dir/fcntl-disassembly"
-    local helper
-    local helper_disassembly="$work_dir/fcntl-record-lock-disassembly"
-
-    objdump -d --disassemble=fcntl "$candidate" >"$dispatcher"
-    grep -Eq '\$0x5,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_GETLK pointer-vararg dispatch"
-    grep -Eq '\$0x6,%esi' "$dispatcher" ||
-        fail "fcntl lacks F_SETLK pointer-vararg dispatch"
-    grep -Fq 'fcntl_record_lock' "$dispatcher" ||
-        fail "fcntl lacks its record-lock helper tail path"
-    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$dispatcher"; then
-        fail "fcntl dispatcher must not enter Linux before command dispatch"
-    fi
-    helper="$(helper_symbol fcntl_record_lock)"
-    objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    grep -Eq '\$0x48,%(e|r)ax' "$helper_disassembly" ||
-        fail "F_GETLK/F_SETLK helper lacks Linux fcntl=72"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-        fail "F_GETLK/F_SETLK helper lacks its Linux syscall"
 }
 
 assert_fixture_tls_capacity() {
@@ -119,21 +80,31 @@ assert_fixture_tls_capacity() {
     fi
 }
 
+assert_flock_syscall_path() {
+    local disassembly="$work_dir/flock-disassembly"
+
+    objdump -d --disassemble=flock "$candidate" >"$disassembly"
+    grep -Eq '\$0x49,%(e|r)ax' "$disassembly" ||
+        fail "flock lacks Linux syscall 73"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        fail "flock lacks its Linux syscall"
+}
+
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mkdir nm objdump readelf rustup wc; do
+for tool in ar awk cargo cat cmp diff grep mapfile mkdir nm objdump readelf rustup sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_fcntl_header_abi.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_x86_fcntl_getlk_reference.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_flock_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_x86_flock_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-fcntl-record-locks.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-flock.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-fcntl-record-locks-reference"
-candidate="$work_dir/crabc-static-fcntl-record-locks-candidate"
+reference="$work_dir/musl-flock-reference"
+candidate="$work_dir/crabc-static-flock-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -149,21 +120,19 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_fcntl_record_locks_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h stddef.h sys/types.h sys/syscall.h bits/fcntl.h \
-    bits/syscall.h unistd.h; do
+    compat/x86_64/libc_flock_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h fcntl.h sys/file.h sys/syscall.h sys/types.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_fcntl_record_locks_probe.c \
-    -o "$reference"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_flock_probe.c -o "$reference"
 if "$reference"; then
     :
 else
     status=$?
-    fail "pinned-musl fcntl record-lock fixture exited ${status}"
+    fail "pinned-musl flock fixture exited ${status}"
 fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
@@ -174,13 +143,13 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location fcntl; do
+for symbol in __errno_location flock; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in fcntl64 lockf lockf64 fchown readv writev preadv \
-    pwritev preadv2 pwritev2 openat2 open_by_handle_at close_range fork _Fork \
-    vfork clone execve gettid syscall setfsuid setfsgid malloc free calloc realloc; do
+for unselected in fcntl64 lockf lockf64 fchown readv writev preadv pwritev \
+    preadv2 pwritev2 openat2 open_by_handle_at close_range fork _Fork vfork \
+    clone execve gettid syscall setfsuid setfsgid malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -193,26 +162,25 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
-    -DCRABC_FCNTL_RECORD_LOCKS_FREESTANDING -I"$ROOT_DIR/include" \
-    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_fcntl_record_locks_probe.c \
-    compat/x86_64/libc_fcntl_record_locks_start.S "$archive" -o "$candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_FLOCK_FREESTANDING \
+    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    compat/x86_64/libc_flock_probe.c compat/x86_64/libc_flock_start.S \
+    "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location fcntl; do
+for symbol in __errno_location flock; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-for unrelated in ioctl open openat creat close dup dup2 dup3 read write pread \
-    pwrite pipe pipe2 flock lockf; do
+for unrelated in fcntl open openat close dup dup2 dup3 read write pipe pipe2 \
+    lockf; do
     if grep -Eq "[[:space:]]${unrelated}$" "$candidate_symbols"; then
-        fail "fcntl record-lock candidate unexpectedly pulls ${unrelated}"
+        fail "flock candidate unexpectedly pulls ${unrelated}"
     fi
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
@@ -241,13 +209,13 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 
-assert_fcntl_record_lock_path
+assert_flock_syscall_path
 
 if "$candidate"; then
     :
 else
     status=$?
-    fail "freestanding fcntl record-lock fixture exited ${status}"
+    fail "freestanding flock fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc fcntl record locks: PASS\n'
+printf 'x86 static crabc-libc flock: PASS\n'

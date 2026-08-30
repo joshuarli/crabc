@@ -2,8 +2,8 @@
 //!
 //! The selected static x86 metadata, credential, bootstrap-primitives, simple
 //! signal-control, termios-control, selected process-context, selected
-//! fcntl status-control/nonblocking record-lock, descriptor-I/O, selected
-//! process-resources, and selected readiness/signal-
+//! fcntl status-control/nonblocking record-lock, advisory flock, descriptor-I/O,
+//! selected process-resources, and selected readiness/signal-
 //! waits, selected system-configuration, selected system-observation, selected UTS-namespace identity, and
 //! basic socket-transport, integer-parsing, and nanosleep artifact boundaries share this
 //! one initial-TLS slot.

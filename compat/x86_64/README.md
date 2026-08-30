@@ -233,6 +233,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh poll-header-abi
 ./scripts/dev-x86_64.sh select-header-abi
 ./scripts/dev-x86_64.sh fcntl-header-abi
+./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
@@ -362,6 +363,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-access
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
 ./scripts/dev-x86_64.sh libc-fcntl-record-locks
+./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
@@ -678,6 +680,11 @@ declarations, including x86 open/fcntl flags, `flock`, GNU owner/file-handle
 records, selected extensions, and large-file aliases including `lockf64`. It
 is source-only header evidence; it does not provide descriptor behavior or
 select `crabc-libc`.
+
+`flock-header-abi` compiles project and pinned-musl C/C++ `<sys/file.h>`
+declarations, including the direct `flock` signature, x86 operation bits, and
+legacy `L_*` values with unmangled C++ linkage. It is source-only header
+evidence; it does not select locking behavior or `crabc-libc`.
 
 `unistd-header-abi` compiles project and pinned-musl C/C++ `<unistd.h>`
 declarations, including the staged x86 LP64 POSIX/GNU selectors, process and
@@ -2269,6 +2276,17 @@ errno on success, and direct `EBADF`/`EINVAL` failures. It does not select
 ownership/signalling policy, descriptor/pathname policy, general runtime, or
 public x86 support.
 
+`libc-flock` is a separately recorded `static-c-flock` `verified_artifact`
+gate over the same archive, not a general locking or descriptor capability.
+Its project-header C/C++ `<sys/file.h>` gate runs before a pinned-musl and
+`-nostdlib -static` candidate fixture for only direct nonblocking `flock`.
+It proves the x86 operation bits, duplicate open-file-description release
+state, a separately opened child conflict and later exclusive reacquisition,
+stale errno on success, and direct `EWOULDBLOCK`/`EAGAIN`, `EBADF`, and
+`EINVAL` errors. It does not select `fcntl` record-lock interaction, `lockf`,
+generic descriptor/pathname policy, network/distributed-filesystem semantics,
+general runtime, or public x86 support.
+
 `libc-ioctl` is a separately recorded `static-c-generic-ioctl`
 `verified_artifact` gate over the same archive, not generic device support.
 After the direct `sys/ioctl.h` C/C++ matrix and a pinned-musl execution, its
@@ -2938,6 +2956,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-access`,
 `libc-fcntl-status-control`,
 `libc-fcntl-record-locks`,
+`libc-flock`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,

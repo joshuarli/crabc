@@ -8,7 +8,8 @@
 # C11 immediate termination, callback algorithms, direct clock_gettime,
 # system configuration,
 # nanosleep, and clock_nanosleep,
-# selected descriptor entry, selected filesystem access, selected fcntl status control and nonblocking record locks, selected descriptor I/O, selected process resources, and selected readiness
+# selected descriptor entry, selected filesystem access, selected fcntl status control,
+# nonblocking record locks, and advisory flock, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # SysV semaphore operations,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
@@ -68,6 +69,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
   select-header-abi  compile the staged x86 C/C++ sys/select header layouts
   fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
+  flock-header-abi compile the staged x86 C/C++ sys/file.h header layouts
   unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
   system-header-abi  compile the staged x86 C/C++ system header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
@@ -205,6 +207,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-timestamp-updates  run the static x86 rcrt1/libc timestamp-update block
   libc-fcntl-status-control  run the static x86 crabc-libc fcntl status-control slice
   libc-fcntl-record-locks  run the static x86 crabc-libc fcntl record-lock slice
+  libc-flock  run the static x86 crabc-libc advisory flock slice
   libc-ioctl  run the static x86 crabc-libc generic ioctl slice
   libc-sysv-semaphore  run the static x86 crabc-libc SysV semaphore slice
   libc-sysv-message-shared-memory  run the static x86 crabc-libc SysV message/shared-memory slice
@@ -429,6 +432,13 @@ a child observation/conflict against a parent lock, release, stale `errno` on
 success, and direct kernel errors. It does not select `F_SETLKW` cancellation,
 OFD locks, `lockf`, `flock`, generic fcntl, dynamic libc, or application
 startup.
+`libc-flock` exercises a separate freestanding project-header C fixture after
+its equivalent pinned-musl run. It selects only direct nonblocking `flock`:
+the public operation bits, raw-duplicate open-file-description release state,
+a separately opened child conflict and later exclusive reacquisition, stale
+`errno`, and direct kernel errors. It does not select fcntl record-lock
+interaction, `lockf`, generic descriptor/pathname policy, dynamic libc, or
+application startup.
 `libc-uts-identity` exercises the same archive through a freestanding
 project-header C fixture after an equivalent pinned-musl run. Each fixture arm
 creates a fresh UTS namespace before it mutates hostname/domain-name state; the
@@ -556,7 +566,7 @@ C consumers intentionally link pinned musl's math runtime, not crabc-libc.
 `sys-reg-header-abi` compiles only the staged ptrace register-index header.
 `types-header-abi` compiles only staged C/C++ type declarations and opaque
 pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
-`select-header-abi`, `fcntl-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
+`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
 `system-header-abi` compile only their named C/C++ layout/declaration slices.
 `syscall-header-abi` compares only staged syscall number macros.
 `signal-header-abi`, `termios-header-abi`, `mman-header-abi`, and
@@ -1124,6 +1134,14 @@ pointer-bearing nonblocking `F_GETLK`/`F_SETLK` record locks: the public
 stale `errno`, and direct kernel errors. It does not provide `F_SETLKW`
 cancellation, OFD locks, `lockf`, `flock`, generic fcntl, dynamic libc,
 CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+`libc-flock` links that archive into a separate freestanding project-header C
+fixture after an equivalent pinned-musl run. It selects only direct
+nonblocking `flock`: public operation bits, raw-duplicate
+open-file-description release state, separately opened child conflict and
+later exclusive reacquisition, stale `errno`, and direct kernel errors. It
+does not provide fcntl record-lock interaction, `lockf`, generic
+descriptor/pathname policy, dynamic libc, CRT/TLS lifecycle, loader, sysroot,
+or public x86 support.
 `libc-thread-pointer` compiles only the private musl-shaped `%fs:0` identity
 leaf and a pinned-musl C fixture. It establishes neither a C runtime artifact,
 public C ABI, pthread/TLS lifecycle, loader TLS, nor an FS-base setup path.
@@ -1522,6 +1540,10 @@ run_select_header_abi() {
 
 run_fcntl_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_fcntl_header_abi.sh
+}
+
+run_flock_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_flock_header_abi.sh
 }
 
 run_unistd_header_abi() {
@@ -2349,6 +2371,10 @@ run_libc_fcntl_record_locks_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_fcntl_record_locks.sh
 }
 
+run_libc_flock_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_flock.sh
+}
+
 run_libc_uts_identity_probe() {
     run_in_uts_cap_container bash /workspace/compat/x86_64/run_libc_uts_identity.sh
 }
@@ -2419,7 +2445,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|flock-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls) ;;
     libc-crt1-static-tls) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
@@ -2444,7 +2470,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
     *)
@@ -2649,6 +2675,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "fcntl-header-abi takes no arguments"
         ensure_image
         run_fcntl_header_abi
+        ;;
+    flock-header-abi)
+        [ "$#" -eq 0 ] || fail "flock-header-abi takes no arguments"
+        ensure_image
+        run_flock_header_abi
         ;;
     unistd-header-abi)
         [ "$#" -eq 0 ] || fail "unistd-header-abi takes no arguments"
@@ -3318,6 +3349,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-fcntl-record-locks takes no arguments"
         ensure_image
         run_libc_fcntl_record_locks_probe
+        ;;
+    libc-flock)
+        [ "$#" -eq 0 ] || fail "libc-flock takes no arguments"
+        ensure_image
+        run_libc_flock_probe
         ;;
     libc-uts-identity)
         [ "$#" -eq 0 ] || fail "libc-uts-identity takes no arguments"

@@ -7427,6 +7427,97 @@ def require_fcntl_record_locks_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_flock_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected C flock wrapper distinct from record locks and lockf."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-flock"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-flock artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "advisory whole-file flock block",
+        "flock=73",
+        "`LOCK_SH`/`LOCK_EX`/`LOCK_NB`/`LOCK_UN`",
+        "open-file-description association",
+        "EWOULDBLOCK/EAGAIN",
+        "fcntl record-lock interaction",
+        "`lockf`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-flock description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/flock.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/sys/file.h",
+        "compat/x86_64/flock_header_abi_probe.c",
+        "compat/x86_64/flock_header_abi_probe.cpp",
+        "compat/x86_64/run_flock_header_abi.sh",
+        "compat/x86_64/run_x86_flock_reference.sh",
+        "compat/x86_64/x86_flock_reference_probe.c",
+        "compat/x86_64/libc_flock_probe.c",
+        "compat/x86_64/libc_flock_start.S",
+        "compat/x86_64/run_libc_flock.sh",
+    ):
+        require(owner in owners, f"static-c-flock must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "flock=73" in item and "rdi/rsi" in item and "syscall2" in item
+            for item in prerequisites
+        ),
+        "static-c-flock must record its two-word syscall ABI",
+    )
+    require(
+        any(
+            "LOCK_SH/LOCK_EX/LOCK_NB/LOCK_UN" in item
+            and "1/2/4/8" in item
+            and "open file description" in item
+            and "EWOULDBLOCK/EAGAIN" in item
+            for item in prerequisites
+        ),
+        "static-c-flock must record its operation and OFD conflict boundary",
+    )
+    require(
+        any("src/linux/flock.c" in item and "cancellation" in item for item in prerequisites),
+        "static-c-flock must record musl's direct non-cancellation path",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-flock"},
+        "static-c-flock must use the closed libc-flock command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "flock=73",
+        "rdi/rsi",
+        "EWOULDBLOCK/EAGAIN",
+        "fcntl record-lock interaction",
+        "lockf",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-flock evidence scope omits {phrase}",
+        )
+
+
 def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     """Keep the generic ioctl ABI forwarder bounded despite its broad spelling."""
     artifacts = require_verified_artifacts(
@@ -9360,6 +9451,7 @@ def validate_ledger(
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
+    require_flock_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
