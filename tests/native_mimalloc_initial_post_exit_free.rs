@@ -3,6 +3,27 @@ mod test_support;
 
 use std::process::{Command, Output};
 
+fn assert_candidate_free_uses_native_shadow() {
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
+    let libc = root.join("target/debug/libc.so");
+    let output = Command::new("objdump")
+        .args(["-d", "--demangle", "--disassemble=free"])
+        .arg(&libc)
+        .output()
+        .expect("failed to disassemble the selected candidate libc");
+    assert!(
+        output.status.success(),
+        "could not disassemble selected candidate libc {}: {}",
+        libc.display(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("crabc_mimalloc::runtime_lifecycle::native_free"),
+        "candidate libc free does not resolve to the Rust native shadow route"
+    );
+}
+
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = root.join("tests/fixtures/native_mimalloc_initial_post_exit_free_test.c");
@@ -50,6 +71,8 @@ fn native_mimalloc_initial_post_exit_free_matches_pinned_musl() {
         test_support::TempArtifact::new("native-mimalloc-initial-post-exit-free-candidate");
     compile_fixture(&reference, false);
     compile_fixture(&candidate, true);
+
+    assert_candidate_free_uses_native_shadow();
 
     let reference_output = run(&reference, false);
     let candidate_output = run(&candidate, true);
