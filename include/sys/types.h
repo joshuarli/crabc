@@ -38,8 +38,14 @@ typedef int blksize_t;
 typedef long blksize_t;
 #endif
 typedef long blkcnt_t;
+#ifndef __DEFINED_fsblkcnt_t
+#define __DEFINED_fsblkcnt_t
 typedef unsigned long fsblkcnt_t;
+#endif
+#ifndef __DEFINED_fsfilcnt_t
+#define __DEFINED_fsfilcnt_t
 typedef unsigned long fsfilcnt_t;
+#endif
 typedef unsigned int id_t;
 typedef int key_t;
 typedef long time_t;

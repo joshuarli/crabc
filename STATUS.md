@@ -278,6 +278,19 @@ or cache-effect claim. Cache policy/effects, allocation, pathname and
 filesystem policy, durability, cancellation, family/platform parity, and
 public x86 support remain unselected.
 
+`./scripts/dev-x86_64.sh libc-filesystem-capacity` is a separate private
+`static-c-filesystem-capacity` artifact inside planned `libc.posix-runtime`.
+Its seven-base-plus-two-LF64 project-header C/C++ `sys/statfs.h`/
+`sys/statvfs.h` matrix proves only the four declarations, x86 LP64 records,
+mount flags, unmangled C++ references, and LF64 macro aliases. Its
+pinned-musl/freestanding-static fixture then proves only `statfs`/`fstatfs`
+through `statfs=137`/`fstatfs=138`, plus musl `src/stat/statvfs.c`'s derived
+`statvfs`/`fstatvfs` conversion: public statfs zeroing, successful statvfs
+zero-and-map results (including fragment-size fallback, `f_favail`, and fsid
+mapping), stale errno on success, and direct ENOENT/EBADF errors. It does not
+select capacity/quota/accounting policy, pathname behavior, general filesystem
+support, family/platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

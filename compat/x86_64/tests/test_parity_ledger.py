@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 65)
+        self.assertEqual(report["verified_artifact_count"], 66)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1313,12 +1313,27 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 44
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 45
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
             if isinstance(artifact, dict)
         }
+        filesystem_capacity = artifacts_by_id["static-c-filesystem-capacity"]
+        assert isinstance(filesystem_capacity, dict)
+        self.assertNotIn("capabilities", filesystem_capacity)
+        for owner in (
+            "libc/src/c_abi/x86_64/filesystem_capacity.rs",
+            "compat/x86_64/run_filesystem_capacity_header_abi.sh",
+            "compat/x86_64/run_libc_filesystem_capacity.sh",
+        ):
+            self.assertIn(owner, filesystem_capacity["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in filesystem_capacity["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-filesystem-capacity"},
+        )
+        self.assertIn("src/stat/statvfs.c", str(filesystem_capacity["oracle"]))
+        self.assertIn("public x86 support", filesystem_capacity["description"])
         signal_control = artifacts_by_id["static-c-signal-control"]
         assert isinstance(signal_control, dict)
         self.assertNotIn("capabilities", signal_control)

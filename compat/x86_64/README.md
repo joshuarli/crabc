@@ -235,6 +235,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-header-abi
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
+./scripts/dev-x86_64.sh filesystem-capacity-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
@@ -367,6 +368,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sendfile
 ./scripts/dev-x86_64.sh libc-posix-fallocate
+./scripts/dev-x86_64.sh libc-filesystem-capacity
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
@@ -694,6 +696,14 @@ hidden; C++ object checks prove unmangled base/GNU linkage, while the runner's
 `-H` traces keep the feature/header owners explicit. It is compile-only
 declaration evidence, not cache-effect, descriptor behavior, or public x86
 support.
+
+`filesystem-capacity-header-abi` compiles seven base and two
+`_LARGEFILE64_SOURCE` project/pinned-musl C/C++ profiles for
+`<sys/statfs.h>` and `<sys/statvfs.h>`. It proves the four declarations, x86
+LP64 `fsid_t`/`statfs`/`statvfs` layouts and mount flags, C++ C-linkage
+spelling, and LF64-only function/type macro aliases. It is compile-only
+declaration/layout/linkage evidence, not archive linkage, runtime behavior,
+filesystem support, or public x86 support.
 
 `flock-header-abi` compiles project and pinned-musl C/C++ `<sys/file.h>`
 declarations, including the direct `flock` signature, x86 operation bits, and
@@ -2343,6 +2353,18 @@ no cache-residency or cache-effect claim. It does not select cache policy or
 effects, allocation, pathname or filesystem policy, durability, cancellation,
 general runtime, or public x86 support.
 
+`libc-filesystem-capacity` is a separately recorded
+`static-c-filesystem-capacity` `verified_artifact` gate over the same archive,
+not a filesystem capacity capability. Its dedicated `sys/statfs.h`/
+`sys/statvfs.h` C/C++ matrix runs before pinned-musl and `-nostdlib -static`
+fixture execution for exactly `statfs`, `fstatfs`, `statvfs`, and `fstatvfs`.
+It proves `statfs=137`/`fstatfs=138`, zeroed public statfs records, and musl
+`src/stat/statvfs.c`'s successful zero-and-map statvfs conversion, including
+fragment-size fallback, `f_favail=f_ffree`, first-fsid-word mapping, stale
+errno success, and direct ENOENT/EBADF results. It does not select capacity or
+quota meaning, filesystem accounting/policy, pathname behavior, durability,
+cancellation, general runtime, or public x86 support.
+
 `libc-ioctl` is a separately recorded `static-c-generic-ioctl`
 `verified_artifact` gate over the same archive, not generic device support.
 After the direct `sys/ioctl.h` C/C++ matrix and a pinned-musl execution, its
@@ -3015,6 +3037,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-flock`,
 `libc-sendfile`,
 `libc-posix-fallocate`,
+`libc-filesystem-capacity`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,

@@ -74,6 +74,8 @@ mod raw_syscall;
 mod static_tls;
 #[path = "stat_compat.rs"]
 mod stat_compat;
+#[path = "filesystem_capacity.rs"]
+mod filesystem_capacity;
 #[path = "timestamp_updates.rs"]
 mod timestamp_updates;
 #[path = "credentials.rs"]

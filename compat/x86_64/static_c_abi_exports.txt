@@ -111,6 +111,8 @@ flock
 fpathconf
 fstat
 fstatat
+fstatfs
+fstatvfs
 fsync
 ftok
 ftruncate
@@ -300,6 +302,8 @@ sigwaitinfo
 socket
 socketpair
 stat
+statfs
+statvfs
 stpcpy
 stpncpy
 strcat
