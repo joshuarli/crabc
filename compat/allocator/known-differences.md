@@ -1191,8 +1191,10 @@ transfer capability.
   aggregate traversal for the aggregate/medium cases or the existing
   `abandon_mapped_small_or_medium_to_process_route` cache-validating source
   drain for direct small. The aggregate keeps direct-small, non-direct-small,
-  full-medium, force-empty large, two-client live-large, arena-singleton, and
-  OS-singleton members in that one existing traversal; it does not create a
+  a pre-exit-normalized medium, a source-unmapped full medium, an A-locally
+  unfull mapped medium, force-empty large, two-client live-large,
+  arena-singleton, and OS-singleton members in that one existing traversal; it
+  does not create a
   class- or block-count-specific owner-exit entry. A fixed preparation ledger
   mints every A-side allocation as one capability and requires it to be
   locally freed, joined-published before exit, or moved exactly once into the
@@ -1204,7 +1206,7 @@ transfer capability.
   calls. Its consuming `prepare_sequential_exit` transfers every still-live
   entry without a workload-shaped client list, moving that extension only with
   the opaque route; source-published entries remain outside the route for
-  source collection. For the one source-valid B/C interleaving,
+  source collection. For a source-valid B/C/D interleaving,
   it may move exactly two generation-checked opaque keys into the existing
   scoped post-exit pair only after validating them before transfer. The TLS
   state distinguishes that active session from a prepared parked engine and
@@ -1259,7 +1261,11 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   `0x9e3779b97f4a7c15`, proving ticket-zero reactivation after each.
   `crabc-mimalloc/tests/runtime_lifecycle_session_post_exit_publisher.rs`
   separately proves the active-session pair reaches B/C without exposing a
-  client address. `crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs`
+  client address. `crabc-mimalloc/tests/runtime_lifecycle_session_initial_mapped_medium_post_exit_publisher.rs`
+  separately proves that an ordinary A-local free leaves a distinct medium
+  mapped and non-full before owner exit, then the existing bounded B/C/D
+  medium publisher group drains through the generic aggregate route. The
+  `crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs`
   then proves one detached aggregate can outlive a nonterminal B no-page
   lifecycle and reach terminal source release through fresh C: A's parked
   scheduler token and admission remain private until C's normal finish. The

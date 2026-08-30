@@ -247,8 +247,14 @@ const OWNER_EXIT_MAPPED_MEDIUM_START: usize =
     OWNER_EXIT_LIVE_LARGE_START + OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS;
 const OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START: usize =
     OWNER_EXIT_MAPPED_MEDIUM_START + (OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS - 1);
-const OWNER_EXIT_ARENA_SINGLETON_INDEX: usize =
+// The third medium begins full, then A locally frees one exact client before
+// owner exit. Its remaining clients therefore reach the general aggregate as
+// an initially mapped, non-full regular member, distinct from both the
+// pre-exit-normalized and source-unmapped full-medium members above.
+const OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START: usize =
     OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START + OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS;
+const OWNER_EXIT_ARENA_SINGLETON_INDEX: usize =
+    OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START + (OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS - 1);
 const OWNER_EXIT_OS_SINGLETON_INDEX: usize = OWNER_EXIT_ARENA_SINGLETON_INDEX + 1;
 // This is the inline portion of the private client registry for the internal
 // generic page-bearing TLS owner. It covers the largest source aggregate used
@@ -6005,6 +6011,7 @@ struct OwnerExitMappedRegularWorkload<Client> {
     non_direct_small: [Option<Client>; OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS],
     full_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
     unmapped_full_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
+    initially_mapped_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
     force_empty_large: Option<Client>,
     large: [Option<Client>; OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS],
     arena_singleton: Option<Client>,
@@ -6020,6 +6027,9 @@ enum OwnerExitMappedRegularWorkloadError {
     FullMediumAllocation,
     UnmappedFullMediumAllocation,
     UnmappedFullMediumCapacity,
+    InitiallyMappedMediumAllocation,
+    InitiallyMappedMediumCapacity,
+    InitiallyMappedMediumLocalFree,
     ForceEmptyLargeAllocation,
     LargeAllocation,
     ArenaSingletonAllocation,
@@ -6036,6 +6046,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             non_direct_small: core::array::from_fn(|_| None),
             full_medium: core::array::from_fn(|_| None),
             unmapped_full_medium: core::array::from_fn(|_| None),
+            initially_mapped_medium: core::array::from_fn(|_| None),
             force_empty_large: None,
             large: core::array::from_fn(|_| None),
             arena_singleton: None,
@@ -6122,6 +6133,52 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             *slot = Some(block);
         }
 
+        // Fill a third regular medium page, then return one A-local client.
+        // This is an ordinary source unfull transition before owner exit: the
+        // remaining clients are already a mapped, non-full member when
+        // `_mi_theap_collect_ex(MI_ABANDON)` begins. Keep it beside the
+        // force-normalized and source-unmapped full members so the aggregate
+        // coordinator—not a special page route—selects all three states.
+        let Ok(first_initially_mapped_medium) =
+            allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false)
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumAllocation);
+        };
+        workload.initially_mapped_medium[0] = Some(first_initially_mapped_medium);
+        let Some(initially_mapped_capacity) = allocator
+            .current_allocation_page_reserved_client(
+                workload.initially_mapped_medium[0]
+                    .as_ref()
+                    .expect("the initially mapped medium remains in its private workload slot"),
+            )
+            .filter(|capacity| {
+                *capacity >= 4 && *capacity <= OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS
+            })
+        else {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumCapacity);
+        };
+        for slot in workload
+            .initially_mapped_medium
+            .iter_mut()
+            .take(initially_mapped_capacity)
+            .skip(1)
+        {
+            let Ok(block) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false) else {
+                let _ = workload.free_locals(allocator);
+                return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumAllocation);
+            };
+            *slot = Some(block);
+        }
+        let initially_mapped_local_free = workload.initially_mapped_medium[0]
+            .take()
+            .expect("the full medium keeps the exact A-local client that makes it non-full");
+        if allocator.free_client(initially_mapped_local_free).is_err() {
+            let _ = workload.free_locals(allocator);
+            return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumLocalFree);
+        }
+
         let Ok(force_empty_large) = allocator.allocate_client(OWNER_EXIT_FORCE_EMPTY_LARGE_REQUEST, false) else {
             let _ = workload.free_locals(allocator);
             return Err(OwnerExitMappedRegularWorkloadError::ForceEmptyLargeAllocation);
@@ -6191,6 +6248,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             || !self.non_direct_small.iter().all(Option::is_some)
             || !self.full_medium[1..].iter().all(Option::is_some)
             || !self.unmapped_full_medium.iter().all(Option::is_some)
+            || !self.initially_mapped_medium[1..].iter().all(Option::is_some)
             || !self.large.iter().all(Option::is_some)
             || self.arena_singleton.is_none()
             || self.os_singleton.is_none()
@@ -6223,9 +6281,16 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
         {
             *destination = source.take();
         }
-        for (destination, source) in blocks[OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START..OWNER_EXIT_ARENA_SINGLETON_INDEX]
+        for (destination, source) in blocks[OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START..OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START]
             .iter_mut()
             .zip(&mut self.unmapped_full_medium)
+        {
+            *destination = source.take();
+        }
+        for (destination, source) in blocks
+            [OWNER_EXIT_INITIAL_MAPPED_MEDIUM_START..OWNER_EXIT_ARENA_SINGLETON_INDEX]
+            .iter_mut()
+            .zip(&mut self.initially_mapped_medium[1..])
         {
             *destination = source.take();
         }
@@ -6242,6 +6307,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
         free_owner_exit_clients(allocator, &mut self.non_direct_small)?;
         free_owner_exit_clients(allocator, &mut self.full_medium)?;
         free_owner_exit_clients(allocator, &mut self.unmapped_full_medium)?;
+        free_owner_exit_clients(allocator, &mut self.initially_mapped_medium)?;
         free_owner_exit_clients(allocator, core::slice::from_mut(&mut self.force_empty_large))?;
         free_owner_exit_clients(allocator, &mut self.large)?;
         free_owner_exit_clients(allocator, core::slice::from_mut(&mut self.arena_singleton))?;
@@ -6297,6 +6363,26 @@ impl OwnerExitMappedRegularWorkload<PreparedOwnerExitClient> {
                 self.full_medium[1].as_ref()?.key(),
                 self.full_medium[2].as_ref()?.key(),
                 self.full_medium[3].as_ref()?.key(),
+            ],
+        })
+    }
+
+    /// Selects three remaining clients from the distinct medium page that A
+    /// made non-full through one ordinary local free before owner exit. The
+    /// lower aggregate route already owns every mapped regular member through
+    /// the same source traversal; this selection proves that a pre-existing
+    /// mapped medium can use the bounded B/C/D publication without being
+    /// mistaken for the separate force-normalized source state.
+    #[inline]
+    fn post_exit_initial_mapped_medium_remote_publication_group_keys(
+        &self,
+    ) -> Option<DetachedOwnerExitRemotePublicationSelection> {
+        Some(DetachedOwnerExitRemotePublicationSelection {
+            kind: DetachedOwnerExitRemotePublicationKind::MappedMedium,
+            clients: [
+                self.initially_mapped_medium[1].as_ref()?.key(),
+                self.initially_mapped_medium[2].as_ref()?.key(),
+                self.initially_mapped_medium[3].as_ref()?.key(),
             ],
         })
     }
@@ -10158,6 +10244,7 @@ enum ParkedSessionPostExitPublication {
     Ordinary,
     ScopedDirectSmallRemoteFree,
     ScopedMappedMediumRemoteFree,
+    ScopedInitiallyMappedMediumRemoteFree,
 }
 
 /// Exercises the ordinary owner-exit dispatcher from a real parked TLS
@@ -10214,6 +10301,25 @@ pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_
         publish_before_exit,
         free_after_exit,
         ParkedSessionPostExitPublication::ScopedMappedMediumRemoteFree,
+    )
+}
+
+/// Exercises the same bounded B/C/D publication from a medium member that
+/// was already mapped and non-full when A entered the general owner-exit
+/// traversal. A reaches that source state through one ordinary local free;
+/// the aggregate route still chooses and owns the member, while fresh B may
+/// lend C/D the nominally mapped-medium producers only after B has claimed
+/// the page's source low owner bit. This remains neither a general concurrent
+/// free route nor a public pointer-handoff API.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_session_owner_exit_with_initial_mapped_medium_post_exit_publisher_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+        publish_before_exit,
+        free_after_exit,
+        ParkedSessionPostExitPublication::ScopedInitiallyMappedMediumRemoteFree,
     )
 }
 
@@ -10315,6 +10421,15 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
         }
         ParkedSessionPostExitPublication::ScopedMappedMediumRemoteFree => {
             match workload.post_exit_mapped_medium_remote_publication_group_keys() {
+                Some(group) => Some(group),
+                None => {
+                    retain_current_thread_live_page_owner();
+                    return TicketZeroLaterThreadPageResult::Retained;
+                }
+            }
+        }
+        ParkedSessionPostExitPublication::ScopedInitiallyMappedMediumRemoteFree => {
+            match workload.post_exit_initial_mapped_medium_remote_publication_group_keys() {
                 Some(group) => Some(group),
                 None => {
                     retain_current_thread_live_page_owner();
@@ -14323,6 +14438,64 @@ mod tests {
                             );
                         }
 
+                        let initially_mapped_medium_page_pointer = core::ptr::NonNull::new(unsafe {
+                            allocator.test_page_for_block(
+                                workload.initially_mapped_medium[1].expect(
+                                    "the owner-exit workload retains an initially mapped medium client",
+                                ),
+                            )
+                        })
+                        .expect("the initially mapped medium page stays PageMap-published before exit");
+                        assert_ne!(
+                            initially_mapped_medium_page_pointer,
+                            medium_page_pointer,
+                            "the initially mapped source member is distinct from the force-normalized medium"
+                        );
+                        assert_ne!(
+                            initially_mapped_medium_page_pointer,
+                            unmapped_medium_page_pointer,
+                            "the initially mapped source member is distinct from the source-unmapped full medium"
+                        );
+                        let initially_mapped_medium_page =
+                            unsafe { initially_mapped_medium_page_pointer.as_ref() };
+                        assert_eq!(
+                            crate::size_class::page_kind_for_block_size(
+                                initially_mapped_medium_page.block_size(),
+                            ),
+                            Some(crate::types::PageKind::Medium),
+                            "the local-free source member remains a regular medium page"
+                        );
+                        assert_eq!(
+                            initially_mapped_medium_page.used() + 1,
+                            usize::from(initially_mapped_medium_page.reserved()),
+                            "A's one ordinary local free makes the third medium non-full before owner exit"
+                        );
+                        assert!(
+                            !crate::types::page_queue::page_is_in_full(initially_mapped_medium_page)
+                                && !initially_mapped_medium_page.has_published_remote_free(),
+                            "the third medium reaches owner exit as an already-mapped, local-free regular member"
+                        );
+                        assert_eq!(
+                            crate::size_class::bin(initially_mapped_medium_page.block_size()),
+                            Some(full_medium_bin),
+                            "all three medium members retain their one regular static-main bitmap class"
+                        );
+                        assert!(
+                            workload.initially_mapped_medium[0].is_none(),
+                            "the A-local medium client has left the private ledger before owner exit"
+                        );
+                        for (index, block) in workload.initially_mapped_medium[1..].iter().enumerate() {
+                            let block = block.expect(
+                                "the owner-exit workload retains every remaining initially mapped medium client",
+                            );
+                            assert_eq!(
+                                unsafe { allocator.test_page_for_block(block) },
+                                initially_mapped_medium_page_pointer.as_ptr(),
+                                "initially mapped medium client {} stays in its exact regular page",
+                                index + 1,
+                            );
+                        }
+
                         let force_empty_large_page_pointer = core::ptr::NonNull::new(unsafe {
                             allocator.test_page_for_block(
                                 workload.force_empty_large.expect(
@@ -14515,13 +14688,13 @@ mod tests {
                         };
                         assert_eq!(
                             route.test_remaining_pages(),
-                            7,
-                            "the aggregate releases the force-empty large during collection and retains direct-small, non-direct-small, live-large, force-normalized-medium, unchanged-full-medium, live-arena-singleton, and private-OS-singleton members"
+                            8,
+                            "the aggregate releases the force-empty large during collection and retains direct-small, non-direct-small, live-large, force-normalized-medium, source-unmapped-full-medium, initially-mapped-medium, live-arena-singleton, and private-OS-singleton members"
                         );
                         assert_eq!(
                             route.test_abandoned_count_for_bin(full_medium_bin),
-                            Some(1),
-                            "only the medium with a joined remote free enters the static-main mapped bitmap at owner exit"
+                            Some(2),
+                            "the force-normalized and initially mapped mediums enter the static-main mapped bitmap at owner exit"
                         );
                         assert_eq!(
                             unmapped_medium_page.used(),

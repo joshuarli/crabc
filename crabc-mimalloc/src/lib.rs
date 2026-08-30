@@ -155,6 +155,7 @@ pub mod __crabc_runtime {
         ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish,
+        ticket_zero_later_thread_session_owner_exit_with_initial_mapped_medium_post_exit_publisher_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish,
         ticket_zero_later_thread_persistent_local_workload,
         ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,

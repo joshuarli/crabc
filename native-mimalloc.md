@@ -1114,13 +1114,16 @@ Required scenarios:
 
 At least one test must contain a genuinely mixed departing Theap rather than selecting a special route before calling owner exit.
 
-The current mixed witnesses cover scenario 5 only through two bounded,
+The current mixed witnesses cover scenario 5 only through three bounded,
 synchronous same-page B/C/D publication groups. One uses the existing
-direct-small page; the other uses three remaining clients from the first
-full-medium page after its pre-exit remote free has made it mapped and
-non-full. In either case B has already claimed the low owner bit, and C and D
-can each append one opaque private client before B collects both through the
-normal source unown/release tail. The fixed preparation and active
+direct-small page; one uses three remaining clients from the first full-medium
+page after its pre-exit remote free has made it mapped and non-full; and one
+uses three remaining clients from a distinct full medium after A locally frees
+one client before exit. The latter reaches the aggregate already mapped and
+non-full, so it exercises the same generic regular-page path without adding a
+second medium route. In every case B has already claimed the low owner bit,
+and C and D can each append one opaque private client before B collects both
+through the normal source unown/release tail. The fixed preparation and active
 parked-session regressions carry a group only as three private
 generation-checked ledger keys plus its source-page kind; matching
 direct-small and mapped-medium producer types prevent a callback for one shape
