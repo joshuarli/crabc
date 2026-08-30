@@ -1,0 +1,147 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-architecture-gate",
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "current": "shadow_subset",
+    "final_required": "promotion_qualified",
+    "static_analysis_cannot_close_final_gate": true,
+    "meaning": "This manifest records the nondefault native-mimalloc-shadow source path and its bounded evidence. Source/module inspection can show selected temporary scaffolding, but final hot-path values require independently generated production-general runtime and artifact evidence."
+  },
+  "selected_production": {
+    "package": "crabc-libc",
+    "feature": "native-mimalloc-shadow",
+    "target": "aarch64-unknown-linux-musl",
+    "libc_manifest": "libc/Cargo.toml",
+    "c_abi_source": "libc/src/c_abi.rs",
+    "native_boundary_source": "libc/src/allocator_native_mimalloc.rs",
+    "engine_root_source": "crabc-mimalloc/src/lib.rs",
+    "runtime_source": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "page_map_source": "crabc-mimalloc/src/process_page_map.rs",
+    "sources": [
+      "libc/Cargo.toml",
+      "libc/src/c_abi.rs",
+      "libc/src/allocator_native_mimalloc.rs",
+      "crabc-mimalloc/src/lib.rs",
+      "crabc-mimalloc/src/runtime_lifecycle.rs",
+      "crabc-mimalloc/src/process_page_map.rs"
+    ]
+  },
+  "metrics": {
+    "local_hot_path_process_scheduler_ops": {
+      "final_required": 0,
+      "unit": "process-global scheduler operations per steady-state local allocator operation",
+      "source_limit": "A selected source indicator proves the current route retains scheduler machinery, not an exact dynamic operation count."
+    },
+    "local_hot_path_global_pagemap_leases": {
+      "final_required": 0,
+      "unit": "global PageMap mutation leases per steady-state local allocator operation",
+      "source_limit": "A selected source indicator proves the current route retains the lease machinery, not an exact dynamic operation count."
+    },
+    "local_operation_owner_registry_scans": {
+      "final_required": 0,
+      "unit": "owner-registry scans per local allocator operation",
+      "source_limit": "Source matching records the registry traversal implementation; runtime tracing is required to attribute it to every local operation."
+    },
+    "local_operation_client_ledger_scans": {
+      "final_required": 0,
+      "unit": "client-ledger scans per local allocator operation",
+      "source_limit": "Source matching records the selected ledger and traversal implementation; runtime tracing is required for operation counts."
+    },
+    "remote_free_owner_registry_scans": {
+      "final_required": 0,
+      "unit": "owner-registry scans per remote free",
+      "source_limit": "Source matching records the exact-client owner traversal; runtime tracing is required for a dynamic complexity claim."
+    },
+    "extra_control_bytes_per_live_allocation": {
+      "final_required": 0,
+      "unit": "extra non-page-local control bytes per live allocation",
+      "source_limit": "Selected ledger types establish that extra control metadata remains, but only a layout/runtime probe can measure bytes per live allocation."
+    },
+    "per_call_engine_park_resume": {
+      "final_required": false,
+      "unit": "per-call engine park/resume",
+      "source_limit": "Selected suspend/resume definitions and calls are an architecture warning, not a proof that each public call exercises them."
+    },
+    "exited_owner_admission_survives_thread_exit": {
+      "final_required": false,
+      "unit": "exited-owner admission survives until a later worker completion",
+      "source_limit": "The admission-carrying route fields show the temporary representation remains selected; a lifecycle probe is required to prove final behavior."
+    },
+    "single_thread_throughput_ratio": {
+      "final_required": "promotion-qualified",
+      "unit": "native-to-pinned-C single-thread local throughput ratio",
+      "source_limit": "This is a qualified runtime measurement; selected source cannot establish a throughput ratio."
+    },
+    "four_thread_local_throughput_ratio": {
+      "final_required": "promotion-qualified",
+      "unit": "native-to-pinned-C four-thread independent-local throughput ratio",
+      "source_limit": "This is a qualified runtime measurement; selected source cannot establish a throughput ratio."
+    },
+    "cross_thread_free_throughput_ratio": {
+      "final_required": "promotion-qualified",
+      "unit": "native-to-pinned-C cross-thread-free throughput ratio",
+      "source_limit": "This is a qualified runtime measurement; selected source cannot establish a throughput ratio."
+    },
+    "metadata_plateau_after_warmup": {
+      "final_required": true,
+      "unit": "metadata high-water plateaus after warmup",
+      "source_limit": "This is a runtime high-water observation; selected source cannot establish a plateau."
+    }
+  },
+  "forbidden_scaffolding": {
+    "patterns": {
+      "prepared_owner_exit_clients": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+PreparedOwnerExitClients\\b"
+      },
+      "live_remote_owner_registry": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+NativeLiveRemoteOwnerRegistry\\b"
+      },
+      "post_exit_route_registry": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+NativePostExitRouteRegistry\\b"
+      },
+      "process_global_page_owner_scheduler": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bpage_owner_state\\s*:\\s*AtomicUsize\\b"
+      },
+      "per_call_parked_engine": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+RuntimeParkedPersistentPageEngine\\b"
+      },
+      "exited_owner_admission_claim": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\bstruct\\s+LaterThreadAdmissionClaim\\b"
+      },
+      "geometry_shaped_post_exit_route": {
+        "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+        "pattern": "\\benum\\s+NativePostExitFreeRoute\\b"
+      }
+    }
+  },
+  "contracts": {
+    "upstream_inventory": "compat/allocator/upstream-tests-v3.5.0.json",
+    "native_shadow_stress": "compat/allocator/native-shadow-stress-v3.5.0.json"
+  },
+  "ratchet_baseline": {
+    "static_signal_ceiling": {
+      "local_hot_path_process_scheduler_ops": 10,
+      "local_hot_path_global_pagemap_leases": 3,
+      "local_operation_owner_registry_scans": 14,
+      "local_operation_client_ledger_scans": 9,
+      "remote_free_owner_registry_scans": 16,
+      "extra_control_bytes_per_live_allocation": 2,
+      "per_call_engine_park_resume": 19,
+      "exited_owner_admission_survives_thread_exit": 9,
+      "single_thread_throughput_ratio": 0,
+      "four_thread_local_throughput_ratio": 0,
+      "cross_thread_free_throughput_ratio": 0,
+      "metadata_plateau_after_warmup": 0
+    }
+  }
+}
