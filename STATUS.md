@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has nine private static artifacts inside still-planned
+The x86 lane now has ten private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -80,9 +80,27 @@ fixture proves held-lock `EBUSY`, caller-`errno` preservation, and mutual
 exclusion across six bounded two-worker rounds. Non-null attributes or a
 nonzero type word return `ENOTSUP` rather than selecting another mutex type.
 It excludes mutex attributes, recursive/error-checking/robust/PI/
-process-shared/timed mutexes, C11 mutexes, condition variables, cancellation,
+process-shared/timed mutexes, C11 mutexes, C11 and general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
-full pthread/TLS or x86-64 parity, and public x86 support. The CRT-composition artifact,
+full pthread/TLS or x86-64 parity, and public x86 support. The separate
+`./scripts/dev-x86_64.sh libc-pthread-cond-private` artifact is a tenth
+private static `verified_artifact` in that same still-planned
+`libc.pthread-tls` family. It admits only a 48-byte, eight-byte-aligned
+all-zero or `pthread_cond_init(..., NULL)` process-private condition record,
+paired only with the selected all-zero or NULL-initialized normal mutex. Its
+pinned-musl/reference and true static-candidate routes preserve the private
+stack waiter/list/barrier/requeue protocol and use
+`FUTEX_WAIT_PRIVATE`/`FUTEX_WAKE_PRIVATE`/`FUTEX_REQUEUE_PRIVATE` for the
+selected handoff. They prove static and NULL initialization, one deterministic
+signal, a two-waiter broadcast, four bounded 64-handoff ping-pong rounds,
+caller-`errno` preservation, and quiescent destruction. Candidate-only
+evidence requires every non-NULL condition attribute to return `ENOTSUP`;
+that rejection is a selected-boundary diagnostic, not a musl-parity claim.
+Condition attributes, process-shared or timed waits, cancellation, C11 or
+general condition behavior, non-selected mutex kinds, destruction with live
+waiters, dynamic/loader TLS, CRT/sysroot integration, general pthread
+synchronization, full pthread/TLS or x86-64 parity, promotion, and public x86
+support remain excluded. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls

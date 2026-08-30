@@ -4442,6 +4442,224 @@ def require_static_pthread_normal_mutex_artifact(family: Mapping[str, Any]) -> N
     )
 
 
+def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one private waiter/barrier/requeue block without promotion.
+
+    This artifact is intentionally a selected static C boundary, not a claim
+    that the pthread family, its condition attributes, or the C11 condition
+    surface is complete.  Keep the exact public records, sibling normal mutex,
+    raw futex ABI, and candidate-only attribute rejection durable here.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-cond-private"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-cond-private artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-cond-private must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "`pthread_cond_init`/`pthread_cond_destroy`/`pthread_cond_wait`/`pthread_cond_signal`/`pthread_cond_broadcast`",
+        "all-zero 48-byte aligned public `pthread_cond_t`",
+        "`PTHREAD_MUTEX_NORMAL` 40-byte record",
+        "private stack waiter/list/barrier/notify protocol",
+        "FIFO requeue handoff",
+        "four bounded 64-handoff ping-pong rounds",
+        "candidate-only `ENOTSUP` rejection",
+        "condition attributes",
+        "process-shared state",
+        "timed waits",
+        "cancellation",
+        "C11 conditions",
+        "thread.pthread-c11",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-cond-private description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/atomic.rs",
+        "libc/src/c_abi/x86_64/pthread_mutex.rs",
+        "libc/src/c_abi/x86_64/pthread_cond.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/run_types_header_abi.sh",
+        "compat/x86_64/run_libc_pthread_create_join_tls.sh",
+        "compat/x86_64/run_libc_c11_lifecycle.sh",
+        "compat/x86_64/run_libc_thrd_sleep.sh",
+        "compat/x86_64/run_libc_pthread_mutex_normal.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_cond_private_probe.c",
+        "compat/x86_64/libc_pthread_cond_private_start.S",
+        "compat/x86_64/run_libc_pthread_cond_private.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "static-c-pthread-cond-private source owners",
+            )
+        )
+        == expected_sources,
+        "static-c-pthread-cond-private source owners drifted",
+    )
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "pthread_cond_init.c",
+        "pthread_cond_destroy.c",
+        "pthread_cond_wait.c",
+        "pthread_cond_timedwait.c",
+        "pthread_cond_signal.c",
+        "pthread_cond_broadcast.c",
+        "__wait.c",
+        "48 bytes",
+        "8-byte alignment",
+        "offsets 8/40",
+        "offset 32",
+        "40 bytes",
+        "offsets 0/4/8",
+        "EBUSY=16",
+        "EBUSY|INT_MIN",
+        "futex=202",
+        "FUTEX_WAIT_PRIVATE=128",
+        "FUTEX_WAKE_PRIVATE=129",
+        "FUTEX_REQUEUE_PRIVATE=131",
+        "r10",
+        "r8",
+        "EINTR",
+        "without mutating C errno",
+        "dynamic TLS",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-cond-private ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "pthread.h",
+        "errno.h",
+        "bits/alltypes.h",
+        "bits/syscall.h",
+        "48 bytes",
+        "8-byte alignment",
+        "40 bytes",
+        "pthread_cond_init/pthread_cond_destroy/pthread_cond_wait/pthread_cond_signal/pthread_cond_broadcast",
+        "28-context C/C++",
+        "unmangled C-linkage",
+        "not claim a broad installed header or pthread/C11 implementation",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-pthread-cond-private header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-cond-private"},
+        "static-c-pthread-cond-private must use the closed libc-pthread-cond-private command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "static/all-zero and NULL-attribute initialization",
+        "candidate-only non-NULL attribute ENOTSUP rejection",
+        "stale errno preservation",
+        "no-waiter signal",
+        "one-waiter signal",
+        "two-waiter broadcast",
+        "quiescent destruction",
+        "four bounded 64-handoff ping-pong rounds",
+        "private waiter/barrier/requeue handoff",
+        "futex=202",
+        "FUTEX_WAIT_PRIVATE=128",
+        "FUTEX_WAKE_PRIVATE=129",
+        "FUTEX_REQUEUE_PRIVATE=131",
+        "x86 r10/r8 requeue route",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "process-shared/timed/cancellation/C11 condition behavior",
+        "general pthread synchronization",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-cond-private evidence scope omits {phrase}",
+        )
+
+    static_exports = {
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    selected_condition_exports = {
+        "pthread_cond_init",
+        "pthread_cond_destroy",
+        "pthread_cond_wait",
+        "pthread_cond_signal",
+        "pthread_cond_broadcast",
+    }
+    require(
+        {symbol for symbol in static_exports if symbol.startswith("pthread_cond")}
+        == selected_condition_exports,
+        "static-c-pthread-cond-private must expose exactly its five selected condition symbols",
+    )
+    require(
+        "run_libc_pthread_cond_private.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-pthread-cond-private dispatcher binding is missing",
+    )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -6495,6 +6713,7 @@ def validate_ledger(
     require_static_pthread_c11_detach_artifact(by_id["libc.pthread-tls"])
     require_static_thrd_sleep_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_normal_mutex_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_private_cond_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

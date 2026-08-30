@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 48)
+        self.assertEqual(report["verified_artifact_count"], 49)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4316,7 +4316,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 9)
+        self.assertEqual(len(artifacts), 10)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4330,6 +4330,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-c11-detach",
                 "static-c-thrd-sleep",
                 "static-c-pthread-normal-mutex",
+                "static-c-pthread-cond-private",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4341,6 +4342,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         detach = by_id["static-c-pthread-c11-detach"]
         thrd_sleep = by_id["static-c-thrd-sleep"]
         normal_mutex = by_id["static-c-pthread-normal-mutex"]
+        private_condition = by_id["static-c-pthread-cond-private"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4711,6 +4713,106 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, normal_mutex_scope)
+        self.assertEqual(
+            private_condition["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-cond-private",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "`pthread_cond_init`/`pthread_cond_destroy`/`pthread_cond_wait`/`pthread_cond_signal`/`pthread_cond_broadcast`",
+            "all-zero 48-byte aligned public `pthread_cond_t`",
+            "`PTHREAD_MUTEX_NORMAL` 40-byte record",
+            "private stack waiter/list/barrier/notify protocol",
+            "FIFO requeue handoff",
+            "four bounded 64-handoff ping-pong rounds",
+            "candidate-only `ENOTSUP` rejection",
+            "C11 conditions",
+            "thread.pthread-c11",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, private_condition["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/atomic.rs",
+            "libc/src/c_abi/x86_64/pthread_mutex.rs",
+            "libc/src/c_abi/x86_64/pthread_cond.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "include/pthread.h",
+            "compat/x86_64/libc_pthread_cond_private_probe.c",
+            "compat/x86_64/libc_pthread_cond_private_start.S",
+            "compat/x86_64/run_libc_pthread_cond_private.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/run_types_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, private_condition["source_owners"])
+        private_condition_abi = " ".join(private_condition["x86_abi_prerequisites"])
+        for phrase in (
+            "pthread_cond_init.c",
+            "pthread_cond_destroy.c",
+            "pthread_cond_wait.c",
+            "pthread_cond_timedwait.c",
+            "pthread_cond_signal.c",
+            "pthread_cond_broadcast.c",
+            "__wait.c",
+            "48 bytes",
+            "8-byte alignment",
+            "offsets 8/40",
+            "offset 32",
+            "40 bytes",
+            "offsets 0/4/8",
+            "futex=202",
+            "FUTEX_WAIT_PRIVATE=128",
+            "FUTEX_WAKE_PRIVATE=129",
+            "FUTEX_REQUEUE_PRIVATE=131",
+            "r10",
+            "r8",
+            "EINTR",
+            "without mutating C errno",
+            "dynamic TLS",
+        ):
+            self.assertIn(phrase, private_condition_abi)
+        private_condition_headers = " ".join(
+            private_condition["x86_header_prerequisites"]
+        )
+        for phrase in (
+            "pthread.h",
+            "errno.h",
+            "bits/alltypes.h",
+            "bits/syscall.h",
+            "48 bytes",
+            "8-byte alignment",
+            "40 bytes",
+            "pthread_cond_init/pthread_cond_destroy/pthread_cond_wait/pthread_cond_signal/pthread_cond_broadcast",
+            "28-context C/C++",
+            "unmangled C-linkage",
+            "not claim a broad installed header or pthread/C11 implementation",
+        ):
+            self.assertIn(phrase, private_condition_headers)
+        private_condition_scope = private_condition["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "static/all-zero and NULL-attribute initialization",
+            "candidate-only non-NULL attribute ENOTSUP rejection",
+            "stale errno preservation",
+            "no-waiter signal",
+            "one-waiter signal",
+            "two-waiter broadcast",
+            "quiescent destruction",
+            "four bounded 64-handoff ping-pong rounds",
+            "private waiter/barrier/requeue handoff",
+            "futex=202",
+            "FUTEX_WAIT_PRIVATE=128",
+            "FUTEX_WAKE_PRIVATE=129",
+            "FUTEX_REQUEUE_PRIVATE=131",
+            "x86 r10/r8 requeue route",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "process-shared/timed/cancellation/C11 condition behavior",
+            "general pthread synchronization",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, private_condition_scope)
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -4888,6 +4990,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-normal-mutex must use the closed libc-pthread-mutex-normal command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_private_condition = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-cond-private"
+        )
+        changed_private_condition["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-cond-private must use the closed libc-pthread-cond-private command",
         ):
             ledger.validate_ledger(changed)
 

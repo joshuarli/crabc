@@ -336,6 +336,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-detach
 ./scripts/dev-x86_64.sh libc-thrd-sleep
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
+./scripts/dev-x86_64.sh libc-pthread-cond-private
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1885,9 +1886,28 @@ six bounded two-worker rounds. The fixture proves held-lock `EBUSY`, mutual
 exclusion, and caller-`errno` preservation. Non-null attributes or a nonzero
 type word return `ENOTSUP` rather than being interpreted as another mutex
 type. It does not select mutex attributes, recursive/error-checking/robust/PI/
-process-shared/timed mutexes, C11 mutexes, condition variables, cancellation,
+process-shared/timed mutexes, C11 mutexes, C11 and general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, or public x86 support.
+
+`libc-pthread-cond-private` is a tenth separately recorded private static
+`verified_artifact` under that same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only a 48-byte, eight-byte-aligned
+all-zero or `pthread_cond_init(..., NULL)` process-private `pthread_cond_t`,
+paired only with the selected all-zero or NULL-initialized
+`PTHREAD_MUTEX_NORMAL` object. The candidate preserves musl's private stack
+waiter/list/barrier/requeue protocol with `FUTEX_WAIT_PRIVATE`,
+`FUTEX_WAKE_PRIVATE`, and `FUTEX_REQUEUE_PRIVATE`. The fixture proves static
+and NULL initialization, one deterministic signal, a two-waiter broadcast,
+four bounded 64-handoff ping-pong rounds, caller-`errno` preservation, and
+quiescent destruction. Candidate-only evidence requires every non-NULL
+condition attribute to return `ENOTSUP`; it is a fail-closed selected-boundary
+diagnostic, not a musl-parity claim. It does not select condition attributes,
+process-shared or timed waits, cancellation, C11 or general condition
+behavior, non-selected mutex kinds, destruction with live waiters,
+dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
+full pthread/TLS or x86-64 parity, promotion, or public x86 support.
 
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
@@ -2355,7 +2375,8 @@ the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, or `libc-pthread-mutex-normal`: their start shims
+`libc-pthread-detach`, `libc-pthread-mutex-normal`, or
+`libc-pthread-cond-private`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. `libc-thrd-sleep` deliberately
 retains the fixture-local errno/TLS setup because it proves that its adapter
@@ -2667,6 +2688,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,
+`libc-pthread-cond-private`,
 `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,

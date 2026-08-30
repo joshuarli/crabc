@@ -162,6 +162,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
     Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_mutex.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_cond.rs"),
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
@@ -3541,6 +3542,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_identity.rs"]',
         '#[path = "pthread_create_join.rs"]',
         '#[path = "pthread_mutex.rs"]',
+        '#[path = "pthread_cond.rs"]',
         '#[path = "c11_thread_lifecycle.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
@@ -4432,16 +4434,16 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "x86_64_swap_acqrel_i32",
         "x86_64_fetch_add_acqrel_i32",
         "x86_64_fetch_sub_acqrel_i32",
-        "normal-mutex artifact",
+        "private normal-mutex and its private condition-variable handoff artifacts",
     ):
         if required not in atomic_text:
             errors.append(
-                "libc/src/c_abi/x86_64/atomic.rs: selected static normal-mutex "
+                "libc/src/c_abi/x86_64/atomic.rs: selected static mutex/condition "
                 f"helper is missing {required!r}"
             )
     if "#[no_mangle]" in atomic_text:
         errors.append(
-            "libc/src/c_abi/x86_64/atomic.rs: normal-mutex atomic helpers must "
+            "libc/src/c_abi/x86_64/atomic.rs: mutex/condition atomic helpers must "
             "remain private Rust helpers rather than public C exports"
         )
 
@@ -4518,6 +4520,96 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_mutex.rs: selected private normal "
                 f"mutex leaf must not select {forbidden!r}"
+            )
+
+    pthread_cond_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_cond.rs"
+    )
+    pthread_cond_text = pthread_cond_source.read_text(errors="replace")
+    for required in (
+        "1.2.6 release commit",
+        "src/thread/pthread_cond_init.c::pthread_cond_init",
+        "src/thread/pthread_cond_destroy.c::pthread_cond_destroy",
+        "src/thread/pthread_cond_wait.c::pthread_cond_wait",
+        "src/thread/pthread_cond_timedwait.c::__pthread_cond_timedwait",
+        "src/thread/pthread_cond_signal.c::pthread_cond_signal",
+        "src/thread/pthread_cond_broadcast.c::pthread_cond_broadcast",
+        "src/thread/pthread_cond_timedwait.c::__private_cond_signal",
+        "src/thread/__wait.c::__wait",
+        "src/thread/pthread_cond_timedwait.c::{lock,unlock,unlock_requeue}",
+        "process-private condition-variable handoff",
+        "struct PublicPthreadCond",
+        "#[repr(C, align(8))]",
+        "COND_WORD_COUNT: usize = 12",
+        "COND_LOCK_WORD: usize = 8",
+        "size_of::<PublicPthreadCond>() == 48",
+        "align_of::<PublicPthreadCond>() == 8",
+        "cond_head_slot",
+        "cond_tail_slot",
+        "struct Waiter",
+        "barrier: c_int",
+        "notify: *mut c_int",
+        "let mut node = Waiter {",
+        "WAITER_LEAVING: c_int = 2",
+        "private_cond_signal",
+        "private_unlock_requeue",
+        "const FUTEX_WAIT: i64 = 0;",
+        "const FUTEX_WAKE: i64 = 1;",
+        "const FUTEX_REQUEUE: i64 = 3;",
+        "const FUTEX_PRIVATE_FLAG: i64 = 128;",
+        "const FUTEX_WAIT_PRIVATE: i64 = FUTEX_WAIT | FUTEX_PRIVATE_FLAG;",
+        "const FUTEX_WAKE_PRIVATE: i64 = FUTEX_WAKE | FUTEX_PRIVATE_FLAG;",
+        "const FUTEX_REQUEUE_PRIVATE: i64 = FUTEX_REQUEUE | FUTEX_PRIVATE_FLAG;",
+        "raw_syscall::SYS_FUTEX",
+        "raw_syscall::syscall4(",
+        "raw_syscall::syscall5(",
+        "val2=1` in r10",
+        "mutex_lock` in r8",
+        "pthread_mutex::selected_normal_mutex_words",
+        "pthread_mutex::unlock_selected_normal_mutex",
+        "pthread_mutex::lock_selected_normal_mutex",
+        "public x86 support",
+    ):
+        if required not in pthread_cond_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_cond.rs: selected private condition "
+                f"leaf is missing {required!r}"
+            )
+    pthread_cond_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_cond_text,
+        )
+    )
+    expected_pthread_cond_exports = {
+        "pthread_cond_init",
+        "pthread_cond_destroy",
+        "pthread_cond_wait",
+        "pthread_cond_signal",
+        "pthread_cond_broadcast",
+    }
+    if pthread_cond_exports != expected_pthread_cond_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_cond.rs: selected private condition "
+            "leaf must export only init, destroy, wait, signal, and broadcast"
+        )
+    for forbidden in (
+        'pub unsafe extern "C" fn pthread_cond_timedwait',
+        'pub unsafe extern "C" fn pthread_condattr_',
+        'pub unsafe extern "C" fn cnd_',
+        'pub unsafe extern "C" fn mtx_',
+        'pub unsafe extern "C" fn pthread_mutexattr_',
+        'pub unsafe extern "C" fn pthread_rwlock_',
+        'pub unsafe extern "C" fn pthread_once',
+        "__tls_get_addr",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in pthread_cond_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_cond.rs: selected private condition "
+                f"leaf must not select {forbidden!r}"
             )
 
     termios_control_source = (
@@ -5991,6 +6083,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_identity_text,
         pthread_create_join_text,
         pthread_mutex_text,
+        pthread_cond_text,
         c11_thread_lifecycle_text,
         termios_control_text,
         process_context_text,
@@ -6142,6 +6235,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_mutex_lock",
         "pthread_mutex_trylock",
         "pthread_mutex_unlock",
+        "pthread_cond_broadcast",
+        "pthread_cond_destroy",
+        "pthread_cond_init",
+        "pthread_cond_signal",
+        "pthread_cond_wait",
         "thrd_create",
         "thrd_detach",
         "thrd_exit",
@@ -6324,7 +6422,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes and their musl private condition-variable handoff, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -6349,6 +6447,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_identity.rs", pthread_identity_text),
         ("pthread_create_join.rs", pthread_create_join_text),
         ("pthread_mutex.rs", pthread_mutex_text),
+        ("pthread_cond.rs", pthread_cond_text),
         ("c11_thread_lifecycle.rs", c11_thread_lifecycle_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),

@@ -116,15 +116,19 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
     || fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" \
     || fail "archive Static Initial TLS v1 bootstrap is not hidden"
- # The shared static archive also contains the separately evidenced private
- # normal-mutex block. This create/join fixture does not exercise it; retain
- # the narrower rejection for every still-unselected pthread synchronization
- # surface instead of treating a sibling artifact as an accidental export.
+ # The shared static archive also contains separately evidenced private
+ # normal-mutex and private-condition blocks. This create/join fixture does
+ # not exercise either one; retain the narrower rejection for every still
+ # unselected pthread synchronization surface instead of treating siblings as
+ # accidental exports.
 for unselected in clone __clone \
     pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     pthread_key_create pthread_setspecific pthread_getspecific \
     pthread_mutexattr_init pthread_mutexattr_destroy pthread_mutexattr_settype \
-    pthread_mutex_timedlock pthread_mutex_consistent pthread_cond_init pthread_cond_wait \
+    pthread_mutex_timedlock pthread_mutex_consistent \
+    pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
+    pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \
+    pthread_cond_timedwait \
     pthread_sigmask \
     malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

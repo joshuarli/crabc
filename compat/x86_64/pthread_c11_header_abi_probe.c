@@ -143,6 +143,12 @@ typedef int (*crabc_pthread_mutex_destroy_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_mutex_lock_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_mutex_trylock_signature)(pthread_mutex_t *);
 typedef int (*crabc_pthread_mutex_unlock_signature)(pthread_mutex_t *);
+typedef int (*crabc_pthread_cond_init_signature)(
+	pthread_cond_t *, const pthread_condattr_t *);
+typedef int (*crabc_pthread_cond_destroy_signature)(pthread_cond_t *);
+typedef int (*crabc_pthread_cond_wait_signature)(pthread_cond_t *, pthread_mutex_t *);
+typedef int (*crabc_pthread_cond_signal_signature)(pthread_cond_t *);
+typedef int (*crabc_pthread_cond_broadcast_signature)(pthread_cond_t *);
 typedef int (*crabc_thrd_create_signature)(thrd_t *, thrd_start_t, void *);
 typedef int (*crabc_thrd_detach_signature)(thrd_t);
 typedef int (*crabc_thrd_join_signature)(thrd_t, int *);
@@ -174,6 +180,16 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_trylock),
 	crabc_pthread_mutex_trylock_signature), "pthread_mutex_trylock signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_unlock),
 	crabc_pthread_mutex_unlock_signature), "pthread_mutex_unlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_init),
+	crabc_pthread_cond_init_signature), "pthread_cond_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_destroy),
+	crabc_pthread_cond_destroy_signature), "pthread_cond_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_wait),
+	crabc_pthread_cond_wait_signature), "pthread_cond_wait signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_signal),
+	crabc_pthread_cond_signal_signature), "pthread_cond_signal signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_broadcast),
+	crabc_pthread_cond_broadcast_signature), "pthread_cond_broadcast signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_sigmask),
 	crabc_pthread_sigmask_signature), "pthread_sigmask signature");

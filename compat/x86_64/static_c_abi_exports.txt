@@ -175,6 +175,11 @@ ppoll
 pread
 prlimit
 pselect
+pthread_cond_broadcast
+pthread_cond_destroy
+pthread_cond_init
+pthread_cond_signal
+pthread_cond_wait
 pthread_create
 pthread_detach
 pthread_equal

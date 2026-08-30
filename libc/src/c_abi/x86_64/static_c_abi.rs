@@ -8,7 +8,8 @@
 //! and bounded process-signal execution, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
-//! process-private normal `pthread_mutex_*` block, all backed by the private
+//! process-private normal `pthread_mutex_*` block and its paired private
+//! process-private condition-variable handoff, all backed by the private
 //! Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
@@ -33,7 +34,10 @@
 //! use their selected explicit-exit path, plus prompt detach with later
 //! clear-child-tid reaping and opaque current/equality identity. The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
-//! and private futex contention; it is not C11 synchronization. The C11
+//! and private futex contention. Its condition sibling retains musl's private
+//! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
+//! process-private conditions paired with those normal mutexes; it is not C11
+//! synchronization. The C11
 //! lifecycle/sleep sibling likewise remains a static-only typed worker and
 //! direct non-cancellation realtime-sleep slice;
 //! neither is a claim for broader pthread/C11 header support.
@@ -101,6 +105,8 @@ mod pthread_identity;
 mod pthread_create_join;
 #[path = "pthread_mutex.rs"]
 mod pthread_mutex;
+#[path = "pthread_cond.rs"]
+mod pthread_cond;
 #[path = "c11_thread_lifecycle.rs"]
 mod c11_thread_lifecycle;
 #[path = "termios_control.rs"]

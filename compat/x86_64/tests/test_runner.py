@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-thrd-sleep|libc-pthread-mutex-normal|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -100,6 +100,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-detach", source)
         self.assertIn("libc-thrd-sleep", source)
         self.assertIn("libc-pthread-mutex-normal", source)
+        self.assertIn("libc-pthread-cond-private", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -2969,7 +2970,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, static_export_names)
         for forbidden in (
             "pthread_cancel",
-            "pthread_cond_init",
         ):
             self.assertNotIn(forbidden, static_export_names)
         self.assertIn("libc-pthread-create-join-tls", runner)
@@ -3496,7 +3496,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "x86_64_swap_acqrel_i32",
             "x86_64_fetch_add_acqrel_i32",
             "x86_64_fetch_sub_acqrel_i32",
-            "normal-mutex artifact",
+            "private normal-mutex and its private condition-variable handoff artifacts",
         ):
             self.assertIn(required, atomic)
         self.assertNotIn("#[no_mangle]", atomic)
@@ -3612,7 +3612,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FUTEX_WAKE_PRIVATE",
             "atomic exchange release",
             "pthread_mutexattr_init",
-            "pthread_cond_init",
+            "pthread_cond_timedwait",
             "pthread_rwlock_init",
             "pthread_once",
             "__tls_get_addr",
@@ -3633,7 +3633,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {
                 "pthread_mutexattr_init",
                 "pthread_mutex_timedlock",
-                "pthread_cond_init",
+                "pthread_condattr_init",
+                "pthread_cond_timedwait",
                 "pthread_rwlock_init",
                 "pthread_once",
                 "mtx_init",
@@ -3664,6 +3665,250 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pthread-mutex-normal)\n        [ "$#" -eq 0 ] || fail "libc-pthread-mutex-normal takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_private_condition_artifact_stays_bounded(
+        self,
+    ) -> None:
+        """Keep the selected waiter/barrier/requeue handoff private and exact."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        raw_syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        pthread_mutex = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_mutex.rs"
+        ).read_text(encoding="utf-8")
+        pthread_cond = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_cond.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_cond_private_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_cond_private_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_cond_private.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing private condition artifact input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_mutex.rs"]', static_root)
+        self.assertIn('#[path = "pthread_cond.rs"]', static_root)
+        for required in (
+            "1.2.6 release commit",
+            "src/thread/pthread_cond_init.c::pthread_cond_init",
+            "src/thread/pthread_cond_destroy.c::pthread_cond_destroy",
+            "src/thread/pthread_cond_wait.c::pthread_cond_wait",
+            "src/thread/pthread_cond_timedwait.c::__pthread_cond_timedwait",
+            "src/thread/pthread_cond_signal.c::pthread_cond_signal",
+            "src/thread/pthread_cond_broadcast.c::pthread_cond_broadcast",
+            "src/thread/pthread_cond_timedwait.c::__private_cond_signal",
+            "src/thread/__wait.c::__wait",
+            "src/thread/pthread_cond_timedwait.c::{lock,unlock,unlock_requeue}",
+            "process-private condition-variable handoff",
+            "struct PublicPthreadCond",
+            "#[repr(C, align(8))]",
+            "COND_WORD_COUNT: usize = 12",
+            "COND_LOCK_WORD: usize = 8",
+            "size_of::<PublicPthreadCond>() == 48",
+            "align_of::<PublicPthreadCond>() == 8",
+            "cond_head_slot",
+            "cond_tail_slot",
+            "struct Waiter",
+            "barrier: c_int",
+            "notify: *mut c_int",
+            "let mut node = Waiter {",
+            "WAITER_LEAVING: c_int = 2",
+            "private_cond_signal",
+            "private_unlock_requeue",
+            "const FUTEX_WAIT: i64 = 0;",
+            "const FUTEX_WAKE: i64 = 1;",
+            "const FUTEX_REQUEUE: i64 = 3;",
+            "const FUTEX_PRIVATE_FLAG: i64 = 128;",
+            "const FUTEX_WAIT_PRIVATE: i64 = FUTEX_WAIT | FUTEX_PRIVATE_FLAG;",
+            "const FUTEX_WAKE_PRIVATE: i64 = FUTEX_WAKE | FUTEX_PRIVATE_FLAG;",
+            "const FUTEX_REQUEUE_PRIVATE: i64 = FUTEX_REQUEUE | FUTEX_PRIVATE_FLAG;",
+            "raw_syscall::SYS_FUTEX",
+            "raw_syscall::syscall4(",
+            "raw_syscall::syscall5(",
+            "val2=1` in r10",
+            "mutex_lock` in r8",
+            "pthread_mutex::selected_normal_mutex_words",
+            "pthread_mutex::unlock_selected_normal_mutex",
+            "pthread_mutex::lock_selected_normal_mutex",
+            "never writes C errno",
+            "public x86 support",
+        ):
+            self.assertIn(required, pthread_cond)
+        condition_exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                pthread_cond,
+            )
+        )
+        self.assertSetEqual(
+            condition_exports,
+            {
+                "pthread_cond_init",
+                "pthread_cond_destroy",
+                "pthread_cond_wait",
+                "pthread_cond_signal",
+                "pthread_cond_broadcast",
+            },
+        )
+        for forbidden in (
+            'pub unsafe extern "C" fn pthread_cond_timedwait',
+            'pub unsafe extern "C" fn pthread_condattr_',
+            'pub unsafe extern "C" fn cnd_',
+            'pub unsafe extern "C" fn mtx_',
+            'pub unsafe extern "C" fn pthread_mutexattr_',
+            'pub unsafe extern "C" fn pthread_rwlock_',
+            'pub unsafe extern "C" fn pthread_once',
+            "__tls_get_addr",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, pthread_cond)
+
+        for required in (
+            "pub(super) unsafe fn selected_normal_mutex_words",
+            "pub(super) unsafe fn lock_selected_normal_mutex",
+            "pub(super) unsafe fn unlock_selected_normal_mutex",
+        ):
+            self.assertIn(required, pthread_mutex)
+        syscall5 = raw_syscall.split("pub(crate) unsafe fn syscall5(", 1)[1].split(
+            "/// Issue a six-argument raw Linux/x86-64 syscall.", 1
+        )[0]
+        self.assertIn('in("r10") a4', syscall5)
+        self.assertIn('in("r8") a5', syscall5)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "sizeof(pthread_cond_t) == 48",
+            "PTHREAD_COND_INITIALIZER",
+            "PTHREAD_MUTEX_INITIALIZER",
+            "BROADCAST_WAITER_COUNT = 2",
+            "PING_PONG_HANDOFFS = 64",
+            "PING_PONG_ROUNDS = 4",
+            "run_static_initializer_round",
+            "run_initialized_waiter_round",
+            "run_no_waiter_signal_round",
+            "run_candidate_only_attribute_rejection",
+            "run_ping_pong_round",
+            "pthread_cond_wait",
+            "pthread_cond_signal",
+            "pthread_cond_broadcast",
+            "errno != E2BIG",
+            "CRABC_PTHREAD_COND_PRIVATE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("#include <threads.h>", probe)
+
+        for required in (
+            ".globl _start",
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_cond_private_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_types_header_abi.sh",
+            "run_pthread_c11_header_abi.sh",
+            "assert_private_futex_path",
+            "-nostdlib -static",
+            "-DCRABC_PTHREAD_COND_PRIVATE_FREESTANDING",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "timeout \"$EXECUTION_TIMEOUT\"",
+            "FUTEX_WAIT_PRIVATE",
+            "FUTEX_WAKE_PRIVATE",
+            "FUTEX_REQUEUE_PRIVATE",
+            "requeue val2=1 in x86 r10",
+            "uaddr2 handoff through x86 r8",
+            "assert_private_futex_path pthread_cond_wait wait",
+            "assert_private_futex_path pthread_cond_wait requeue",
+            "assert_private_futex_path pthread_cond_signal wake",
+            "assert_private_futex_path pthread_cond_broadcast wake",
+            "pthread_condattr_init",
+            "pthread_cond_timedwait",
+            "cnd_init",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertTrue(
+            {
+                "pthread_cond_init",
+                "pthread_cond_destroy",
+                "pthread_cond_wait",
+                "pthread_cond_signal",
+                "pthread_cond_broadcast",
+            }
+            <= static_exports
+        )
+        self.assertTrue(
+            {
+                "pthread_condattr_init",
+                "pthread_condattr_destroy",
+                "pthread_cond_timedwait",
+                "cnd_init",
+                "cnd_destroy",
+                "cnd_wait",
+                "cnd_signal",
+                "cnd_broadcast",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_cond_init_signature",
+                "crabc_pthread_cond_destroy_signature",
+                "crabc_pthread_cond_wait_signature",
+                "crabc_pthread_cond_signal_signature",
+                "crabc_pthread_cond_broadcast_signature",
+                "pthread_cond_init signature",
+                "pthread_cond_destroy signature",
+                "pthread_cond_wait signature",
+                "pthread_cond_signal signature",
+                "pthread_cond_broadcast signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("run_libc_pthread_cond_private_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_cond_private.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-cond-private)\n        [ "$#" -eq 0 ] || fail "libc-pthread-cond-private takes no arguments"',
             runner,
         )
 
