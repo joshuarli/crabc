@@ -13798,6 +13798,156 @@ def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_descriptor_pipeline_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the inter-module pipe composition evidence private and closed."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-descriptor-pipeline"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-descriptor-pipeline artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-descriptor-pipeline must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "descriptor-pipeline composition",
+        "`pipe2`",
+        "`fcntl`",
+        "`poll`",
+        "`readv`/`writev`",
+        "nonblocking CLOEXEC pipe lifecycle",
+        "adds no C API",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-descriptor-pipeline description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-descriptor-pipeline.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/descriptor_io.rs",
+        "libc/src/c_abi/x86_64/descriptor_control.rs",
+        "libc/src/c_abi/x86_64/readiness_waits.rs",
+        "libc/src/c_abi/x86_64/vector_io.rs",
+        "compat/x86_64/run_fcntl_header_abi.sh",
+        "compat/x86_64/run_poll_header_abi.sh",
+        "compat/x86_64/run_vector_io_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_descriptor_pipeline_probe.c",
+        "compat/x86_64/libc_descriptor_pipeline_start.S",
+        "compat/x86_64/run_libc_descriptor_pipeline.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-descriptor-pipeline source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-descriptor-pipeline.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "pipe2=293" in item
+            and "fcntl=72" in item
+            and "poll=7" in item
+            and "readv=19" in item
+            and "writev=20" in item
+            and "dup=32" in item
+            and "close=3" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-pipeline must record its selected syscall ABI",
+    )
+    require(
+        any(
+            "O_NONBLOCK=0x800" in item
+            and "O_CLOEXEC=0x80000" in item
+            and "FD_CLOEXEC=1" in item
+            and "POLLIN/POLLHUP/POLLNVAL" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-pipeline must record descriptor and readiness state",
+    )
+    require(
+        any(
+            "pthread cancellation-point" in item
+            and "no blocking transfer or cancellation point" in item
+            for item in prerequisites
+        ),
+        "static-c-descriptor-pipeline must retain its no-cancellation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-descriptor-pipeline.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "fcntl, poll, and sys/uio C/C++ matrices" in item
+            and "does not close a header family" in item
+            for item in headers
+        ),
+        "static-c-descriptor-pipeline must retain its existing header-boundary proof",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in ("pipe2", "fcntl", "poll", "readv", "writev", "dup", "close"):
+        require(
+            symbol in static_exports,
+            f"static-c-descriptor-pipeline must retain selected export {symbol}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-descriptor-pipeline"},
+        "static-c-descriptor-pipeline must use the closed libc-descriptor-pipeline command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "`-nostdlib -static` candidate",
+                "pipe2=293",
+                "vector transfer",
+                "duplicate ownership",
+                "adds no C API",
+                "public x86 support",
+            )
+        ),
+        "static-c-descriptor-pipeline evidence must retain its bounded composition scope",
+    )
+
+
 def require_timestamp_updates_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected timestamp C ABI real, bounded, and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -15477,6 +15627,7 @@ def validate_ledger(
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
+    require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])

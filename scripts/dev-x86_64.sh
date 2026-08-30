@@ -238,6 +238,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
   libc-descriptor-entry  run the static x86 crabc-libc descriptor-entry slice
   libc-descriptor-lifecycle  run the static x86 crabc-libc descriptor lifecycle composition
+  libc-descriptor-pipeline  run the static x86 crabc-libc pipe/readiness/vector composition
   libc-timestamp-updates  run the static x86 rcrt1/libc timestamp-update block
   libc-fcntl-status-control  run the static x86 crabc-libc fcntl status-control slice
   libc-fcntl-record-locks  run the static x86 crabc-libc fcntl record-lock slice
@@ -444,7 +445,10 @@ and stat leaves through one PID-isolated relative-directory lifecycle. Its raw
 Linux calls only create and clean that temporary directory; they never replace
 candidate C calls. It does not establish descriptor/filesystem capability,
 general C runtime, cancellation, CRT, loader, sysroot, family completion, or
-public x86 support. `libc-process-resources`
+public x86 support. `libc-descriptor-pipeline` composes the already-selected
+pipe2, fcntl status/descriptor flags, poll readiness, vector transfer, dup,
+and close leaves through one nonblocking pipe lifecycle. It adds no C API or
+generic descriptor policy. `libc-process-resources`
 exercises the same archive through a freestanding project-header C fixture
 after an equivalent pinned-musl run. It selects only limits, resource usage,
 priority, and `nice`; raw child/pipe control contains mutations and a live
@@ -1229,6 +1233,12 @@ Linux calls only create and remove its PID-specific temporary directory; they
 do not stand in for candidate C calls. It is not a descriptor/filesystem
 capability, general C runtime, cancellation, CRT/TLS lifecycle, loader,
 sysroot, family completion, or public x86 support.
+`libc-descriptor-pipeline` links that archive into one separate freestanding
+project-header C composition after an equivalent pinned-musl run. It proves
+the existing `pipe2`/fcntl/poll/readv/writev/dup/close leaves cooperate through
+one nonblocking CLOEXEC pipe and initial-TLS errno owner. It neither adds APIs
+nor establishes generic descriptor policy, cancellation, CRT/TLS lifecycle,
+loader, sysroot, family completion, or public x86 support.
 `libc-process-resources` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 the named limit, usage, priority, and `nice` wrappers; raw children contain
@@ -2659,6 +2669,10 @@ run_libc_descriptor_lifecycle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_lifecycle.sh
 }
 
+run_libc_descriptor_pipeline_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_descriptor_pipeline.sh
+}
+
 run_libc_timestamp_updates_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_timestamp_updates.sh
 }
@@ -2844,7 +2858,7 @@ case "$command" in
     libc-memory-locking) ;;
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
     libc-vector-io) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3789,6 +3803,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-descriptor-lifecycle takes no arguments"
         ensure_image
         run_libc_descriptor_lifecycle_probe
+        ;;
+    libc-descriptor-pipeline)
+        [ "$#" -eq 0 ] || fail "libc-descriptor-pipeline takes no arguments"
+        ensure_image
+        run_libc_descriptor_pipeline_probe
         ;;
     libc-timestamp-updates)
         [ "$#" -eq 0 ] || fail "libc-timestamp-updates takes no arguments"

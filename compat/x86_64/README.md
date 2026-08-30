@@ -404,6 +404,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
+./scripts/dev-x86_64.sh libc-descriptor-pipeline
 ./scripts/dev-x86_64.sh libc-timestamp-updates
 ./scripts/dev-x86_64.sh libc-process-resources
 ./scripts/dev-x86_64.sh libc-readiness-waits
@@ -2739,6 +2740,18 @@ syscalls only create and remove that directory. It does not establish general
 C runtime, cancellation, CRT, loader, sysroot, family completion, AArch64
 parity, or public x86 support.
 
+`libc-descriptor-pipeline` is a separately recorded private static
+`verified_artifact` gate over the same archive, not a descriptor-readiness or
+filesystem capability. Its project-header C body first executes through
+pinned musl and then a `-nostdlib -static` candidate. It composes only already
+selected `pipe2`, public status/descriptor-flag `fcntl`, `poll`,
+`readv`/`writev`, `dup`, and `close` leaves through one nonblocking CLOEXEC
+pipe lifecycle: empty/readable/hangup transitions, vector ordering, duplicate
+read ownership after closing the original descriptor, selected flag mutation,
+and initial-TLS errno preservation. It adds no API and excludes generic
+descriptor/path policy, cancellation, AIO, CRT/TLS lifecycle, loader, sysroot,
+family completion, AArch64 parity, and public x86 support.
+
 `libc-timestamp-updates` is a separately recorded private static
 `verified_artifact` over that archive, not a filesystem or C-runtime
 capability. One project-header C body runs through pinned musl and then a real
@@ -3473,6 +3486,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pathname-lifecycle`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
+`libc-descriptor-pipeline`,
 `libc-timestamp-updates`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,

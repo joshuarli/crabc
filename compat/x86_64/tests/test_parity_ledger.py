@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 91)
+        self.assertEqual(report["verified_artifact_count"], 92)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -8568,6 +8568,57 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-descriptor-io"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-descriptor-lifecycle command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_descriptor_pipeline_artifact_keeps_its_composition_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-descriptor-pipeline"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/descriptor_io.rs",
+            "libc/src/c_abi/x86_64/descriptor_control.rs",
+            "libc/src/c_abi/x86_64/readiness_waits.rs",
+            "libc/src/c_abi/x86_64/vector_io.rs",
+            "compat/x86_64/libc_descriptor_pipeline_probe.c",
+            "compat/x86_64/libc_descriptor_pipeline_start.S",
+            "compat/x86_64/run_libc_descriptor_pipeline.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-descriptor-pipeline"},
+        )
+        self.assertIn("nonblocking CLOEXEC pipe lifecycle", artifact["description"])
+        self.assertIn("vector transfer", artifact["native_evidence"][0]["scope"])
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("pipe2=293", "pipe2=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "selected syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-descriptor-pipeline"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-descriptor-io"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-descriptor-pipeline command"
         ):
             ledger.validate_ledger(data)
 

@@ -1780,6 +1780,9 @@ source_owners = [
   "compat/x86_64/libc_descriptor_io_probe.c",
   "compat/x86_64/libc_descriptor_io_start.S",
   "compat/x86_64/run_libc_descriptor_io.sh",
+  "compat/x86_64/libc_descriptor_pipeline_probe.c",
+  "compat/x86_64/libc_descriptor_pipeline_start.S",
+  "compat/x86_64/run_libc_descriptor_pipeline.sh",
   "libc/src/c_abi/x86_64/process_resources.rs",
   "compat/x86_64/libc_process_resources_probe.c",
   "compat/x86_64/libc_process_resources_start.S",
@@ -3497,6 +3500,65 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and selected composition behavior oracle for the existing src/fcntl open/openat/creat/fcntl and src/unistd descriptor-I/O wrappers plus the selected stat compatibility boundary; cancellation, AIO, and broader descriptor policy remain deliberately unselected." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Selected open/openat/fcntl/descriptor/stat syscall registers, LP64 metadata record, descriptor/open-file-description state, relative lookup, and raw errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "Variadic C register convention, LP64 scalar/pointer ABI, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-descriptor-pipeline"
+description = "Private native x86 selected-static-archive descriptor-pipeline composition within still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves only already selected `pipe2`, public status/descriptor-flag `fcntl`, `poll`, `readv`/`writev`, `dup`, and `close` entries into one freestanding project-header C fixture after an equivalent pinned-musl execution. The fixture proves a nonblocking CLOEXEC pipe lifecycle: empty/readable/hangup readiness, vector ordering, duplicate read ownership after closing the original descriptor, selected descriptor-flag mutation, selected bad-fd/invalid-flag errors, and stale errno preservation. It adds no C API and does not establish generic descriptor readiness, filesystem or path policy, cancellation, AIO, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, AArch64 parity, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/descriptor_io.rs",
+  "libc/src/c_abi/x86_64/descriptor_control.rs",
+  "libc/src/c_abi/x86_64/readiness_waits.rs",
+  "libc/src/c_abi/x86_64/vector_io.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/bits/fcntl.h",
+  "include/poll.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/types.h",
+  "include/sys/uio.h",
+  "include/unistd.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/fcntl_header_abi_probe.c",
+  "compat/x86_64/fcntl_header_abi_probe.cpp",
+  "compat/x86_64/run_fcntl_header_abi.sh",
+  "compat/x86_64/poll_header_abi_probe.c",
+  "compat/x86_64/poll_header_abi_probe.cpp",
+  "compat/x86_64/run_poll_header_abi.sh",
+  "compat/x86_64/vector_io_header_abi_probe.c",
+  "compat/x86_64/vector_io_header_abi_probe.cpp",
+  "compat/x86_64/run_vector_io_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_descriptor_pipeline_probe.c",
+  "compat/x86_64/libc_descriptor_pipeline_start.S",
+  "compat/x86_64/run_libc_descriptor_pipeline.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 selected descriptor-pipeline syscalls are pipe2=293, fcntl=72, poll=7, readv=19, writev=20, dup=32, and close=3. pipe2 receives its int descriptor pair and flags in rdi/rsi; poll receives its eight-byte align-4 pollfd array/count/timeout in rdi/rsi/rdx; readv/writev receive descriptor/iovec/int count in rdi/rsi/rdx; fcntl's public SysV variadic dispatcher supplies rdx=0 only for F_GETFD/F_GETFL and accepts one scalar word for F_SETFD/F_SETFL",
+  "The selected public x86 records are an eight-byte align-4 pollfd and sixteen-byte align-8 iovec. The composition observes O_NONBLOCK=0x800 and O_CLOEXEC=0x80000 at pipe2 creation, FD_CLOEXEC=1 through F_GETFD/F_SETFD, and poll's POLLIN/POLLHUP/POLLNVAL readiness flags without creating a descriptor registry or lifecycle policy",
+  "The existing direct leaves intentionally omit musl pthread cancellation-point and AIO integration for pipe I/O, fcntl, poll, readv/writev, and close. This composition records only normal single-threaded direct syscall behavior; no blocking transfer or cancellation point is selected",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The existing project-first/pinned-musl fcntl, poll, and sys/uio C/C++ matrices prove the selected variadic fcntl, pipe2/dup/close, poll/pollfd, and vector-I/O declarations, x86 record layouts, feature visibility, and unmangled C++ linkage. This project-header fixture additionally compiles errno.h, fcntl.h, poll.h, stddef.h, stdint.h, sys/types.h, sys/uio.h, unistd.h, sys/syscall.h, bits/alltypes.h, bits/fcntl.h, and bits/syscall.h. It composes only already-qualified declaration boundaries and does not close a header family or establish general C ABI support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-descriptor-pipeline", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding `-nostdlib -static` candidate. The gate runs the existing fcntl/poll/vector-I/O header matrices; ratchets exact crate-owned C object-member exports separately from compiler-builtins; rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS, and unowned runtime dependencies; requires direct initial-TLS errno access; pins pipe2=293, fcntl=72, poll=7, readv=19, writev=20, dup=32, and close=3 emitted paths; and executes one nonblocking CLOEXEC pipe lifecycle across selected fcntl status/descriptor flags, empty/readable/hangup readiness, vector transfer, duplicate ownership, close, invalid flags, and errno. It adds no C API and does not establish generic descriptor, readiness, filesystem, cancellation, AIO, libc.so, CRT, loader, sysroot, family, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and normal descriptor composition oracle for src/unistd/pipe2.c, dup.c, close.c, src/fcntl/fcntl.c, src/select/poll.c, and src/unistd/readv.c/writev.c; their cancellation/AIO paths remain deliberately unselected." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "pipe2/fcntl/poll/readv/writev/dup/close registers, descriptor flags, readiness states, vector records, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 scalar/pointer and variadic fcntl register convention plus static initial-exec TLS fixture contract." },
 ]
 
 [[family.verified_artifact]]
