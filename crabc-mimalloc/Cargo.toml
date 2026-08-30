@@ -11,6 +11,27 @@ publish = false
 [lib]
 name = "crabc_mimalloc"
 
+[[test]]
+name = "native_post_exit_registry_high_water"
+path = "tests/native_post_exit_registry_high_water.rs"
+# The scalar registry audit is compiled only for this direct lifecycle test.
+# It is not part of the production allocator or libc friend surface.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_live_remote_owner_registry_reuse"
+path = "tests/native_live_remote_owner_registry_reuse.rs"
+# The scalar registry audit is compiled only for this direct lifecycle test.
+# It is not part of the production allocator or libc friend surface.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_post_exit_failed_os_release"
+path = "tests/native_post_exit_failed_os_release.rs"
+# This direct-only fault witness crosses the native B-side registry boundary.
+# Neither the fault hook nor its scalar audit ships in the production surface.
+required-features = ["native-runtime-test-audit", "native-runtime-test-fault"]
+
 [features]
 default = []
 # Private, allocation-backed process context used only by the standalone
@@ -24,6 +45,16 @@ loom = []
 # roots so the pinned target-specific ELF harness can inspect their exact access model.
 # Normal allocator builds expose neither these witnesses nor a TLS ABI.
 tls-codegen-probe = []
+# Enables read-only scalar lifecycle and fork-admission audits used by the
+# isolated native post-exit and live-owner registry high-water regressions and
+# the test-only ticket-zero C soak adapter. They expose no route, raw client
+# address, PageMap root, allocator, or release capability and are absent from
+# normal builds.
+native-runtime-test-audit = []
+# Enables one deliberately narrow direct-test injection: the next allocator
+# `munmap` fails while the native post-exit registry owns its source route.
+# It is absent from normal allocator and libc builds.
+native-runtime-test-fault = []
 
 [dependencies]
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }

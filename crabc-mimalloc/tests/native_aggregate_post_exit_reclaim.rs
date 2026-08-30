@@ -17,6 +17,10 @@ fn current_page_size() -> usize {
 
 #[test]
 fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes() {
+    // `RUNTIME_PROCESS` is a true process-lifetime source owner. Keep this
+    // regression in its own integration-test executable rather than the
+    // shared `--lib` unit-test process: a second initialization would test
+    // the intentional one-shot rejection, not aggregate reclamation.
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before its aggregate-reclaim witness"

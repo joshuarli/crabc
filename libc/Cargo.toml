@@ -75,6 +75,10 @@ name = "native_mimalloc_two_owner_exit"
 path = "../tests/native_mimalloc_two_owner_exit.rs"
 
 [[test]]
+name = "native_mimalloc_three_owner_exit"
+path = "../tests/native_mimalloc_three_owner_exit.rs"
+
+[[test]]
 name = "native_mimalloc_aggregate_reclaim"
 path = "../tests/native_mimalloc_aggregate_reclaim.rs"
 
@@ -85,6 +89,10 @@ path = "../tests/native_mimalloc_owner_exit_realloc.rs"
 [[test]]
 name = "native_mimalloc_live_remote_free"
 path = "../tests/native_mimalloc_live_remote_free.rs"
+
+[[test]]
+name = "native_mimalloc_two_live_remote_owners"
+path = "../tests/native_mimalloc_two_live_remote_owners.rs"
 
 [[test]]
 name = "native_mimalloc_initial_remote_free"

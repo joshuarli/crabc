@@ -933,7 +933,7 @@ impl ProcessSharedArenaLease {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn test_registry_count(self) -> Result<usize, ProcessSharedArenaError> {
         self.ensure_ready()?;

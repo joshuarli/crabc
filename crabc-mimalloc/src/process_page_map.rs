@@ -394,7 +394,7 @@ impl ProcessPageMapLease {
     /// caller obligations remain in force, including synchronization of plain
     /// overlapping entry accesses and retaining a registered page until its
     /// matching unregister operation.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     pub(crate) fn page_map(self) -> Result<&'static PageMap, ProcessPageMapError> {
         self.ensure_ready()?;
         if self.storage.root.load().is_none() {

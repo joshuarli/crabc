@@ -34,7 +34,7 @@
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crate::compiler_tls::current_thread_identity;
 use crate::config::{
@@ -76,6 +76,7 @@ use crate::single_thread::{
     RemoteFreeProducer, RemoteFreeProducerPair,
     ThreadExitKnownPostExitOsAbandonedList,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
+    ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
 };
 use crate::types::{LiveThreadId, Page};
 
@@ -145,25 +146,45 @@ const fn page_owner_transition_is_retryable(state: usize) -> bool {
         || matches!(page_owner_parked_count(state), Some(parked_count) if parked_count > 0)
 }
 
-// The native libc shadow has two bounded post-exit route slots. They are not
-// a general allocator lock: each active entry owns one already-detached A
-// route and serializes only that route's private ledger. The lower source
-// `ProcessPageMapPostExitAccess` takes the shared PageMap exclusion around
-// each complete exact free, while this fixed private router never exposes a
-// client or a page selection capability.
+// The native libc shadow keeps detached post-exit routes in a metadata-backed
+// process registry. It is not a general allocator lock: each active entry
+// owns one already-detached A route and serializes only that route's private
+// ledger. The lower source `ProcessPageMapPostExitAccess` takes the shared
+// PageMap exclusion around each complete exact free, while this private router
+// never exposes a client or a page selection capability.
 const NATIVE_POST_EXIT_ROUTE_EMPTY: u8 = 0;
 const NATIVE_POST_EXIT_ROUTE_ACTIVE: u8 = 1;
 const NATIVE_POST_EXIT_ROUTE_BUSY: u8 = 2;
 const NATIVE_POST_EXIT_ROUTE_RETAINED: u8 = 3;
 
-// A native live-owner remote free has one current parked A session, not a
-// process-wide client table. The static entry stores only A's compiler-TLS
-// slot and generation; the exact C address remains private in A's bounded
-// session ledger until B has atomically published it to the source page.
+// Appending one permanent metadata-backed registry entry is separate from an
+// entry's own `ACTIVE -> BUSY` route serialization. Nodes never move or leave
+// the list, so a reader that acquired the list head may inspect a stable entry
+// without a raw-pointer lifetime race. Empty entries are reused; growth only
+// records the process high-water of concurrently detached source owners.
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE: u8 = 0;
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_GROWING: u8 = 1;
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED: u8 = 2;
+
+// Native live-owner remote frees use metadata-backed entries, not a
+// process-wide client table. Every entry stores only one A compiler-TLS slot
+// and generation; an exact C address remains private in that A session ledger
+// until B has atomically published it to the source page. Empty entries are
+// reusable while their backing metadata stays process-lived, so concurrent A
+// owners have no fixed cardinality cap and sequential workers reuse the
+// observed high-water instead of accumulating a new raw-TLS handoff each time.
 const NATIVE_LIVE_REMOTE_OWNER_EMPTY: u8 = 0;
 const NATIVE_LIVE_REMOTE_OWNER_ACTIVE: u8 = 1;
 const NATIVE_LIVE_REMOTE_OWNER_BUSY: u8 = 2;
 const NATIVE_LIVE_REMOTE_OWNER_RETAINED: u8 = 3;
+
+// Appending one stable live-owner entry is separate from claiming that entry
+// for a source-shaped B operation. Readers may scan the append-only list
+// without exposing a client or node identity; growth never serializes ordinary
+// PageMap work or a different entry's `ACTIVE -> BUSY` transition.
+const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE: u8 = 0;
+const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_GROWING: u8 = 1;
+const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_RETAINED: u8 = 2;
 
 // Linux/AArch64's public C allocation ABI guarantees 16-byte natural malloc
 // alignment. A request at or below this boundary remains an ordinary native
@@ -180,7 +201,11 @@ const NATIVE_C_MALLOC_ALIGNMENT: usize = 16;
 // Keep both source small-page classes in the one mixed Theap: 37 lands in
 // the direct cache range, while `SMALL_SIZE_MAX + 1` remains a small page but
 // has no direct-cache slot. Neither class gets its own owner-exit entry.
-const OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS: usize = 2;
+// The existing direct-small member supplies the one direct post-exit source
+// free plus two same-page atomic publishers. Keeping all three clients in the
+// already-covered direct-cache source page exercises the upstream multi-push
+// remote-head transition without introducing a new page geometry.
+const OWNER_EXIT_DIRECT_SMALL_CLIENT_SLOTS: usize = 3;
 const OWNER_EXIT_NON_DIRECT_SMALL_CLIENT_SLOTS: usize = 1;
 const OWNER_EXIT_NON_DIRECT_SMALL_REQUEST: usize = SMALL_SIZE_MAX + 1;
 const OWNER_EXIT_FULL_MEDIUM_REQUEST: usize = 64 * 1024;
@@ -231,7 +256,7 @@ const OWNER_EXIT_OS_SINGLETON_INDEX: usize = OWNER_EXIT_ARENA_SINGLETON_INDEX + 
 // private metadata-backed overflow beyond it; client identity remains inside
 // the session and never becomes a public registry or a routing capability.
 const RUNTIME_PAGE_OWNER_PRIVATE_CLIENT_SLOTS: usize = OWNER_EXIT_OS_SINGLETON_INDEX + 1;
-// Preparation sees the two source clients before their joined remote
+// Preparation sees the two pre-exit source clients before their joined remote
 // publications. They are deliberately absent from the post-exit route after
 // source collection, but the inline ledger must still account for them while
 // A owns the live engine. Keep that source-fixture capacity separate from the
@@ -347,12 +372,13 @@ impl<'owner> TicketZeroRemoteFreeProducer<'owner> {
 
 }
 
-/// One opaque C-side publication capability issued only after B has claimed
-/// the source abandoned-page owner bit for its direct client free.
+/// One opaque post-exit publication capability issued only after B has
+/// claimed the source abandoned-page owner bit for its direct client free.
 ///
-/// The runtime keeps both client identities private. C receives only this
-/// single-use producer, which may publish into B's already-owned remote head;
-/// it cannot collect, reclaim, adopt, release, or retain the page route.
+/// The runtime keeps every client identity private. A joined publisher receives
+/// only this single-use producer, which may publish into B's already-owned
+/// remote head; it cannot collect, reclaim, adopt, release, or retain the page
+/// route.
 #[doc(hidden)]
 #[must_use = "the post-exit remote publication must publish or return its opaque producer"]
 pub struct TicketZeroOwnerExitRemoteFreeProducer<'route> {
@@ -365,9 +391,9 @@ pub struct TicketZeroOwnerExitRemoteFreeProducer<'route> {
 unsafe impl Send for TicketZeroOwnerExitRemoteFreeProducer<'_> {}
 
 impl<'route> TicketZeroOwnerExitRemoteFreeProducer<'route> {
-    /// Atomically publishes C's one private client to B's held source remote
+    /// Atomically publishes one private client to B's held source remote
     /// head. A failure returns the same opaque capability, allowing the
-    /// direct route to become terminal rather than pretending C published.
+    /// direct route to become terminal rather than pretending it published.
     #[inline]
     pub fn publish(self) -> Result<(), Self> {
         match self.producer.publish() {
@@ -377,13 +403,129 @@ impl<'route> TicketZeroOwnerExitRemoteFreeProducer<'route> {
     }
 }
 
+/// Two opaque C/D-side publication capabilities issued only after B has
+/// claimed the source abandoned-page owner bit for its direct client free.
+///
+/// Splitting this value transfers exactly two atomic-only appends. It cannot
+/// reveal a client address, construct a collector, or outlive B's
+/// higher-ranked synchronous callback.
+#[doc(hidden)]
+#[must_use = "both post-exit remote publications must publish or the opaque pair must return to the runtime callback"]
+pub struct TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
+    producers: ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+}
+
+// SAFETY: each component is Send and carries only one exact private client
+// plus the callback-local lifetime boundary. The pair gives no route,
+// PageMap, collector, or terminal-release authority to its receiver.
+unsafe impl Send for TicketZeroOwnerExitRemoteFreeProducerPair<'_> {}
+
+impl<'route> TicketZeroOwnerExitRemoteFreeProducerPair<'route> {
+    /// Separates C and D's opaque atomic-only source publications. Both
+    /// tokens remain bounded by B's direct source transition.
+    #[inline]
+    pub fn split(
+        self,
+    ) -> (
+        TicketZeroOwnerExitRemoteFreeProducer<'route>,
+        TicketZeroOwnerExitRemoteFreeProducer<'route>,
+    ) {
+        let (first, second) = self.producers.split();
+        (
+            TicketZeroOwnerExitRemoteFreeProducer { producer: first },
+            TicketZeroOwnerExitRemoteFreeProducer { producer: second },
+        )
+    }
+
+    #[inline]
+    fn into_source_pair(self) -> ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> {
+        self.producers
+    }
+}
+
 /// The one callback shape admitted between B's direct source low-bit claim
-/// and its existing collector. Its higher-ranked producer cannot outlive the
+/// and its existing collector. Its higher-ranked pair cannot outlive the
 /// synchronous callback that the aggregate route joins before it resumes.
 #[doc(hidden)]
 pub type TicketZeroOwnerExitRemoteFreePublisher = for<'route> fn(
-    TicketZeroOwnerExitRemoteFreeProducer<'route>,
-) -> Result<(), TicketZeroOwnerExitRemoteFreeProducer<'route>>;
+    TicketZeroOwnerExitRemoteFreeProducerPair<'route>,
+) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'route>>;
+
+/// One opaque post-exit publication capability for a source-mapped, non-full
+/// medium page. B mints it only after claiming that page's source low owner
+/// bit for its direct client free.
+///
+/// This is intentionally a nominally distinct capability from
+/// [`TicketZeroOwnerExitRemoteFreeProducer`]. The callback cannot reinterpret
+/// a direct-small witness as a mapped-medium route, and still receives no
+/// address, PageMap, collector, reclaim, or terminal-release authority.
+#[doc(hidden)]
+#[must_use = "the mapped-medium post-exit publication must publish or return its opaque producer"]
+pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
+    producer: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+}
+
+// SAFETY: the wrapped source producer is Send and carries only one exact
+// private client plus its callback-local lifetime boundary. Moving it exposes
+// no route, map, collector, or terminal-release capability.
+unsafe impl Send for TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'_> {}
+
+impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route> {
+    /// Atomically publishes one private mapped-medium client to B's held
+    /// source remote head. Failure returns the same opaque capability so the
+    /// route remains terminal instead of claiming a publication happened.
+    #[inline]
+    pub fn publish(self) -> Result<(), Self> {
+        match self.producer.publish() {
+            Ok(()) => Ok(()),
+            Err(producer) => Err(Self { producer }),
+        }
+    }
+}
+
+/// Two opaque C/D-side mapped-medium publication capabilities issued only
+/// after B has claimed the source low owner bit for its direct medium free.
+#[doc(hidden)]
+#[must_use = "both mapped-medium post-exit publications must publish or the opaque pair must return to the runtime callback"]
+pub struct TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
+    producers: ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+}
+
+// SAFETY: each component is Send and carries only one exact private client
+// plus the callback-local lifetime boundary. The pair transfers no route,
+// PageMap, collector, or terminal-release authority.
+unsafe impl Send for TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'_> {}
+
+impl<'route> TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route> {
+    /// Separates C and D's opaque mapped-medium atomic-only publications.
+    /// Both remain bounded by B's one direct source transition.
+    #[inline]
+    pub fn split(
+        self,
+    ) -> (
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route>,
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducer<'route>,
+    ) {
+        let (first, second) = self.producers.split();
+        (
+            TicketZeroOwnerExitMappedMediumRemoteFreeProducer { producer: first },
+            TicketZeroOwnerExitMappedMediumRemoteFreeProducer { producer: second },
+        )
+    }
+
+    #[inline]
+    fn into_source_pair(self) -> ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> {
+        self.producers
+    }
+}
+
+/// The one callback shape admitted between B's mapped-medium direct source
+/// low-bit claim and its existing collector. Its higher-ranked pair cannot
+/// outlive the synchronous callback that B joins before it resumes.
+#[doc(hidden)]
+pub type TicketZeroOwnerExitMappedMediumRemoteFreePublisher = for<'route> fn(
+    TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route>,
+) -> Result<(), TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'route>>;
 
 /// One opaque client identity after A has detached its Theap/TLD.
 ///
@@ -395,6 +537,48 @@ pub type TicketZeroOwnerExitRemoteFreePublisher = for<'route> fn(
 struct DetachedOwnerExitClientKey {
     slot: usize,
     generation: usize,
+}
+
+/// The one source page shape selected for a bounded post-exit B/C/D
+/// publication. This stays wholly inside the runtime ledger: it is not a
+/// selector exposed to the consumer callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DetachedOwnerExitRemotePublicationKind {
+    DirectSmall,
+    MappedMedium,
+}
+
+/// Three opaque ledger identities together with the source shape that proved
+/// their shared-page relation while A still owned the live engine.
+#[derive(Clone, Copy)]
+struct DetachedOwnerExitRemotePublicationSelection {
+    kind: DetachedOwnerExitRemotePublicationKind,
+    clients: [DetachedOwnerExitClientKey; 3],
+}
+
+/// The private callback identity carried to B's one bounded source
+/// interleaving. It is checked against the opaque ledger selection before B
+/// removes any client from that selection, so a callback for one source shape
+/// cannot consume the other shape's route.
+enum TicketZeroOwnerExitPostExitPublisher {
+    DirectSmall(TicketZeroOwnerExitRemoteFreePublisher),
+    MappedMedium(TicketZeroOwnerExitMappedMediumRemoteFreePublisher),
+}
+
+impl TicketZeroOwnerExitPostExitPublisher {
+    #[inline]
+    fn accepts(&self, kind: DetachedOwnerExitRemotePublicationKind) -> bool {
+        matches!(
+            (self, kind),
+            (
+                Self::DirectSmall(_),
+                DetachedOwnerExitRemotePublicationKind::DirectSmall
+            ) | (
+                Self::MappedMedium(_),
+                DetachedOwnerExitRemotePublicationKind::MappedMedium
+            )
+        )
+    }
 }
 
 /// One private entry in the detached owner's client ledger.
@@ -568,34 +752,45 @@ impl DetachedOwnerExitClientLedger {
         }
     }
 
-    fn take_remote_pair(
+    fn take_remote_publication_group(
         &mut self,
-        first: DetachedOwnerExitClientKey,
-        second: DetachedOwnerExitClientKey,
-    ) -> Option<DetachedOwnerExitRemotePair> {
-        if first == second {
+        selection: DetachedOwnerExitRemotePublicationSelection,
+    ) -> Option<DetachedOwnerExitRemotePublicationGroup> {
+        let [direct, first_published, second_published] = selection.clients;
+        if direct == first_published
+            || direct == second_published
+            || first_published == second_published
+        {
             return None;
         }
         match self {
             Self::Inline { entries } => {
-                let first_index = entries.iter().position(|entry| {
-                    matches!(entry, Some(client) if client.key == first)
+                let direct_index = entries.iter().position(|entry| {
+                    matches!(entry, Some(client) if client.key == direct)
                 })?;
-                let second_index = entries.iter().position(|entry| {
-                    matches!(entry, Some(client) if client.key == second)
+                let first_published_index = entries.iter().position(|entry| {
+                    matches!(entry, Some(client) if client.key == first_published)
                 })?;
-                let first = entries[first_index]
+                let second_published_index = entries.iter().position(|entry| {
+                    matches!(entry, Some(client) if client.key == second_published)
+                })?;
+                let direct = entries[direct_index]
                     .take()
                     .expect("the located detached client remains present");
-                let second = entries[second_index]
+                let first_published = entries[first_published_index]
                     .take()
                     .expect("the distinct located detached client remains present");
-                Some(DetachedOwnerExitRemotePair {
-                    first: Some(first.block),
-                    second: Some(second.block),
+                let second_published = entries[second_published_index]
+                    .take()
+                    .expect("the distinct located detached client remains present");
+                Some(DetachedOwnerExitRemotePublicationGroup {
+                    kind: selection.kind,
+                    direct: Some(direct.block),
+                    first_published: Some(first_published.block),
+                    second_published: Some(second_published.block),
                 })
             }
-            Self::Session(clients) => clients.take_detached_remote_pair(first, second),
+            Self::Session(clients) => clients.take_detached_remote_publication_group(selection),
         }
     }
 
@@ -625,39 +820,59 @@ impl DetachedOwnerExitClientLedger {
     }
 }
 
-/// The one source-faithful B/C interleaving retained only by the bounded
-/// runtime witness. The pair is selected by opaque ledger keys during A's
+/// The one source-faithful B/C/D interleaving retained only by the bounded
+/// runtime witness. The group is selected by opaque ledger keys during A's
 /// preparation; the generic sequential route never indexes a fixture layout.
-struct DetachedOwnerExitRemotePair {
-    first: Option<core::ptr::NonNull<u8>>,
-    second: Option<core::ptr::NonNull<u8>>,
+/// Its explicit kind keeps the direct-small and mapped-medium source proofs
+/// nominally separate. B directly claims the source low bit, then C and D
+/// each atomically append one same-page client before B's collector resumes.
+struct DetachedOwnerExitRemotePublicationGroup {
+    kind: DetachedOwnerExitRemotePublicationKind,
+    direct: Option<core::ptr::NonNull<u8>>,
+    first_published: Option<core::ptr::NonNull<u8>>,
+    second_published: Option<core::ptr::NonNull<u8>>,
 }
 
-impl DetachedOwnerExitRemotePair {
+impl DetachedOwnerExitRemotePublicationGroup {
     #[inline]
     fn is_empty(&self) -> bool {
-        self.first.is_none() && self.second.is_none()
+        self.direct.is_none()
+            && self.first_published.is_none()
+            && self.second_published.is_none()
     }
 
     #[inline]
     fn take_next(&mut self) -> Option<core::ptr::NonNull<u8>> {
-        self.first.take().or_else(|| self.second.take())
+        self.direct
+            .take()
+            .or_else(|| self.first_published.take())
+            .or_else(|| self.second_published.take())
     }
 
     #[inline]
-    fn take_for_publisher(
+    fn take_for_publishers(
         &mut self,
-    ) -> Option<(core::ptr::NonNull<u8>, core::ptr::NonNull<u8>)> {
-        if self.first.is_none() || self.second.is_none() {
+    ) -> Option<(
+        core::ptr::NonNull<u8>,
+        core::ptr::NonNull<u8>,
+        core::ptr::NonNull<u8>,
+    )> {
+        if self.direct.is_none()
+            || self.first_published.is_none()
+            || self.second_published.is_none()
+        {
             return None;
         }
         Some((
-            self.first
+            self.direct
                 .take()
-                .expect("the checked first private client remains present"),
-            self.second
+                .expect("the checked direct private client remains present"),
+            self.first_published
                 .take()
-                .expect("the checked second private client remains present"),
+                .expect("the checked first published private client remains present"),
+            self.second_published
+                .take()
+                .expect("the checked second published private client remains present"),
         ))
     }
 
@@ -666,7 +881,7 @@ impl DetachedOwnerExitRemotePair {
         allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     ) -> Result<(), ()> {
         while let Some(block) = self.take_next() {
-            // SAFETY: this pair remains A-local until preparation either
+            // SAFETY: this group remains A-local until preparation either
             // suspends its exact source engine or aborts it normally.
             unsafe { allocator.free(block) }.map_err(|_| ())?;
         }
@@ -696,7 +911,7 @@ pub struct TicketZeroOwnerExitFreeRoute<'main> {
     // cannot safely retain this opaque route beyond its synchronous handoff.
     route: MainHeapThreadProcessPageExitMappedRegularPagesRoute<'static>,
     clients: DetachedOwnerExitClientLedger,
-    post_exit_remote_pair: Option<DetachedOwnerExitRemotePair>,
+    post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationGroup>,
     /// The immutable process map/arena identity remains private to this route
     /// so a final mapped regular member can enter B only through the existing
     /// source-shaped short-to-long adoption transition. It is not an exposed
@@ -1069,6 +1284,14 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         self,
         attachment: &mut MainHeapThreadAttachment<'static>,
     ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        if self.post_exit_remote_publication_group.is_some() {
+            // A bounded B/C/D source interleaving is not a generic
+            // sequential-free fallback. The caller must select the matching
+            // typed publisher route so B can lend the atomic-only producers
+            // only after its source low-bit claim; otherwise its normal
+            // no-page finish could falsely stand in for that terminal route.
+            return TicketZeroOwnerExitFreeOutcome::Retained(self);
+        }
         self.free_remaining_clients(attachment)
     }
 
@@ -1086,10 +1309,10 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         attachment: &mut MainHeapThreadAttachment<'static>,
         block: core::ptr::NonNull<u8>,
     ) -> AggregateNativePostExitFreeStep<'main> {
-        // The scoped B/C publisher is a distinct source-test interleaving.
-        // A C free may not accidentally reinterpret that pair as a general
-        // pointer-routing route.
-        if self.post_exit_remote_pair.is_some() {
+        // The scoped B/C/D publishers are a distinct source-test
+        // interleaving. A C free may not accidentally reinterpret that
+        // bounded group as a general pointer-routing route.
+        if self.post_exit_remote_publication_group.is_some() {
             return AggregateNativePostExitFreeStep::Retained(self);
         }
 
@@ -1193,12 +1416,12 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         let Self {
             route,
             mut clients,
-            post_exit_remote_pair,
+            post_exit_remote_publication_group,
             pair,
             admission,
             _consumer: _,
         } = self;
-        debug_assert!(post_exit_remote_pair.is_none());
+        debug_assert!(post_exit_remote_publication_group.is_none());
 
         // SAFETY: the native route owns its last exact once-live client and
         // its aggregate short PageMap capability. `candidate` was observed
@@ -1268,7 +1491,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
                 Self {
                     route,
                     clients,
-                    post_exit_remote_pair,
+                    post_exit_remote_publication_group,
                     pair,
                     admission,
                     _consumer: PhantomData,
@@ -1298,50 +1521,85 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// merely to answer `malloc_usable_size` before a later exact `free`.
     #[inline]
     fn native_usable_size(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
-        // The scoped B/C producer pair is a test-only source interleaving and
+        // The scoped B/C/D producer group is a test-only source interleaving and
         // intentionally has no raw-C lookup surface.
-        if self.post_exit_remote_pair.is_some() {
+        if self.post_exit_remote_publication_group.is_some() {
             return None;
         }
         self.clients.usable_size_for_native_block(block)
     }
 
-    /// Runs the test-only B/C interleaving for the opaque pair selected by
+    /// Runs one test-only B/C/D interleaving for the opaque group selected by
     /// the mixed regression builder, then resumes the generic ledger drain.
     ///
-    /// The callback is present only in the Gate 5C adapter witness. Its two
-    /// slots were allocated from the same regular page while A owned the live
-    /// engine, and C can receive only the opaque producer constructed after
-    /// B's direct free has claimed the source low owner bit.
+    /// The callback is present only in the Gate 5C adapter witness. Its three
+    /// slots were allocated from either the covered direct-small page or the
+    /// separately selected mapped, non-full medium page while A owned the
+    /// live engine. B directly frees one; C and D receive only the two opaque
+    /// producers constructed after B has claimed the source low owner bit.
     fn free_remaining_with_post_exit_publisher(
         mut self,
         attachment: &mut MainHeapThreadAttachment<'static>,
-        publisher: TicketZeroOwnerExitRemoteFreePublisher,
+        publisher: TicketZeroOwnerExitPostExitPublisher,
     ) -> TicketZeroOwnerExitFreeOutcome<'main> {
-        let Some(mut pair) = self.post_exit_remote_pair.take() else {
-            // The bounded B/C witness has no valid two-client same-page
+        let Some(mut group) = self.post_exit_remote_publication_group.take() else {
+            // The bounded B/C/D witness has no valid three-client same-page
             // shape. It must not silently fall back to a linear drain, which
             // would claim a concurrent source protocol had been exercised.
             return TicketZeroOwnerExitFreeOutcome::Retained(self);
         };
-        let Some((block, published_block)) = pair.take_for_publisher() else {
-            self.post_exit_remote_pair = Some(pair);
+        if !publisher.accepts(group.kind) {
+            // A nominally different opaque producer must not be treated as a
+            // fallback for this source page. Keep the private selection and
+            // route intact so neither ordinary nor mismatched finalization
+            // can claim the bounded interleaving completed.
+            self.post_exit_remote_publication_group = Some(group);
+            return TicketZeroOwnerExitFreeOutcome::Retained(self);
+        }
+        let Some((block, first_published_block, second_published_block)) =
+            group.take_for_publishers()
+        else {
+            self.post_exit_remote_publication_group = Some(group);
             return TicketZeroOwnerExitFreeOutcome::Retained(self);
         };
-        // SAFETY: the regression builder selected two distinct current
+        // SAFETY: the regression builder selected three distinct current
         // clients from one source page by their private ledger keys. The
         // lower route validates that same-page image again under its short
-        // PageMap access before B lends C the atomic-only producer.
+        // PageMap access before B lends C and D the atomic-only producers.
         let has_remaining_clients = self.has_remaining_clients();
-        let free = unsafe {
-            self.route.remote_free_after_thread_exit_with_same_page_publisher(
-                block,
-                published_block,
-                |producer| match publisher(TicketZeroOwnerExitRemoteFreeProducer { producer }) {
-                    Ok(()) => Ok(()),
-                    Err(TicketZeroOwnerExitRemoteFreeProducer { producer }) => Err(producer),
-                },
-            )
+        let free = match publisher {
+            TicketZeroOwnerExitPostExitPublisher::DirectSmall(publisher) => unsafe {
+                self.route
+                    .remote_free_after_thread_exit_with_direct_small_publishers(
+                        block,
+                        first_published_block,
+                        second_published_block,
+                        |producers| {
+                            match publisher(TicketZeroOwnerExitRemoteFreeProducerPair {
+                                producers,
+                            }) {
+                                Ok(()) => Ok(()),
+                                Err(producers) => Err(producers.into_source_pair()),
+                            }
+                        },
+                    )
+            },
+            TicketZeroOwnerExitPostExitPublisher::MappedMedium(publisher) => unsafe {
+                self.route
+                    .remote_free_after_thread_exit_with_mapped_medium_publishers(
+                        block,
+                        first_published_block,
+                        second_published_block,
+                        |producers| {
+                            match publisher(
+                                TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair { producers },
+                            ) {
+                                Ok(()) => Ok(()),
+                                Err(producers) => Err(producers.into_source_pair()),
+                            }
+                        },
+                    )
+            },
         };
         match classify_detached_owner_exit_free(free) {
             DetachedOwnerExitFreeStep::Continue(route) => {
@@ -1369,9 +1627,9 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     fn has_remaining_clients(&self) -> bool {
         !self.clients.is_empty()
             || self
-                .post_exit_remote_pair
+                .post_exit_remote_publication_group
                 .as_ref()
-                .is_some_and(|pair| !pair.is_empty())
+                .is_some_and(|group| !group.is_empty())
     }
 
     fn free_remaining_clients(
@@ -1381,22 +1639,22 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         let Self {
             mut route,
             mut clients,
-            mut post_exit_remote_pair,
+            mut post_exit_remote_publication_group,
             pair,
             admission,
             ..
         } = self;
 
         loop {
-            // Do not skip the bounded B/C publisher pair: C's source-shaped
-            // publication must run before any later-main adoption attempt.
-            // Once that pair is gone, only an A-side prevalidated immediate
+            // Do not skip the bounded B/C/D publisher group: both
+            // source-shaped publications must run before any later-main
+            // adoption attempt. Once that group is gone, only an A-side prevalidated immediate
             // local head may attempt the consuming final-member reclaim. A
             // normal ledger entry without that fact is still fully routable,
             // but must remain on sequential free: the lower long-lifecycle
             // claim is intentionally irreversible after it observes a missing
             // head. This scheduler never derives or stores a page identity.
-            if post_exit_remote_pair.is_none() {
+            if post_exit_remote_publication_group.is_none() {
                 if let Some(candidate) = clients
                     .next()
                     .filter(|client| client.can_attempt_final_member_adoption())
@@ -1488,10 +1746,10 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
                 }
             }
 
-            let block = if let Some(mut remote_pair) = post_exit_remote_pair.take() {
-                let block = remote_pair.take_next();
-                if !remote_pair.is_empty() {
-                    post_exit_remote_pair = Some(remote_pair);
+            let block = if let Some(mut remote_group) = post_exit_remote_publication_group.take() {
+                let block = remote_group.take_next();
+                if !remote_group.is_empty() {
+                    post_exit_remote_publication_group = Some(remote_group);
                 }
                 block
             } else {
@@ -1505,7 +1763,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
                 return TicketZeroOwnerExitFreeOutcome::Retained(Self {
                     route,
                     clients,
-                    post_exit_remote_pair,
+                    post_exit_remote_publication_group,
                     pair,
                     admission,
                     _consumer: PhantomData,
@@ -1514,9 +1772,9 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
             // SAFETY: this opaque route owns the exact current private client
             // and the only aggregate post-exit route that can consume it.
             let has_remaining_clients = !clients.is_empty()
-                || post_exit_remote_pair
+                || post_exit_remote_publication_group
                     .as_ref()
-                    .is_some_and(|remote_pair| !remote_pair.is_empty());
+                    .is_some_and(|remote_group| !remote_group.is_empty());
             let free = unsafe { route.remote_free_after_thread_exit(block) };
             match classify_detached_owner_exit_free(free) {
                 DetachedOwnerExitFreeStep::Continue(returned) => route = returned,
@@ -1531,7 +1789,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
                     return TicketZeroOwnerExitFreeOutcome::Retained(Self {
                         route: returned,
                         clients,
-                        post_exit_remote_pair,
+                        post_exit_remote_publication_group,
                         pair,
                         admission,
                         _consumer: PhantomData,
@@ -1572,8 +1830,9 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         self.free_remaining_in_fresh_runtime_worker_with_publisher(None)
     }
 
-    /// Consumes this opaque A-side route from fresh joined B while one joined
-    /// C publishes a second private client after B's direct source claim.
+    /// Consumes this opaque A-side route from fresh joined B while scoped C/D
+    /// workers publish two direct-small private clients after B's direct
+    /// source claim.
     ///
     /// This bounded adapter seam is intentionally narrower than a general
     /// concurrent free entry point. C receives no client address, route,
@@ -1585,12 +1844,33 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
         self,
         publisher: TicketZeroOwnerExitRemoteFreePublisher,
     ) -> TicketZeroOwnerExitFreeOutcome<'main> {
-        self.free_remaining_in_fresh_runtime_worker_with_publisher(Some(publisher))
+        self.free_remaining_in_fresh_runtime_worker_with_publisher(Some(
+            TicketZeroOwnerExitPostExitPublisher::DirectSmall(publisher),
+        ))
+    }
+
+    /// Consumes this opaque A-side route from fresh joined B while scoped C/D
+    /// workers publish two private clients from the one source-mapped,
+    /// non-full medium page selected during A's owner exit.
+    ///
+    /// The mapped-medium callback is nominally distinct from the direct-small
+    /// callback. A mismatch retains this exact route without exposing a
+    /// client address or falling through to ordinary no-page finalization.
+    /// The callback remains synchronous: it can append only to B's held
+    /// source remote head, and B remains the only collector and terminal
+    /// release owner.
+    pub fn free_remaining_in_fresh_runtime_worker_with_post_exit_mapped_medium_publisher(
+        self,
+        publisher: TicketZeroOwnerExitMappedMediumRemoteFreePublisher,
+    ) -> TicketZeroOwnerExitFreeOutcome<'main> {
+        self.free_remaining_in_fresh_runtime_worker_with_publisher(Some(
+            TicketZeroOwnerExitPostExitPublisher::MappedMedium(publisher),
+        ))
     }
 
     fn free_remaining_in_fresh_runtime_worker_with_publisher(
         self,
-        publisher: Option<TicketZeroOwnerExitRemoteFreePublisher>,
+        publisher: Option<TicketZeroOwnerExitPostExitPublisher>,
     ) -> TicketZeroOwnerExitFreeOutcome<'main> {
         match attach_current_thread() {
             ThreadAttachResult::Attached => {}
@@ -1871,10 +2151,11 @@ pub type TicketZeroSingleRemoteFreePublisher = for<'owner> fn(
 // The high two bits are an allocation-free fork admission gate. The low bits
 // count every current later-thread attachment, including one still between its
 // pre-user-code attach and post-destructor finish transitions. A fork may
-// preserve the copied no-page process owner only if it first publishes the
-// gate and observes this count at zero. The second high bit records that
-// exactly that precondition held for the raw-fork child; it is never exposed
-// while the parent is allowed to admit a later owner.
+// preserve the copied quiescent ticket-zero process owner only if it first
+// publishes the gate, observes this count at zero, and the private predicate
+// finds no active page engine or live client. The second high bit records that
+// complete precondition for the raw-fork child; it is never exposed while the
+// parent is allowed to admit a later owner.
 const FORK_GATE_HELD: usize = 1usize << (usize::BITS - 1);
 const FORK_GATE_PRESERVE: usize = 1usize << (usize::BITS - 2);
 const FORK_GATE_COUNT_MASK: usize = FORK_GATE_PRESERVE - 1;
@@ -2264,7 +2545,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
     /// # Safety
     ///
     /// `block` must be a current C-facing client recorded in the parked A
-    /// session whose static route admitted this B operation.
+    /// session whose exact registry entry admitted this B operation.
     #[inline]
     unsafe fn publish_remote_free_to_parked_live_owner(
         &mut self,
@@ -2561,13 +2842,33 @@ impl RuntimeProcessStorage {
     }
 
     #[inline]
-    fn is_active_on_initial_thread(&self) -> bool {
-        self.is_on_initial_thread()
-            // A permanent session—even one still waiting for its first
-            // mapping—has page-root authority that this no-page fork bridge
-            // cannot repair in a child. Preserve the old fork behavior only
-            // before ticket zero begins that irreversible transition.
-            && self.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_COLD
+    fn is_quiescent_on_initial_thread_for_fork(&self) -> bool {
+        if !self.is_on_initial_thread() {
+            return false;
+        }
+
+        match self.page_owner_state.load(Ordering::Acquire) {
+            // The historical no-page case remains valid.
+            PAGE_OWNER_COLD => true,
+            // The caller invokes this only after `RuntimeForkAdmission` has
+            // installed its held gate while its count is zero.  That excludes
+            // every later owner which could otherwise change READY into BUSY
+            // and mutably borrow this final slot.  The initial thread itself
+            // is crossing `fork` with signals held, so this immutable view is
+            // the one safe quiescent ticket-zero inspection.
+            PAGE_OWNER_READY => {
+                // SAFETY: `start_ticket_zero_page_owner_with_storage` wrote
+                // this final slot before its Release READY publication.  The
+                // gate precondition above excludes a concurrent later-engine
+                // transition, and the current initial thread owns the only
+                // ticket-zero operation.
+                let page_owner = unsafe { (&*self.page_owner.get()).assume_init_ref() };
+                page_owner.is_quiescent_for_fork()
+            }
+            // Starting, a current operation, any parked page engine, and
+            // retained source state all remain outside the child contract.
+            PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _ => false,
+        }
     }
 
     /// Reconstructs the immutable source owner identity used by a remote
@@ -2996,7 +3297,7 @@ impl RuntimeProcessStorage {
 
 static RUNTIME_PROCESS: RuntimeProcessStorage = RuntimeProcessStorage::new();
 
-/// Allocation-free admission accounting around the incomplete no-page
+/// Allocation-free admission accounting around the incomplete runtime
 /// lifecycle.
 ///
 /// This is deliberately not a general allocator lock or source fork repair.
@@ -3079,9 +3380,23 @@ impl RuntimeForkAdmission {
     }
 
     /// Holds the direct internal fork boundary and records whether the copied
-    /// child may preserve this incomplete no-page image. No allocation, lock
-    /// traversal, page operation, or public pthread-atfork slot is involved.
+    /// child may preserve its quiescent ticket-zero image. No allocation,
+    /// lock traversal, page operation, or public pthread-atfork slot is
+    /// involved.
     fn before_fork(&self, can_preserve_process_owner: bool) {
+        self.before_fork_with(|| can_preserve_process_owner);
+    }
+
+    /// Holds the gate before inspecting a potentially permanent page owner.
+    ///
+    /// The callback executes only after the gate has observed zero later
+    /// attachments.  That ordering matters: a READY ticket-zero owner may be
+    /// mutably borrowed by a later engine, so reading its dormant source image
+    /// before worker admission is closed would be an unsound concurrent view.
+    /// The callback is an allocation-free private predicate for the direct
+    /// libc fork path; it never exposes a page or fork capability.
+    fn before_fork_with(&self, can_preserve_process_owner: impl FnOnce() -> bool) {
+        let mut can_preserve_process_owner = Some(can_preserve_process_owner);
         loop {
             let observed = self.state.load(Ordering::Acquire);
             if observed & FORK_GATE_HELD != 0 {
@@ -3089,15 +3404,24 @@ impl RuntimeForkAdmission {
                 continue;
             }
             let count = observed & FORK_GATE_COUNT_MASK;
-            let preserve = can_preserve_process_owner && count == 0;
-            let next = observed
-                | FORK_GATE_HELD
-                | if preserve { FORK_GATE_PRESERVE } else { 0 };
+            let next = observed | FORK_GATE_HELD;
             if self
                 .state
                 .compare_exchange_weak(observed, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
+                // A zero count under HELD excludes every later attachment:
+                // `claim_later_thread` spins until the parent clears HELD.
+                // Therefore the predicate may safely inspect a READY
+                // permanent ticket-zero owner before this raw fork.
+                if count == 0
+                    && can_preserve_process_owner
+                        .take()
+                        .is_some_and(|predicate| predicate())
+                {
+                    self.state
+                        .store(next | FORK_GATE_PRESERVE, Ordering::Release);
+                }
                 return;
             }
         }
@@ -3198,18 +3522,142 @@ enum NativePostExitRouteFreeResult {
     Retained,
 }
 
+/// Result visible to the native libc friend boundary after it asks a private
+/// detached route to replace one exact A-owned client in B's parked session.
+///
+/// The successful block is already recorded in B's private ledger.  This is
+/// deliberately not a route/client/page capability: callers may only return
+/// the replacement through the normal C `realloc` boundary, then later offer
+/// that address back to B's ordinary local `free` or `realloc` path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePostExitRouteReallocateResult {
+    NotOwned,
+    Allocated(core::ptr::NonNull<u8>),
+    AllocationFailed,
+    Unavailable,
+    Retained,
+}
+
+#[inline]
+fn native_post_exit_reallocate_session_failure(
+    error: CurrentThreadPageOwnerSessionError,
+) -> NativePostExitRouteReallocateResult {
+    match error {
+        CurrentThreadPageOwnerSessionError::Preparation(
+            CurrentThreadPageOwnerPreparationError::AllocationFailed
+            | CurrentThreadPageOwnerPreparationError::OverCapacity,
+        ) => NativePostExitRouteReallocateResult::AllocationFailed,
+        CurrentThreadPageOwnerSessionError::Retained => NativePostExitRouteReallocateResult::Retained,
+        CurrentThreadPageOwnerSessionError::Busy
+        | CurrentThreadPageOwnerSessionError::Unavailable
+        | CurrentThreadPageOwnerSessionError::Stale
+        | CurrentThreadPageOwnerSessionError::Preparation(_) => {
+            NativePostExitRouteReallocateResult::Unavailable
+        }
+    }
+}
+
 /// Private result of probing one detached route for an exact usable-size
-/// query. It keeps a retained first slot from being mistaken for an ordinary
-/// address miss while the fixed router considers another slot.
+/// query. It keeps a retained registry entry from being mistaken for an
+/// ordinary address miss while the private router considers another entry.
 enum NativePostExitRouteUsableSizeResult {
     NotOwned,
     Owned(usize),
     Retained,
 }
 
-/// One allocation-free static slot for the bounded native-shadow post-exit
-/// router. The atomic word protects only moves through the `UnsafeCell`; no
-/// lock guards general allocation. The route's own `ProcessPageMapPostExitAccess`
+/// One registry entry's observable ownership state.
+///
+/// `Live` includes the brief private `BUSY` move while its exact B-side
+/// operation runs. A retained entry closes the whole process runtime, so a
+/// later source owner may not use it as evidence that another route can
+/// safely append an OS-abandoned-list member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePostExitRouteStorageState {
+    Empty,
+    Live,
+    Retained,
+}
+
+/// Read-only scalar accounting for the private native post-exit registry.
+///
+/// This exists only in the default-off direct-test feature. It deliberately
+/// reports aggregate counts rather than a node address, route, client, page,
+/// allocator, or release capability. `published_entry_count` is also the
+/// registry's retained metadata high-water: nodes are append-only and an
+/// emptied node is the only reusable storage for a later detached owner.
+/// The direct regression samples it only after all participating workers have
+/// joined; a contemporaneous `BUSY` entry is conservatively reported live.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativePostExitRouteRegistryAudit {
+    pub published_entry_count: usize,
+    pub live_entry_count: usize,
+    pub retained_entry_count: usize,
+}
+
+/// Read-only scalar accounting for the private native live-owner registry.
+///
+/// This exists only in the default-off direct-test feature. It reports the
+/// stable metadata-node high-water and aggregate entry states, never an entry
+/// identity, raw TLS slot, client address, page, allocator, or release
+/// capability. Nodes are append-only and an emptied entry is the only
+/// reusable storage for a later parked A. Callers must sample only after all
+/// participating workers have joined; a contemporaneous `BUSY` entry is
+/// conservatively reported as live.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeLiveRemoteOwnerRegistryAudit {
+    pub published_entry_count: usize,
+    pub live_entry_count: usize,
+    pub retained_entry_count: usize,
+}
+
+/// Read-only scalar accounting for one quiescent native runtime process.
+///
+/// This is deliberately a default-off evidence hook. It reports lifecycle
+/// counts and readiness bits only; it does not reveal a route, client address,
+/// PageMap root, arena address, allocator, or release capability. Callers
+/// must sample only after every participating worker has joined, so no normal
+/// engine or detached route is concurrently mutating the source-owned state.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeLifecycleAudit {
+    pub process_active: usize,
+    pub page_owner_ready: usize,
+    pub page_map_registered_entry_count: usize,
+    pub page_map_published_submap_count: usize,
+    pub page_map_lazy_submap_allocation_count: usize,
+    pub arena_registry_count: usize,
+    pub live_thread_count: usize,
+    pub metadata_live_capability_count: usize,
+    pub metadata_high_water_capability_count: usize,
+    pub shared_later_theap_count: usize,
+    pub main_heap_abandoned_page_count: usize,
+    pub main_heap_os_abandoned_pages_empty: usize,
+}
+
+/// Read-only scalar accounting for the runtime's fork-admission gate.
+///
+/// This is deliberately a default-off direct-test hook. It reports only the
+/// current number of attached later-thread claims. It neither claims,
+/// releases, nor preserves an admission, and it exposes no route, client
+/// address, page, allocator, or fork capability. Unlike the quiescent
+/// lifecycle audit, a direct regression may sample this scalar while its exact
+/// B worker is still attached.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeForkAdmissionAudit {
+    pub active_later_thread_count: usize,
+}
+
+/// One metadata-backed entry in the private native-shadow post-exit registry.
+/// The atomic word protects only moves through the `UnsafeCell`; no lock
+/// guards general allocation. The route's own `ProcessPageMapPostExitAccess`
 /// serializes each exact free, while its parked runtime token keeps ticket
 /// zero unavailable without preventing a distinct normal engine from using
 /// the shared process pair between route operations.
@@ -3224,34 +3672,41 @@ struct NativePostExitRouteStorage {
 unsafe impl Sync for NativePostExitRouteStorage {}
 
 impl NativePostExitRouteStorage {
-    const fn new() -> Self {
+    #[inline]
+    fn from_active(route: NativePostExitRoute) -> Self {
         Self {
-            state: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_EMPTY),
-            entry: UnsafeCell::new(MaybeUninit::uninit()),
+            state: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_ACTIVE),
+            entry: UnsafeCell::new(MaybeUninit::new(NativePostExitRouteEntry::Active(route))),
         }
     }
 
+    /// Classifies one stable metadata entry without exposing its route,
+    /// clients, PageMap access, or admission capability.
     #[inline]
-    fn is_empty(&self) -> bool {
-        self.state.load(Ordering::Acquire) == NATIVE_POST_EXIT_ROUTE_EMPTY
+    fn registry_state(&self) -> NativePostExitRouteStorageState {
+        match self.state.load(Ordering::Acquire) {
+            NATIVE_POST_EXIT_ROUTE_EMPTY => NativePostExitRouteStorageState::Empty,
+            NATIVE_POST_EXIT_ROUTE_ACTIVE | NATIVE_POST_EXIT_ROUTE_BUSY => {
+                NativePostExitRouteStorageState::Live
+            }
+            NATIVE_POST_EXIT_ROUTE_RETAINED => NativePostExitRouteStorageState::Retained,
+            _ => {
+                // An invalid state cannot name a route whose source PageMap
+                // and admission ownership can be reconstructed. Preserve the
+                // registry entry and close the runtime rather than treating a
+                // corrupt word as an empty reusable slot.
+                RUNTIME_PROCESS.retain_page_owner();
+                self.state
+                    .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                NativePostExitRouteStorageState::Retained
+            }
+        }
     }
 
-    /// Whether this fixed slot still carries one live route, including the
-    /// brief private `BUSY` move while its exact B-side free is running.
-    /// Retained state is intentionally excluded: that process has already
-    /// become terminal and cannot authorize a second source traversal.
-    #[inline]
-    fn has_live_route(&self) -> bool {
-        matches!(
-            self.state.load(Ordering::Acquire),
-            NATIVE_POST_EXIT_ROUTE_ACTIVE | NATIVE_POST_EXIT_ROUTE_BUSY
-        )
-    }
-
-    /// Installs one fully detached route. A caller checks emptiness before it
-    /// begins the irreversible source drain; an unexpected race returns the
-    /// original exact route so the caller can retain it rather than overwrite
-    /// an existing A owner.
+    /// Installs one fully detached route into a previously allocated metadata
+    /// entry. An unexpected `EMPTY -> BUSY` race returns the original exact
+    /// route so the caller can retry another entry or retain it rather than
+    /// overwrite an independently parked owner.
     fn install(&self, route: NativePostExitRoute) -> Result<(), NativePostExitRoute> {
         if self
             .state
@@ -3271,6 +3726,126 @@ impl NativePostExitRouteStorage {
         self.state
             .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
         Ok(())
+    }
+
+    /// Restores one unchanged or still-live route after this entry's private
+    /// operation has completed. The route and its parked scheduler token move
+    /// together so an address miss or a nonterminal exact free cannot make
+    /// ticket zero observe a false quiescent state.
+    #[inline]
+    fn restore_active(&self, parked: RuntimeParkedPostExitRoute, route: NativePostExitFreeRoute) {
+        // SAFETY: this storage operation owns the entry after its successful
+        // `ACTIVE -> BUSY` claim and writes the next complete linear image
+        // before publishing ACTIVE again.
+        unsafe {
+            (*self.entry.get()).write(NativePostExitRouteEntry::Active(
+                NativePostExitRoute { parked, route },
+            ))
+        };
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
+    }
+
+    /// Keeps a concrete route and its scheduler token process-terminal after
+    /// an operation can no longer prove a retryable source state.
+    #[inline]
+    fn retain_route(&self, parked: RuntimeParkedPostExitRoute, route: NativePostExitFreeRoute) {
+        // SAFETY: see `restore_active`; retained entries are never moved back
+        // through an active route operation.
+        unsafe {
+            (*self.entry.get()).write(NativePostExitRouteEntry::RetainedRoute(
+                NativePostExitRoute { parked, route },
+            ))
+        };
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+    }
+
+    /// Commits a consumed exact-source free into this storage entry.
+    ///
+    /// A route may mint its terminal proof only after it has released every
+    /// A-owned client. This helper is shared by C `free` and the detached
+    /// B-side `realloc` transaction, so both paths preserve the same rule:
+    /// B's attachment and any independently parked B session must finish
+    /// before A's parked token and worker-admission claim can be released.
+    fn settle_exact_free(
+        &self,
+        parked: RuntimeParkedPostExitRoute,
+        free: NativePostExitFreeStep,
+    ) -> NativePostExitRouteFreeResult {
+        match free {
+            NativePostExitFreeStep::NotOwned(route) => {
+                self.restore_active(parked, route);
+                NativePostExitRouteFreeResult::NotOwned
+            }
+            NativePostExitFreeStep::Freed(route) => {
+                self.restore_active(parked, route);
+                NativePostExitRouteFreeResult::Freed
+            }
+            NativePostExitFreeStep::Finished(proof) => {
+                // The detached source route has terminally released, but B is still
+                // an attached worker. B may already have its own *parked*
+                // local native session: that engine is independent of A's
+                // route and its eventual source finish is the concrete B
+                // lifecycle boundary we need. Transfer both the terminal
+                // proof and this route's still-parked scheduler token into B
+                // TLS only when no engine is active and B has not already
+                // received another route completion. Other owners may
+                // continue their separately serialized PageMap operations,
+                // but ticket zero cannot reopen until B has crossed its
+                // required finish boundary.
+                let slot = current_thread_slot();
+                let b_session_is_parked = match slot.page_owner.as_ref() {
+                    None => true,
+                    Some(ThreadLifecyclePageOwner::Session(session)) => session.parked.is_some(),
+                    Some(ThreadLifecyclePageOwner::PreparedExit(_)) => false,
+                };
+                if slot.state != ThreadLifecycleState::Attached
+                    || !b_session_is_parked
+                    || slot.post_exit_route_proof.is_some()
+                {
+                    // A complete route without its matching B lifecycle has
+                    // no legal scheduler settle or admission release. Keep
+                    // both typed capabilities terminally represented instead
+                    // of converting the static route back into an empty slot.
+                    unsafe {
+                        (*self.entry.get()).write(NativePostExitRouteEntry::RetainedFinished {
+                            parked,
+                            proof,
+                        })
+                    };
+                    RUNTIME_PROCESS.retain_page_owner();
+                    self.state
+                        .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                    NativePostExitRouteFreeResult::Retained
+                } else {
+                    slot.post_exit_route_proof = Some(NativePostExitRouteCompletion {
+                        parked,
+                        proof,
+                    });
+                    self.state
+                        .store(NATIVE_POST_EXIT_ROUTE_EMPTY, Ordering::Release);
+                    NativePostExitRouteFreeResult::Finished
+                }
+            }
+            NativePostExitFreeStep::Retained(route) => {
+                self.retain_route(parked, route);
+                NativePostExitRouteFreeResult::Retained
+            }
+            NativePostExitFreeStep::Poisoned(proof) => {
+                // SAFETY: the lower route has no retryable source state, but
+                // its scheduler claim and exact admission must remain owned.
+                unsafe {
+                    (*self.entry.get()).write(NativePostExitRouteEntry::RetainedPoisoned {
+                        parked,
+                        proof,
+                    })
+                };
+                self.state
+                    .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                NativePostExitRouteFreeResult::Retained
+            }
+        }
     }
 
     /// Applies one exact C free to the current detached route. A route that
@@ -3345,89 +3920,203 @@ impl NativePostExitRouteStorage {
             route.free_exact_native_block(attachment, block)
         };
 
-        match free {
-            NativePostExitFreeStep::NotOwned(route) => {
-                // SAFETY: this same writer took the initialized entry above.
-                unsafe {
-                    (*self.entry.get()).write(NativePostExitRouteEntry::Active(
-                        NativePostExitRoute { parked, route },
-                    ))
-                };
-                self.state
-                    .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
-                NativePostExitRouteFreeResult::NotOwned
-            }
-            NativePostExitFreeStep::Freed(route) => {
-                // SAFETY: see the unchanged-route arm above.
-                unsafe {
-                    (*self.entry.get()).write(NativePostExitRouteEntry::Active(
-                        NativePostExitRoute { parked, route },
-                    ))
-                };
-                self.state
-                    .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
-                NativePostExitRouteFreeResult::Freed
-            }
-            NativePostExitFreeStep::Finished(proof) => {
-                // The detached source route has terminally released, but B is still
-                // an attached no-page worker. Transfer both the terminal
-                // proof and this route's still-parked scheduler token into B
-                // TLS. Other owners may continue their separately serialized
-                // PageMap operations, but ticket zero cannot reopen until B
-                // has crossed its required no-page finish boundary.
-                let slot = current_thread_slot();
-                if slot.state != ThreadLifecycleState::Attached
-                    || slot.page_owner.is_some()
-                    || slot.post_exit_route_proof.is_some()
-                {
-                    // A complete route without its matching B lifecycle has
-                    // no legal scheduler settle or admission release. Keep
-                    // both typed capabilities terminally represented instead
-                    // of converting the static route back into an empty slot.
-                    unsafe {
-                        (*self.entry.get()).write(NativePostExitRouteEntry::RetainedFinished {
-                            parked,
-                            proof,
-                        })
-                    };
+        self.settle_exact_free(parked, free)
+    }
+
+    /// Replaces one exact detached A client through one private B-side
+    /// allocate/copy/free transaction.
+    ///
+    /// The entry stays `BUSY` across B's parked-session allocation. That is
+    /// longer than a normal post-exit exact free, but it does not borrow a
+    /// source PageMap lease: B's session operation resumes and re-parks its
+    /// own engine before this route consumes A's block through the existing
+    /// source free transition. Keeping the opaque route claimed for the full
+    /// transaction prevents another exact free from removing A's client after
+    /// the replacement copy but before the old client is terminally released.
+    fn reallocate_exact(
+        &self,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> NativePostExitRouteReallocateResult {
+        loop {
+            match self.state.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_EMPTY => {
+                    return NativePostExitRouteReallocateResult::NotOwned;
+                }
+                NATIVE_POST_EXIT_ROUTE_RETAINED => {
+                    return NativePostExitRouteReallocateResult::Retained;
+                }
+                NATIVE_POST_EXIT_ROUTE_BUSY => core::hint::spin_loop(),
+                NATIVE_POST_EXIT_ROUTE_ACTIVE => {
+                    if self
+                        .state
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_ACTIVE,
+                            NATIVE_POST_EXIT_ROUTE_BUSY,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+                _ => {
                     RUNTIME_PROCESS.retain_page_owner();
                     self.state
                         .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
-                    NativePostExitRouteFreeResult::Retained
-                } else {
-                    slot.post_exit_route_proof = Some(NativePostExitRouteCompletion {
-                        parked,
-                        proof,
-                    });
-                    self.state
-                        .store(NATIVE_POST_EXIT_ROUTE_EMPTY, Ordering::Release);
-                    NativePostExitRouteFreeResult::Finished
+                    return NativePostExitRouteReallocateResult::Retained;
                 }
             }
-            NativePostExitFreeStep::Retained(route) => {
-                // SAFETY: retain the exact source route and scheduler claim.
-                unsafe {
-                    (*self.entry.get()).write(NativePostExitRouteEntry::RetainedRoute(
-                        NativePostExitRoute { parked, route },
-                    ))
-                };
-                self.state
-                    .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
-                NativePostExitRouteFreeResult::Retained
+        }
+
+        // SAFETY: this thread exclusively claimed the initialized active
+        // entry. Every return below restores a complete active image or keeps
+        // the exact route process-terminal before publishing another state.
+        let entry = unsafe { (*self.entry.get()).assume_init_read() };
+        let NativePostExitRouteEntry::Active(NativePostExitRoute { parked, route }) = entry
+        else {
+            // The atomic state and entry discriminant disagreed. Preserve the
+            // concrete value and close the runtime rather than guessing which
+            // detached owner owns the old C client.
+            core::mem::forget(entry);
+            RUNTIME_PROCESS.retain_page_owner();
+            self.state
+                .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+            return NativePostExitRouteReallocateResult::Retained;
+        };
+
+        let Some(old_usable_size) = route.native_usable_size(block) else {
+            self.restore_active(parked, route);
+            return NativePostExitRouteReallocateResult::NotOwned;
+        };
+
+        // The B allocation is made and recorded before A's exact route may
+        // consume the old client. This is the source `malloc -> memcpy ->
+        // free` ordering: every allocation refusal restores the untouched A
+        // route so C still owns `block` and may later free it normally.
+        let replacement = match current_thread_native_session_handle(true) {
+            Ok(mut session) => match session.native_allocate_aligned(
+                new_size,
+                NATIVE_C_MALLOC_ALIGNMENT,
+                false,
+            ) {
+                Ok(replacement) => match session.enable_native_live_remote() {
+                    Ok(()) => replacement,
+                    Err(error) => {
+                        let result = native_post_exit_reallocate_session_failure(error);
+                        // `native_allocate_aligned` recorded the exact client
+                        // before publication. Remove it again before the old
+                        // source route is touched; a failed cleanup has an
+                        // unobservable native allocation, so retain both
+                        // owners rather than claim ordinary realloc failure.
+                        if session.native_free(replacement).is_err()
+                            || result == NativePostExitRouteReallocateResult::Retained
+                        {
+                            self.retain_route(parked, route);
+                            RUNTIME_PROCESS.retain_page_owner();
+                            return NativePostExitRouteReallocateResult::Retained;
+                        }
+                        self.restore_active(parked, route);
+                        return result;
+                    }
+                },
+                Err(error) => {
+                    let result = native_post_exit_reallocate_session_failure(error);
+                    if result == NativePostExitRouteReallocateResult::Retained {
+                        self.retain_route(parked, route);
+                        RUNTIME_PROCESS.retain_page_owner();
+                        return NativePostExitRouteReallocateResult::Retained;
+                    }
+                    self.restore_active(parked, route);
+                    return result;
+                }
+            },
+            Err(error) => {
+                let result = native_post_exit_reallocate_session_failure(error);
+                if result == NativePostExitRouteReallocateResult::Retained {
+                    self.retain_route(parked, route);
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return NativePostExitRouteReallocateResult::Retained;
+                }
+                self.restore_active(parked, route);
+                return result;
             }
-            NativePostExitFreeStep::Poisoned(proof) => {
-                // SAFETY: the lower route has no retryable source state, but
-                // its scheduler claim and exact admission must remain owned.
-                unsafe {
-                    (*self.entry.get()).write(NativePostExitRouteEntry::RetainedPoisoned {
-                        parked,
-                        proof,
-                    })
-                };
-                self.state
-                    .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
-                NativePostExitRouteFreeResult::Retained
+        };
+
+        let copy_size = core::cmp::min(old_usable_size, new_size);
+        if new_size == 0 {
+            // Pinned `mi_theap_realloc_zero_ex` gives a successful zero-size
+            // replacement a defined first byte even though ordinary malloc(0)
+            // is otherwise uninitialized. The successful native allocation
+            // has at least one writable byte.
+            unsafe { replacement.as_ptr().write(0) };
+        }
+        if copy_size != 0 {
+            // SAFETY: the private route still proves that `block` is live and
+            // readable through `old_usable_size`; the B session has recorded
+            // a distinct live normal-alignment replacement. The bounded copy
+            // extent is exactly the pinned source overlap before old-client
+            // release, and C's realloc contract excludes concurrent access.
+            unsafe {
+                crate::support::copy_bytes_aligned(
+                    replacement.as_ptr(),
+                    block.as_ptr(),
+                    copy_size,
+                )
+            };
+        }
+
+        let free = {
+            let slot = current_thread_slot();
+            let Some(attachment) = slot.attachment.as_mut() else {
+                // A successful B allocation without its matched attachment
+                // cannot safely advance A's source route or hand its terminal
+                // proof to a normal B finish. Preserve both linear owners.
+                self.retain_route(parked, route);
+                RUNTIME_PROCESS.retain_page_owner();
+                return NativePostExitRouteReallocateResult::Retained;
+            };
+            route.free_exact_native_block(attachment, block)
+        };
+
+        match free {
+            NativePostExitFreeStep::NotOwned(route) => {
+                // The immutable exact lookup above and the still-claimed
+                // entry make this impossible without a lower ownership
+                // disagreement. Cleanly remove B's private replacement only
+                // if that local ledger remains coherent; otherwise retain
+                // rather than returning a hidden allocation to C.
+                match current_thread_native_session_handle(false)
+                    .and_then(|mut session| session.native_free(replacement))
+                {
+                    Ok(()) => {
+                        self.restore_active(parked, route);
+                        NativePostExitRouteReallocateResult::Unavailable
+                    }
+                    Err(_) => {
+                        self.retain_route(parked, route);
+                        RUNTIME_PROCESS.retain_page_owner();
+                        NativePostExitRouteReallocateResult::Retained
+                    }
+                }
             }
+            free => match self.settle_exact_free(parked, free) {
+                NativePostExitRouteFreeResult::Freed
+                | NativePostExitRouteFreeResult::Finished => {
+                    NativePostExitRouteReallocateResult::Allocated(replacement)
+                }
+                NativePostExitRouteFreeResult::Retained => {
+                    NativePostExitRouteReallocateResult::Retained
+                }
+                NativePostExitRouteFreeResult::NotOwned => {
+                    // The `NotOwned` source result is handled above while it
+                    // still carries the route. Reaching it here would lose a
+                    // proven B replacement, so make the runtime terminal.
+                    RUNTIME_PROCESS.retain_page_owner();
+                    NativePostExitRouteReallocateResult::Retained
+                }
+            },
         }
     }
 
@@ -3506,99 +4195,477 @@ impl NativePostExitRouteStorage {
 
 }
 
-/// The fixed private native post-exit router.
+/// One permanent node in the metadata-backed detached-route registry.
 ///
-/// Each slot stays self-contained: scanning never returns a route, raw
-/// client, or PageMap fact to the caller. A foreign address restores the
-/// first claimed slot before the next slot is considered, so concurrent C
-/// frees remain serialized per route and source PageMap access remains
-/// serialized by the route-local short operation.
-struct NativePostExitRouteSlots {
-    first: NativePostExitRouteStorage,
-    second: NativePostExitRouteStorage,
+/// The metadata capability intentionally remains in the same process-lifetime
+/// allocation as this node. It is never released or moved: a concurrent raw
+/// C free may have acquired the node from the registry head, so reclaiming
+/// node storage would require an unrelated hazard-pointer or epoch protocol.
+/// Empty entries are reused instead. This bounds retained metadata by the
+/// high-water of simultaneously detached owners rather than by the number of
+/// sequential worker exits.
+struct NativePostExitRouteRegistryNode {
+    next: AtomicPtr<NativePostExitRouteRegistryNode>,
+    storage: NativePostExitRouteStorage,
+    /// Keeps the exact metadata backing capability live for this stable node.
+    /// It is deliberately not exposed or freed independently of the node.
+    _backing: MetaAllocation<'static>,
 }
 
-impl NativePostExitRouteSlots {
+// Metadata's ordinary source allocation is naturally aligned to the native
+// malloc boundary. Keep this node's typed image within that established
+// guarantee before projecting its bytes as a registry entry.
+const _: [(); 1] = [();
+    (core::mem::align_of::<NativePostExitRouteRegistryNode>() <= NATIVE_C_MALLOC_ALIGNMENT)
+        as usize
+];
+
+impl NativePostExitRouteRegistryNode {
+    #[inline]
+    fn new(
+        route: NativePostExitRoute,
+        next: *mut NativePostExitRouteRegistryNode,
+        backing: MetaAllocation<'static>,
+    ) -> Self {
+        Self {
+            next: AtomicPtr::new(next),
+            storage: NativePostExitRouteStorage::from_active(route),
+            _backing: backing,
+        }
+    }
+}
+
+// SAFETY: `next` is initialized before this node is Release-published and is
+// never changed. The only mutable route state is inside `storage`, whose own
+// `ACTIVE -> BUSY` protocol already provides the required exclusion. The
+// metadata capability is process-lived and never accessed through this shared
+// reference after initialization.
+unsafe impl Sync for NativePostExitRouteRegistryNode {}
+
+/// Result of looking for a reusable detached-route registry entry.
+enum NativePostExitRouteRegistryInstall {
+    Installed,
+    NeedsEntry(NativePostExitRoute),
+    Retained(NativePostExitRoute),
+}
+
+/// Private state of the complete registry view used before another A may
+/// begin its source owner-exit traversal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePostExitRouteRegistryView {
+    Empty,
+    Live,
+    Retained,
+}
+
+/// The private metadata-backed native post-exit router.
+///
+/// Nodes have a stable process-lifetime address and the list only grows under
+/// the small append word. Scanning never returns a route, raw client, or
+/// PageMap fact to the caller. A foreign address restores the claimed entry
+/// before the next node is considered, so exact C frees remain serialized per
+/// route and source PageMap access remains route-local.
+struct NativePostExitRouteRegistry {
+    growth: AtomicU8,
+    head: AtomicPtr<NativePostExitRouteRegistryNode>,
+}
+
+impl NativePostExitRouteRegistry {
     const fn new() -> Self {
         Self {
-            first: NativePostExitRouteStorage::new(),
-            second: NativePostExitRouteStorage::new(),
+            growth: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE),
+            head: AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Scans the stable list once without exposing an entry. A retained node
+    /// wins over a reusable empty node: once source ownership is terminal,
+    /// another detached A may not publish a route beside it.
+    fn try_install_existing(
+        &self,
+        route: NativePostExitRoute,
+    ) -> NativePostExitRouteRegistryInstall {
+        let mut candidate: *mut NativePostExitRouteRegistryNode = core::ptr::null_mut();
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: every node is fully initialized before the Release store
+            // that links it from `head`, and nodes are never removed or moved.
+            let node = unsafe { &*current };
+            match node.storage.registry_state() {
+                NativePostExitRouteStorageState::Empty if candidate.is_null() => {
+                    candidate = current;
+                }
+                NativePostExitRouteStorageState::Empty | NativePostExitRouteStorageState::Live => {}
+                NativePostExitRouteStorageState::Retained => {
+                    return NativePostExitRouteRegistryInstall::Retained(route);
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        if candidate.is_null() {
+            return NativePostExitRouteRegistryInstall::NeedsEntry(route);
+        }
+        // SAFETY: `candidate` was read from the stable registry list above.
+        // A concurrent installer can only win the entry's own EMPTY -> BUSY
+        // transition; in that case this returns the unchanged linear route so
+        // the caller can rescan or grow without overwriting it.
+        match unsafe { (&*candidate).storage.install(route) } {
+            Ok(()) => NativePostExitRouteRegistryInstall::Installed,
+            Err(route) => NativePostExitRouteRegistryInstall::NeedsEntry(route),
+        }
+    }
+
+    /// Acquires only the list-growth word. It never covers a route's source
+    /// free or usable-size operation; those retain their existing per-entry
+    /// short `ACTIVE -> BUSY` serialization.
+    fn acquire_growth(&self) -> bool {
+        loop {
+            match self.growth.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE => {
+                    if self
+                        .growth
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE,
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_GROWING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_GROWING => core::hint::spin_loop(),
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return false;
+                }
+            }
         }
     }
 
     #[inline]
-    fn has_empty_slot(&self) -> bool {
-        self.first.is_empty() || self.second.is_empty()
+    fn release_growth(&self) {
+        self.growth
+            .store(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE, Ordering::Release);
     }
 
-    /// Returns the one-shot lower-source proof needed when a second detached
-    /// native route may append an OS singleton beside members already held by
-    /// one of these fixed slots.
-    ///
-    /// The router is the only production owner that can leave the static
-    /// main Heap's private OS list nonempty while another native owner starts
-    /// its source exit. Every live slot retains a typed route whose exact
-    /// terminal free removes its own list member before mapping release; a
-    /// retained slot instead makes the whole page runtime terminal and cannot
-    /// enter this path. `BUSY` still names the same live route, merely moved
-    /// into its serialized exact-free operation.
-    fn known_post_exit_os_abandoned_members(
+    /// Installs one fully detached route. Existing empty metadata entries are
+    /// reused first; if every live entry is occupied, one new process-lived
+    /// metadata node is initialized and published. An allocation failure
+    /// returns the exact route for terminal retention rather than adding a
+    /// cardinality cap or overwriting another A owner.
+    fn install(
         &self,
-    ) -> Option<ThreadExitKnownPostExitOsAbandonedList> {
-        if !self.first.has_live_route() && !self.second.has_live_route() {
-            return None;
+        route: NativePostExitRoute,
+        config: MemoryConfig,
+    ) -> Result<(), NativePostExitRoute> {
+        let route = match self.try_install_existing(route) {
+            NativePostExitRouteRegistryInstall::Installed => return Ok(()),
+            NativePostExitRouteRegistryInstall::NeedsEntry(route) => route,
+            NativePostExitRouteRegistryInstall::Retained(route) => return Err(route),
+        };
+        if !self.acquire_growth() {
+            return Err(route);
         }
-        // SAFETY: the two slots above are the complete native production
-        // router for detached owner exits. A live entry owns every prior
-        // private-list member through its typed route; this token grants only
-        // a second source traversal's preflight, never list access itself.
-        Some(unsafe {
-            ThreadExitKnownPostExitOsAbandonedList::from_bounded_post_exit_router()
-        })
+
+        // A prior grower may have published a reusable node while this thread
+        // waited. Recheck under the append word before asking metadata for a
+        // new process-lifetime entry.
+        let route = match self.try_install_existing(route) {
+            NativePostExitRouteRegistryInstall::Installed => {
+                self.release_growth();
+                return Ok(());
+            }
+            NativePostExitRouteRegistryInstall::NeedsEntry(route) => route,
+            NativePostExitRouteRegistryInstall::Retained(route) => {
+                self.release_growth();
+                return Err(route);
+            }
+        };
+
+        let backing = match MetaAllocator::global().zalloc(
+            config,
+            core::mem::size_of::<NativePostExitRouteRegistryNode>(),
+        ) {
+            Ok(backing) => backing,
+            Err(_) => {
+                self.release_growth();
+                return Err(route);
+            }
+        };
+        let next = self.head.load(Ordering::Acquire);
+        let node = backing
+            .pointer()
+            .as_ptr()
+            .cast::<NativePostExitRouteRegistryNode>();
+        // SAFETY: `backing` is a fresh zeroed metadata allocation with the
+        // compile-time-checked alignment above. This is its one typed node
+        // initialization, before any registry reader can acquire `head`.
+        unsafe { node.write(NativePostExitRouteRegistryNode::new(route, next, backing)) };
+        self.head.store(node, Ordering::Release);
+        self.release_growth();
+        Ok(())
     }
 
-    /// Installs a route into the first available fixed private slot. The
-    /// source route has already completed A's teardown, so an exhausted
-    /// bounded router returns the exact linear value for terminal retention
-    /// rather than overwriting an independently parked owner.
-    fn install(&self, route: NativePostExitRoute) -> Result<(), NativePostExitRoute> {
-        match self.first.install(route) {
-            Ok(()) => Ok(()),
-            Err(route) => self.second.install(route),
+    /// Reports whether every currently published detached route remains live.
+    /// The caller receives no entry identity or list access. A `Live` answer
+    /// means every pre-existing private OS-list member is still owned by one
+    /// typed route whose terminal exact free unlinks only its own member.
+    fn view(&self) -> NativePostExitRouteRegistryView {
+        let mut live = false;
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: see `try_install_existing`; the append-only node chain
+            // makes this exact entry stable for the complete inspection.
+            let node = unsafe { &*current };
+            match node.storage.registry_state() {
+                NativePostExitRouteStorageState::Empty => {}
+                NativePostExitRouteStorageState::Live => live = true,
+                NativePostExitRouteStorageState::Retained => {
+                    return NativePostExitRouteRegistryView::Retained;
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        if live {
+            NativePostExitRouteRegistryView::Live
+        } else {
+            NativePostExitRouteRegistryView::Empty
         }
     }
 
-    /// Offers one raw C address to at most the two private detached routes.
-    /// A retained slot has already made the shared runtime terminal, so no
-    /// later slot may safely answer a free after that point.
+    /// Offers one raw C address to the private detached routes. A retained
+    /// entry has already made the shared runtime terminal, so no later node
+    /// may safely answer a free after that point.
     fn free_exact(&self, block: core::ptr::NonNull<u8>) -> NativePostExitRouteFreeResult {
-        match self.first.free_exact(block) {
-            NativePostExitRouteFreeResult::NotOwned => self.second.free_exact(block),
-            result => result,
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes stay linked and stable for the process lifetime.
+            let node = unsafe { &*current };
+            match node.storage.free_exact(block) {
+                NativePostExitRouteFreeResult::NotOwned => {
+                    current = node.next.load(Ordering::Acquire);
+                }
+                result => return result,
+            }
         }
+        NativePostExitRouteFreeResult::NotOwned
+    }
+
+    /// Offers one raw C address to the private detached routes for the one
+    /// source-shaped B allocation/copy/free transition. Each entry decides
+    /// membership under its own `ACTIVE -> BUSY` move; the registry never
+    /// returns a route, a client identity, or a page capability while it
+    /// continues its stable-node scan after an address miss.
+    fn reallocate_exact(
+        &self,
+        block: core::ptr::NonNull<u8>,
+        new_size: usize,
+    ) -> NativePostExitRouteReallocateResult {
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes stay linked and stable for the process lifetime.
+            let node = unsafe { &*current };
+            match node.storage.reallocate_exact(block, new_size) {
+                NativePostExitRouteReallocateResult::NotOwned => {
+                    current = node.next.load(Ordering::Acquire);
+                }
+                result => return result,
+            }
+        }
+        NativePostExitRouteReallocateResult::NotOwned
     }
 
     /// Looks up one source-recorded extent without exposing which private
-    /// route owned it. A failed first lookup restores that entry before the
-    /// second route is considered.
+    /// route owns it. A failed node lookup restores that entry before the next
+    /// stable node is considered.
     fn usable_size_exact(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
-        match self.first.usable_size_exact(block) {
-            NativePostExitRouteUsableSizeResult::Owned(usable_size) => Some(usable_size),
-            NativePostExitRouteUsableSizeResult::Retained => None,
-            NativePostExitRouteUsableSizeResult::NotOwned => match self.second.usable_size_exact(block) {
-                NativePostExitRouteUsableSizeResult::Owned(usable_size) => Some(usable_size),
-                NativePostExitRouteUsableSizeResult::NotOwned
-                | NativePostExitRouteUsableSizeResult::Retained => None,
-            },
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes stay linked and stable for the process lifetime.
+            let node = unsafe { &*current };
+            match node.storage.usable_size_exact(block) {
+                NativePostExitRouteUsableSizeResult::Owned(usable_size) => return Some(usable_size),
+                NativePostExitRouteUsableSizeResult::Retained => return None,
+                NativePostExitRouteUsableSizeResult::NotOwned => {
+                    current = node.next.load(Ordering::Acquire);
+                }
+            }
         }
+        None
+    }
+
+    /// Counts only stable entry states for the direct high-water regression.
+    /// It returns no route identity or capability, and it must be sampled
+    /// after the test's participating workers have joined. A transient busy
+    /// state is intentionally counted as live by `registry_state`.
+    #[cfg(feature = "native-runtime-test-audit")]
+    fn test_audit(&self) -> NativePostExitRouteRegistryAudit {
+        let mut audit = NativePostExitRouteRegistryAudit {
+            published_entry_count: 0,
+            live_entry_count: 0,
+            retained_entry_count: 0,
+        };
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: every node is fully initialized before its Release
+            // publication, and append-only links keep the node address valid
+            // for this diagnostic-only traversal.
+            let node = unsafe { &*current };
+            audit.published_entry_count += 1;
+            match node.storage.registry_state() {
+                NativePostExitRouteStorageState::Empty => {}
+                NativePostExitRouteStorageState::Live => audit.live_entry_count += 1,
+                NativePostExitRouteStorageState::Retained => audit.retained_entry_count += 1,
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        audit
     }
 }
 
-// SAFETY: each fixed slot has the same `ACTIVE -> BUSY` ownership protocol;
-// the outer router stores no mutable route state of its own.
-unsafe impl Sync for NativePostExitRouteSlots {}
+// SAFETY: the registry publishes only fully initialized immutable node links.
+// Each node's mutable route state is independently protected by its storage
+// protocol, and the append word serializes only list growth.
+unsafe impl Sync for NativePostExitRouteRegistry {}
 
-static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteSlots = NativePostExitRouteSlots::new();
+static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRouteRegistry::new();
+
+/// Returns scalar-only accounting for the private native post-exit registry.
+///
+/// This direct-test hook is feature-gated and deliberately cannot identify,
+/// operate on, or release any registry entry. See
+/// [`NativePostExitRouteRegistryAudit`] for the quiescent-sampling contract.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_post_exit_registry_test_audit() -> NativePostExitRouteRegistryAudit {
+    NATIVE_POST_EXIT_ROUTE.test_audit()
+}
+
+/// Returns scalar-only lifecycle accounting for the process-global runtime.
+///
+/// A `None` result means the source process image is not active and quiescent
+/// enough to produce an auditable snapshot. It intentionally does not turn an
+/// audit request into a scheduler claim or a PageMap operation.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAudit> {
+    let process_active = RUNTIME_PROCESS.is_active();
+    if !process_active {
+        return None;
+    }
+    // SAFETY: PROCESS_ACTIVE follows the one process-lifetime owner and main
+    // Heap publication. This diagnostic takes only their immutable witnesses.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let process_page_map = ready.page_map().ok()?;
+    let page_map = process_page_map.page_map().ok()?;
+    let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
+    let subprocess = ready.subprocess().ok()?;
+    // SAFETY: see the owner access above. The copied lease permits one short
+    // serialized read-only Heap projection and carries no allocator authority.
+    let main_heap = unsafe { RUNTIME_PROCESS.active_main_heap() }?;
+    let (main_heap_abandoned_page_count, main_heap_os_abandoned_pages_empty) =
+        native_runtime_main_heap_lifecycle_audit(main_heap)?;
+    let metadata = MetaAllocator::global().test_allocation_audit();
+
+    Some(NativeRuntimeLifecycleAudit {
+        process_active: usize::from(process_active),
+        page_owner_ready: usize::from(
+            RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_READY,
+        ),
+        page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
+        page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
+        page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
+        arena_registry_count: arena.test_registry_count().ok()?,
+        live_thread_count: subprocess.live_thread_count(),
+        metadata_live_capability_count: metadata.live_capability_count,
+        metadata_high_water_capability_count: metadata.high_water_capability_count,
+        shared_later_theap_count: main_heap.test_shared_later_theap_count(),
+        main_heap_abandoned_page_count,
+        main_heap_os_abandoned_pages_empty: usize::from(main_heap_os_abandoned_pages_empty),
+    })
+}
+
+/// Returns scalar-only accounting for the private fork-admission gate.
+///
+/// This direct-test hook intentionally reads one atomic word and cannot turn
+/// that read into an admission claim, a fork preparation, or any allocator
+/// operation. It exists so a terminal post-exit regression can distinguish
+/// A's still-retained worker admission from the independent parked page-owner
+/// token after B has completed its own ordinary finish.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_fork_admission_test_audit() -> NativeRuntimeForkAdmissionAudit {
+    let state = RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire);
+    NativeRuntimeForkAdmissionAudit {
+        active_later_thread_count: state & FORK_GATE_COUNT_MASK,
+    }
+}
+
+/// One direct-test-only guard that makes the next allocator `munmap` fail.
+///
+/// This deliberately exposes neither a generic fault plan nor any allocator
+/// route, page, client, scheduler, or PageMap capability. The sole native
+/// post-exit regression uses it after A's aggregate route has detached and
+/// immediately before B offers the exact OS-aligned client to that opaque
+/// route. Dropping the guard clears the one test process's injection.
+#[cfg(feature = "native-runtime-test-fault")]
+#[doc(hidden)]
+pub struct NativeRuntimeTestUnmapFailure {
+    guard: crate::os::fault::Guard,
+}
+
+#[cfg(feature = "native-runtime-test-fault")]
+impl NativeRuntimeTestUnmapFailure {
+    /// Returns the number of selected `munmap` attempts observed while this
+    /// serial direct-test guard was installed.
+    #[doc(hidden)]
+    #[inline]
+    pub fn observed(&self) -> usize {
+        self.guard.observed()
+    }
+}
+
+/// Installs the one direct-test `munmap` failure used at the native post-exit
+/// terminal-release boundary.
+///
+/// The default-off feature keeps this hook out of normal allocator and libc
+/// builds. It never exposes the fault subsystem's general plan or any source
+/// route capability to a caller.
+#[cfg(feature = "native-runtime-test-fault")]
+#[doc(hidden)]
+pub fn native_runtime_test_fail_next_unmap() -> NativeRuntimeTestUnmapFailure {
+    NativeRuntimeTestUnmapFailure {
+        guard: crate::os::fault::install(crate::os::fault::Plan::at(
+            crate::os::fault::Point::Unmap,
+            1,
+            crabc_core::Errno::NOMEM,
+        )),
+    }
+}
+
+/// Reads the scalar static-Heap state while holding exactly the established
+/// short projection guard. The explicit unlock is part of this diagnostic's
+/// contract: an audit failure must not leave an evidence-only lock held.
+#[cfg(feature = "native-runtime-test-audit")]
+fn native_runtime_main_heap_lifecycle_audit(
+    main_heap: MainStaticHeapLease<'static>,
+) -> Option<(usize, bool)> {
+    let mut heap = main_heap.lock_heap().ok()?;
+    let result = (|| {
+        let heap = heap.heap_mut();
+        let abandoned_page_count = (0..crate::config::BIN_COUNT)
+            .try_fold(0usize, |total, bin| total.checked_add(heap.abandoned_count(bin)?))?;
+        let os_abandoned_pages_empty = heap.os_abandoned_pages_are_empty().ok()?;
+        Some((abandoned_page_count, os_abandoned_pages_empty))
+    })();
+    match (result, heap.unlock()) {
+        (Some(snapshot), Ok(())) => Some(snapshot),
+        (Some(_) | None, Err(_)) | (None, Ok(())) => None,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThreadLifecycleState {
@@ -3727,18 +4794,18 @@ struct DetachedOwnerExit {
 enum DetachedOwnerExitDisposition {
     SequentialFree {
         free_after_exit: TicketZeroOwnerExitFreeConsumer,
-        post_exit_remote_pair: Option<DetachedOwnerExitRemotePair>,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationGroup>,
     },
     SoleImmediateMappedRegularReclaim {
         source: DetachedOwnerExitReclaimSource,
         request: usize,
         reclaim_after_exit: TicketZeroOwnerExitReclaimConsumer,
     },
-    /// The nondefault native libc shadow moves this opaque route into one of
-    /// two fixed private post-exit scheduler slots. The scheduler still
-    /// retains the same client ledger and A admission, but C presents later
-    /// frees one address at a time rather than receiving a route callback or
-    /// client identity.
+    /// The nondefault native libc shadow moves this opaque route into one
+    /// stable metadata-backed private post-exit registry entry. The scheduler
+    /// still retains the same client ledger and A admission, but C presents
+    /// later frees one address at a time rather than receiving a route
+    /// callback or client identity.
     NativeDeferred,
 }
 
@@ -3755,12 +4822,12 @@ impl DetachedOwnerExit {
         allocator: &mut MainHeapThreadProcessPageAllocator<'_, '_>,
     ) -> Result<(), ()> {
         if let DetachedOwnerExitDisposition::SequentialFree {
-            post_exit_remote_pair,
+            post_exit_remote_publication_group,
             ..
         } = &mut self.disposition
         {
-            if let Some(pair) = post_exit_remote_pair {
-                pair.free_locals(allocator)?;
+            if let Some(group) = post_exit_remote_publication_group {
+                group.free_locals(allocator)?;
             }
         }
         self.clients.free_locals(allocator)
@@ -3784,19 +4851,19 @@ struct NativeLiveRemoteOwner {
     generation: usize,
 }
 
-/// The static publication's state while a B-side native query or free asks
-/// whether A still owns the supplied C address.
+/// One entry's state while a B-side native query or free asks whether its A
+/// still owns the supplied C address.
 enum NativeLiveRemoteOwnerClaim {
     Empty,
     Retained,
     Claimed(NativeLiveRemoteOwnerGuard),
 }
 
-/// Result of looking up the one static route before the running thread
-/// borrows its compiler-TLS session.  `Claimed` deliberately keeps the static
-/// entry `BUSY`: it is the exclusive handoff that makes a cross-thread raw
-/// TLS borrow sound.  A foreign entry is restored before this value escapes,
-/// so it never grants access to another worker's session.
+/// Result of looking up the running thread's exact registry entry before it
+/// borrows its compiler-TLS session. `Claimed` deliberately keeps that entry
+/// `BUSY`: it is the exclusive handoff that makes a cross-thread raw TLS
+/// borrow sound. A foreign entry is restored before this value escapes, so it
+/// never grants access to another worker's session.
 enum NativeLiveRemoteOwnerCurrentClaim {
     Empty,
     Foreign,
@@ -3804,25 +4871,54 @@ enum NativeLiveRemoteOwnerCurrentClaim {
     Claimed(NativeLiveRemoteOwnerGuard),
 }
 
-/// A process-static, allocation-free handoff to the one parked native A
-/// session. The atomic state serializes only moves through `entry`; the
-/// runtime page-owner scheduler separately serializes every page-map and
-/// ordinary-page operation.
+/// A private result of scanning stable live-owner entries for one exact C
+/// address. The returned client is still module-private and exists only while
+/// the accompanying guard excludes A's TLS session from resuming.
+enum NativeLiveRemoteOwnerExactClaim {
+    NotOwned,
+    Retained,
+    Claimed {
+        route: NativeLiveRemoteOwnerGuard,
+        client: PreparedOwnerExitClient,
+    },
+}
+
+/// A private scalar result of asking live-owner entries for an exact C
+/// allocation's source-recorded usable extent.
+enum NativeLiveRemoteOwnerUsableSizeResult {
+    NotOwned,
+    Retained,
+    Owned(usize),
+}
+
+/// The stable classification used only while installing or scanning a
+/// metadata-backed live-owner entry. A `BUSY` entry remains live: a B-side
+/// operation temporarily owns its raw TLS handoff but has not removed it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeLiveRemoteOwnerStorageState {
+    Empty,
+    Live,
+    Retained,
+}
+
+/// One metadata-backed handoff to a parked native A session. The atomic state
+/// serializes only moves through `entry`; the runtime page-owner scheduler
+/// separately serializes every PageMap and ordinary-page operation.
 struct NativeLiveRemoteOwnerStorage {
     state: AtomicU8,
     entry: UnsafeCell<MaybeUninit<NativeLiveRemoteOwner>>,
 }
 
 // SAFETY: `ACTIVE -> BUSY` grants one caller exclusive access to `entry`.
-// That caller may access A's TLS only while it retains the matching static
+// That caller may access A's TLS only while it retains the matching registry
 // handoff. A likewise claims it into `BUSY` before moving its session out of
 // TLS, then either restores the complete parked image or explicitly removes
-// the publication for terminal source exit.
+// its own publication for terminal source exit.
 unsafe impl Sync for NativeLiveRemoteOwnerStorage {}
 
-/// One claimed A-side parked-session publication. Dropping an unresolved
-/// claim is terminal: retaining is safer than exposing a raw TLS pointer after
-/// an incomplete B-side source transition.
+/// One claimed A-side parked-session publication. Dropping an unresolved claim
+/// is terminal: retaining this entry is safer than exposing a raw TLS pointer
+/// after an incomplete B-side source transition.
 #[must_use = "a native live-owner publication claim must restore A or remain retained"]
 struct NativeLiveRemoteOwnerGuard {
     storage: &'static NativeLiveRemoteOwnerStorage,
@@ -3830,10 +4926,31 @@ struct NativeLiveRemoteOwnerGuard {
 }
 
 impl NativeLiveRemoteOwnerStorage {
-    const fn new() -> Self {
+    #[inline]
+    fn from_active(owner: NativeLiveRemoteOwner) -> Self {
         Self {
-            state: AtomicU8::new(NATIVE_LIVE_REMOTE_OWNER_EMPTY),
-            entry: UnsafeCell::new(MaybeUninit::uninit()),
+            state: AtomicU8::new(NATIVE_LIVE_REMOTE_OWNER_ACTIVE),
+            entry: UnsafeCell::new(MaybeUninit::new(owner)),
+        }
+    }
+
+    /// Classifies one stable entry without exposing its raw TLS identity. A
+    /// malformed state has no reconstructible source owner, so it becomes
+    /// terminal rather than reusable.
+    #[inline]
+    fn registry_state(&self) -> NativeLiveRemoteOwnerStorageState {
+        match self.state.load(Ordering::Acquire) {
+            NATIVE_LIVE_REMOTE_OWNER_EMPTY => NativeLiveRemoteOwnerStorageState::Empty,
+            NATIVE_LIVE_REMOTE_OWNER_ACTIVE | NATIVE_LIVE_REMOTE_OWNER_BUSY => {
+                NativeLiveRemoteOwnerStorageState::Live
+            }
+            NATIVE_LIVE_REMOTE_OWNER_RETAINED => NativeLiveRemoteOwnerStorageState::Retained,
+            _ => {
+                RUNTIME_PROCESS.retain_page_owner();
+                self.state
+                    .store(NATIVE_LIVE_REMOTE_OWNER_RETAINED, Ordering::Release);
+                NativeLiveRemoteOwnerStorageState::Retained
+            }
         }
     }
 
@@ -3861,7 +4978,7 @@ impl NativeLiveRemoteOwnerStorage {
         Ok(())
     }
 
-    /// Claims the one active publication for a B-side C query or `free`. The
+    /// Claims this active publication for a B-side C query or `free`. The
     /// guard keeps the entry `BUSY`, so A cannot resume or end its page owner
     /// until the guard restores it or terminally retains the process.
     fn claim(&'static self) -> NativeLiveRemoteOwnerClaim {
@@ -3904,29 +5021,6 @@ impl NativeLiveRemoteOwnerStorage {
         }
     }
 
-    /// Claims the current thread's own A entry before it reads its compiler
-    /// TLS. A running A must take this path even for a seemingly read-only
-    /// decision such as native thread finish: B may otherwise hold the raw
-    /// TLS handoff and mutate A's private ledger at the same instant.
-    fn claim_current_slot(
-        &'static self,
-        slot: core::ptr::NonNull<ThreadLifecycleSlot>,
-    ) -> NativeLiveRemoteOwnerCurrentClaim {
-        match self.claim() {
-            NativeLiveRemoteOwnerClaim::Empty => NativeLiveRemoteOwnerCurrentClaim::Empty,
-            NativeLiveRemoteOwnerClaim::Retained => NativeLiveRemoteOwnerCurrentClaim::Retained,
-            NativeLiveRemoteOwnerClaim::Claimed(route) => {
-                if route.owner().slot == slot {
-                    NativeLiveRemoteOwnerCurrentClaim::Claimed(route)
-                } else {
-                    // This caller has no alias to the foreign session. Put it
-                    // back before the caller touches its own compiler TLS.
-                    route.restore();
-                    NativeLiveRemoteOwnerCurrentClaim::Foreign
-                }
-            }
-        }
-    }
 }
 
 impl NativeLiveRemoteOwnerGuard {
@@ -3936,7 +5030,7 @@ impl NativeLiveRemoteOwnerGuard {
             .expect("a live-owner guard retains its entry until it resolves")
     }
 
-    /// Borrows A's parked native session while the static route is BUSY.
+    /// Borrows A's parked native session while its registry entry is BUSY.
     ///
     /// # Safety
     ///
@@ -3961,7 +5055,7 @@ impl NativeLiveRemoteOwnerGuard {
         Some(session)
     }
 
-    /// Returns the exact A publication to the static slot after B has either
+    /// Returns the exact A publication to its registry entry after B has either
     /// completed a read-only exact query, rejected an unrelated C pointer, or
     /// completely published and finished its source interleaving operation.
     fn restore(mut self) {
@@ -3977,7 +5071,7 @@ impl NativeLiveRemoteOwnerGuard {
             .store(NATIVE_LIVE_REMOTE_OWNER_ACTIVE, Ordering::Release);
     }
 
-    /// Consumes A's static publication before A moves or tears down its
+    /// Consumes A's registry publication before A moves or tears down its
     /// parked session. The raw TLS identity is discarded, so another B can
     /// no longer borrow it while A holds the session locally.
     fn remove(mut self) -> NativeLiveRemoteOwner {
@@ -4015,13 +5109,390 @@ impl Drop for NativeLiveRemoteOwnerGuard {
     }
 }
 
-static NATIVE_LIVE_REMOTE_OWNER: NativeLiveRemoteOwnerStorage = NativeLiveRemoteOwnerStorage::new();
+/// One permanent metadata-backed entry in the private live-owner registry.
+///
+/// The backing capability remains in the same process-lifetime allocation as
+/// the entry. A raw C free may already have reached the node from the registry
+/// head, so removing or moving it would require a separate reclamation
+/// protocol. Empty storage is reused instead, bounding metadata by concurrent
+/// live-owner high-water rather than the number of sequential workers.
+struct NativeLiveRemoteOwnerRegistryNode {
+    next: AtomicPtr<NativeLiveRemoteOwnerRegistryNode>,
+    storage: NativeLiveRemoteOwnerStorage,
+    _backing: MetaAllocation<'static>,
+}
+
+const _: [(); 1] = [();
+    (core::mem::align_of::<NativeLiveRemoteOwnerRegistryNode>()
+        <= NATIVE_C_MALLOC_ALIGNMENT) as usize
+];
+
+impl NativeLiveRemoteOwnerRegistryNode {
+    #[inline]
+    fn new(
+        owner: NativeLiveRemoteOwner,
+        next: *mut NativeLiveRemoteOwnerRegistryNode,
+        backing: MetaAllocation<'static>,
+    ) -> Self {
+        Self {
+            next: AtomicPtr::new(next),
+            storage: NativeLiveRemoteOwnerStorage::from_active(owner),
+            _backing: backing,
+        }
+    }
+}
+
+// SAFETY: a node is fully initialized before the Release publication from
+// `head`; its next link never changes and its mutable entry uses the separate
+// `ACTIVE -> BUSY` protocol above. The backing capability keeps this address
+// valid until process termination.
+unsafe impl Sync for NativeLiveRemoteOwnerRegistryNode {}
+
+enum NativeLiveRemoteOwnerRegistryExistingInstall {
+    Installed,
+    NeedsEntry(NativeLiveRemoteOwner),
+    Retained(NativeLiveRemoteOwner),
+}
+
+enum NativeLiveRemoteOwnerRegistryInstall {
+    Installed,
+    Unavailable(NativeLiveRemoteOwner),
+    Retained(NativeLiveRemoteOwner),
+}
+
+/// The private append-only registry of independently parked live A sessions.
+///
+/// Scanning never returns a node, raw address, page, or allocator capability.
+/// A foreign address restores each claimed entry before the next stable node is
+/// considered. The only value that leaves this registry internally is an
+/// opaque guard paired with an already-validated private client fact.
+struct NativeLiveRemoteOwnerRegistry {
+    growth: AtomicU8,
+    head: AtomicPtr<NativeLiveRemoteOwnerRegistryNode>,
+}
+
+impl NativeLiveRemoteOwnerRegistry {
+    const fn new() -> Self {
+        Self {
+            growth: AtomicU8::new(NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE),
+            head: AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Finds a reusable entry without exposing its identity. A retained entry
+    /// wins over a reusable one: a terminal raw-TLS handoff closes the runtime
+    /// instead of allowing an unrelated A to publish beside it.
+    fn try_install_existing(
+        &self,
+        owner: NativeLiveRemoteOwner,
+    ) -> NativeLiveRemoteOwnerRegistryExistingInstall {
+        let mut candidate: *mut NativeLiveRemoteOwnerRegistryNode = core::ptr::null_mut();
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: nodes are fully initialized before publication and stay
+            // linked at this address for the process lifetime.
+            let node = unsafe { &*current };
+            match node.storage.registry_state() {
+                NativeLiveRemoteOwnerStorageState::Empty if candidate.is_null() => {
+                    candidate = current;
+                }
+                NativeLiveRemoteOwnerStorageState::Empty
+                | NativeLiveRemoteOwnerStorageState::Live => {}
+                NativeLiveRemoteOwnerStorageState::Retained => {
+                    return NativeLiveRemoteOwnerRegistryExistingInstall::Retained(owner);
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        if candidate.is_null() {
+            return NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner);
+        }
+        // SAFETY: the candidate is an append-only stable node. A concurrent
+        // installer may win its EMPTY -> BUSY transition; in that case this
+        // returns the unchanged owner for a rescan rather than overwriting it.
+        match unsafe { (&*candidate).storage.install(owner) } {
+            Ok(()) => NativeLiveRemoteOwnerRegistryExistingInstall::Installed,
+            Err(owner) => NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner),
+        }
+    }
+
+    /// Acquires only the append word. It never covers a live-owner source
+    /// operation, whose entry-level state retains the short serialization.
+    fn acquire_growth(&self) -> bool {
+        loop {
+            match self.growth.load(Ordering::Acquire) {
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE => {
+                    if self
+                        .growth
+                        .compare_exchange(
+                            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE,
+                            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_GROWING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_GROWING => core::hint::spin_loop(),
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return false;
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn release_growth(&self) {
+        self.growth
+            .store(NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE, Ordering::Release);
+    }
+
+    /// Installs a current A session into an empty stable entry or appends one
+    /// new metadata-backed node. Allocation failure leaves the session local
+    /// only; it never overwrites a peer route or makes the client address
+    /// visible through a fallback table.
+    fn install(
+        &self,
+        owner: NativeLiveRemoteOwner,
+        config: MemoryConfig,
+    ) -> NativeLiveRemoteOwnerRegistryInstall {
+        let owner = match self.try_install_existing(owner) {
+            NativeLiveRemoteOwnerRegistryExistingInstall::Installed => {
+                return NativeLiveRemoteOwnerRegistryInstall::Installed;
+            }
+            NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner) => owner,
+            NativeLiveRemoteOwnerRegistryExistingInstall::Retained(owner) => {
+                return NativeLiveRemoteOwnerRegistryInstall::Retained(owner);
+            }
+        };
+        if !self.acquire_growth() {
+            return NativeLiveRemoteOwnerRegistryInstall::Retained(owner);
+        }
+
+        // A prior grower may have made an empty entry reusable while this
+        // caller waited. Recheck under the append word before allocating.
+        let owner = match self.try_install_existing(owner) {
+            NativeLiveRemoteOwnerRegistryExistingInstall::Installed => {
+                self.release_growth();
+                return NativeLiveRemoteOwnerRegistryInstall::Installed;
+            }
+            NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner) => owner,
+            NativeLiveRemoteOwnerRegistryExistingInstall::Retained(owner) => {
+                self.release_growth();
+                return NativeLiveRemoteOwnerRegistryInstall::Retained(owner);
+            }
+        };
+
+        let backing = match MetaAllocator::global().zalloc(
+            config,
+            core::mem::size_of::<NativeLiveRemoteOwnerRegistryNode>(),
+        ) {
+            Ok(backing) => backing,
+            Err(_) => {
+                self.release_growth();
+                return NativeLiveRemoteOwnerRegistryInstall::Unavailable(owner);
+            }
+        };
+        let next = self.head.load(Ordering::Acquire);
+        let node = backing
+            .pointer()
+            .as_ptr()
+            .cast::<NativeLiveRemoteOwnerRegistryNode>();
+        // SAFETY: the metadata allocation has the checked alignment and this
+        // is its one typed initialization before the Release publication.
+        unsafe { node.write(NativeLiveRemoteOwnerRegistryNode::new(owner, next, backing)) };
+        self.head.store(node, Ordering::Release);
+        self.release_growth();
+        NativeLiveRemoteOwnerRegistryInstall::Installed
+    }
+
+    /// Claims the running thread's exact entry before it reads compiler TLS.
+    /// A running A must wait for a B-side guard that borrowed its raw slot, but
+    /// all foreign entries are restored before A accesses its own TLS image.
+    fn claim_current_slot(
+        &'static self,
+        slot: core::ptr::NonNull<ThreadLifecycleSlot>,
+    ) -> NativeLiveRemoteOwnerCurrentClaim {
+        let mut saw_foreign = false;
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: this append-only metadata node has process lifetime, so
+            // a claimed guard may retain its storage reference after the scan
+            // advances to another node.
+            let node: &'static NativeLiveRemoteOwnerRegistryNode = unsafe { &*current };
+            match node.storage.claim() {
+                NativeLiveRemoteOwnerClaim::Empty => {}
+                NativeLiveRemoteOwnerClaim::Retained => {
+                    return NativeLiveRemoteOwnerCurrentClaim::Retained;
+                }
+                NativeLiveRemoteOwnerClaim::Claimed(route) => {
+                    if route.owner().slot == slot {
+                        return NativeLiveRemoteOwnerCurrentClaim::Claimed(route);
+                    }
+                    route.restore();
+                    saw_foreign = true;
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        if saw_foreign {
+            NativeLiveRemoteOwnerCurrentClaim::Foreign
+        } else {
+            NativeLiveRemoteOwnerCurrentClaim::Empty
+        }
+    }
+
+    /// Finds and claims the one live A ledger that proves `block` is current.
+    /// Every address miss restores that exact entry before the scan continues;
+    /// an inconsistent session is terminal rather than treated as a foreign
+    /// pointer that could reach another A.
+    fn claim_exact_client(
+        &'static self,
+        block: core::ptr::NonNull<u8>,
+    ) -> NativeLiveRemoteOwnerExactClaim {
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: see `claim_current_slot`; entries never move or leave
+            // the list while a C free can still be scanning them.
+            let node: &'static NativeLiveRemoteOwnerRegistryNode = unsafe { &*current };
+            match node.storage.claim() {
+                NativeLiveRemoteOwnerClaim::Empty => {}
+                NativeLiveRemoteOwnerClaim::Retained => {
+                    return NativeLiveRemoteOwnerExactClaim::Retained;
+                }
+                NativeLiveRemoteOwnerClaim::Claimed(mut route) => {
+                    let client = {
+                        // SAFETY: this guard excludes the matching A session
+                        // from resume or source exit while B checks only its
+                        // private ledger.
+                        let Some(session) = (unsafe { route.session_mut() }) else {
+                            route.retain();
+                            return NativeLiveRemoteOwnerExactClaim::Retained;
+                        };
+                        session.clients.native_client_for_block(block)
+                    };
+                    match client {
+                        Ok(client) => {
+                            return NativeLiveRemoteOwnerExactClaim::Claimed { route, client };
+                        }
+                        Err(CurrentThreadPageOwnerPreparationError::UnknownClient) => {
+                            route.restore();
+                        }
+                        Err(_) => {
+                            route.retain();
+                            return NativeLiveRemoteOwnerExactClaim::Retained;
+                        }
+                    }
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        NativeLiveRemoteOwnerExactClaim::NotOwned
+    }
+
+    /// Reads the source-recorded usable extent of one exact live client. The
+    /// scan restores every nonmatching A before moving on and returns only a
+    /// scalar, never a route or a client capability.
+    fn usable_size_exact(
+        &'static self,
+        block: core::ptr::NonNull<u8>,
+    ) -> NativeLiveRemoteOwnerUsableSizeResult {
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: see `claim_current_slot`; this stable node owns the
+            // storage referenced by its temporary guard for process lifetime.
+            let node: &'static NativeLiveRemoteOwnerRegistryNode = unsafe { &*current };
+            match node.storage.claim() {
+                NativeLiveRemoteOwnerClaim::Empty => {}
+                NativeLiveRemoteOwnerClaim::Retained => {
+                    return NativeLiveRemoteOwnerUsableSizeResult::Retained;
+                }
+                NativeLiveRemoteOwnerClaim::Claimed(mut route) => {
+                    let usable_size = {
+                        // SAFETY: the claimed entry is the only raw TLS alias
+                        // until the exact result below restores it.
+                        let Some(session) = (unsafe { route.session_mut() }) else {
+                            route.retain();
+                            return NativeLiveRemoteOwnerUsableSizeResult::Retained;
+                        };
+                        session.clients.recorded_native_usable_size(block)
+                    };
+                    match usable_size {
+                        Ok(usable_size) => {
+                            route.restore();
+                            return NativeLiveRemoteOwnerUsableSizeResult::Owned(usable_size);
+                        }
+                        Err(CurrentThreadPageOwnerPreparationError::UnknownClient) => {
+                            route.restore();
+                        }
+                        Err(_) => {
+                            route.retain();
+                            return NativeLiveRemoteOwnerUsableSizeResult::Retained;
+                        }
+                    }
+                }
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        NativeLiveRemoteOwnerUsableSizeResult::NotOwned
+    }
+
+    /// Counts only stable entry states for the direct live-owner high-water
+    /// regression. It returns no raw TLS identity or route capability and
+    /// must be sampled after the test's participating workers have joined.
+    /// A transient busy entry is conservatively counted as live.
+    #[cfg(feature = "native-runtime-test-audit")]
+    fn test_audit(&self) -> NativeLiveRemoteOwnerRegistryAudit {
+        let mut audit = NativeLiveRemoteOwnerRegistryAudit {
+            published_entry_count: 0,
+            live_entry_count: 0,
+            retained_entry_count: 0,
+        };
+        let mut current = self.head.load(Ordering::Acquire);
+        while !current.is_null() {
+            // SAFETY: every node is fully initialized before its Release
+            // publication, and append-only links keep its metadata address
+            // valid for this diagnostic-only traversal.
+            let node = unsafe { &*current };
+            audit.published_entry_count += 1;
+            match node.storage.registry_state() {
+                NativeLiveRemoteOwnerStorageState::Empty => {}
+                NativeLiveRemoteOwnerStorageState::Live => audit.live_entry_count += 1,
+                NativeLiveRemoteOwnerStorageState::Retained => audit.retained_entry_count += 1,
+            }
+            current = node.next.load(Ordering::Acquire);
+        }
+        audit
+    }
+}
+
+// SAFETY: nodes publish only complete immutable links, and every mutable
+// entry operation owns its independent state word. The append word serializes
+// only metadata growth, not live allocator work.
+unsafe impl Sync for NativeLiveRemoteOwnerRegistry {}
+
+static NATIVE_LIVE_REMOTE_OWNER: NativeLiveRemoteOwnerRegistry =
+    NativeLiveRemoteOwnerRegistry::new();
+
+/// Returns scalar-only accounting for the private native live-owner registry.
+///
+/// This direct-test hook is feature-gated and cannot identify, operate on, or
+/// release a registry entry. See [`NativeLiveRemoteOwnerRegistryAudit`] for
+/// the quiescent-sampling contract.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_live_remote_owner_registry_test_audit() -> NativeLiveRemoteOwnerRegistryAudit {
+    NATIVE_LIVE_REMOTE_OWNER.test_audit()
+}
 
 #[inline]
 fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
     // SAFETY: compiler TLS gives this running thread the only normal Rust
     // access to its slot. The one native live-owner route transfers this raw
-    // identity only under its explicit static/scheduler protocol above.
+    // identity only under its explicit registry/scheduler protocol above.
     unsafe { core::ptr::NonNull::new_unchecked(THREAD_LIFECYCLE.get()) }
 }
 
@@ -4296,13 +5767,14 @@ pub fn native_allocate_aligned(
 ///
 /// When present, `block` must be a live result from this same native-shadow
 /// owner and must not be concurrently accessed, remotely published, or
-/// already freed. Cross-thread reallocation is deliberately unavailable until
-/// the general M5 pointer-routing contract exists. In pinned v3.5.0,
+/// already freed. One joined B may instead present an exact client held by a
+/// typed detached-owner route. That route privately records a normal B
+/// replacement, copies the source-defined prefix, and only then consumes A's
+/// old client through its existing terminal-free path; it does not expose an
+/// in-place, page, or general pointer-routing capability. In pinned v3.5.0,
 /// `mi_theap_realloc_zero_ex` reuses an allocation in place only when its
-/// page still belongs to the current Theap. That cannot hold after A's owner
-/// exit, so a future post-exit route must give B a real allocation/copy/free
-/// lifecycle rather than treating an immutable recorded usable extent as a
-/// detached in-place reallocation capability.
+/// page still belongs to the current Theap, which cannot hold after A's owner
+/// exit.
 #[doc(hidden)]
 pub unsafe fn native_reallocate(
     block: Option<core::ptr::NonNull<u8>>,
@@ -4320,6 +5792,23 @@ pub unsafe fn native_reallocate(
         return native_allocation_from_ticket_zero(unsafe {
             ticket_zero_reallocate(Some(block), new_size)
         });
+    }
+    if current_thread_can_access_native_post_exit_route() {
+        match NATIVE_POST_EXIT_ROUTE.reallocate_exact(block, new_size) {
+            NativePostExitRouteReallocateResult::Allocated(block) => {
+                return NativePageAllocationResult::Allocated(block);
+            }
+            NativePostExitRouteReallocateResult::AllocationFailed => {
+                return NativePageAllocationResult::AllocationFailed;
+            }
+            NativePostExitRouteReallocateResult::Unavailable => {
+                return NativePageAllocationResult::Unavailable;
+            }
+            NativePostExitRouteReallocateResult::Retained => {
+                return NativePageAllocationResult::Retained;
+            }
+            NativePostExitRouteReallocateResult::NotOwned => {}
+        }
     }
     // SAFETY: forwarded unchanged from this boundary's exact-current native
     // block contract to the current attached worker's parked session.
@@ -4343,7 +5832,7 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         // native block contract.
         return native_free_from_ticket_zero(unsafe { ticket_zero_free(block) });
     }
-    if current_thread_can_consume_native_post_exit_route() {
+    if current_thread_can_access_native_post_exit_route() {
         match NATIVE_POST_EXIT_ROUTE.free_exact(block) {
             NativePostExitRouteFreeResult::Freed | NativePostExitRouteFreeResult::Finished => {
                 return NativePageFreeResult::Freed;
@@ -4375,7 +5864,7 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     }
 
     if local != NativePageFreeResult::Unavailable
-        || !current_thread_can_consume_native_post_exit_route()
+        || !current_thread_can_access_native_post_exit_route()
     {
         return local;
     }
@@ -4403,7 +5892,7 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
         // native block contract.
         return unsafe { ticket_zero_usable_size(block) };
     }
-    if current_thread_can_consume_native_post_exit_route() {
+    if current_thread_can_access_native_post_exit_route() {
         if let Some(usable_size) = NATIVE_POST_EXIT_ROUTE.usable_size_exact(block) {
             return Some(usable_size);
         }
@@ -4773,16 +6262,43 @@ impl OwnerExitMappedRegularWorkload<core::ptr::NonNull<u8>> {
 }
 
 impl OwnerExitMappedRegularWorkload<PreparedOwnerExitClient> {
-    /// Selects the two same-page clients used only by the bounded B/C
+    /// Selects the three direct-small clients used only by the bounded B/C/D
     /// regression. The selection remains an opaque ledger-key fact: generic
     /// post-exit routing neither names these fixture positions nor exposes
     /// their addresses.
     #[inline]
-    fn post_exit_remote_pair_keys(&self) -> Option<[DetachedOwnerExitClientKey; 2]> {
-        Some([
-            self.unmapped_full_medium[0].as_ref()?.key(),
-            self.unmapped_full_medium[1].as_ref()?.key(),
-        ])
+    fn post_exit_remote_publication_group_keys(
+        &self,
+    ) -> Option<DetachedOwnerExitRemotePublicationSelection> {
+        Some(DetachedOwnerExitRemotePublicationSelection {
+            kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+            clients: [
+                self.direct_small[0].as_ref()?.key(),
+                self.direct_small[1].as_ref()?.key(),
+                self.direct_small[2].as_ref()?.key(),
+            ],
+        })
+    }
+
+    /// Selects three still-live clients from the first full-medium member
+    /// after its pre-exit remote free forced it into the mapped regular
+    /// route. `full_medium[0]` has already left A through that pre-exit
+    /// publication; the following three entries remain on the same now
+    /// non-full medium page. Their identities stay private ledger facts, so
+    /// this is a bounded source witness rather than a page selector or a
+    /// general post-exit producer API.
+    #[inline]
+    fn post_exit_mapped_medium_remote_publication_group_keys(
+        &self,
+    ) -> Option<DetachedOwnerExitRemotePublicationSelection> {
+        Some(DetachedOwnerExitRemotePublicationSelection {
+            kind: DetachedOwnerExitRemotePublicationKind::MappedMedium,
+            clients: [
+                self.full_medium[1].as_ref()?.key(),
+                self.full_medium[2].as_ref()?.key(),
+                self.full_medium[3].as_ref()?.key(),
+            ],
+        })
     }
 
     /// Produces the same complete private ledger as `into_post_exit_clients`,
@@ -5495,25 +7011,34 @@ impl PreparedOwnerExitClients {
         })
     }
 
-    fn take_detached_remote_pair(
+    fn take_detached_remote_publication_group(
         &mut self,
-        first: DetachedOwnerExitClientKey,
-        second: DetachedOwnerExitClientKey,
-    ) -> Option<DetachedOwnerExitRemotePair> {
-        if first == second {
+        selection: DetachedOwnerExitRemotePublicationSelection,
+    ) -> Option<DetachedOwnerExitRemotePublicationGroup> {
+        let [direct, first_published, second_published] = selection.clients;
+        if direct == first_published
+            || direct == second_published
+            || first_published == second_published
+        {
             return None;
         }
-        self.detached_client_for_key(first)?;
-        self.detached_client_for_key(second)?;
-        let first = self
-            .take_detached_client_for_key(first)
-            .expect("the prevalidated first detached client remains present");
-        let second = self
-            .take_detached_client_for_key(second)
-            .expect("the distinct detached client remains present");
-        Some(DetachedOwnerExitRemotePair {
-            first: Some(first.block),
-            second: Some(second.block),
+        self.detached_client_for_key(direct)?;
+        self.detached_client_for_key(first_published)?;
+        self.detached_client_for_key(second_published)?;
+        let direct = self
+            .take_detached_client_for_key(direct)
+            .expect("the prevalidated direct detached client remains present");
+        let first_published = self
+            .take_detached_client_for_key(first_published)
+            .expect("the distinct first published detached client remains present");
+        let second_published = self
+            .take_detached_client_for_key(second_published)
+            .expect("the distinct second published detached client remains present");
+        Some(DetachedOwnerExitRemotePublicationGroup {
+            kind: selection.kind,
+            direct: Some(direct.block),
+            first_published: Some(first_published.block),
+            second_published: Some(second_published.block),
         })
     }
 
@@ -5923,36 +7448,45 @@ impl PreparedOwnerExitClients {
     }
 
     /// Transfers every live session client and, when requested by the one
-    /// source-valid B/C witness, separates two prevalidated opaque entries
-    /// into the scoped post-exit publisher pair.  The keys are validated
+    /// source-valid B/C/D witness, separates three prevalidated opaque entries
+    /// into the scoped post-exit publication group. The keys are validated
     /// before the linear registry moves, so a stale, duplicate, freed, or
     /// pre-exit-published selection leaves the parked session recoverable.
-    fn transfer_all_live_with_final_member_adoption_and_post_exit_remote_pair(
+    fn transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
         &mut self,
-        post_exit_remote_pair: Option<[DetachedOwnerExitClientKey; 2]>,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
         has_pre_exit_owner_exit_collectable_local_free: impl FnMut(&PreparedOwnerExitClient) -> bool,
     ) -> Result<
-        (DetachedOwnerExitClientLedger, Option<DetachedOwnerExitRemotePair>),
+        (
+            DetachedOwnerExitClientLedger,
+            Option<DetachedOwnerExitRemotePublicationGroup>,
+        ),
         CurrentThreadPageOwnerPreparationError,
     > {
-        if let Some([first, second]) = post_exit_remote_pair {
-            if first == second {
+        if let Some(selection) = post_exit_remote_publication_group {
+            let [direct, first_published, second_published] = selection.clients;
+            if direct == first_published
+                || direct == second_published
+                || first_published == second_published
+            {
                 return Err(CurrentThreadPageOwnerPreparationError::DuplicateClient);
             }
-            self.validate_live_key(first)?;
-            self.validate_live_key(second)?;
+            self.validate_live_key(direct)?;
+            self.validate_live_key(first_published)?;
+            self.validate_live_key(second_published)?;
         }
 
         let mut clients = self
             .transfer_all_live_with_final_member_adoption(
                 has_pre_exit_owner_exit_collectable_local_free,
             )?;
-        let post_exit_remote_pair = post_exit_remote_pair.map(|[first, second]| {
+        let post_exit_remote_publication_group =
+            post_exit_remote_publication_group.map(|selection| {
             clients
-                .take_remote_pair(first, second)
-                .expect("the prevalidated live pair remains in the just-transferred ledger")
+                .take_remote_publication_group(selection)
+                .expect("the prevalidated live publication group remains in the just-transferred ledger")
         });
-        Ok((clients, post_exit_remote_pair))
+        Ok((clients, post_exit_remote_publication_group))
     }
 
     fn free_client(
@@ -6007,7 +7541,7 @@ impl PreparedOwnerExitClients {
 
     /// Returns one exact live C client's source-recorded usable extent
     /// without resuming its owner engine. The only foreign caller is the
-    /// bounded parked-A read-only route, which holds the static publication
+    /// bounded parked-A read-only route, which holds its registry publication
     /// exclusively while it proves this address; it never receives the
     /// client capability, a page, or a PageMap lease.
     fn recorded_native_usable_size(
@@ -6361,16 +7895,17 @@ struct CurrentThreadPageOwnerSession {
     clients: PreparedOwnerExitClients,
     generation: usize,
     /// A C-facing native allocation has made this parked owner eligible for
-    /// the one source-shaped B-side remote publication route. The static
-    /// route stores this session's slot/generation only; it never receives a
-    /// client address or a page capability.
+    /// the source-shaped B-side remote publication route. Its metadata-backed
+    /// registry entry stores this session's slot/generation only; it never
+    /// receives a client address or a page capability.
     native_live_remote: bool,
     /// A native live-owner route stays `BUSY` while its A session is
     /// temporarily out of compiler TLS for one ordinary operation.  Keeping
-    /// this guard beside the moved session reserves the one static route, so
-    /// a second local-only worker cannot install itself in the brief interval
-    /// between A's resume and re-park.  Parked TLS sessions hold `None` and
-    /// are instead reachable through the published `ACTIVE` entry.
+    /// this guard beside the moved session reserves this exact registry entry
+    /// through the brief interval between A's resume and re-park. Other
+    /// parked A sessions retain independently published entries; parked TLS
+    /// sessions hold `None` and are instead reachable through their own
+    /// `ACTIVE` entry.
     native_live_remote_reservation: Option<NativeLiveRemoteOwnerGuard>,
 }
 
@@ -6385,7 +7920,7 @@ impl CurrentThreadPageOwnerSession {
         }
     }
 
-    /// Removes A's static publication only when this parked session is
+    /// Removes A's registry publication only when this parked session is
     /// permanently leaving the live-owner state for a typed exit route.  The
     /// source exit no longer permits B to borrow A's ledger, so `EMPTY` is
     /// correct only after the parked engine has been transferred into the
@@ -6473,7 +8008,7 @@ fn take_current_thread_page_owner_session(
     generation: usize,
 ) -> Result<CurrentThreadPageOwnerSession, CurrentThreadPageOwnerSessionError> {
     let slot_pointer = current_thread_slot_pointer();
-    // Claim the static handoff *before* inspecting compiler TLS. A B-side
+    // Claim this slot's registry handoff *before* inspecting compiler TLS. A B-side
     // free owns a mutable reference to A's ledger while this state is BUSY;
     // even a generation read must therefore wait for it to resolve.
     let native_route = match NATIVE_LIVE_REMOTE_OWNER.claim_current_slot(slot_pointer) {
@@ -6485,7 +8020,7 @@ fn take_current_thread_page_owner_session(
             None
         }
         NativeLiveRemoteOwnerCurrentClaim::Retained => {
-            // SAFETY: a retained static route has discarded its raw TLS
+            // SAFETY: a retained registry entry has discarded its raw TLS
             // identity, so no B-side reference remains to this slot.
             let slot = unsafe { &mut *slot_pointer.as_ptr() };
             slot.state = ThreadLifecycleState::Retained;
@@ -6527,7 +8062,7 @@ fn take_current_thread_page_owner_session(
                 session.native_live_remote_reservation = native_route;
                 Ok(session)
             } else {
-                // The static route and the in-TLS session disagree. Keep the
+                // The registry entry and the in-TLS session disagree. Keep the
                 // exact parked engine terminal instead of manufacturing a
                 // second publication or exposing a raw TLS alias.
                 slot.page_owner = Some(ThreadLifecyclePageOwner::Session(session));
@@ -6582,7 +8117,7 @@ fn restore_current_thread_page_owner_session(mut session: CurrentThreadPageOwner
 
     // This can arise only from an impossible reentrant/private transition.
     // Do not drop a parked source token into an apparently fresh slot. Resolve
-    // a held static publication terminally so a future B cannot wait on it.
+    // a held registry publication terminally so a future B cannot wait on it.
     if let Some(route) = native_route {
         route.retain();
     }
@@ -6608,7 +8143,7 @@ fn retain_current_thread_page_owner_session(mut session: CurrentThreadPageOwnerS
 
 /// Preserves a moved session as a terminal diagnostic owner without leaving a
 /// live-route guard in `BUSY`.  Callers intentionally leak the source engine
-/// after an irrecoverable lower transition, but the static route must still
+/// after an irrecoverable lower transition, but the registry entry must still
 /// become explicitly non-routable before that leak.
 fn retain_forgotten_current_thread_page_owner_session(mut session: CurrentThreadPageOwnerSession) {
     session.retain_native_live_remote_reservation();
@@ -6833,9 +8368,9 @@ impl CurrentThreadPageOwnerSessionHandle {
         }
     }
 
-    /// Publishes this parked session as the one native C live-owner source
-    /// route after a successful C-facing allocation has been recorded in its
-    /// private ledger. The static entry carries only this TLS slot and
+    /// Publishes this parked session as one native C live-owner source route
+    /// after a successful C-facing allocation has been recorded in its private
+    /// ledger. Its metadata-backed entry carries only this TLS slot and
     /// generation; B must still prove an exact address against that ledger.
     fn enable_native_live_remote(&self) -> Result<(), CurrentThreadPageOwnerSessionError> {
         let slot_pointer = current_thread_slot_pointer();
@@ -6858,7 +8393,7 @@ impl CurrentThreadPageOwnerSessionHandle {
                     return Ok(());
                 }
 
-                // A static entry naming this TLS slot must agree with the
+                // A registry entry naming this TLS slot must agree with the
                 // parked native session. Discard its raw address on any
                 // mismatch rather than trying to repair a half-publication.
                 let slot = unsafe { &mut *slot_pointer.as_ptr() };
@@ -6867,71 +8402,90 @@ impl CurrentThreadPageOwnerSessionHandle {
                 return Err(CurrentThreadPageOwnerSessionError::Retained);
             }
             NativeLiveRemoteOwnerCurrentClaim::Retained => {
-                // SAFETY: a retained static entry has no TLS alias left.
+                // SAFETY: a retained registry entry has no TLS alias left.
                 let slot = unsafe { &mut *slot_pointer.as_ptr() };
                 slot.state = ThreadLifecycleState::Retained;
                 RUNTIME_PROCESS.retain_page_owner();
                 return Err(CurrentThreadPageOwnerSessionError::Retained);
             }
-            NativeLiveRemoteOwnerCurrentClaim::Foreign => {
-                // A different parked A owns the one C-visible live route.
-                // This session's allocations remain in its own private TLS
-                // ledger, so it may continue as a local-only native worker;
-                // it never becomes a second raw-TLS route or remote-free
-                // target merely because the page scheduler can park it too.
-                return Ok(());
+            NativeLiveRemoteOwnerCurrentClaim::Empty
+            | NativeLiveRemoteOwnerCurrentClaim::Foreign => {}
+        }
+
+        // SAFETY: the current TLS slot has no B-side alias until its complete
+        // native image is Release-published through the registry below.
+        let (owner, config) = {
+            let slot = unsafe { &mut *slot_pointer.as_ptr() };
+            if slot.state != ThreadLifecycleState::Attached {
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
             }
-            NativeLiveRemoteOwnerCurrentClaim::Empty => {}
-        }
+            let Some(ThreadLifecyclePageOwner::Session(session)) = slot.page_owner.as_mut() else {
+                return Err(CurrentThreadPageOwnerSessionError::Stale);
+            };
+            if session.generation != self.generation {
+                return Err(CurrentThreadPageOwnerSessionError::Stale);
+            }
+            if session.native_live_remote {
+                // An in-TLS bit without its exact registry entry would let A
+                // and a future B disagree about who may borrow this session.
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            }
+            let Some(config) = session.clients.metadata_config else {
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return Err(CurrentThreadPageOwnerSessionError::Retained);
+            };
 
-        // SAFETY: no static route exists. This current TLS slot has no
-        // B-side alias, so it may publish the first live-owner route.
-        let slot = unsafe { &mut *slot_pointer.as_ptr() };
-        if slot.state != ThreadLifecycleState::Attached {
-            return Err(CurrentThreadPageOwnerSessionError::Unavailable);
-        }
-        let Some(ThreadLifecyclePageOwner::Session(session)) = slot.page_owner.as_mut() else {
-            return Err(CurrentThreadPageOwnerSessionError::Stale);
+            // Set the bit before publishing the entry so a B that claims it
+            // immediately validates a complete A session image. End this raw
+            // TLS borrow before metadata growth, which may wait on a distinct
+            // registry append but never exposes this client address.
+            session.native_live_remote = true;
+            (
+                NativeLiveRemoteOwner {
+                    slot: slot_pointer,
+                    generation: self.generation,
+                },
+                config,
+            )
         };
-        if session.generation != self.generation {
-            return Err(CurrentThreadPageOwnerSessionError::Stale);
-        }
-        if session.native_live_remote {
-            // An in-TLS native bit without the exact static entry would let A
-            // and a future B disagree about who may borrow this session.
-            slot.state = ThreadLifecycleState::Retained;
-            RUNTIME_PROCESS.retain_page_owner();
-            return Err(CurrentThreadPageOwnerSessionError::Retained);
-        }
 
-        // Set the in-TLS bit before publishing the static entry so a B that
-        // claims it immediately can validate a complete A session image.
-        session.native_live_remote = true;
-        if NATIVE_LIVE_REMOTE_OWNER
-            .install(NativeLiveRemoteOwner {
-                slot: slot_pointer,
-                generation: self.generation,
-            })
-            .is_ok()
-        {
-            return Ok(());
-        }
-
-        // Another worker won the empty-route publication race.  Its raw TLS
-        // identity is not this session's capability, but this session's
-        // client addresses are still private and locally valid.  Drop back
-        // to the explicit local-only mode unless the competing route is
-        // already terminal; this is the same bounded behavior as the
-        // `Foreign` branch above, without manufacturing a second route.
-        session.native_live_remote = false;
-        if NATIVE_LIVE_REMOTE_OWNER.state.load(Ordering::Acquire)
-            == NATIVE_LIVE_REMOTE_OWNER_RETAINED
-        {
-            slot.state = ThreadLifecycleState::Retained;
-            RUNTIME_PROCESS.retain_page_owner();
-            Err(CurrentThreadPageOwnerSessionError::Retained)
-        } else {
-            Ok(())
+        match NATIVE_LIVE_REMOTE_OWNER.install(owner, config) {
+            NativeLiveRemoteOwnerRegistryInstall::Installed => Ok(()),
+            NativeLiveRemoteOwnerRegistryInstall::Unavailable(owner) => {
+                // Metadata exhaustion leaves this session safely local-only:
+                // no entry was published, its exact clients remain private,
+                // and future C frees cannot mistake another A for this one.
+                let slot = unsafe { &mut *slot_pointer.as_ptr() };
+                let Some(ThreadLifecyclePageOwner::Session(session)) = slot.page_owner.as_mut()
+                else {
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                };
+                if slot.state != ThreadLifecycleState::Attached
+                    || owner.slot != slot_pointer
+                    || session.generation != owner.generation
+                    || !session.native_live_remote
+                {
+                    slot.state = ThreadLifecycleState::Retained;
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return Err(CurrentThreadPageOwnerSessionError::Retained);
+                }
+                session.native_live_remote = false;
+                Ok(())
+            }
+            NativeLiveRemoteOwnerRegistryInstall::Retained(_owner) => {
+                // A retained registry entry has already discarded the raw TLS
+                // identity that made its source route safe. Do not publish a
+                // second route beside that terminal process state.
+                let slot = unsafe { &mut *slot_pointer.as_ptr() };
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                Err(CurrentThreadPageOwnerSessionError::Retained)
+            }
         }
     }
 
@@ -7048,23 +8602,23 @@ impl CurrentThreadPageOwnerSessionHandle {
     }
 
     /// Prepares the same generic sequential route while carrying the one
-    /// source-valid scoped B/C publication pair. The pair contains only opaque
-    /// registry keys selected before suspension; it grants neither a caller
-    /// address nor a general post-exit producer route.
-    fn prepare_sequential_exit_with_post_exit_remote_pair(
+    /// source-valid scoped B/C/D publication group. The group contains only
+    /// opaque registry keys selected before suspension; it grants neither a
+    /// caller address nor a general post-exit producer route.
+    fn prepare_sequential_exit_with_post_exit_remote_publication_group(
         self,
-        post_exit_remote_pair: [DetachedOwnerExitClientKey; 2],
+        post_exit_remote_publication_group: DetachedOwnerExitRemotePublicationSelection,
         free_after_exit: TicketZeroOwnerExitFreeConsumer,
     ) -> Result<(), CurrentThreadPageOwnerSessionError> {
         self.prepare_sequential_exit_with_consumer(
-            Some(post_exit_remote_pair),
+            Some(post_exit_remote_publication_group),
             CurrentThreadPageOwnerExitConsumer::Callback(free_after_exit),
         )
     }
 
     fn prepare_sequential_exit_with_consumer(
         self,
-        post_exit_remote_pair: Option<[DetachedOwnerExitClientKey; 2]>,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
         consumer: CurrentThreadPageOwnerExitConsumer,
     ) -> Result<(), CurrentThreadPageOwnerSessionError> {
         let mut session = take_current_thread_page_owner_session(self.generation)?;
@@ -7118,15 +8672,15 @@ impl CurrentThreadPageOwnerSessionHandle {
             }
         };
 
-        let (clients, post_exit_remote_pair) = match {
+        let (clients, post_exit_remote_publication_group) = match {
             let allocator = engine
                 .allocator
                 .as_ref()
                 .expect("a resumed session retains its ordinary allocator");
             session
                 .clients
-                .transfer_all_live_with_final_member_adoption_and_post_exit_remote_pair(
-                    post_exit_remote_pair,
+                .transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                    post_exit_remote_publication_group,
                     |client| {
                         // SAFETY: the session registry has already validated
                         // the client as live in this exclusive source engine,
@@ -7171,14 +8725,14 @@ impl CurrentThreadPageOwnerSessionHandle {
             CurrentThreadPageOwnerExitConsumer::Callback(free_after_exit) => {
                 DetachedOwnerExitDisposition::SequentialFree {
                     free_after_exit,
-                    post_exit_remote_pair,
+                    post_exit_remote_publication_group,
                 }
             }
             CurrentThreadPageOwnerExitConsumer::NativeDeferred => {
-                // The only source-supported B/C pair is a scoped test seam;
+                // The only source-supported B/C/D group is a scoped test seam;
                 // a C post-exit route has no such callback and must not carry
-                // those two identities into a general pointer dispatcher.
-                if post_exit_remote_pair.is_some() {
+                // those three identities into a general pointer dispatcher.
+                if post_exit_remote_publication_group.is_some() {
                     core::mem::forget(clients);
                     core::mem::forget(engine);
                     retain_forgotten_current_thread_page_owner_session(session);
@@ -7325,7 +8879,7 @@ fn current_thread_native_session_handle(
     let slot_pointer = current_thread_slot_pointer();
     let existing_generation = match NATIVE_LIVE_REMOTE_OWNER.claim_current_slot(slot_pointer) {
         NativeLiveRemoteOwnerCurrentClaim::Claimed(route) => {
-            // SAFETY: this exact A-side static handoff remains BUSY while the
+            // SAFETY: this exact A-side registry handoff remains BUSY while the
             // running thread decides whether it already has a session.
             let matching_native_session = unsafe {
                 let slot = &mut *slot_pointer.as_ptr();
@@ -7374,7 +8928,7 @@ fn current_thread_native_session_handle(
                     Some(session.generation)
                 }
                 Some(ThreadLifecyclePageOwner::Session(_)) => {
-                    // A native session without its own active static entry
+                    // A native session without its own active registry entry
                     // cannot safely re-enter ordinary allocator code.
                     slot.state = ThreadLifecycleState::Retained;
                     RUNTIME_PROCESS.retain_page_owner();
@@ -7572,13 +9126,13 @@ unsafe fn native_ticket_zero_live_remote_free(
 /// Publishes one exact C pointer to the source remote head of a separately
 /// parked native A session.
 ///
-/// The static publication contains no client address. B first proves its raw
-/// input against A's existing private C ledger, then borrows the runtime pair
-/// only for one complete non-parkable `PARKED -> BUSY -> PARKED` operation.
-/// That operation serializes the PageMap preflight and atomic source push; A
-/// cannot resume until B finishes it, at which point A's normal allocation or
-/// page drain collects the remote head. This is a bounded live-owner route,
-/// not a general concurrent allocator or a foreign-pointer registry.
+/// The metadata-backed registry contains no client address. B first proves its
+/// raw input against one A's existing private C ledger, then borrows the
+/// runtime pair only for one complete non-parkable `PARKED -> BUSY -> PARKED`
+/// operation. That operation serializes the PageMap preflight and atomic
+/// source push; A cannot resume until B finishes it, at which point A's normal
+/// allocation or page drain collects the remote head. This remains a bounded
+/// live-owner route, not a general allocator or foreign-pointer registry.
 ///
 /// # Safety
 ///
@@ -7589,30 +9143,14 @@ unsafe fn native_ticket_zero_live_remote_free(
 unsafe fn native_later_thread_live_remote_free(
     block: core::ptr::NonNull<u8>,
 ) -> NativeLiveRemoteFreeResult {
-    let mut route = match NATIVE_LIVE_REMOTE_OWNER.claim() {
-        NativeLiveRemoteOwnerClaim::Empty => return NativeLiveRemoteFreeResult::NotOwned,
-        NativeLiveRemoteOwnerClaim::Retained => return NativeLiveRemoteFreeResult::Retained,
-        NativeLiveRemoteOwnerClaim::Claimed(route) => route,
-    };
-
-    let client = {
-        // SAFETY: the claimed static route excludes A's resume/teardown while
-        // B reads only A's private ledger. It does not grant page access.
-        let Some(session) = (unsafe { route.session_mut() }) else {
-            route.retain();
-            return NativeLiveRemoteFreeResult::Retained;
-        };
-        match session.clients.native_client_for_block(block) {
-            Ok(client) => client,
-            Err(CurrentThreadPageOwnerPreparationError::UnknownClient) => {
-                route.restore();
-                return NativeLiveRemoteFreeResult::NotOwned;
-            }
-            Err(_) => {
-                route.retain();
-                return NativeLiveRemoteFreeResult::Retained;
-            }
+    let (mut route, client) = match NATIVE_LIVE_REMOTE_OWNER.claim_exact_client(block) {
+        NativeLiveRemoteOwnerExactClaim::NotOwned => {
+            return NativeLiveRemoteFreeResult::NotOwned;
         }
+        NativeLiveRemoteOwnerExactClaim::Retained => {
+            return NativeLiveRemoteFreeResult::Retained;
+        }
+        NativeLiveRemoteOwnerExactClaim::Claimed { route, client } => (route, client),
     };
 
     let engine = {
@@ -7631,10 +9169,10 @@ unsafe fn native_later_thread_live_remote_free(
         match RUNTIME_PROCESS.begin_interleaving_persistent_later_engine(attachment) {
             Ok(engine) => engine,
             Err(_) => {
-                // The static route proves A is parked. Failing to acquire the
-                // matching source interleaving operation therefore leaves an
-                // ambiguous scheduler/PageMap image rather than a retryable
-                // foreign-free miss.
+                // The exact registry entry proves A is parked. Failing to
+                // acquire the matching source interleaving operation therefore
+                // leaves an ambiguous scheduler/PageMap image rather than a
+                // retryable foreign-free miss.
                 route.retain();
                 return NativeLiveRemoteFreeResult::Retained;
             }
@@ -7689,57 +9227,33 @@ unsafe fn native_later_thread_live_remote_free(
 /// separately parked native A session.
 ///
 /// This is intentionally narrower than the source `mi_usable_size` page
-/// lookup: B claims only the static A-session publication, proves its input
-/// against A's private live ledger, and restores that same publication before
-/// returning a scalar. It does not borrow A's page engine, acquire the
-/// persistent scheduler, or change the remote-free/admission state. A later
-/// `free` still follows the complete source-shaped interleaving above.
+/// lookup: B scans only private live-owner entries, proves its input against
+/// one A ledger, and restores that same entry before returning a scalar. It
+/// does not borrow A's page engine, acquire the persistent scheduler, or
+/// change the remote-free/admission state. A later `free` still follows the
+/// complete source-shaped interleaving above.
 ///
 /// # Safety
 ///
 /// `block` must be a non-null C pointer. The caller must have established
 /// that the current B attachment has no page owner or terminal post-exit
-/// proof. Unknown and unavailable pointers return `None`; a malformed static
-/// route is terminally retained rather than exposing A's TLS.
+/// proof. Unknown and unavailable pointers return `None`; a malformed registry
+/// entry is terminally retained rather than exposing A's TLS.
 unsafe fn native_later_thread_live_remote_usable_size(
     block: core::ptr::NonNull<u8>,
 ) -> Option<usize> {
-    let mut route = match NATIVE_LIVE_REMOTE_OWNER.claim() {
-        NativeLiveRemoteOwnerClaim::Empty | NativeLiveRemoteOwnerClaim::Retained => return None,
-        NativeLiveRemoteOwnerClaim::Claimed(route) => route,
-    };
-
     let slot = current_thread_slot();
     if slot.state != ThreadLifecycleState::Attached
         || slot.page_owner.is_some()
         || slot.post_exit_route_proof.is_some()
     {
-        route.restore();
         return None;
     }
-
-    let usable_size = {
-        // SAFETY: the claimed route excludes A's resume/teardown while B
-        // reads only A's source-recorded scalar from its private ledger.
-        let Some(session) = (unsafe { route.session_mut() }) else {
-            route.retain();
-            return None;
-        };
-        match session.clients.recorded_native_usable_size(block) {
-            Ok(usable_size) => usable_size,
-            Err(CurrentThreadPageOwnerPreparationError::UnknownClient) => {
-                route.restore();
-                return None;
-            }
-            Err(_) => {
-                route.retain();
-                return None;
-            }
-        }
-    };
-
-    route.restore();
-    Some(usable_size)
+    match NATIVE_LIVE_REMOTE_OWNER.usable_size_exact(block) {
+        NativeLiveRemoteOwnerUsableSizeResult::Owned(usable_size) => Some(usable_size),
+        NativeLiveRemoteOwnerUsableSizeResult::NotOwned
+        | NativeLiveRemoteOwnerUsableSizeResult::Retained => None,
+    }
 }
 
 unsafe fn native_later_thread_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize> {
@@ -7748,17 +9262,28 @@ unsafe fn native_later_thread_usable_size(block: core::ptr::NonNull<u8>) -> Opti
         .ok()
 }
 
-/// Returns whether this attached worker can consume a pointer-private native
-/// B-side route. B remains no-page until its ordinary destructor finish
-/// consumes A's terminal proof, so neither the deferred owner-exit route nor
-/// the parked-live read-only route can be confused with a current local page
-/// engine.
+/// Returns whether this attached worker can make one pointer-private native
+/// post-exit route operation.
+///
+/// A fresh B has no page owner. A B that established its own native session
+/// before seeing A's pointer is also admissible, but only while that session
+/// is parked: the route's short PageMap operation then serializes with B's
+/// future long engine operation through the existing scheduler. A prepared
+/// exit has already consumed B's source clients into another typed route, so
+/// it cannot accept a second terminal proof or advance A's route. Once B has
+/// received A's terminal proof it likewise remains out of the dispatcher
+/// until its ordinary finish settles that proof.
 #[inline]
-fn current_thread_can_consume_native_post_exit_route() -> bool {
+fn current_thread_can_access_native_post_exit_route() -> bool {
     let slot = current_thread_slot();
-    slot.state == ThreadLifecycleState::Attached
-        && slot.page_owner.is_none()
-        && slot.post_exit_route_proof.is_none()
+    if slot.state != ThreadLifecycleState::Attached || slot.post_exit_route_proof.is_some() {
+        return false;
+    }
+    match slot.page_owner.as_ref() {
+        None => true,
+        Some(ThreadLifecyclePageOwner::Session(session)) => session.parked.is_some(),
+        Some(ThreadLifecyclePageOwner::PreparedExit(_)) => false,
+    }
 }
 
 impl OwnerExitClientAllocator for CurrentThreadPageOwnerSessionHandle {
@@ -7886,7 +9411,7 @@ impl<'allocator, 'attachment, 'main>
     fn finish_sequential(
         &mut self,
         clients: &mut [Option<PreparedOwnerExitClient>],
-        post_exit_remote_pair: Option<[DetachedOwnerExitClientKey; 2]>,
+        post_exit_remote_publication_group: Option<DetachedOwnerExitRemotePublicationSelection>,
         free_after_exit: TicketZeroOwnerExitFreeConsumer,
     ) -> Result<(), CurrentThreadPageOwnerPreparationError> {
         if self.exit.is_some() {
@@ -7906,14 +9431,18 @@ impl<'allocator, 'attachment, 'main>
                 }
                 .unwrap_or(false)
             })?;
-        let post_exit_remote_pair = match post_exit_remote_pair {
-            Some([first, second]) => {
-                if first == second {
+        let post_exit_remote_publication_group = match post_exit_remote_publication_group {
+            Some(selection) => {
+                let [direct, first_published, second_published] = selection.clients;
+                if direct == first_published
+                    || direct == second_published
+                    || first_published == second_published
+                {
                     return Err(CurrentThreadPageOwnerPreparationError::DuplicateClient);
                 }
                 Some(
                     clients
-                        .take_remote_pair(first, second)
+                        .take_remote_publication_group(selection)
                         .ok_or(CurrentThreadPageOwnerPreparationError::UnknownClient)?,
                 )
             }
@@ -7923,7 +9452,7 @@ impl<'allocator, 'attachment, 'main>
             clients,
             disposition: DetachedOwnerExitDisposition::SequentialFree {
                 free_after_exit,
-                post_exit_remote_pair,
+                post_exit_remote_publication_group,
             },
         });
         Ok(())
@@ -8154,12 +9683,16 @@ fn install_mapped_regular_owner_exit_page_owner(
             let _ = workload.free_locals(preparation);
             return Err(OwnerExitMappedRegularPageOwnerInstallResult::PublicationFailed);
         }
-        let post_exit_remote_pair = workload.post_exit_remote_pair_keys();
+        let post_exit_remote_publication_group = workload.post_exit_remote_publication_group_keys();
         let Some(mut clients) = workload.into_post_exit_clients_for_later_main_adoption() else {
             return Err(OwnerExitMappedRegularPageOwnerInstallResult::Retained);
         };
         preparation
-            .finish_sequential(&mut clients, post_exit_remote_pair, free_after_exit)
+            .finish_sequential(
+                &mut clients,
+                post_exit_remote_publication_group,
+                free_after_exit,
+            )
             .map_err(|_| OwnerExitMappedRegularPageOwnerInstallResult::Retained)
     })
 }
@@ -8616,14 +10149,15 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish(
     }
 }
 
-/// The one source choice that changes a parked session's post-exit consumer
-/// preparation. Both cases retain the same generic aggregate route and its
-/// private client ledger; only the scoped same-page source interleaving moves
-/// two opaque client keys outside that ledger for B to hand C its one producer.
+/// The source choice that changes a parked session's post-exit consumer
+/// preparation. Every case retains the same generic aggregate route and its
+/// private client ledger; a scoped source interleaving moves two opaque client
+/// keys outside that ledger only for B to hand C/D their bounded producers.
 #[derive(Clone, Copy)]
 enum ParkedSessionPostExitPublication {
     Ordinary,
-    ScopedSamePageRemoteFree,
+    ScopedDirectSmallRemoteFree,
+    ScopedMappedMediumRemoteFree,
 }
 
 /// Exercises the ordinary owner-exit dispatcher from a real parked TLS
@@ -8647,11 +10181,11 @@ pub fn ticket_zero_later_thread_session_owner_exit_through_normal_finish(
     )
 }
 
-/// Exercises the source-valid B/C post-exit publication from the same parked
-/// TLS session lifecycle. A selects two still-live clients only by private
-/// ledger key before it suspends; fresh B receives the opaque route and may
-/// lend C the one scoped atomic producer only after B has the source low-bit
-/// claim. This is not a public producer or pointer-handoff API.
+/// Exercises the source-valid direct-small B/C/D post-exit publication from
+/// the same parked TLS session lifecycle. A selects three still-live clients
+/// only by private ledger key before it suspends; fresh B receives the opaque
+/// route and may lend C/D scoped atomic producers only after B has the source
+/// low-bit claim. This is not a public producer or pointer-handoff API.
 #[doc(hidden)]
 pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish(
     publish_before_exit: TicketZeroRemoteFreePublisher,
@@ -8660,7 +10194,26 @@ pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_thro
     ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
         publish_before_exit,
         free_after_exit,
-        ParkedSessionPostExitPublication::ScopedSamePageRemoteFree,
+        ParkedSessionPostExitPublication::ScopedDirectSmallRemoteFree,
+    )
+}
+
+/// Exercises the separately bounded mapped-medium B/C/D publication from the
+/// same parked TLS session lifecycle. A selects three remaining medium
+/// clients only by private ledger key after the page's pre-exit source remote
+/// free has normalized it into the mapped regular route. Fresh B can lend C/D
+/// the nominally mapped-medium producers only after B holds the source low
+/// owner bit. This is neither a general concurrent free route nor a public
+/// pointer-handoff API.
+#[doc(hidden)]
+pub fn ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish(
+    publish_before_exit: TicketZeroRemoteFreePublisher,
+    free_after_exit: TicketZeroOwnerExitFreeConsumer,
+) -> TicketZeroLaterThreadPageResult {
+    ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_exit_publication(
+        publish_before_exit,
+        free_after_exit,
+        ParkedSessionPostExitPublication::ScopedMappedMediumRemoteFree,
     )
 }
 
@@ -8749,11 +10302,20 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
         retain_current_thread_live_page_owner();
         return TicketZeroLaterThreadPageResult::Retained;
     }
-    let post_exit_remote_pair = match post_exit_publication {
+    let post_exit_remote_publication_group = match post_exit_publication {
         ParkedSessionPostExitPublication::Ordinary => None,
-        ParkedSessionPostExitPublication::ScopedSamePageRemoteFree => {
-            match workload.post_exit_remote_pair_keys() {
-                Some(pair) => Some(pair),
+        ParkedSessionPostExitPublication::ScopedDirectSmallRemoteFree => {
+            match workload.post_exit_remote_publication_group_keys() {
+                Some(group) => Some(group),
+                None => {
+                    retain_current_thread_live_page_owner();
+                    return TicketZeroLaterThreadPageResult::Retained;
+                }
+            }
+        }
+        ParkedSessionPostExitPublication::ScopedMappedMediumRemoteFree => {
+            match workload.post_exit_mapped_medium_remote_publication_group_keys() {
+                Some(group) => Some(group),
                 None => {
                     retain_current_thread_live_page_owner();
                     return TicketZeroLaterThreadPageResult::Retained;
@@ -8763,8 +10325,9 @@ fn ticket_zero_later_thread_session_owner_exit_through_normal_finish_with_post_e
     };
     drop(workload);
 
-    let prepare_exit = match post_exit_remote_pair {
-        Some(pair) => session.prepare_sequential_exit_with_post_exit_remote_pair(pair, free_after_exit),
+    let prepare_exit = match post_exit_remote_publication_group {
+        Some(group) => session
+            .prepare_sequential_exit_with_post_exit_remote_publication_group(group, free_after_exit),
         None => session.prepare_sequential_exit(free_after_exit),
     };
     match prepare_exit {
@@ -9701,18 +11264,22 @@ pub fn ticket_zero_later_thread_page_roundtrip(
 }
 
 /// Prevents a later attachment from beginning across libc's direct raw-fork
-/// boundary and snapshots whether this no-page bridge can survive in the
-/// child.
+/// boundary and snapshots whether its narrow quiescent ticket-zero image can
+/// survive in the child.
 ///
 /// Libc invokes this after public prepare handlers and before the raw Linux
 /// fork-equivalent syscall. It has no C ABI, does not allocate, and does not
 /// consume a public `pthread_atfork` registration slot. The child is eligible
-/// for preservation only when the caller is the ticket-zero TPIDR_EL0 image
-/// and no later bridge attachment is live or retained.
+/// for preservation only when the caller is the original ticket-zero
+/// TPIDR_EL0 image, no later bridge attachment is live or retained, and its
+/// permanent page owner is either unmapped or has returned to its source
+/// all-free dormant image. It does not repair a live page engine or client.
 #[doc(hidden)]
 #[inline]
 pub fn before_fork() {
-    RUNTIME_FORK_ADMISSION.before_fork(RUNTIME_PROCESS.is_active_on_initial_thread());
+    RUNTIME_FORK_ADMISSION.before_fork_with(|| {
+        RUNTIME_PROCESS.is_quiescent_on_initial_thread_for_fork()
+    });
 }
 
 /// Releases the parent's direct fork admission boundary before public parent
@@ -9827,7 +11394,7 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
     let page_owner = {
         let slot_pointer = current_thread_slot_pointer();
         // A native A may not even inspect its TLS slot while B owns the raw
-        // handoff. Remove the exact static entry first, then make the normal
+        // handoff. Remove the exact registry entry first, then make the normal
         // page-owner finish decision with no B-side alias remaining.
         let native_owner = match NATIVE_LIVE_REMOTE_OWNER.claim_current_slot(slot_pointer) {
             NativeLiveRemoteOwnerCurrentClaim::Claimed(route) => Some(route.remove()),
@@ -9876,7 +11443,7 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
         };
         if !native_route_matches {
             // A normal pthread finisher must not move a live native owner out
-            // of TLS when the static route does not prove it owns the same
+            // of TLS when its registry entry does not prove it owns the same
             // session. Keep the exact page owner terminal instead.
             slot.state = ThreadLifecycleState::Retained;
             RUNTIME_PROCESS.retain_page_owner();
@@ -9976,15 +11543,6 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
                 route.retain();
                 return ThreadFinishResult::Retained;
             };
-            if needs_deferred_exit && !NATIVE_POST_EXIT_ROUTE.has_empty_slot() {
-                // Do this while the exact raw TLS handoff remains BUSY. A
-                // retained route must never leave the native session exposed
-                // for a later B after the pthread finisher has returned.
-                let slot = unsafe { &mut *slot_pointer.as_ptr() };
-                slot.state = ThreadLifecycleState::Retained;
-                route.retain();
-                return ThreadFinishResult::Retained;
-            }
             let generation = route.owner().generation;
             route.restore();
             needs_deferred_exit.then_some(generation)
@@ -9999,7 +11557,7 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
         NativeLiveRemoteOwnerCurrentClaim::Empty
         | NativeLiveRemoteOwnerCurrentClaim::Foreign => {
             // SAFETY: the current slot has no B-side native handoff. A
-            // foreign static entry was restored before this branch.
+            // foreign registry entry was restored before this branch.
             let slot = unsafe { &mut *slot_pointer.as_ptr() };
             match slot.state {
                 ThreadLifecycleState::Fresh => return ThreadFinishResult::NotAttached,
@@ -10012,7 +11570,7 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
                 Some(ThreadLifecyclePageOwner::Session(session)) if session.native_live_remote
             ) {
                 // A C-visible session may only be finished through its exact
-                // static route; without it neither A nor B has a valid owner
+                // registry entry; without it neither A nor B has a valid owner
                 // handoff to explain the raw pointer lifetime.
                 slot.state = ThreadLifecycleState::Retained;
                 RUNTIME_PROCESS.retain_page_owner();
@@ -10115,7 +11673,7 @@ fn finish_current_thread_page_owner_after_post_exit_route(
 }
 
 /// Transfers a fully detached native-shadow route out of A's compiler TLS
-/// into the fixed private C free scheduler.
+/// into the private metadata-backed C free registry.
 ///
 /// This is deliberately after the source aggregate has torn down A's
 /// Theap/TLD and after its long PageMap lease has become route-owned short
@@ -10128,6 +11686,7 @@ fn finish_current_thread_page_owner_after_post_exit_route(
 /// worker-admission count has been released.
 fn defer_current_thread_native_post_exit_route(
     operation: RuntimeDormantPageOperation,
+    registry_config: MemoryConfig,
     build_route: impl FnOnce(LaterThreadAdmissionClaim) -> NativePostExitFreeRoute,
 ) -> ThreadFinishResult {
     let admission = {
@@ -10165,7 +11724,8 @@ fn defer_current_thread_native_post_exit_route(
         parked,
         route,
     };
-    match NATIVE_POST_EXIT_ROUTE.install(deferred) {
+    let installed = NATIVE_POST_EXIT_ROUTE.install(deferred, registry_config);
+    match installed {
         Ok(()) => {
             let slot = current_thread_slot();
             // The source aggregate completed the old Theap/TLD boundary.
@@ -10177,9 +11737,10 @@ fn defer_current_thread_native_post_exit_route(
             ThreadFinishResult::Finished
         }
         Err(deferred) => {
-            // A third concurrent source exit can exhaust this deliberately
-            // two-slot router. Preserve both exact capabilities rather than
-            // overwriting an independently parked owner.
+            // Registry growth failed or observed a terminal entry after A's
+            // source teardown. Preserve both exact capabilities rather than
+            // overwriting an independently parked owner or manufacturing a
+            // normal no-page finalizer.
             let deferred = core::mem::ManuallyDrop::new(deferred);
             // SAFETY: `deferred` is intentionally never dropped after this
             // ownership mismatch. Reading its non-Copy admission transfers
@@ -10496,6 +12057,24 @@ fn finish_current_thread_page_owner_after_user_destructors(
         clients,
         disposition,
     } = exit;
+    // `pair` remains a copyable, identity-checked process view after the old
+    // attachment tears down, unlike `MainHeapThreadAttachment::memory_config`,
+    // which intentionally rejects that post-Theap boundary. Capture the
+    // immutable configuration before source abandonment so metadata registry
+    // growth never needs to reopen A's attachment.
+    let native_registry_config = if matches!(&disposition, DetachedOwnerExitDisposition::NativeDeferred) {
+        match pair.memory_config() {
+            Ok(config) => Some(config),
+            Err(_) => {
+                core::mem::forget(drain);
+                drop(operation);
+                retain_current_thread_live_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+        }
+    } else {
+        None
+    };
 
     // Direct small has a distinct source entrance because its owner exit must
     // prove and clear the exact rounded direct-cache image before the page
@@ -10542,23 +12121,40 @@ fn finish_current_thread_page_owner_after_user_destructors(
     // remaining client identity in `exit`, no scoped pre-exit producer
     // survives, and this normal finish is the source fast-slot-clear boundary.
     let route_begin = if matches!(&disposition, DetachedOwnerExitDisposition::NativeDeferred) {
-        match NATIVE_POST_EXIT_ROUTE.known_post_exit_os_abandoned_members() {
-            // SAFETY: the fixed native router proved every prior private
-            // OS-list member remains owned by one live typed route. This
-            // source drain can append only its own exact member; it receives
-            // neither a list traversal nor another route's client address.
-            Some(known_os_abandoned_members) => unsafe {
+        match NATIVE_POST_EXIT_ROUTE.view() {
+            NativePostExitRouteRegistryView::Live => {
+                // SAFETY: the metadata-backed registry proved every prior
+                // private OS-list member remains owned by one live typed
+                // route. This source drain can append only its own exact
+                // member; it receives neither a list traversal nor another
+                // route's client address.
+                let known_os_abandoned_members = unsafe {
+                    ThreadExitKnownPostExitOsAbandonedList::from_native_post_exit_route_registry()
+                };
+                unsafe {
                 drain.abandon_mapped_regular_pages_to_process_route_with_known_os_abandoned_members(
                     known_os_abandoned_members,
                 )
-            },
+                }
+            }
             // SAFETY: no live native route exists, so the standard source
             // preflight retains its conservative empty-list requirement.
-            None => unsafe { drain.abandon_mapped_regular_pages_to_process_route() },
+            NativePostExitRouteRegistryView::Empty => unsafe {
+                drain.abandon_mapped_regular_pages_to_process_route()
+            },
+            NativePostExitRouteRegistryView::Retained => {
+                // A prior detached route no longer has retryable source
+                // ownership. Do not use its former list membership as a
+                // preflight proof or run another A through normal teardown.
+                core::mem::forget(drain);
+                drop(operation);
+                retain_current_thread_detached_owner_exit();
+                return ThreadFinishResult::Retained;
+            }
         }
     } else {
-        // SAFETY: non-native routes never receive the bounded static-router
-        // proof and therefore keep the ordinary empty-list source entrance.
+        // SAFETY: non-native routes never receive the private registry proof
+        // and therefore keep the ordinary empty-list source entrance.
         unsafe { drain.abandon_mapped_regular_pages_to_process_route() }
     };
     match route_begin {
@@ -10566,7 +12162,7 @@ fn finish_current_thread_page_owner_after_user_destructors(
             match disposition {
                 DetachedOwnerExitDisposition::SequentialFree {
                     free_after_exit,
-                    post_exit_remote_pair,
+                    post_exit_remote_publication_group,
                 } => {
                 let admission = {
                     let slot = current_thread_slot();
@@ -10581,7 +12177,7 @@ fn finish_current_thread_page_owner_after_user_destructors(
                 match free_after_exit(TicketZeroOwnerExitFreeRoute {
                     route,
                     clients,
-                    post_exit_remote_pair,
+                    post_exit_remote_publication_group,
                     pair,
                     admission,
                     _consumer: PhantomData,
@@ -10605,11 +12201,13 @@ fn finish_current_thread_page_owner_after_user_destructors(
                 }
                 }
                 DetachedOwnerExitDisposition::NativeDeferred => {
-                    defer_current_thread_native_post_exit_route(operation, |admission| {
+                    let registry_config = native_registry_config
+                        .expect("the native deferred route captured its immutable process config");
+                    defer_current_thread_native_post_exit_route(operation, registry_config, |admission| {
                         NativePostExitFreeRoute::Aggregate(TicketZeroOwnerExitFreeRoute {
                             route,
                             clients,
-                            post_exit_remote_pair: None,
+                            post_exit_remote_publication_group: None,
                             pair,
                             admission,
                             _consumer: PhantomData,
@@ -10672,7 +12270,9 @@ fn finish_current_thread_page_owner_after_user_destructors(
                     // only after the opaque route proves the exact address
                     // against A's private ledger, then uses the existing
                     // source failed-reclaim terminal-free path.
-                    defer_current_thread_native_post_exit_route(operation, |admission| {
+                    let registry_config = native_registry_config
+                        .expect("the native deferred route captured its immutable process config");
+                    defer_current_thread_native_post_exit_route(operation, registry_config, |admission| {
                         NativePostExitFreeRoute::SoleMappedRegular(
                             NativeSoleMappedRegularPostExitRoute {
                                 route,
@@ -10703,19 +12303,21 @@ fn finish_current_thread_page_owner_after_user_destructors(
     }
 }
 
-/// Preserves only a quiescent ticket-zero no-page image in the post-fork child,
+/// Preserves only a quiescent ticket-zero image in the post-fork child,
 /// otherwise disables this incomplete lifecycle without acquiring an
 /// inherited allocator lock or walking inherited thread/page ownership.
 ///
 /// The caller is libc's raw-fork child path. `fork_was_prepared` is true only
 /// for the direct public `fork` path that just called [`before_fork`]. That
 /// explicit token, plus the gate, preserves the copied process owner only when
-/// no later bridge attachment was live or retained and the raw fork ran on the
-/// original ticket-zero TLS image. It prevents another raw-fork caller from
-/// borrowing a concurrently copied gate. A preserving child may attach a
-/// fresh pthread through the existing no-page path. Every other child remains
-/// disabled: this is intentionally not a general fork repair and never
-/// traverses inherited locks, roots, lists, or page ownership.
+/// no later bridge attachment was live or retained, the raw fork ran on the
+/// original ticket-zero TLS image, and its permanent page owner was unmapped
+/// or all-free dormant. It prevents another raw-fork caller from borrowing a
+/// concurrently copied gate. A preserving child may reactivate that dormant
+/// ticket-zero owner or attach a fresh pthread through the existing no-page
+/// path. Every other child remains disabled: this is intentionally not a
+/// general fork repair and never traverses inherited locks, roots, lists, or
+/// page ownership.
 #[doc(hidden)]
 pub fn after_fork_child(fork_was_prepared: bool) {
     if RUNTIME_FORK_ADMISSION.after_fork_child(fork_was_prepared) {
@@ -10757,19 +12359,35 @@ mod tests {
     // next worker begin.
     const OWNER_EXIT_STATE_AUDIT_CYCLES: usize = 8;
 
-    /// Publishes C's one private post-exit client only while B holds the
-    /// source low owner bit for its direct free. The scoped join is part of
-    /// the test contract: it proves the producer cannot outlive B's exact
-    /// `mi_free_block_mt` -> `mi_free_try_collect_mt` transition.
-    fn publish_post_exit_remote_free_from_scoped_worker<'route>(
-        producer: TicketZeroOwnerExitRemoteFreeProducer<'route>,
-    ) -> Result<(), TicketZeroOwnerExitRemoteFreeProducer<'route>> {
+    /// Publishes C and D's two private post-exit clients only while B holds
+    /// the source low owner bit for its direct free. Each scoped join is part
+    /// of the test contract: it proves both producers complete before B's
+    /// exact `mi_free_block_mt` -> `mi_free_try_collect_mt` collector resumes.
+    fn publish_post_exit_remote_free_from_scoped_workers<'route>(
+        producers: TicketZeroOwnerExitRemoteFreeProducerPair<'route>,
+    ) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'route>> {
+        let (first, second) = producers.split();
         thread::scope(|scope| {
-            scope
-                .spawn(move || producer.publish())
-                .join()
-                .expect("the scoped post-exit publisher joins before B resumes collection")
-        })
+            assert!(
+                scope
+                    .spawn(move || first.publish())
+                    .join()
+                    .expect("the first scoped post-exit publisher joins before B resumes collection")
+                    .is_ok(),
+                "the first post-exit publisher reaches B's held source remote head"
+            );
+        });
+        thread::scope(|scope| {
+            assert!(
+                scope
+                    .spawn(move || second.publish())
+                    .join()
+                    .expect("the second scoped post-exit publisher joins before B resumes collection")
+                    .is_ok(),
+                "the second post-exit publisher appends before B resumes collection"
+            );
+        });
+        Ok(())
     }
 
     fn ledger_test_client(
@@ -10789,152 +12407,6 @@ mod tests {
                 Some(1),
             )
             .expect("each synthetic live client occupies one distinct ledger slot")
-    }
-
-    #[test]
-    fn native_aggregate_route_adopts_its_last_mapped_regular_member_before_b_finishes() {
-        assert!(
-            initialize_process(4096),
-            "the native runtime initializes before its aggregate-reclamation witness"
-        );
-        assert!(
-            prepare_native_later_thread_arena(),
-            "ticket zero parks the first arena before A publishes its detached route"
-        );
-
-        let adoption_count_before =
-            AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT.load(Ordering::Relaxed);
-        let (blocks_sender, blocks_receiver) = mpsc::sync_channel(0);
-        let owner = thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-            let small = match native_allocate_aligned(37, 16, false) {
-                NativePageAllocationResult::Allocated(block) => block,
-                _ => panic!("A receives the aggregate's direct-small sibling"),
-            };
-            // Match the source-proved medium predecessor: its three exact
-            // allocations fit one medium page, while the returned third block
-            // stays in `local_free` until owner-exit force collection. The
-            // 16-byte request is libc's natural C ABI alignment, so it must
-            // preserve ordinary-request provenance rather than take the
-            // genuinely over-aligned path.
-            let regular_request = OWNER_EXIT_RECLAIM_MEDIUM_REQUEST;
-            let first_regular = match native_allocate_aligned(regular_request, 16, false) {
-                NativePageAllocationResult::Allocated(block) => block,
-                _ => panic!("A receives the aggregate's first mapped regular client"),
-            };
-            let final_regular = match native_allocate_aligned(regular_request, 16, false) {
-                NativePageAllocationResult::Allocated(block) => block,
-                _ => panic!("A receives the aggregate's final mapped regular client"),
-            };
-            let spare_regular = match native_allocate_aligned(regular_request, 16, false) {
-                NativePageAllocationResult::Allocated(block) => block,
-                _ => panic!("A materializes an immediate local free-list head"),
-            };
-            assert_eq!(
-                // SAFETY: A still owns this exact allocation locally. Keeping
-                // its two siblings live makes this a source-side immediate
-                // free-list witness rather than a detached-route input.
-                unsafe { native_free(spare_regular) },
-                NativePageFreeResult::Freed,
-                "A creates the final regular member's immediate local-head proof"
-            );
-            blocks_sender
-                .send((
-                    small.as_ptr().addr(),
-                    first_regular.as_ptr().addr(),
-                    final_regular.as_ptr().addr(),
-                ))
-                .expect("B receives only the C-shaped exact client inputs");
-            assert_eq!(
-                finish_current_thread_native_after_user_destructors(),
-                ThreadFinishResult::Finished,
-                "A detaches its mixed source route before B begins reclamation"
-            );
-        });
-        let (small, first_regular, final_regular) = blocks_receiver
-            .recv()
-            .expect("the owner publishes the private C-shaped exact addresses");
-        owner
-            .join()
-            .expect("A finishes after the aggregate route owns both pages");
-
-        let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
-        let (finish_sender, finish_receiver) = mpsc::sync_channel(0);
-        let releaser = thread::spawn(move || {
-            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-            // SAFETY: A has detached these exact client identities into the
-            // private native route. The route revalidates each address before
-            // it reaches source page state.
-            let small = unsafe { core::ptr::NonNull::new_unchecked(small as *mut u8) };
-            let first_regular =
-                unsafe { core::ptr::NonNull::new_unchecked(first_regular as *mut u8) };
-            let final_regular =
-                unsafe { core::ptr::NonNull::new_unchecked(final_regular as *mut u8) };
-            assert_eq!(
-                // SAFETY: this exact source sibling must terminally release
-                // before the aggregate has one mapped regular member left.
-                unsafe { native_free(small) },
-                NativePageFreeResult::Freed,
-                "B terminally releases the direct-small sibling before final-member adoption"
-            );
-            assert_eq!(
-                // SAFETY: this exact source client remains one of two live
-                // regular ledger entries, so it takes the ordinary opaque
-                // aggregate free before the final-member edge is available.
-                unsafe { native_free(first_regular) },
-                NativePageFreeResult::Freed,
-                "B releases all but the final eligible mapped regular client"
-            );
-            assert_eq!(
-                // SAFETY: this final exact C free is the only B input that
-                // can cross the prevalidated aggregate last-member adoption
-                // transition. It remains opaque to B throughout.
-                unsafe { native_free(final_regular) },
-                NativePageFreeResult::Freed,
-                "B adopts, reuses, and drains the final mapped regular page"
-            );
-            assert!(
-                AGGREGATE_LAST_MAPPED_REGULAR_ADOPTION_COUNT.load(Ordering::Relaxed)
-                    > adoption_count_before,
-                "the native route reaches the existing aggregate final-member adoption boundary",
-            );
-            terminal_sender
-                .send(())
-                .expect("B reports source terminal release before its own finish");
-            finish_receiver
-                .recv()
-                .expect("the coordinator releases B's required no-page finish");
-            assert_eq!(
-                finish_current_thread_native_after_user_destructors(),
-                ThreadFinishResult::Finished,
-                "B finishes its own attachment before A's admission returns"
-            );
-        });
-
-        terminal_receiver
-            .recv()
-            .expect("B reaches the adopted-route terminal state");
-        assert!(
-            matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-            "ticket zero remains unavailable after adoption until B finishes"
-        );
-        finish_sender
-            .send(())
-            .expect("the coordinator allows B to finish its no-page lifecycle");
-        releaser
-            .join()
-            .expect("B completes the adopted aggregate route lifecycle");
-
-        let resumed = match ticket_zero_allocate(73, false) {
-            TicketZeroPageAllocationResult::Allocated(block) => block,
-            _ => panic!("ticket zero reactivates only after B finishes"),
-        };
-        assert_eq!(
-            // SAFETY: `resumed` is the exact reactivated ticket-zero block.
-            unsafe { ticket_zero_free(resumed) },
-            TicketZeroPageFreeResult::Freed,
-            "the reactivated ticket-zero client returns normally"
-        );
     }
 
     #[test]
@@ -11115,23 +12587,28 @@ mod tests {
     }
 
     #[test]
-    fn parked_session_post_exit_pair_selection_validates_before_moving_the_ledger() {
-        // The active-session B/C route names two prospective publisher clients
-        // only by private generation-checked keys. A bad selection must reject
-        // while the session is still fully parked and recoverable; it may not
-        // first transfer a partial ledger and then discover a stale pair.
+    fn parked_session_post_exit_publication_group_validates_before_moving_the_ledger() {
+        // The active-session B/C/D route names its direct source client and
+        // two prospective publishers only by private generation-checked keys.
+        // A bad selection must reject while the session is still fully parked
+        // and recoverable; it may not first transfer a partial ledger and then
+        // discover a stale publication group.
         let mut clients = PreparedOwnerExitClients::new(None);
         let first = ledger_test_client(&mut clients, 0x1000);
         let second = ledger_test_client(&mut clients, 0x2000);
         let third = ledger_test_client(&mut clients, 0x3000);
+        let fourth = ledger_test_client(&mut clients, 0x4000);
 
         assert!(matches!(
-            clients.transfer_all_live_with_final_member_adoption_and_post_exit_remote_pair(
-                Some([first.key(), first.key()]),
+            clients.transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                Some(DetachedOwnerExitRemotePublicationSelection {
+                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                    clients: [first.key(), first.key(), second.key()],
+                }),
                 |_| false,
             ),
             Err(CurrentThreadPageOwnerPreparationError::DuplicateClient)
-        ), "a duplicate opaque pair rejects before the session registry moves");
+        ), "a duplicate opaque publication group rejects before the session registry moves");
         assert!(matches!(
             clients.slots[first.slot],
             PreparedOwnerExitClientState::Live { .. }
@@ -11146,8 +12623,11 @@ mod tests {
             generation: third.generation.wrapping_add(1),
         };
         assert!(matches!(
-            clients.transfer_all_live_with_final_member_adoption_and_post_exit_remote_pair(
-                Some([first.key(), stale]),
+            clients.transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                Some(DetachedOwnerExitRemotePublicationSelection {
+                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                    clients: [first.key(), stale, third.key()],
+                }),
                 |_| false,
             ),
             Err(CurrentThreadPageOwnerPreparationError::UnknownClient)
@@ -11157,33 +12637,47 @@ mod tests {
             PreparedOwnerExitClientState::Live { .. }
         ));
 
-        let (ledger, mut pair) = clients
-            .transfer_all_live_with_final_member_adoption_and_post_exit_remote_pair(
-                Some([first.key(), second.key()]),
+        let (ledger, mut group) = clients
+            .transfer_all_live_with_final_member_adoption_and_post_exit_remote_publication_group(
+                Some(DetachedOwnerExitRemotePublicationSelection {
+                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                    clients: [first.key(), second.key(), third.key()],
+                }),
                 |_| false,
             )
-            .expect("two validated live keys move only into the scoped post-exit pair");
+            .expect("three validated live keys move only into the scoped post-exit publication group");
         assert_eq!(
             ledger.block_for(first.key()),
             None,
-            "the first scoped source client leaves the ordinary B ledger"
+            "the direct scoped source client leaves the ordinary B ledger"
         );
         assert_eq!(
             ledger.block_for(second.key()),
             None,
-            "the second scoped source client leaves the ordinary B ledger"
+            "the first publisher source client leaves the ordinary B ledger"
         );
         assert_eq!(
             ledger.block_for(third.key()),
-            Some(third.block),
+            None,
+            "the second publisher source client leaves the ordinary B ledger"
+        );
+        assert_eq!(
+            ledger.block_for(fourth.key()),
+            Some(fourth.block),
             "unselected live clients remain in the ordinary opaque ledger"
         );
-        let pair = pair
+        let group = group
             .as_mut()
-            .expect("the validated pair retains both source client identities");
-        assert_eq!(pair.take_next(), Some(first.block));
-        assert_eq!(pair.take_next(), Some(second.block));
-        assert!(pair.is_empty());
+            .expect("the validated group retains all three source client identities");
+        assert_eq!(
+            group.kind,
+            DetachedOwnerExitRemotePublicationKind::DirectSmall,
+            "the opaque ledger retains the source page-shape proof with its clients"
+        );
+        assert_eq!(group.take_next(), Some(first.block));
+        assert_eq!(group.take_next(), Some(second.block));
+        assert_eq!(group.take_next(), Some(third.block));
+        assert!(group.is_empty());
     }
 
     #[test]
@@ -11248,6 +12742,57 @@ mod tests {
         assert!(
             admissions.release_later_thread(claim).is_ok(),
             "the retained value remains the exact claim that would otherwise release"
+        );
+    }
+
+    #[test]
+    fn fork_predicate_runs_only_after_gate_excludes_every_later_admission() {
+        let admissions = RuntimeForkAdmission::new();
+        let claim = admissions
+            .claim_later_thread()
+            .expect("the isolated admission word accepts one worker");
+        let inspected = std::sync::atomic::AtomicBool::new(false);
+
+        admissions.before_fork_with(|| {
+            inspected.store(true, Ordering::Release);
+            true
+        });
+        assert!(
+            !inspected.load(Ordering::Acquire),
+            "a live later admission prevents the fork predicate from borrowing the permanent owner"
+        );
+        assert_eq!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE,
+            0,
+            "a nonzero admission count cannot preserve a copied runtime image"
+        );
+        admissions.after_fork_parent();
+        assert!(
+            admissions.release_later_thread(claim).is_ok(),
+            "the isolated worker releases before the quiescent fork boundary"
+        );
+
+        admissions.before_fork_with(|| {
+            assert_eq!(
+                admissions.state.load(Ordering::Acquire),
+                FORK_GATE_HELD,
+                "the predicate observes the gate held with every later admission excluded"
+            );
+            inspected.store(true, Ordering::Release);
+            true
+        });
+        assert!(
+            inspected.load(Ordering::Acquire),
+            "the quiescent gate invokes its private preservation predicate"
+        );
+        assert_ne!(
+            admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE,
+            0,
+            "only the held zero-count boundary records a preserving child image"
+        );
+        assert!(
+            admissions.after_fork_child(true),
+            "the prepared child consumes exactly the preserving gate record"
         );
     }
 
@@ -11394,7 +12939,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_ticket_zero_page_owner_is_lazy_and_closes_no_page_fork_preservation() {
+    fn runtime_ticket_zero_page_owner_is_lazy_and_preserves_only_a_quiescent_fork_image() {
         thread::spawn(|| {
             let process_storage = ProcessMainInitializationStorage::test_static_owner();
             let main_static = MainStaticAttachmentStorage::test_static_owner();
@@ -11417,8 +12962,15 @@ mod tests {
             // every source/process owner alive through the permanent fixture.
             unsafe { publish_test_owner(runtime, owner) };
             let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let admissions = RuntimeForkAdmission::new();
+            let is_preserved_at_quiescent_fork_boundary = || {
+                admissions.before_fork_with(|| runtime.is_quiescent_on_initial_thread_for_fork());
+                let preserves = admissions.state.load(Ordering::Acquire) & FORK_GATE_PRESERVE != 0;
+                admissions.after_fork_parent();
+                preserves
+            };
 
-            assert!(runtime.is_active_on_initial_thread());
+            assert!(is_preserved_at_quiescent_fork_boundary());
             assert!(
                 runtime.start_ticket_zero_page_owner_with_storage(arena_storage),
                 "the runtime creates its permanent owner without an arena reservation"
@@ -11428,8 +12980,8 @@ mod tests {
                 "the runtime page owner remains mapping-free until its first valid request"
             );
             assert!(
-                !runtime.is_active_on_initial_thread(),
-                "the old no-page fork bridge refuses to preserve a permanent page authority"
+                is_preserved_at_quiescent_fork_boundary(),
+                "an unmapped permanent ticket-zero owner remains quiescent for fork"
             );
 
             let block = runtime
@@ -11438,6 +12990,10 @@ mod tests {
                 })
                 .flatten()
                 .expect("the first ordinary runtime request activates the source default arena");
+            assert!(
+                !is_preserved_at_quiescent_fork_boundary(),
+                "a live ticket-zero client keeps the copied child outside the narrow fork contract"
+            );
             assert!(
                 !arena_storage.test_is_cold(),
                 "only the valid first miss publishes the default arena"
@@ -11448,8 +13004,12 @@ mod tests {
                     // by this runtime's sole ticket-zero page owner.
                     unsafe { owner.free(block) }
             })
-            .expect("the permanent owner remains callable after activation");
+                .expect("the permanent owner remains callable after activation");
             assert!(free.is_ok(), "the exact ticket-zero allocation frees normally");
+            assert!(
+                is_preserved_at_quiescent_fork_boundary(),
+                "the all-free source finish restores the permanent owner to the quiescent fork image"
+            );
 
             let aligned = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
@@ -12980,18 +14540,23 @@ mod tests {
                             panic!("the remote medium client leaves the private workload before A exits");
                         };
                         // This direct lower-level test intentionally retains
-                        // the historical witness positions solely to select
-                        // the B/C pair. The runtime owner path converts the
-                        // same selection into opaque ledger keys before it
-                        // suspends A; `TicketZeroOwnerExitFreeRoute` itself
-                        // has no fixture-shaped indexing.
-                        let Some(first) = blocks[OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START].take() else {
+                        // the historical direct-small witness positions solely
+                        // to select the B/C/D publication group. The runtime
+                        // owner path converts the same selection into opaque
+                        // ledger keys before it suspends A;
+                        // `TicketZeroOwnerExitFreeRoute` itself has no
+                        // fixture-shaped indexing.
+                        let Some(direct) = blocks[0].take() else {
                             core::mem::forget(route);
-                            panic!("the post-exit B/C witness keeps its first same-page client");
+                            panic!("the post-exit B/C/D witness keeps its direct same-page client");
                         };
-                        let Some(second) = blocks[OWNER_EXIT_UNMAPPED_FULL_MEDIUM_START + 1].take() else {
+                        let Some(first_published) = blocks[1].take() else {
                             core::mem::forget(route);
-                            panic!("the post-exit B/C witness keeps its second same-page client");
+                            panic!("the post-exit B/C/D witness keeps its first publisher same-page client");
+                        };
+                        let Some(second_published) = blocks[2].take() else {
+                            core::mem::forget(route);
+                            panic!("the post-exit B/C/D witness keeps its second publisher same-page client");
                         };
                         let mut entries = core::array::from_fn(|slot| {
                                 blocks.get(slot).copied().flatten().map(|block| DetachedOwnerExitClient {
@@ -13001,7 +14566,7 @@ mod tests {
                                     },
                                     block,
                                     // This direct source-state fixture
-                                    // retains the B/C pair and therefore
+                                    // retains the B/C/D group and therefore
                                     // deliberately has no raw-C
                                     // `malloc_usable_size` surface (see
                                     // `TicketZeroOwnerExitFreeRoute::native_usable_size`).
@@ -13055,10 +14620,14 @@ mod tests {
                         let post_exit = TicketZeroOwnerExitFreeRoute {
                             route,
                             clients,
-                            post_exit_remote_pair: Some(DetachedOwnerExitRemotePair {
-                                first: Some(first),
-                                second: Some(second),
-                            }),
+                            post_exit_remote_publication_group: Some(
+                                DetachedOwnerExitRemotePublicationGroup {
+                                    kind: DetachedOwnerExitRemotePublicationKind::DirectSmall,
+                                    direct: Some(direct),
+                                    first_published: Some(first_published),
+                                    second_published: Some(second_published),
+                                },
+                            ),
                             pair,
                             admission,
                             _consumer: PhantomData,
@@ -13112,7 +14681,9 @@ mod tests {
                                 };
                                 let outcome = post_exit.free_remaining_with_post_exit_publisher(
                                     &mut b_attachment,
-                                    publish_post_exit_remote_free_from_scoped_worker,
+                                    TicketZeroOwnerExitPostExitPublisher::DirectSmall(
+                                        publish_post_exit_remote_free_from_scoped_workers,
+                                    ),
                                 );
                                 b_attachment
                                     .finish_after_user_destructors()

@@ -12,7 +12,18 @@
 #include <stdlib.h>
 
 enum {
-    LIVE_BLOCK_COUNT = 40,
+    /*
+     * Eighty 1 KiB direct-small requests fill the first 64 KiB source page
+     * before this owner reaches the second page. The tail then adds
+     * non-direct-small, medium, large, and arena-singleton members. The owner
+     * therefore exits through one ordinary native session with an unchanged
+     * full direct-small member, a later nonfull member in the same source bin,
+     * and pages from the other regular source classes. This is not a bespoke
+     * full-page route: the private ledger and the one aggregate
+     * `_mi_theap_collect_abandon` traversal must account for every client.
+     */
+    DIRECT_SMALL_BLOCK_COUNT = 80,
+    LIVE_BLOCK_COUNT = DIRECT_SMALL_BLOCK_COUNT + 4,
     OWNER_EXIT_EPOCHS = 8,
 };
 
@@ -20,7 +31,18 @@ static unsigned char *shared_blocks[LIVE_BLOCK_COUNT];
 
 static size_t block_size(size_t index)
 {
-    return 37 + (index % 17);
+    if (index < DIRECT_SMALL_BLOCK_COUNT)
+        return 1024;
+    switch (index - DIRECT_SMALL_BLOCK_COUNT) {
+    case 0:
+        return 1025;
+    case 1:
+        return 64 * 1024;
+    case 2:
+        return 128 * 1024;
+    default:
+        return 1024 * 1024;
+    }
 }
 
 static void *owner_worker(void *opaque)

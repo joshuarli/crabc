@@ -486,14 +486,39 @@ case "$command" in
         # The direct runtime regressions keep the typed post-exit proof and
         # live-owner remote-publication boundaries observable without
         # accidentally selecting the ordinary C allocator artifact. They
-        # cover aggregate, source-proved sole mapped-regular, and parked-A
-        # source remote-free routes before the C ABI fixture exercises the
-        # selected shared object.
+        # cover aggregate, source-proved sole mapped-regular, parked-A source
+        # remote-free, and the two nominally distinct bounded post-exit B/C/D
+        # routes before the C ABI fixture exercises the selected shared object.
         run_in_container cargo test -p crabc-mimalloc \
             --test native_post_exit_lifecycle \
             --test native_sole_post_exit_lifecycle \
             --test native_two_post_exit_lifecycle \
+            --test native_three_post_exit_lifecycle \
+            --test native_post_exit_registry_reuse \
+            --test native_post_exit_with_local_session \
             --test native_live_remote_free \
+            --test native_two_live_remote_owners \
+            --test runtime_lifecycle_session_post_exit_publisher \
+            --test runtime_lifecycle_session_post_exit_mapped_medium_publisher \
+            --test runtime_lifecycle_session_post_exit_mapped_medium_requires_publisher \
+            --test runtime_lifecycle_session_post_exit_mismatch_publisher \
+            -- --test-threads=1
+        # These direct tests compile scalar-only registry audits behind their
+        # own default-off feature. They establish the detached three-route and
+        # live two-owner concurrent high-waters, then prove later epochs reuse
+        # those exact stable metadata nodes without exposing a route or client
+        # capability.
+        run_in_container cargo test -p crabc-mimalloc \
+            --features native-runtime-test-audit \
+            --test native_post_exit_registry_high_water \
+            --test native_live_remote_owner_registry_reuse \
+            -- --test-threads=1
+        # The next-`munmap` injection is a separately gated direct witness:
+        # a failed OS terminal release must retain the opaque B-side route and
+        # A's scheduler/admission claim instead of manufacturing completion.
+        run_in_container cargo test -p crabc-mimalloc \
+            --features native-runtime-test-audit,native-runtime-test-fault \
+            --test native_post_exit_failed_os_release \
             -- --test-threads=1
         run_in_container env RUSTC_WRAPPER="/workspace/scripts/rustc_test_host_tool_wrapper.sh" \
             python3 scripts/run_owned_test_suite.py \
@@ -503,16 +528,19 @@ case "$command" in
             --test allocator \
             --test native_mimalloc_owner_exit \
             --test native_mimalloc_two_owner_exit \
+            --test native_mimalloc_three_owner_exit \
             --test native_mimalloc_aggregate_reclaim \
             --test native_mimalloc_owner_exit_realloc \
             --test native_mimalloc_live_remote_free \
+            --test native_mimalloc_two_live_remote_owners \
             --test native_mimalloc_initial_remote_free \
             --test native_mimalloc_parallel_local_workers \
             --test native_mimalloc_many_local_allocations \
             --test native_mimalloc_many_owner_exit_allocations \
             --test native_mimalloc_live_remote_owner_exit \
-                --test pthread_create_join_tls_regression \
-                -- --test-threads=1
+            --test pthread_atfork \
+            --test pthread_create_join_tls_regression \
+            -- --test-threads=1
         ;;
     allocator-tls)
         ensure_image

@@ -1,7 +1,7 @@
 //! Test-only prefixed C ABI for the private ticket-zero runtime page owner.
 //!
 //! This crate is deliberately outside `crabc-libc` and is linked only by the
-//! allocator evidence harness. Its ten `crabc_ticket_zero_test_*` exports
+//! allocator evidence harness. Its eleven `crabc_ticket_zero_test_*` exports
 //! exercise one process's original thread plus one fresh scoped worker through
 //! the hidden Rust runtime seam; they are neither `malloc`/`free`
 //! interposition symbols nor a production backend-selection mechanism.
@@ -22,9 +22,11 @@ use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroPageAllocationResult,
     TicketZeroPageFreeResult, TicketZeroOwnerExitFreeOutcome,
     TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitRemoteFreeProducer,
+    TicketZeroOwnerExitRemoteFreeProducerPair,
     TicketZeroOwnerExitReclaimOutcome,
     TicketZeroOwnerExitReclaimRoute, TicketZeroRemoteFreeProducer,
-    TicketZeroRemoteFreeProducerPair, initialize_process,
+    TicketZeroRemoteFreeProducerPair, NativeRuntimeLifecycleAudit,
+    initialize_process, native_runtime_lifecycle_test_audit,
     ticket_zero_allocate, ticket_zero_free, ticket_zero_later_thread_page_roundtrip,
     ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish,
     ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish,
@@ -68,9 +70,9 @@ struct RemotePublishContext<'owner> {
 }
 
 /// Stack-owned C-side publication capability issued inside B's one bounded
-/// post-exit source decision. C can only append its private client to B's
-/// held remote head; neither pthread receives a client address, PageMap, or
-/// collector/release capability.
+/// post-exit source decision. C or D can only append its private client to
+/// B's held remote head; neither pthread receives a client address, PageMap,
+/// or collector/release capability.
 struct OwnerExitRemotePublishContext<'owner> {
     producer: Option<TicketZeroOwnerExitRemoteFreeProducer<'owner>>,
     published: bool,
@@ -90,6 +92,46 @@ struct OwnerExitFreeContext<'owner> {
 struct OwnerExitReclaimContext {
     route: Option<TicketZeroOwnerExitReclaimRoute>,
     outcome: Option<TicketZeroOwnerExitReclaimOutcome>,
+}
+
+/// Scalar-only lifecycle snapshot for the test adapter's C soak fixture.
+///
+/// Its fields deliberately expose no pointer, route, page identity, allocator,
+/// or release capability. They may be sampled only by the original serialized
+/// C caller after every worker from the bounded schedule has joined.
+#[repr(C)]
+pub struct CrabcTicketZeroTestLifecycleAudit {
+    pub process_active: usize,
+    pub page_owner_ready: usize,
+    pub page_map_registered_entry_count: usize,
+    pub page_map_published_submap_count: usize,
+    pub page_map_lazy_submap_allocation_count: usize,
+    pub arena_registry_count: usize,
+    pub live_thread_count: usize,
+    pub metadata_live_capability_count: usize,
+    pub metadata_high_water_capability_count: usize,
+    pub shared_later_theap_count: usize,
+    pub main_heap_abandoned_page_count: usize,
+    pub main_heap_os_abandoned_pages_empty: usize,
+}
+
+impl From<NativeRuntimeLifecycleAudit> for CrabcTicketZeroTestLifecycleAudit {
+    fn from(audit: NativeRuntimeLifecycleAudit) -> Self {
+        Self {
+            process_active: audit.process_active,
+            page_owner_ready: audit.page_owner_ready,
+            page_map_registered_entry_count: audit.page_map_registered_entry_count,
+            page_map_published_submap_count: audit.page_map_published_submap_count,
+            page_map_lazy_submap_allocation_count: audit.page_map_lazy_submap_allocation_count,
+            arena_registry_count: audit.arena_registry_count,
+            live_thread_count: audit.live_thread_count,
+            metadata_live_capability_count: audit.metadata_live_capability_count,
+            metadata_high_water_capability_count: audit.metadata_high_water_capability_count,
+            shared_later_theap_count: audit.shared_later_theap_count,
+            main_heap_abandoned_page_count: audit.main_heap_abandoned_page_count,
+            main_heap_os_abandoned_pages_empty: audit.main_heap_os_abandoned_pages_empty,
+        }
+    }
 }
 
 unsafe extern "C" {
@@ -273,12 +315,32 @@ fn free_owner_exit_route_in_joined_pthread<'owner>(
         .expect("joined B consumes exactly one opaque post-exit route")
 }
 
-/// Creates and joins C while B holds the source abandoned-page low owner bit
-/// for its direct post-exit free. The callback returns the opaque token on a
-/// clean publication refusal so B's route can retain its exact terminal state;
-/// a failed join cannot prove that C stopped touching the stack context and
-/// therefore stops the test process rather than guessing at ownership.
+/// Creates and joins C, then D, while B holds the source abandoned-page low
+/// owner bit for its direct post-exit free. The two opaque tokens originate in
+/// the same bounded source callback, but each C pthread completes before the
+/// next starts. A failed publication after splitting the pair cannot safely
+/// reconstruct its consumed linear state, so this test adapter stops rather
+/// than guessing at ownership; a failed join has the same terminal policy.
 fn publish_owner_exit_remote_free_in_joined_pthread<'owner>(
+    producers: TicketZeroOwnerExitRemoteFreeProducerPair<'owner>,
+) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'owner>> {
+    let (first, second) = producers.split();
+    if publish_one_owner_exit_remote_free_in_joined_pthread(first).is_err() {
+        // SAFETY: the pair has been split and a failed first publication
+        // cannot be reassembled with the still-private second token. This is
+        // an evidence-only C callback, so terminal process retention is safer
+        // than returning a forged complete source group.
+        unsafe { abort() }
+    }
+    if publish_one_owner_exit_remote_free_in_joined_pthread(second).is_err() {
+        // SAFETY: C has already published its exact block; dropping D's
+        // opaque token would falsely make the direct route appear complete.
+        unsafe { abort() }
+    }
+    Ok(())
+}
+
+fn publish_one_owner_exit_remote_free_in_joined_pthread<'owner>(
     producer: TicketZeroOwnerExitRemoteFreeProducer<'owner>,
 ) -> Result<(), TicketZeroOwnerExitRemoteFreeProducer<'owner>> {
     let mut context = OwnerExitRemotePublishContext {
@@ -457,6 +519,39 @@ pub unsafe extern "C" fn crabc_ticket_zero_test_init(page_size: usize) -> c_int 
     preserve_errno(saved_errno, 0)
 }
 
+/// Copies one scalar-only quiescent runtime snapshot into caller-owned C
+/// storage.
+///
+/// # Safety
+///
+/// `audit` must be non-null, valid for one complete
+/// [`CrabcTicketZeroTestLifecycleAudit`] write, and suitably aligned. The
+/// original initializing thread must serialize this call after every bounded
+/// worker has joined; this export is evidence-only and does not grant any
+/// allocator, page, route, or release authority.
+#[no_mangle]
+pub unsafe extern "C" fn crabc_ticket_zero_test_lifecycle_audit(
+    audit: *mut CrabcTicketZeroTestLifecycleAudit,
+) -> c_int {
+    let saved_errno = errno_value();
+    let Some(audit) = NonNull::new(audit) else {
+        set_errno(EINVAL);
+        return -1;
+    };
+    if !is_ready() {
+        set_errno(EBUSY);
+        return -1;
+    }
+    let Some(snapshot) = native_runtime_lifecycle_test_audit() else {
+        set_errno(EBUSY);
+        return -1;
+    };
+    // SAFETY: the caller contract above grants one complete typed C-image
+    // write to the non-null, aligned output slot. The snapshot is scalar-only.
+    unsafe { audit.as_ptr().write(snapshot.into()) };
+    preserve_errno(saved_errno, 0)
+}
+
 /// Allocates one uninitialized private ticket-zero page-owner block.
 ///
 /// # Safety
@@ -632,15 +727,14 @@ pub unsafe extern "C" fn crabc_ticket_zero_test_worker_remote_free_roundtrip() -
     }
 }
 
-/// Attaches this fresh worker as owner A of a mixed regular Theap, fills two
-/// `BIN_FULL` medium pages, and gives joined B/C one opaque pre-exit remote
-/// free from the first medium plus the sole client from a distinct large page.
-/// Source collection maps the first medium, releases the now-empty large page,
+/// Attaches this fresh worker as owner A of a mixed regular Theap. Source
+/// collection maps the first full medium, releases the force-empty large page,
 /// and leaves the second medium source-unmapped. A then transfers the opaque
-/// post-exit route to a second fresh joined B. After B claims the source low
-/// owner bit for its first direct free of that unchanged medium, joined C can
-/// atomically publish only one scoped same-page private client; B's existing
-/// collector consumes both before B releases the route's remaining clients.
+/// post-exit route to a second fresh joined B. B directly frees one of the
+/// route's three existing direct-small clients after claiming the source low
+/// owner bit. Joined C and D then serially publish the other two opaque
+/// same-page clients; B's existing collector consumes that two-node remote
+/// chain before it releases the route's remaining clients.
 /// B then completes only B's own no-page attachment; its completed proof
 /// returns to A before the runtime releases A's worker-admission claim.
 ///

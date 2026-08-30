@@ -1,6 +1,7 @@
 #include "unistd.h"
 #include "sys/wait.h"
 #include "pthread_atfork.h"
+#include "stdlib.h"
 
 static int prepare_seq[10], parent_seq[10], child_seq[10];
 static int pi, pai, chi;
@@ -23,22 +24,69 @@ static void dump(int *seq, int n) {
     write(1, "\n", 1);
 }
 
+/*
+ * This stays outside the public atfork callbacks.  The selected native
+ * allocator must have completed its private child transition before the
+ * callbacks run, but neither musl's handler ordering nor the bounded
+ * allocator fork contract permits allocation from a hook.
+ */
+static int exercise_quiescent_allocator(unsigned char tag)
+{
+    unsigned char *block;
+    unsigned char *grown;
+
+    block = malloc(73);
+    if (block == NULL)
+        return 1;
+    block[0] = tag;
+    block[72] = (unsigned char)(tag + 1);
+
+    grown = realloc(block, 149);
+    if (grown == NULL)
+        return 2;
+    if (grown[0] != tag || grown[72] != (unsigned char)(tag + 1)) {
+        free(grown);
+        return 3;
+    }
+    grown[148] = (unsigned char)(tag + 2);
+    if (grown[148] != (unsigned char)(tag + 2)) {
+        free(grown);
+        return 4;
+    }
+    free(grown);
+    return 0;
+}
+
 int main(void) {
     pthread_atfork(prep_a, par_a, ch_a);
     pthread_atfork(prep_b, par_b, ch_b);
     pthread_atfork(prep_c, par_c, ch_c);
 
+    /*
+     * Make the initial native owner real, then return it to its fully
+     * dormant source image before the fork.  No allocation remains live and
+     * no later worker exists, so this is deliberately not a general
+     * post-fork pointer or lock-repair test.
+     */
+    if (exercise_quiescent_allocator(0x31) != 0)
+        return 1;
+
     pid_t pid = fork();
     if (pid < 0) return 1;
 
     if (pid == 0) {
+        if (exercise_quiescent_allocator(0x51) != 0)
+            _exit(2);
         dump(prepare_seq, pi);
         dump(child_seq, chi);
         _exit(0);
     }
 
     int status;
-    waitpid(pid, &status, 0);
+    if (waitpid(pid, &status, 0) != pid || status != 0)
+        return 2;
+    if (exercise_quiescent_allocator(0x71) != 0)
+        return 3;
     dump(prepare_seq, pi);
     dump(parent_seq, pai);
     return 0;

@@ -4,7 +4,7 @@ use crabc_mimalloc::__crabc_runtime::{
     ThreadAttachResult, ThreadFinishResult, TicketZeroLaterThreadPageResult,
     TicketZeroOwnerExitFreeOutcome, TicketZeroOwnerExitFreeRoute,
     TicketZeroOwnerExitReclaimOutcome, TicketZeroOwnerExitReclaimRoute,
-    TicketZeroOwnerExitRemoteFreeProducer,
+    TicketZeroOwnerExitRemoteFreeProducerPair,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
     TicketZeroRemoteFreeProducerPair, after_fork_child, after_fork_parent,
     attach_current_thread, before_fork, finish_current_thread_after_user_destructors,
@@ -191,15 +191,31 @@ fn publish_owner_exit_remote_frees<'owner>(
     Ok(())
 }
 
-fn publish_owner_exit_remote_free_from_scoped_test_thread<'owner>(
-    producer: TicketZeroOwnerExitRemoteFreeProducer<'owner>,
-) -> Result<(), TicketZeroOwnerExitRemoteFreeProducer<'owner>> {
+fn publish_owner_exit_remote_free_from_scoped_test_threads<'owner>(
+    producers: TicketZeroOwnerExitRemoteFreeProducerPair<'owner>,
+) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'owner>> {
+    let (first, second) = producers.split();
     std::thread::scope(|scope| {
-        scope
-            .spawn(move || producer.publish())
-            .join()
-            .expect("the joined post-exit publisher remains scoped to B's route")
-    })
+        assert!(
+            scope
+                .spawn(move || first.publish())
+                .join()
+                .expect("the first joined post-exit publisher remains scoped to B's route")
+                .is_ok(),
+            "the first post-exit publication reaches B's held source remote head"
+        );
+    });
+    std::thread::scope(|scope| {
+        assert!(
+            scope
+                .spawn(move || second.publish())
+                .join()
+                .expect("the second joined post-exit publisher remains scoped to B's route")
+                .is_ok(),
+            "the second post-exit publication appends before B resumes collection"
+        );
+    });
+    Ok(())
 }
 
 fn free_owner_exit_route_with_joined_post_exit_remote_free<'owner>(
@@ -209,7 +225,7 @@ fn free_owner_exit_route_with_joined_post_exit_remote_free<'owner>(
         scope
             .spawn(move || {
                 route.free_remaining_in_fresh_runtime_worker_with_post_exit_publisher(
-                    publish_owner_exit_remote_free_from_scoped_test_thread,
+                    publish_owner_exit_remote_free_from_scoped_test_threads,
                 )
             })
             .join()

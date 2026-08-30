@@ -713,6 +713,27 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Whether this permanent ticket-zero owner contains no active engine,
+    /// PageMap mutation lease, or caller-visible native allocation.
+    ///
+    /// The runtime asks this only after its fork-admission gate has excluded
+    /// every later owner and after its own `READY` state has excluded a
+    /// current ticket-zero operation.  `AwaitingFreshPage` has never mapped
+    /// the first arena; `DormantExistingArena` reached the source all-free
+    /// finish and retains only the process-lifetime session and arena
+    /// identity.  Both copied images are safe to continue independently in a
+    /// quiescent child.  An `Active` engine may hold a source page-map lease
+    /// or caller client, so it deliberately remains outside this narrow fork
+    /// contract.
+    #[inline]
+    pub(crate) fn is_quiescent_for_fork(&self) -> bool {
+        matches!(
+            &self.state,
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }
+                | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { .. }
+        )
+    }
+
     /// Runs one allocation operation while preserving the permanent
     /// ticket-zero owner's source arena/page-map transition.
     ///

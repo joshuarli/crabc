@@ -36,6 +36,7 @@
   "expected_adapter_symbols": [
     "crabc_ticket_zero_test_free",
     "crabc_ticket_zero_test_init",
+    "crabc_ticket_zero_test_lifecycle_audit",
     "crabc_ticket_zero_test_malloc",
     "crabc_ticket_zero_test_realloc",
     "crabc_ticket_zero_test_worker_mixed_roundtrip",
@@ -45,14 +46,40 @@
     "crabc_ticket_zero_test_worker_roundtrip",
     "crabc_ticket_zero_test_zalloc"
   ],
+  "lifecycle_audit": {
+    "fixture_stdout_fields": [
+      "worker_cycles",
+      "process_active",
+      "page_owner_ready",
+      "page_map_registered_entries",
+      "page_map_published_submaps",
+      "page_map_lazy_submap_allocations",
+      "arena_registry_entries",
+      "live_tlds",
+      "metadata_live_capabilities",
+      "metadata_high_water_capabilities",
+      "shared_later_theaps",
+      "abandoned_regular_pages",
+      "os_abandoned_pages_empty"
+    ],
+    "fixture_stdout_prefix": "runtime ticket-zero lifecycle audit ",
+    "fixture_success_line": "runtime ticket-zero allocator ok",
+    "report": {
+      "audit_snapshot_count": "worker_cycles + 1",
+      "post_warm_cycle_count": "worker_cycles - 1",
+      "status": "passed",
+      "warm_baseline": "the exact first-complete-cycle scalar fixture record"
+    }
+  },
   "caller_contract": [
     "The fixture is one fresh Linux/AArch64 process and calls init once with its original thread's nonzero AT_PAGESZ value.",
     "Every allocation, reallocation, and free is serialized on that original thread.",
     "After the original thread frees every adapter allocation, one fresh pthread may make one pointer-free narrow worker round trip or one pointer-private persistent mixed-local worker round trip; either creates and finishes one later-main page engine before its normal worker teardown.",
     "The persistent worker keeps one engine through multiple simultaneously live small, medium, large, singleton, and multi-page singleton allocations, checks their contents, locally reuses freed small and medium blocks, and frees every block before engine finish; no pointer crosses the worker boundary.",
     "After the original thread frees every adapter allocation, one fresh pthread may become remote-free owner A. The adapter starts and joins two private publisher pthreads B/C; only opaque logical publication capabilities reach them, A false-collects and reuses both remote blocks while still live, and then A frees every block before normal teardown.",
-    "After the original thread frees every adapter allocation, one fresh pthread may become mixed regular-page owner A. The adapter keeps a direct-small page, a non-direct-small page, two distinct full medium pages, a one-client force-empty large page, a distinct two-client live large page, one live arena singleton, and one live OS-aligned singleton in one aggregate route, then suspends A's exact page engine into private compiler TLS and invokes ordinary post-destructor runtime finish. That dispatch resumes only A's matching engine and runs source collection: it makes the first medium page mapped, releases the now-empty force-empty large page, and leaves the unchanged second medium page source-unmapped; the arena member stays private through its PageMap-only raw terminal tail and the OS member through its static-main list and clipped-mapping tail. A distinct fresh B receives only the opaque post-exit route. On B's first direct free of the unchanged full medium, after B claims the source low owner bit, joined C receives only a scoped producer for one distinct same-page private client, atomically publishes it, and returns before B's existing collector consumes both clients. B terminally releases every surviving member, completes B's own no-page runtime attachment, and only then returns A's worker-admission proof; A cannot take the no-page finalizer while that route remains live.",
+    "After the original thread frees every adapter allocation, one fresh pthread may become mixed regular-page owner A. The adapter keeps three direct-small clients from one source page, a non-direct-small page, two distinct full medium pages, a one-client force-empty large page, a distinct two-client live large page, one live arena singleton, and one live OS-aligned singleton in one aggregate route, then suspends A's exact page engine into private compiler TLS and invokes ordinary post-destructor runtime finish. That dispatch resumes only A's matching engine and runs source collection: it makes the first medium page mapped, releases the now-empty force-empty large page, and leaves the unchanged second medium page source-unmapped; the arena member stays private through its PageMap-only raw terminal tail and the OS member through its static-main list and clipped-mapping tail. A distinct fresh B receives only the opaque post-exit route. B directly frees one existing direct-small client after claiming that source page's low owner bit; joined C and D each receive one scoped producer for the remaining distinct same-page clients, publish in separate joined turns, and return before B's existing collector consumes the two-node remote chain. B terminally releases every surviving member, completes B's own no-page runtime attachment, and only then returns A's worker-admission proof; A cannot take the no-page finalizer while that route remains live.",
     "After the original thread frees every adapter allocation, one fresh pthread may become the source owner A of one initially-nonfull mapped-regular page with two private live clients and one returned local free. The existing reclamation export alternates source-valid sole-medium and direct-small predecessors without adding a C operation: the medium source's exit collector makes the returned block the route's immediate head, while the direct-small source validates and clears its complete rounded direct-cache image plus immediate head. A suspends that engine into the same private compiler-TLS owner and ordinary post-destructor finish dispatch; after A's Theap/TLD teardown, joined B receives only an opaque route, attaches through the runtime, reclaims and uses A's exact page, drains it empty, and completes B's own page lifecycle before returning A's terminal admission proof.",
+    "After every scheduled worker joins, the original thread may request one test-only scalar lifecycle audit. It reports process/page-owner readiness and aggregate PageMap, arena registry, live-TLD, metadata-capability, shared-Theap, regular-abandoned, and OS-abandoned-list state only; it cannot identify or operate on a pointer, page, route, allocator, or release capability. The first complete schedule cycle warms immutable capacity; every later cycle and the final ticket-zero allocation/free must reproduce that quiescent snapshot.",
     "Only current pointers returned by this adapter may reach its realloc or free entry points.",
     "No shutdown is exposed: the permanent source-shaped ticket-zero page owner remains live until process exit.",
     "The adapter exports no malloc, free, or mi_* ELF symbol and never selects crabc-libc's production backend."
@@ -66,9 +93,9 @@
     "one fresh worker can borrow that dormant published pair for the retained narrow scoped page-engine round trip and finish its normal attachment",
     "the default three, or one caller-selected bounded count of, fresh workers can each retain one engine through the pointer-private mixed local small/medium/large/singleton/multi-page workload, locally reuse freed small and medium blocks, free all blocks, and restore normal attachment teardown",
     "the default three, or one caller-selected bounded count of, fresh remote-free owners A can each create and join B/C, publish two exact full-small-page blocks through the real remote head, false-collect and reuse both while A stays live, free all blocks, and restore normal attachment teardown",
-    "the default three, or one caller-selected bounded count of, fresh mixed owner-exit workers A each keep a direct-small page, a non-direct-small page, two distinct `BIN_FULL` medium pages, a one-client force-empty large page, a distinct two-client live large page, one live arena singleton, and one live OS-aligned singleton in the same aggregate traversal, then suspend that live engine into private TLS and enter ordinary post-destructor finish; joined B/C remote frees make the first medium nonfull and the force-empty large page empty during source collection, retain the unchanged second medium source-unmapped, detach a genuinely mixed regular Theap, and let a distinct joined fresh B claim the source low owner bit for its first post-exit free while a scoped joined C atomically appends one second same-page private client; B's ordinary collector consumes both before B releases every remaining regular, arena, and OS client—including the arena PageMap-only tail and private-list removal before clipped OS mapping release—and finishes B's own no-page attachment before A's admission becomes fork-quiescent",
+    "the default three, or one caller-selected bounded count of, fresh mixed owner-exit workers A each keep three direct-small clients from one source page, a non-direct-small page, two distinct `BIN_FULL` medium pages, a one-client force-empty large page, a distinct two-client live large page, one live arena singleton, and one live OS-aligned singleton in the same aggregate traversal, then suspend that live engine into private TLS and enter ordinary post-destructor finish; joined pre-exit remote frees make the first medium nonfull and the force-empty large page empty during source collection, retain the unchanged second medium source-unmapped, detach a genuinely mixed regular Theap, and let a distinct joined fresh B claim the direct-small source low owner bit for its first post-exit free while scoped joined C and D each atomically append one remaining same-page private client in separate joined turns; B's ordinary collector consumes the resulting two-node remote chain before B releases every remaining regular, arena, and OS client—including the arena PageMap-only tail and private-list removal before clipped OS mapping release—and finishes B's own no-page attachment before A's admission becomes fork-quiescent",
     "the default three, or one caller-selected bounded count of, fresh mapped-regular reclamation workers A alternate an initially-nonfull sole-medium page with one returned local free and a source-valid direct-small page with the same private-client shape; both suspend into the same private TLS/ordinary-finish dispatch. The medium source transfers its free into the immediate head, while the direct-small source validates and clears its complete rounded direct-cache image plus immediate head; a joined opaque B then attaches, reclaims/uses that exact page, drains all private clients, and finishes B's PageMap/TLD lifecycle before the typed proof makes A fork-quiescent",
-    "the fixture accepts no arguments for its default three worker cycles and default unsigned-64-bit schedule seed, or at most one each of `--worker-cycles N` for decimal N in 1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit literal in either order; every cycle executes each of the four pointer-private worker routes exactly once in a deterministic seed-shuffled order. `allocator --churn` selects 128 with seed `0xd1b54a32d192ed03` under a 30-second watchdog, while opt-in `allocator --soak` selects 1024 with seed `0x94d049bb133111eb` under a 180-second watchdog",
+    "the fixture accepts no arguments for its default three worker cycles and default unsigned-64-bit schedule seed, or at most one each of `--worker-cycles N` for decimal N in 1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit literal in either order; every cycle executes each of the four pointer-private worker routes exactly once in a deterministic seed-shuffled order. The first completed cycle is the scalar lifecycle-audit warmup; each later cycle and the final ticket-zero allocation/free must match that audit's quiescent baseline. `allocator --churn` selects 128 with seed `0xd1b54a32d192ed03` under a 30-second watchdog, while opt-in `allocator --soak` selects 1024 with seed `0x94d049bb133111eb` under a 180-second watchdog",
     "ticket zero reactivates afterward through the same first arena"
   ],
   "compile_requirements": {

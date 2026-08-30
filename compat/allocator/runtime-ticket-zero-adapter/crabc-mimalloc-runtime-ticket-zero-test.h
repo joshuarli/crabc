@@ -22,6 +22,30 @@ extern "C" {
 int crabc_ticket_zero_test_init(size_t page_size);
 
 /*
+ * A read-only scalar lifecycle snapshot for the bounded pthread soak. It
+ * carries no allocation pointer, page identity, map root, route, allocator,
+ * or release capability. The original initializing thread may request it only
+ * after every worker in the current schedule has joined. Success preserves
+ * errno and returns zero; a nonquiescent or inactive runtime returns -1.
+ */
+struct crabc_ticket_zero_test_lifecycle_audit {
+    size_t process_active;
+    size_t page_owner_ready;
+    size_t page_map_registered_entry_count;
+    size_t page_map_published_submap_count;
+    size_t page_map_lazy_submap_allocation_count;
+    size_t arena_registry_count;
+    size_t live_thread_count;
+    size_t metadata_live_capability_count;
+    size_t metadata_high_water_capability_count;
+    size_t shared_later_theap_count;
+    size_t main_heap_abandoned_page_count;
+    size_t main_heap_os_abandoned_pages_empty;
+};
+
+int crabc_ticket_zero_test_lifecycle_audit(struct crabc_ticket_zero_test_lifecycle_audit *audit);
+
+/*
  * Every call must be serialized on the original initializing thread. A
  * non-null allocation is private to this adapter and must reach its matching
  * free/realloc exactly once; foreign, stale, cross-thread, and aliased use is
@@ -71,24 +95,21 @@ int crabc_ticket_zero_test_worker_remote_free_roundtrip(void);
 
 /*
  * After the original thread has freed every adapter allocation, one fresh
- * pthread may become mixed-page owner A. The adapter fills two distinct full
- * medium pages, a distinct one-client large page, one live arena singleton,
- * and one live OS-aligned singleton. Joined B/C receive opaque pre-exit
- * remote-free capabilities for the first medium and the large page. Source
- * collection runs through A's ordinary post-destructor runtime finish: it
- * resumes A's private TLS page owner, maps the first medium, releases the
- * now-empty large page, and
- * leaves the unchanged second medium source-unmapped. A second joined fresh B
- * receives only an opaque post-exit route, retaining the arena singleton's
- * PageMap-only terminal tail and the OS singleton's private-list/clipped-map
- * tail. On B's first direct free of the unchanged full medium, B claims the
- * source low owner bit and gives joined C only one scoped producer for a
- * distinct private client from that same page. C atomically publishes it and
- * returns before B's existing collector consumes both clients. B then releases
- * its remaining private clients and completes its own no-page runtime
- * attachment. The runtime releases A's worker admission only when that
- * completed B lifecycle returns the terminal proof. The C caller neither
- * receives a client pointer nor invokes a generic worker finalizer.
+ * pthread may become mixed-page owner A. The adapter keeps direct-small,
+ * non-direct-small, full-medium, large, arena-singleton, and OS-aligned
+ * clients in its bounded aggregate route. Source collection maps one full
+ * medium, releases the force-empty large page, and leaves another full medium
+ * source-unmapped. A second joined fresh B receives only the opaque route,
+ * including the arena singleton's PageMap-only terminal tail and the OS
+ * singleton's private-list/clipped-map tail. B first directly frees one of
+ * three existing direct-small clients after it claims that source page's low
+ * owner bit. Joined C and D each serially receive one opaque same-page
+ * producer, publish it, and join before B's existing collector consumes the
+ * resulting two-node remote chain. B then releases its remaining private
+ * clients and completes its own no-page runtime attachment. The runtime
+ * releases A's worker admission only when that completed B lifecycle returns
+ * the terminal proof. The C caller neither receives a client pointer nor
+ * invokes a generic worker finalizer.
  * On success this returns 0 and preserves errno; on failure it returns -1
  * with errno set.
  */

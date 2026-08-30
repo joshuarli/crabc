@@ -1132,15 +1132,23 @@ transfer capability.
   unchanged. Main-thread teardown is deliberately absent. The direct public
   fork order is public prepare -> private bridge prepare -> raw fork -> private
   bridge child/parent -> public child/parent. The allocation-free bridge gate
-  preserves copied state only when the original ticket-zero `TPIDR_EL0` image
-  forks with zero live or retained later bridge owners; that child resets the
-  copied gate and may attach a fresh pthread. An unprepared raw-fork child, a
-  foreign caller, or a child copied from a live/retained bridge owner disables
-  the bridge. No inherited lock, root, list, or page state is repaired.
+  first excludes later bridge owners. It preserves copied state only when the
+  original ticket-zero `TPIDR_EL0` image has zero live or retained later bridge
+  owners and its page owner is either cold or permanently dormant in
+  `AwaitingFreshPage` or `DormantExistingArena`, with no live native client or
+  PageMap operation. That child resets the copied gate and may reactivate that
+  dormant owner or attach a fresh pthread. An unprepared raw-fork child, a
+  foreign caller, or a child copied from a live, parked, retained, or otherwise
+  nonquiescent owner disables the bridge. No inherited lock, root, pointer,
+  list, or page state is repaired.
 - **Evidence:** `crabc-mimalloc/tests/runtime_lifecycle.rs` proves overlapping
   attach/finish and churn against the retained process owner, two
   process-isolated quiescent fork children that each attach and finish a fresh
-  worker, and conservative child disablement with a live bridge owner; its raw
+  worker, conservative child disablement with a live bridge owner, and the
+  admission-gated dormant-page predicate. The selected
+  `tests/fixtures/pthread_atfork_test.c` then returns ticket zero to dormant
+  before a normal fork and proves child and parent `malloc`/`realloc`/`free`
+  after public callbacks; callbacks themselves allocate nothing. Its raw
   `wait4` deadline bounds a broken child path;
   `tests/fixtures/pthread_create_join_tls_regression_test.c` and
   `tests/fixtures/static_pthread_tls_test.c` exercise return, direct
@@ -1219,7 +1227,7 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   adopts/uses and drains, the exact route; the common completion boundary
   settles ticket zero only after B returns its typed proof. Rejected, retained,
   poisoned, or mismatched route outcomes remain terminal and never invoke A's
-  no-page finalizer. The C ABI remains ten prefixed test symbols with no client
+  no-page finalizer. The C ABI remains eleven prefixed test symbols with no client
   address or generic finalizer exposure. Its existing reclamation symbol
   alternates source-valid sole-medium and direct-small predecessors; it does
   not expose a direct-small C operation or a generic finalizer.

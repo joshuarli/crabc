@@ -1388,16 +1388,18 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(inventory["summary"]["test_support_file_count"], 3)
         self.assertEqual(inventory["summary"]["total_inventory_file_count"], 16)
 
-    def test_upstream_test_inventory_records_the_reviewed_m4_adapter_selection(self) -> None:
+    def test_upstream_test_inventory_records_the_reviewed_adapter_selections(self) -> None:
         inventory = RUNNER.read_json(RUNNER.UPSTREAM_TEST_CONTRACT)
         states = {item["path"]: item["status"] for item in inventory["tests"]}
 
-        self.assertEqual(inventory["format"], 2)
+        self.assertEqual(inventory["format"], 3)
         self.assertEqual(states["test/test-api.c"], "adapted-milestone-4")
         self.assertEqual(states["test/testhelper.h"], "adapted-milestone-4")
+        self.assertEqual(states["test/test-stress.c"], "adapted-milestone-5")
         self.assertEqual(states["test/main.c"], "blocked-milestone-5-plus")
         self.assertEqual(inventory["summary"]["adapted_milestone_4_file_count"], 2)
-        self.assertEqual(inventory["summary"]["blocked_milestone_5_plus_count"], 14)
+        self.assertEqual(inventory["summary"]["adapted_milestone_5_file_count"], 1)
+        self.assertEqual(inventory["summary"]["blocked_milestone_5_plus_count"], 13)
 
     def test_adapted_api_fixture_contract_is_exact_and_reviewed(self) -> None:
         contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
@@ -1412,13 +1414,63 @@ class ContractTests(unittest.TestCase):
             },
         )
 
+    def test_adapted_stress_fixture_contract_is_exact_and_reviewed(self) -> None:
+        contract = RUNNER.read_json(RUNNER.ADAPTED_STRESS_TEST_CONTRACT)
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+        self.assertEqual(
+            RUNNER.validate_adapted_stress_test_contract(
+                contract, RUNNER.load_pin(), header
+            ),
+            {
+                "excluded_upstream_mode_count": 6,
+                "expected_adapter_symbol_count": 16,
+                "required_prefixed_adapter_symbol_count": 3,
+            },
+        )
+
     def test_runtime_ticket_zero_adapter_contract_is_exact_and_reviewed(self) -> None:
         contract = RUNNER.read_json(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
         header = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
         self.assertEqual(
             RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header),
-            {"expected_adapter_symbol_count": 10},
+            {"expected_adapter_symbol_count": 11},
         )
+        contract["lifecycle_audit"]["fixture_success_line"] = "stale success line"
+        with self.assertRaisesRegex(RUNNER.HarnessError, "lifecycle audit contract"):
+            RUNNER.validate_runtime_ticket_zero_adapter_contract(contract, header)
+
+    def test_runtime_ticket_zero_lifecycle_audit_record_is_exact(self) -> None:
+        stdout = (
+            "runtime ticket-zero lifecycle audit worker_cycles=3 process_active=1 "
+            "page_owner_ready=1 page_map_registered_entries=0 "
+            "page_map_published_submaps=2 page_map_lazy_submap_allocations=1 "
+            "arena_registry_entries=1 live_tlds=1 metadata_live_capabilities=0 "
+            "metadata_high_water_capabilities=3 shared_later_theaps=0 "
+            "abandoned_regular_pages=0 os_abandoned_pages_empty=1\n"
+            "runtime ticket-zero allocator ok\n"
+        )
+        self.assertEqual(
+            RUNNER.parse_runtime_ticket_zero_lifecycle_audit(stdout),
+            {
+                "worker_cycles": 3,
+                "process_active": 1,
+                "page_owner_ready": 1,
+                "page_map_registered_entries": 0,
+                "page_map_published_submaps": 2,
+                "page_map_lazy_submap_allocations": 1,
+                "arena_registry_entries": 1,
+                "live_tlds": 1,
+                "metadata_live_capabilities": 0,
+                "metadata_high_water_capabilities": 3,
+                "shared_later_theaps": 0,
+                "abandoned_regular_pages": 0,
+                "os_abandoned_pages_empty": 1,
+            },
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "fields differ"):
+            RUNNER.parse_runtime_ticket_zero_lifecycle_audit(
+                stdout.replace("live_tlds=1 ", "unexpected=1 ")
+            )
 
     def test_runtime_ticket_zero_lifecycle_commands_are_bounded_and_watchdog_ready(self) -> None:
         fixture = Path("/tmp/runtime-ticket-zero-fixture")
@@ -1507,7 +1559,6 @@ class ContractTests(unittest.TestCase):
             "remote_free_loom_model": {"status": "passed"},
             "runtime_ticket_zero_test_adapter": {
                 "fixture": {
-                    "stdout": "runtime ticket-zero allocator ok\n",
                     "watchdog": {"seconds": 30, "status": "passed"},
                     "worker_cycles": 128,
                     "stress_schedule": {
@@ -1515,6 +1566,43 @@ class ContractTests(unittest.TestCase):
                         "worker_route_invocation_count": 512,
                         "worker_routes_per_cycle": 4,
                     },
+                    "lifecycle_stability": {
+                        "audit_snapshot_count": 129,
+                        "post_warm_cycle_count": 127,
+                        "status": "passed",
+                        "warm_baseline": {
+                            "worker_cycles": 128,
+                            "process_active": 1,
+                            "page_owner_ready": 1,
+                            "page_map_registered_entries": 0,
+                            "arena_registry_entries": 1,
+                            "live_tlds": 1,
+                            "metadata_live_capabilities": 0,
+                            "shared_later_theaps": 0,
+                            "abandoned_regular_pages": 0,
+                            "os_abandoned_pages_empty": 1,
+                        },
+                    },
+                }
+            },
+            "m5_source_derived_stress_adapter": {
+                "fixture": {
+                    "arguments": ["1", "1", "2"],
+                    "compile_defines": ["NTHREADS=1"],
+                    "rejected_compile_modes": [
+                        "ALLOW_LARGE",
+                        "MI_HEAP_WALK",
+                        "MI_USE_HEAPS",
+                        "TEST_LEAK",
+                        "TEST_STRESS_SUBPROCS",
+                        "USE_STD_MALLOC",
+                    ],
+                    "stderr": "",
+                    "stdout": (
+                        "Using 1 threads with a 1% load-per-thread and 2 iterations\n"
+                        "crabc adapted stress ok\n"
+                    ),
+                    "watchdog": {"seconds": 30, "status": "passed"},
                 }
             },
         }
@@ -1534,6 +1622,11 @@ class ContractTests(unittest.TestCase):
                 "m5.5e": "blocked",
             },
         )
+        gate_by_id = {entry["id"]: entry for entry in gate["gates"]}
+        self.assertEqual(
+            gate_by_id["m5.5d"]["observed_evidence"],
+            ["report:/m5_source_derived_stress_adapter/fixture"],
+        )
 
     def test_adapted_api_fixture_rejects_unexplained_omission_and_symbol_drift(self) -> None:
         contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
@@ -1548,6 +1641,15 @@ class ContractTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RUNNER.HarnessError, "header symbol contract"):
             RUNNER.validate_adapted_test_contract(contract, RUNNER.load_pin(), header)
+
+    def test_adapted_stress_fixture_rejects_scope_drift(self) -> None:
+        contract = RUNNER.read_json(RUNNER.ADAPTED_STRESS_TEST_CONTRACT)
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+        contract["execution"]["arguments"] = ["1", "1", "1"]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "execution contract changed"):
+            RUNNER.validate_adapted_stress_test_contract(
+                contract, RUNNER.load_pin(), header
+            )
 
     def test_checked_in_api_inventory_has_audited_linux_aarch64_boundaries(self) -> None:
         inventory = RUNNER.read_json(RUNNER.API_CONTRACT)

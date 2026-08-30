@@ -954,7 +954,7 @@ pub(crate) enum FaultPoint {
     Entropy = 12,
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "native-runtime-test-fault")))]
 #[inline]
 fn fault_before(_point: FaultPoint) -> Result<()> {
     // Test-only injection compiles to this empty direct call in production;
@@ -962,7 +962,7 @@ fn fault_before(_point: FaultPoint) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "native-runtime-test-fault"))]
 pub(crate) mod fault {
     use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
@@ -1128,7 +1128,7 @@ pub(crate) mod fault {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "native-runtime-test-fault"))]
 #[inline]
 fn fault_before(point: FaultPoint) -> Result<()> {
     fault::before(point)

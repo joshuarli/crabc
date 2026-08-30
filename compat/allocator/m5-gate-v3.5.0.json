@@ -38,11 +38,13 @@
     {
       "acceptance": "One general source-shaped owner-exit traversal and terminal-release contract covers the required owner-exit scenarios.",
       "blocked_by": [
-        "The existing mixed aggregate and mapped-regular reclamation witnesses remain bounded source routes; the complete general owner-exit traversal and terminal-release acceptance has not been established."
+        "The existing mixed aggregate, direct-small and mapped-medium B/C/D publication, and mapped-regular reclamation witnesses remain bounded source routes; the complete general owner-exit traversal and terminal-release acceptance has not been established."
       ],
       "evidence": [
         "runtime-ticket-zero:mixed-owner-exit",
-        "runtime-ticket-zero:mapped-regular-reclamation"
+        "runtime-ticket-zero:mapped-regular-reclamation",
+        "native-post-exit:failed-os-release",
+        "native-post-exit:terminal-admission-order"
       ],
       "id": "m5.5c",
       "required": true
@@ -50,10 +52,12 @@
     {
       "acceptance": "Bounded churn, opt-in soak, metadata high-water stability, and applicable upstream stress criteria are accepted for the claimed M5 lifecycle surface.",
       "blocked_by": [
-        "The full lane runs the bounded 128-cycle development witness, but the required soak, high-water stability acceptance, and applicable upstream stress evidence are still incomplete."
+        "The bounded C lanes now enforce a warm scalar lifecycle plateau, the focused Rust regression covers detached-route metadata-node high-water, and one constrained source-derived test-stress.c route runs on its creating thread only. That route creates no pthread and cannot accept upstream cross-thread transfer, remote-free, heap, subprocess, thread-recreation, or the remaining claimed M5 lifecycle surface."
       ],
       "evidence": [
-        "runtime-ticket-zero:128-cycle-churn"
+        "runtime-ticket-zero:128-cycle-churn",
+        "native-post-exit-registry:high-water",
+        "source-derived:test-stress-single-creating-thread"
       ],
       "id": "m5.5d",
       "required": true

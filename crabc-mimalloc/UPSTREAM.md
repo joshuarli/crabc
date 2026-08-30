@@ -172,7 +172,7 @@ no-immediate shapes, and full-origin routes remain client-free-only.
 | Upstream path and function group | Rust module | Provenance/notice status |
 | --- | --- | --- |
 
-| `src/alloc.c:379-451`: `mi_theap_realloc_zero_ex`, `_mi_theap_realloc_zero`, and `mi_theap_realloc` null allocation, reuse, replacement/copy, and old-block release order | `src/alloc.rs`, `src/single_thread.rs`, `src/main_static_page.rs`, and `src/main_heap_page.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; the existing engine retains source failure ownership, copy extent, and zero-size behavior. `MainStaticProcessPageAllocator` and `MainHeapThreadProcessPageAllocator` expose that exact normal delegate only while their complete map lifecycles are live. `MainStaticFirstArenaPageAllocator` dispatches a null block through its completed first ordinary fresh-page reservation policy and otherwise delegates only after activation. This is crate-private, sequential, and does not expose C allocation policy, a foreign-block route, public routing, remote-free routing, or concurrent lifecycle. |
+| `src/alloc.c:379-451`: `mi_theap_realloc_zero_ex`, `_mi_theap_realloc_zero`, and `mi_theap_realloc` null allocation, reuse, replacement/copy, and old-block release order | `src/alloc.rs`, `src/single_thread.rs`, `src/main_static_page.rs`, `src/main_heap_page.rs`, and `src/runtime_lifecycle.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; the existing engine retains source failure ownership, copy extent, and zero-size behavior. `MainStaticProcessPageAllocator` and `MainHeapThreadProcessPageAllocator` expose that exact normal delegate only while their complete map lifecycles are live. `MainStaticFirstArenaPageAllocator` dispatches a null block through its completed first ordinary fresh-page reservation policy and otherwise delegates only after activation. `NativePostExitRouteStorage::reallocate_exact` separately composes the pinned slow path after A's Theap has detached: it proves one exact route-held client, records a normal B replacement in B's parked session, copies `min(old usable, new size)`, applies the zero-size first-byte rule, and only then consumes A through the existing typed exact-free route. An allocation failure restores the old route unchanged; a post-free ambiguity retains both owners. It never manufactures same-Theap reuse, exposes a client/page/allocator, or supplies general foreign routing, remote-free routing, or concurrent lifecycle. |
 
 | `src/threadlocal.c:205-214`, `src/init.c:377-421,448-481`, `src/theap.c:97-115,123-152`, `src/page.c:214-243,291-303`, `src/page-queue.c:252-274`, `src/arena.c:1304-1380`, and `src/free.c:372-418,479-515`: dynamic regular-slot clear, `MI_ABANDON` full-queue traversal, force/false collection, full-queue/page-count detachment, unmappable singleton abandonment, failed-reclaim empty result, and terminal arena release | `src/dynamic_theap.rs`, `src/single_thread.rs`, `src/abandoned.rs`, `src/arena.rs`, and `src/types.rs` | Applicable source-specific 2018–2026 and 2019–2026 Microsoft Research/Daan Leijen MIT notices preserved; `DynamicThreadExitDrain::abandon_full_singleton_pages` and `DynamicThreadExitFullSingletonPagesRoute::remote_free_after_thread_exit` implement one bounded post-TLS dynamic aggregate only: two or more full `MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`, each with its own rounded block size, `reserved == used == 1`, zero retirement countdown, empty local free list, exact arena span, and no other queue/direct state. Source force -> false collection -> full-queue/page-count detach -> unmapped abandonment runs for every member. The route retains the dynamic drain rather than a raw member list or dynamic bitmap/count pair; each sequential canonical free re-resolves and validates its PageMap member before it takes the raw empty failed-reclaim result and releases only that PageMap -> dynamic ordinary bit -> metadata -> arena-slice span. The final member returns the empty drain for existing teardown. Sole, non-singleton, OS-backed, allocation-time, reclaim/adoption/requeue, scan, and concurrent cases remain absent; collection failure retains the drain. |
 | `src/threadlocal.c:205-214`, `src/init.c:377-421,448-481`, `src/theap.c:97-115,123-152`, `src/page.c:214-243,291-303`, `src/page-queue.c:252-274`, `src/arena.c:1304-1355,1383-1424`, and `src/free.c:371-379,479-515`: dynamic regular-slot clear, `MI_ABANDON` full-queue traversal, force/false collection, full-queue/page-count detachment, non-arena private-list insertion/removal, unmappable singleton abandonment, failed-reclaim empty result, and clipped terminal OS release | `src/dynamic_theap.rs`, `src/single_thread.rs`, `src/abandoned.rs`, `src/os_page.rs`, and `src/types.rs` | Applicable source-specific 2018–2026 and 2019–2026 Microsoft Research/Daan Leijen MIT notices preserved; `DynamicThreadExitDrain::abandon_full_os_singleton_pages`, `DynamicThreadExitFullOsSingletonPagesRoute::remote_free_after_thread_exit`, and the narrow `Heap::os_abandoned_pages_are_empty` entry witness implement one bounded post-TLS dynamic aggregate only: two or more full `MemoryKind::Os` singleton members in `BIN_FULL`, each with its own rounded block size, `reserved == used == 1`, a valid clipped PageMap/alias release image, zero retirement countdown, empty local free list, every direct slot and other queue empty, and an initially empty dynamic Heap private OS list. Source force -> false collection -> full-queue/page-count detach -> OS-list insertion -> unmapped unown runs for every member. The route retains the drain plus a count, not a raw member list; each sequential canonical free re-resolves PageMap, must take the raw empty failed-reclaim result, removes its exact list member, and releases only that member's clipped PageMap -> alias -> primary metadata -> mapping image. The final member returns the empty drain for existing teardown. Sole, arena-backed, non-singleton, preexisting-list, allocation-time, reclaim/adoption/requeue, scan, producer, concurrent, huge, and general owner-exit cases remain absent; collection, list, or mapping-release failure retains the only owner terminally. |
@@ -319,9 +319,9 @@ live ledger entry without accepting a workload-shaped client list, moving any
 metadata-backed storage with the opaque route until its final detached client
 has terminally released; a source-published entry remains solely with source
 collection. For the one
-source-valid post-exit B/C interleaving, the session moves two
-generation-checked private keys into the scoped publisher pair only after it
-validates both while A still owns the parked ledger. The TLS state is therefore
+source-valid post-exit B/C/D interleaving, the session moves three
+generation-checked private keys into the scoped publication group only after it
+validates all three while A still owns the parked ledger. The TLS state is therefore
 either an active session or a prepared parked engine with typed private route
 facts, never the mixed workload object. When an active session
 has no locally live entry, the dispatcher resumes its exact engine, runs the
@@ -350,9 +350,11 @@ and cannot fall through the no-page finalizer while A's typed route or
 admission remains live. It
 uses opaque pre-exit publications to normalize the first medium and release
 the now-empty large page, while the unchanged second medium remains
-source-unmapped. The fixed and parked-session regressions may carry that
-second medium's two private keys only through the existing scoped post-exit
-B/C pair. After A's Theap/TLD teardown they send a fresh B only
+source-unmapped. The fixed and parked-session regressions may carry either
+that existing direct-small page's three private keys or three remaining keys
+from the pre-exit-normalized mapped, non-full medium page through separate
+scoped post-exit B/C/D publication groups. After A's Theap/TLD teardown they
+send a fresh B only
 `TicketZeroOwnerExitFreeRoute`. That capability keeps every client
 identity private, including the arena member's PageMap-only terminal tail and
 the OS member's static-main-list and clipped-mapping tail, and carries the
@@ -365,22 +367,26 @@ completed B lifecycle can return A's admission proof. A rejected lower claim
 resumes ordinary sequential release, while a retained route or poisoned wake
 remains terminal rather than invoking the normal no-page finalizer.
 
-For the one source-valid post-exit B/C interleaving, pinned
+For the two source-valid post-exit B/C/D interleavings, pinned
 `src/free.c:372-418,479-515`'s direct remote publication and collection tail
 maps to `abandoned::free_regular_after_failed_reclaim_select_map_with_after_claim`,
-`single_thread::ThreadExitMappedRegularPagesPostExitParts::remote_free_after_thread_exit_with_same_page_publisher`,
-and `main_heap_page::MainHeapThreadProcessPageExitMappedRegularPagesRoute::remote_free_after_thread_exit_with_same_page_publisher`.
-The runtime exposes this only as the callback-scoped
-`TicketZeroOwnerExitRemoteFreeProducer` inside
-`TicketZeroOwnerExitFreeRoute::free_remaining_in_fresh_runtime_worker_with_post_exit_publisher`.
-`CurrentThreadPageOwnerSessionHandle::prepare_sequential_exit_with_post_exit_remote_pair`
-only moves its two opaque validated keys into that already-existing route.
-After B claims the abandoned low owner bit for its direct client, joined C can
-append one distinct same-page client to the atomic remote head; B joins C and
-uses the existing collector before its normal unown/release decision. This is
-not a generic post-exit free interface, does not expose a client address or
-route internals, and supplies no adoption, reclaim, or generic finalizer
-authority to C.
+`single_thread::ThreadExitMappedRegularPagesPostExitParts::{remote_free_after_thread_exit_with_direct_small_publishers,remote_free_after_thread_exit_with_mapped_medium_publishers}`,
+and `main_heap_page::MainHeapThreadProcessPageExitMappedRegularPagesRoute::{remote_free_after_thread_exit_with_direct_small_publishers,remote_free_after_thread_exit_with_mapped_medium_publishers}`.
+The runtime exposes these only as the callback-scoped
+`TicketZeroOwnerExitRemoteFreeProducerPair` and nominally distinct
+`TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair` inside their matching
+`TicketZeroOwnerExitFreeRoute` methods.
+`CurrentThreadPageOwnerSessionHandle::prepare_sequential_exit_with_post_exit_remote_publication_group`
+only moves its three opaque validated keys and their private source-page kind
+into that already-existing route.
+After B claims the abandoned low owner bit for its direct client, joined C and
+D each append one distinct same-page client to the atomic remote head in
+separate joined turns; B uses the existing collector only after both joined
+publications return. This is not a generic post-exit free interface, does not
+expose a client address or route internals, and supplies no adoption, reclaim,
+or generic finalizer authority to C or D. A missing or wrong-shape publisher
+retains the route rather than allowing B's normal no-page finalizer to stand in
+for the source interleaving.
 
 The same source-specific runtime row also records the distinct sole-medium
 reclamation witness. A holds two private 64-KiB clients, returns one matching

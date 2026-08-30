@@ -264,7 +264,7 @@ impl MainSubprocess {
         core::ptr::from_ref(self).cast_mut()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn live_thread_count(&self) -> usize {
         self.thread_count.load(Ordering::Relaxed)

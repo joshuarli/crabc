@@ -8,6 +8,9 @@ use crabc_mimalloc::__crabc_runtime::{
     ticket_zero_allocate, ticket_zero_free, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
 };
 
+#[cfg(feature = "native-runtime-test-audit")]
+use crabc_mimalloc::__crabc_runtime::native_runtime_fork_admission_test_audit;
+
 fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
         .expect("the native Linux test process exposes AT_PAGESZ")
@@ -56,15 +59,15 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
             0,
             "the mixed aggregate keeps its OS-singleton alignment before owner exit"
         );
-        // A rejected post-exit realloc must preserve this exact original
-        // client. The detached route has no B-side Theap that source mimalloc
-        // could use for allocate/copy/free.
+        // A rejected post-exit replacement must preserve this exact original
+        // client before B begins its source-shaped allocate/copy/free route.
         unsafe {
             direct_small.as_ptr().write(0x41);
             direct_small.as_ptr().add(36).write(0x42);
             non_direct_small.as_ptr().write(0x43);
             non_direct_small.as_ptr().add(1024).write(0x44);
             medium.as_ptr().write(0x45);
+            medium.as_ptr().add(4095).write(0x46);
             medium.as_ptr().add(64 * 1024 - 1).write(0x46);
             large.as_ptr().write(0x47);
             large.as_ptr().add(128 * 1024 - 1).write(0x48);
@@ -100,12 +103,24 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
     owner
         .join()
         .expect("A finishes after the route owns its detached aggregate");
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        1,
+        "the detached aggregate retains A's exact worker-admission claim before B attaches"
+    );
 
     let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
     let release_b = Arc::new(Barrier::new(2));
     let b_release = Arc::clone(&release_b);
     let releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            2,
+            "B attaches beside, rather than consumes, A's detached-route admission"
+        );
         // SAFETY: A has completed its typed detached route, and the test
         // passes each exact C-shaped client to its fresh no-page B consumer.
         let direct_small = unsafe { core::ptr::NonNull::new_unchecked(direct_small as *mut u8) };
@@ -140,29 +155,50 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
         );
         assert!(
             matches!(
-                unsafe { native_reallocate(Some(medium), 4096) },
-                NativePageAllocationResult::Unavailable
+                unsafe { native_reallocate(Some(medium), usize::MAX) },
+                NativePageAllocationResult::AllocationFailed
             ),
-            "post-exit realloc declines without borrowing a B-side allocator"
+            "a rejected detached replacement preserves the mixed-route client"
         );
         assert_eq!(unsafe { direct_small.as_ptr().read() }, 0x41);
         assert_eq!(unsafe { direct_small.as_ptr().add(36).read() }, 0x42);
         assert_eq!(unsafe { non_direct_small.as_ptr().read() }, 0x43);
         assert_eq!(unsafe { non_direct_small.as_ptr().add(1024).read() }, 0x44);
         assert_eq!(unsafe { medium.as_ptr().read() }, 0x45);
+        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x46);
         assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x46);
+        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("the mixed route reallocates through B's parked session"),
+        };
+        assert_ne!(
+            replacement, medium,
+            "the detached aggregate cannot reuse A's torn-down Theap page"
+        );
+        assert!(
+            unsafe { native_usable_size(replacement) }.is_some_and(|size| size >= 4096),
+            "the replacement belongs to B's ordinary local ledger"
+        );
+        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x45);
+        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x46);
+        assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { large.as_ptr().read() }, 0x47);
         assert_eq!(unsafe { large.as_ptr().add(128 * 1024 - 1).read() }, 0x48);
         assert_eq!(unsafe { arena_singleton.as_ptr().read() }, 0x49);
         assert_eq!(unsafe { arena_singleton.as_ptr().add(1024 * 1024 - 1).read() }, 0x4a);
         assert_eq!(unsafe { os_singleton.as_ptr().read() }, 0x4b);
         assert_eq!(unsafe { os_singleton.as_ptr().add(6).read() }, 0x4c);
-        assert_eq!(unsafe { native_free(medium) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { native_free(os_singleton) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { native_free(arena_singleton) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { native_free(large) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { native_free(non_direct_small) }, NativePageFreeResult::Freed);
         assert_eq!(unsafe { native_free(direct_small) }, NativePageFreeResult::Freed);
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            2,
+            "the terminal source release leaves both A's typed proof and B's attachment admitted until B finishes"
+        );
         assert!(
             matches!(
                 native_allocate_aligned(73, 16, false),
@@ -178,6 +214,12 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
             "B finishes its no-page attachment before releasing A's completion"
+        );
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            0,
+            "only B's successful lifecycle completion consumes A's typed admission proof"
         );
     });
 

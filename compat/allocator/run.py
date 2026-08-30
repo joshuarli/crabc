@@ -50,6 +50,7 @@ X86_64_API_COVERAGE_RUNNER = ALLOCATOR_ROOT / "x86_64_api_coverage.py"
 X86_64_SOURCE_MAP_CONTRACT = ALLOCATOR_ROOT / "x86_64-source-map-v3.5.0.json"
 X86_64_SOURCE_MAP_RUNNER = ALLOCATOR_ROOT / "x86_64_source_map.py"
 X86_64_TEST_ADAPTER_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-x86_64-v3.5.0.json"
+ADAPTED_STRESS_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-stress-test-v3.5.0.json"
 TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
 TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
 TEST_ADAPTER_FIXTURE = TEST_ADAPTER_ROOT / "allocator-fixture-wrapper.c"
@@ -78,6 +79,34 @@ RUNTIME_TICKET_ZERO_CHURN_STRESS_SEED = 0xD1B54A32D192ED03
 RUNTIME_TICKET_ZERO_SOAK_STRESS_SEED = 0x94D049BB133111EB
 RUNTIME_TICKET_ZERO_MAX_STRESS_SEED = (1 << 64) - 1
 RUNTIME_TICKET_ZERO_WORKER_ROUTES_PER_CYCLE = 4
+RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX = "runtime ticket-zero lifecycle audit "
+RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS = (
+    "worker_cycles",
+    "process_active",
+    "page_owner_ready",
+    "page_map_registered_entries",
+    "page_map_published_submaps",
+    "page_map_lazy_submap_allocations",
+    "arena_registry_entries",
+    "live_tlds",
+    "metadata_live_capabilities",
+    "metadata_high_water_capabilities",
+    "shared_later_theaps",
+    "abandoned_regular_pages",
+    "os_abandoned_pages_empty",
+)
+RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_SUCCESS_LINE = "runtime ticket-zero allocator ok"
+RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_CONTRACT = {
+    "fixture_stdout_fields": list(RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS),
+    "fixture_stdout_prefix": RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX,
+    "fixture_success_line": RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_SUCCESS_LINE,
+    "report": {
+        "audit_snapshot_count": "worker_cycles + 1",
+        "post_warm_cycle_count": "worker_cycles - 1",
+        "status": "passed",
+        "warm_baseline": "the exact first-complete-cycle scalar fixture record",
+    },
+}
 TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
 TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
 X86_64_TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run-x86_64.py"
@@ -212,12 +241,13 @@ ORACLE_SOURCES = (
     "src/prim/prim-tls.c",
 )
 
-# The M4 adapter is intentionally a reviewed, partial adaptation rather than
-# a claim that every pinned upstream test now runs. Keep its exact source and
+# The reviewed M4 and M5 adapters are intentionally partial adaptations, not a
+# claim that every pinned upstream test now runs. Keep their exact source and
 # support input names here, beside the generated inventory, so an inventory
 # refresh cannot regress them back to the historical "adapter absent" state.
 # `adapted-tests-v3.5.0.json` remains the durable selection/omission contract
-# for the 33 selected `test-api.c` checks.
+# for the 33 selected `test-api.c` checks. The separate M5 stress contract
+# preserves one constrained `test-stress.c` creating-thread route only.
 M4_ADAPTED_UPSTREAM_TEST_PATHS = frozenset(
     {
         "test/test-api.c",
@@ -227,6 +257,12 @@ M4_ADAPTED_UPSTREAM_TEST_PATHS = frozenset(
 M4_ADAPTED_UPSTREAM_TEST_NOTE = (
     "Milestone 4: selected through the reviewed prefixed Rust test C API adapter; "
     "the exact selected checks and omissions are in adapted-tests-v3.5.0.json."
+)
+M5_ADAPTED_UPSTREAM_TEST_PATHS = frozenset({"test/test-stress.c"})
+M5_ADAPTED_UPSTREAM_TEST_NOTE = (
+    "Milestone 5 preliminary evidence: a reviewed source-derived, single-creating-thread "
+    "adaptation runs test/test-stress.c through the prefixed Rust adapter; its exact "
+    "scope and exclusions are in adapted-stress-test-v3.5.0.json."
 )
 M5_PLUS_UNADAPTED_UPSTREAM_TEST_NOTE = (
     "Milestone 5+: outside the reviewed M4 adapter selection; this source needs its own "
@@ -1383,17 +1419,76 @@ def _m5_full_lane_evidence_passed(
         return False
     watchdog = fixture.get("watchdog")
     schedule = fixture.get("stress_schedule")
-    if not isinstance(watchdog, Mapping) or not isinstance(schedule, Mapping):
+    lifecycle_stability = fixture.get("lifecycle_stability")
+    if (
+        not isinstance(watchdog, Mapping)
+        or not isinstance(schedule, Mapping)
+        or not isinstance(lifecycle_stability, Mapping)
+    ):
         return False
+    warm_baseline = lifecycle_stability.get("warm_baseline")
+    if not isinstance(warm_baseline, Mapping):
+        return False
+    required_quiescent_values = {
+        "process_active": 1,
+        "page_owner_ready": 1,
+        "page_map_registered_entries": 0,
+        "arena_registry_entries": 1,
+        "live_tlds": 1,
+        "metadata_live_capabilities": 0,
+        "shared_later_theaps": 0,
+        "abandoned_regular_pages": 0,
+        "os_abandoned_pages_empty": 1,
+    }
     return (
-        fixture.get("stdout") == "runtime ticket-zero allocator ok\n"
-        and fixture.get("worker_cycles") == full_lane["worker_cycles"]
+        fixture.get("worker_cycles") == full_lane["worker_cycles"]
         and watchdog.get("status") == "passed"
         and watchdog.get("seconds") == full_lane["watchdog_seconds"]
         and schedule.get("seed") == full_lane["stress_seed"]
         and schedule.get("worker_routes_per_cycle") == full_lane["routes_per_cycle"]
         and schedule.get("worker_route_invocation_count")
         == full_lane["worker_cycles"] * full_lane["routes_per_cycle"]
+        and lifecycle_stability.get("status") == "passed"
+        and lifecycle_stability.get("audit_snapshot_count")
+        == full_lane["worker_cycles"] + 1
+        and lifecycle_stability.get("post_warm_cycle_count")
+        == full_lane["worker_cycles"] - 1
+        and warm_baseline.get("worker_cycles") == full_lane["worker_cycles"]
+        and all(
+            warm_baseline.get(name) == value
+            for name, value in required_quiescent_values.items()
+        )
+    )
+
+
+def _m5_source_derived_stress_evidence_passed(report: Mapping[str, Any]) -> bool:
+    """Recognize preliminary M5 stress evidence without promoting Gate 5D."""
+
+    fixture = _m5_report_mapping(report, "m5_source_derived_stress_adapter", "fixture")
+    if fixture is None:
+        return False
+    watchdog = fixture.get("watchdog")
+    return (
+        fixture.get("arguments") == ["1", "1", "2"]
+        and fixture.get("compile_defines") == ["NTHREADS=1"]
+        and fixture.get("rejected_compile_modes")
+        == [
+            "ALLOW_LARGE",
+            "MI_HEAP_WALK",
+            "MI_USE_HEAPS",
+            "TEST_LEAK",
+            "TEST_STRESS_SUBPROCS",
+            "USE_STD_MALLOC",
+        ]
+        and fixture.get("stdout")
+        == (
+            "Using 1 threads with a 1% load-per-thread and 2 iterations\n"
+            "crabc adapted stress ok\n"
+        )
+        and fixture.get("stderr") == ""
+        and isinstance(watchdog, Mapping)
+        and watchdog.get("seconds") == 30
+        and watchdog.get("status") == "passed"
     )
 
 
@@ -1429,6 +1524,7 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
             "report:/remote_free_loom_model",
         ],
     }
+    source_derived_stress_passed = _m5_source_derived_stress_evidence_passed(report)
 
     gate_records: list[dict[str, Any]] = []
     for source_gate in contract["gates"]:
@@ -1453,6 +1549,10 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
         else:
             record["status"] = "blocked"
             record["blocked_by"] = list(source_gate["blocked_by"])
+            if gate_id == "m5.5d" and source_derived_stress_passed:
+                record["observed_evidence"] = [
+                    "report:/m5_source_derived_stress_adapter/fixture"
+                ]
         gate_records.append(record)
 
     unmet_required = [
@@ -1546,7 +1646,7 @@ def validate_adapted_test_contract(
 
     patch = contract.get("patch")
     adapted = contract.get("adapted_source")
-    if not isinstance(patch, dict) or patch.get("path") != "compat/allocator/adapted/test-api-m4.patch":
+    if not isinstance(patch, dict) or patch.get("path") != "compat/allocator/adapted/test-api-selected.patch":
         raise HarnessError("adapted allocator patch path changed")
     if not isinstance(adapted, dict) or adapted.get("path") != "test/test-api.c":
         raise HarnessError("adapted allocator output path changed")
@@ -1825,6 +1925,245 @@ def validate_x86_64_test_adapter_contract(
         "target": X86_64_RUST_TARGET,
     }
 
+def validate_adapted_stress_test_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str], adapter_header: str
+) -> dict[str, int]:
+    """Validate the bounded source-derived creating-thread stress adaptation.
+
+    This contract is deliberately separate from the selected API fixture:
+    it retains one fixed creating-thread execution of upstream test/test-stress.c
+    without claiming its pthread, remote-transfer, heap, or subprocess paths.
+    """
+
+    if (
+        contract.get("format") != 1
+        or contract.get("schema") != "crabc-mimalloc-adapted-stress-test"
+    ):
+        raise HarnessError("unsupported adapted allocator stress contract")
+    if contract.get("milestone") != "M5" or contract.get("fixture_source") != "test/test-stress.c":
+        raise HarnessError("adapted allocator stress contract must name the M5 test/test-stress.c fixture")
+
+    upstream = contract.get("upstream")
+    if not isinstance(upstream, dict):
+        raise HarnessError("adapted allocator stress contract lacks upstream identity")
+    expected_upstream = {
+        "archive_root": pin["archive_root"],
+        "archive_sha256": pin["sha256"],
+        "archive_source": pin["source"],
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "version": pin["version"],
+    }
+    for key, expected in expected_upstream.items():
+        if upstream.get(key) != expected:
+            raise HarnessError(f"adapted allocator stress upstream identity mismatch: {key}")
+    if (
+        upstream.get("project") != "microsoft/mimalloc"
+        or upstream.get("archive_path") != relative(archive_path(pin))
+    ):
+        raise HarnessError("adapted allocator stress project/archive path changed")
+
+    source_hashes = contract.get("source_hashes")
+    if not isinstance(source_hashes, dict) or set(source_hashes) != {"test/test-stress.c"}:
+        raise HarnessError("adapted allocator stress source-hash set changed")
+    if not all(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+        for value in source_hashes.values()
+    ):
+        raise HarnessError("adapted allocator stress source hash is invalid")
+    expected_regions = [
+        "test/test-stress.c:16-110",
+        "test/test-stress.c:144-345",
+        "test/test-stress.c:400-564",
+    ]
+    if contract.get("source_regions") != expected_regions:
+        raise HarnessError("adapted allocator stress source regions changed")
+    expected_provenance = {
+        "upstream_file_license": "MIT",
+        "upstream_notice": "Copyright (c) 2018-2026 Microsoft Research, Daan Leijen",
+        "adaptation_owner": "crabc",
+        "rust_boundary": "crabc-mimalloc test-adapter's existing prefixed C ABI",
+    }
+    if contract.get("provenance") != expected_provenance:
+        raise HarnessError("adapted allocator stress provenance changed")
+
+    patch = contract.get("patch")
+    adapted = contract.get("adapted_source")
+    if (
+        not isinstance(patch, dict)
+        or patch.get("path") != "compat/allocator/adapted/test-stress-creating-thread.patch"
+    ):
+        raise HarnessError("adapted allocator stress patch path changed")
+    if not isinstance(adapted, dict) or adapted.get("path") != "test/test-stress.c":
+        raise HarnessError("adapted allocator stress output path changed")
+    for label, value in (
+        ("patch", patch.get("sha256")),
+        ("adapted source", adapted.get("sha256")),
+    ):
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise HarnessError(f"adapted allocator stress {label} hash is invalid")
+
+    header_contract = contract.get("adapter_header")
+    if (
+        not isinstance(header_contract, dict)
+        or header_contract.get("include_spelling") != TEST_ADAPTER_HEADER.name
+        or header_contract.get("observed_checkout_path") != relative(TEST_ADAPTER_HEADER)
+    ):
+        raise HarnessError("adapted allocator stress header contract changed")
+    expected_symbols = contract.get("expected_adapter_symbols")
+    if (
+        not isinstance(expected_symbols, list)
+        or not expected_symbols
+        or not all(isinstance(name, str) for name in expected_symbols)
+        or expected_symbols != sorted(set(expected_symbols))
+    ):
+        raise HarnessError("adapted allocator stress expected symbol list is invalid")
+    if adapter_header_function_names(adapter_header) != expected_symbols:
+        raise HarnessError("adapted allocator stress header symbol contract differs from the manifest")
+    required_symbols = contract.get("required_prefixed_adapter_symbols")
+    expected_required_symbols = [
+        {
+            "upstream_spelling": "mi_calloc",
+            "prefixed_symbol": "crabc_test_calloc",
+            "signature": "void *(size_t count, size_t size)",
+        },
+        {
+            "upstream_spelling": "mi_free",
+            "prefixed_symbol": "crabc_test_free",
+            "signature": "void (void *p)",
+        },
+        {
+            "upstream_spelling": "mi_realloc",
+            "prefixed_symbol": "crabc_test_realloc",
+            "signature": "void *(void *p, size_t size)",
+        },
+    ]
+    if required_symbols != expected_required_symbols:
+        raise HarnessError("adapted allocator stress prefixed symbol surface changed")
+
+    execution = contract.get("execution")
+    expected_execution = {
+        "arguments": ["1", "1", "2"],
+        "compile_defines": ["NTHREADS=1"],
+        "creating_thread_only": True,
+        "expected_stderr": "",
+        "expected_stdout": (
+            "Using 1 threads with a 1% load-per-thread and 2 iterations\n"
+            "crabc adapted stress ok\n"
+        ),
+        "spawned_pthread_count": 0,
+        "watchdog_seconds": 30,
+    }
+    if not isinstance(execution, dict):
+        raise HarnessError("adapted allocator stress execution contract is absent")
+    for key, expected in expected_execution.items():
+        if execution.get(key) != expected:
+            raise HarnessError(f"adapted allocator stress execution contract changed: {key}")
+    scheduler_assertions = execution.get("scheduler_assertions")
+    if (
+        not isinstance(scheduler_assertions, list)
+        or len(scheduler_assertions) != 3
+        or not all(isinstance(assertion, str) and assertion for assertion in scheduler_assertions)
+    ):
+        raise HarnessError("adapted allocator stress scheduler assertions are invalid")
+
+    excluded_modes = contract.get("excluded_upstream_modes")
+    expected_mode_names = [
+        "ALLOW_LARGE",
+        "MI_HEAP_WALK",
+        "MI_USE_HEAPS",
+        "TEST_LEAK",
+        "TEST_STRESS_SUBPROCS",
+        "USE_STD_MALLOC",
+    ]
+    if (
+        not isinstance(excluded_modes, list)
+        or [mode.get("macro") if isinstance(mode, dict) else None for mode in excluded_modes]
+        != expected_mode_names
+        or not all(
+            isinstance(mode, dict)
+            and isinstance(mode.get("reason"), str)
+            and bool(mode["reason"])
+            for mode in excluded_modes
+        )
+    ):
+        raise HarnessError("adapted allocator stress excluded-mode contract changed")
+
+    expected_markers = [
+        f'#include "{TEST_ADAPTER_HEADER.name}"',
+        "#if NTHREADS != 1",
+        "#if ALLOW_LARGE",
+        "#if defined(USE_STD_MALLOC)",
+        "#if defined(MI_USE_HEAPS)",
+        "#if defined(MI_HEAP_WALK)",
+        "#if defined(TEST_STRESS_SUBPROCS) && TEST_STRESS_SUBPROCS",
+        "#if defined(TEST_LEAK) && TEST_LEAK",
+        "static bool   main_participates = true;",
+        "const size_t start = (main_participates ? 1 : 0);",
+        "fun(0,arg); // run the main thread as well",
+        "if (THREADS != 1 || SCALE != 1 || ITER != 2 || !main_participates || allow_large_objects)",
+        "crabc_test_init()",
+        "crabc_test_shutdown()",
+        'printf("crabc adapted stress ok\\n");',
+    ]
+    if contract.get("required_source_markers") != expected_markers:
+        raise HarnessError("adapted allocator stress source-marker contract changed")
+
+    compile_requirements = contract.get("compile_requirements")
+    if not isinstance(compile_requirements, dict):
+        raise HarnessError("adapted allocator stress compile requirements are absent")
+    expected_compile = {
+        "adapter_feature": "test-adapter",
+        "compile_flags": [
+            "-O2",
+            "-fPIE",
+            "-pie",
+            "-ftls-model=initial-exec",
+            "-pthread",
+            "-DNTHREADS=1",
+        ],
+        "expected_dynamic_dependencies": ["libc.musl-aarch64.so.1", "libgcc_s.so.1"],
+        "language": "C11",
+        "native_library_search_paths": ["/usr/lib"],
+        "native_static_libs": ["-lgcc_s", "-lc"],
+        "required_header": TEST_ADAPTER_HEADER.name,
+    }
+    for key, expected in expected_compile.items():
+        if compile_requirements.get(key) != expected:
+            raise HarnessError(f"adapted allocator stress compile requirement changed: {key}")
+    for key in ("link_command_shape", "link_order", "notes", "rust_staticlib"):
+        if not isinstance(compile_requirements.get(key), str) or not compile_requirements[key]:
+            raise HarnessError(f"adapted allocator stress compile requirement is absent: {key}")
+    include_directories = compile_requirements.get("include_directories")
+    if include_directories != [
+        "<extracted-root>/include",
+        "<extracted-root>/test",
+        "<repo>/compat/allocator/test-adapter",
+    ]:
+        raise HarnessError("adapted allocator stress include directories changed")
+
+    verification = contract.get("verification")
+    if not isinstance(verification, dict):
+        raise HarnessError("adapted allocator stress verification record is absent")
+    for key in (
+        "patch_applies_cleanly",
+        "patch_round_trip_stable",
+        "adapted_source_sha256_verified",
+        "header_compile_verified",
+        "native_execution_verified",
+        "unsupported_modes_rejected",
+    ):
+        if verification.get(key) is not True:
+            raise HarnessError(f"adapted allocator stress verification is not true: {key}")
+
+    return {
+        "excluded_upstream_mode_count": len(excluded_modes),
+        "expected_adapter_symbol_count": len(expected_symbols),
+        "required_prefixed_adapter_symbol_count": len(required_symbols),
+    }
+
 
 def apply_and_verify_adapted_test_patch(
     source: Path, contract: Mapping[str, Any], patch_tool: str
@@ -1884,6 +2223,107 @@ def apply_and_verify_adapted_test_patch(
         },
         "apply_command": apply_record["command"],
         "selected_test_count": len(observed_names),
+    }
+
+
+def apply_and_verify_adapted_stress_test_patch(
+    source: Path, contract: Mapping[str, Any], patch_tool: str
+) -> dict[str, Any]:
+    """Apply and inspect the narrow source-derived M5 stress fixture."""
+
+    source_hashes = contract["source_hashes"]
+    assert isinstance(source_hashes, dict)
+    for relative_source, expected_hash in source_hashes.items():
+        source_path = source / relative_source
+        if not source_path.is_file() or sha256_file(source_path) != expected_hash:
+            raise HarnessError(
+                f"adapted allocator stress source identity mismatch: {relative_source}"
+            )
+
+    patch_contract = contract["patch"]
+    assert isinstance(patch_contract, dict)
+    patch_path = ROOT / str(patch_contract["path"])
+    if not patch_path.is_file() or sha256_file(patch_path) != patch_contract["sha256"]:
+        raise HarnessError("adapted allocator stress patch identity mismatch")
+    apply_record = command_record(
+        (patch_tool, "-p1", "-f", "-i", str(patch_path)),
+        cwd=source,
+    )
+    require_success(apply_record, "adapted upstream stress patch")
+
+    adapted_contract = contract["adapted_source"]
+    assert isinstance(adapted_contract, dict)
+    adapted_path = source / str(adapted_contract["path"])
+    if not adapted_path.is_file() or sha256_file(adapted_path) != adapted_contract["sha256"]:
+        raise HarnessError(
+            "adapted upstream stress source differs from the reviewed patch result"
+        )
+    adapted_text = adapted_path.read_text(encoding="utf-8")
+    include = f'#include "{TEST_ADAPTER_HEADER.name}"'
+    if adapted_text.count(include) != 1:
+        raise HarnessError("adapted upstream stress source has an unexpected adapter include")
+    if "<mimalloc.h>" in adapted_text or "<mimalloc-stats.h>" in adapted_text:
+        raise HarnessError("adapted upstream stress source retains an upstream mimalloc include")
+    required_markers = contract["required_source_markers"]
+    assert isinstance(required_markers, list)
+    missing_markers = [marker for marker in required_markers if marker not in adapted_text]
+    if missing_markers:
+        raise HarnessError(
+            "adapted upstream stress source omits required markers: "
+            + ", ".join(missing_markers)
+        )
+    required_adapter_macros = [
+        "#define custom_calloc(n,s)    mi_calloc(n,s)",
+        "#define custom_realloc(p,s)   mi_realloc(p,s)",
+        "#define custom_free(p)        mi_free(p)",
+    ]
+    if any(marker not in adapted_text for marker in required_adapter_macros):
+        raise HarnessError("adapted upstream stress source no longer routes its default workload")
+    required_rejection_markers = [
+        '#error "the adapted stress fixture must use the crabc allocator adapter"',
+        '#error "the adapted stress fixture excludes upstream heap APIs"',
+        '#error "the adapted stress fixture excludes upstream theap traversal APIs"',
+        '#error "the adapted stress fixture excludes upstream subprocess stress"',
+        '#error "the adapted stress fixture excludes the upstream leak mode"',
+        '#error "the adapted stress fixture requires one creating worker"',
+        '#error "the adapted stress fixture excludes large-object mode"',
+    ]
+    if any(marker not in adapted_text for marker in required_rejection_markers):
+        raise HarnessError("adapted upstream stress source no longer rejects an excluded mode")
+    bounded_arguments_marker = (
+        "if (THREADS != 1 || SCALE != 1 || ITER != 2 || !main_participates || "
+        "allow_large_objects)"
+    )
+    bounded_arguments_index = adapted_text.find(bounded_arguments_marker)
+    init_index = adapted_text.find("crabc_test_init()")
+    shutdown_index = adapted_text.find("crabc_test_shutdown()")
+    if (
+        bounded_arguments_index < 0
+        or init_index < 0
+        or shutdown_index < 0
+        or bounded_arguments_index >= init_index
+        or shutdown_index <= init_index
+        or adapted_text.count("crabc_test_init()") != 1
+        or adapted_text.count("crabc_test_shutdown()") != 1
+    ):
+        raise HarnessError(
+            "adapted upstream stress source does not keep bounded admission before terminal shutdown"
+        )
+    execution = contract["execution"]
+    assert isinstance(execution, dict)
+    return {
+        "adapted_source": {
+            "bytes": adapted_path.stat().st_size,
+            "path": str(adapted_contract["path"]),
+            "sha256": sha256_file(adapted_path),
+        },
+        "apply_command": apply_record["command"],
+        "arguments": list(execution["arguments"]),
+        "compile_defines": list(execution["compile_defines"]),
+        "excluded_upstream_mode_count": len(contract["excluded_upstream_modes"]),
+        "required_prefixed_adapter_symbol_count": len(
+            contract["required_prefixed_adapter_symbols"]
+        ),
     }
 
 
@@ -2407,6 +2847,10 @@ def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]
             status = "adapted-milestone-4"
             status_note = M4_ADAPTED_UPSTREAM_TEST_NOTE
             status_field = "execution"
+        elif name in M5_ADAPTED_UPSTREAM_TEST_PATHS:
+            status = "adapted-milestone-5"
+            status_note = M5_ADAPTED_UPSTREAM_TEST_NOTE
+            status_field = "execution"
         else:
             status = "blocked-milestone-5-plus"
             status_note = M5_PLUS_UNADAPTED_UPSTREAM_TEST_NOTE
@@ -2421,13 +2865,16 @@ def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]
             }
         )
     return {
-        "format": 2,
+        "format": 3,
         "mimalloc_version": pin["version"],
         "pinned_archive_sha256": pin["sha256"],
         "tests": items,
         "summary": {
             "adapted_milestone_4_file_count": sum(
                 item["status"] == "adapted-milestone-4" for item in items
+            ),
+            "adapted_milestone_5_file_count": sum(
+                item["status"] == "adapted-milestone-5" for item in items
             ),
             "blocked_milestone_5_plus_count": sum(
                 item["status"] == "blocked-milestone-5-plus" for item in items
@@ -2581,6 +3028,7 @@ def ratchet_measurement_regressions(
     for key in (
         "adapted_omitted_test_count",
         "adapted_selected_test_count",
+        "adapted_stress_fixture_count",
         "api_total_item_count",
         "configuration_profile_count",
         "upstream_test_source_count",
@@ -2617,10 +3065,13 @@ def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
     api = read_json(API_CONTRACT)
     tests = read_json(UPSTREAM_TEST_CONTRACT)
     adapted_tests = read_json(ADAPTED_TEST_CONTRACT)
+    adapted_stress = read_json(ADAPTED_STRESS_TEST_CONTRACT)
     return {
         "adapted_omitted_test_count": len(adapted_tests["omitted_tests"]),
         "adapted_selected_test_count": len(adapted_tests["selected_tests"]),
         "adapted_test_contract_sha256": file_digest(ADAPTED_TEST_CONTRACT),
+        "adapted_stress_fixture_count": len(adapted_stress["source_hashes"]),
+        "adapted_stress_test_contract_sha256": file_digest(ADAPTED_STRESS_TEST_CONTRACT),
         "api_contract_sha256": file_digest(API_CONTRACT),
         "api_total_item_count": api["summary"]["total_item_count"],
         "configuration_profile_count": len(CONFIGURATION_PROFILES),
@@ -2670,6 +3121,7 @@ def check_ratchet(port_map: Mapping[str, Any]) -> None:
         )
     for key in (
         "adapted_test_contract_sha256",
+        "adapted_stress_test_contract_sha256",
         "api_contract_sha256",
         "port_map_sha256",
         "upstream_test_contract_sha256",
@@ -3612,6 +4064,10 @@ def validate_runtime_ticket_zero_adapter_contract(
     if runtime_ticket_zero_adapter_header_function_names(adapter_header) != sorted(expected_symbols):
         raise HarnessError(
             "runtime ticket-zero adapter header declarations differ from its contract"
+        )
+    if contract.get("lifecycle_audit") != RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_CONTRACT:
+        raise HarnessError(
+            "runtime ticket-zero lifecycle audit contract differs from the native lane"
         )
     compile_requirements = contract.get("compile_requirements")
     if not isinstance(compile_requirements, dict):
@@ -4889,6 +5345,120 @@ def run_test_adapter_fixtures(
     return result
 
 
+def run_adapted_stress_fixture(
+    compiler: str,
+    source: Path,
+    static_library: Path,
+    native_libraries: Sequence[str],
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the one reviewed source-derived upstream stress route.
+
+    This is intentionally not folded into the M4 fixture result: its fixed
+    creating-thread scheduler is preliminary M5 evidence and must stay visibly
+    distinct from a claimed multi-thread upstream stress acceptance.
+    """
+
+    artifact_root = REPORT_ROOT / "test-adapter"
+    compile_requirements = contract["compile_requirements"]
+    execution = contract["execution"]
+    adapted_source_contract = contract["adapted_source"]
+    assert isinstance(compile_requirements, dict)
+    assert isinstance(execution, dict)
+    assert isinstance(adapted_source_contract, dict)
+    compile_flags = compile_requirements["compile_flags"]
+    native_search_paths = compile_requirements["native_library_search_paths"]
+    assert isinstance(compile_flags, list)
+    assert isinstance(native_search_paths, list)
+    native_search_flags = [f"-L{path}" for path in native_search_paths]
+    fixture_binary = artifact_root / "upstream-test-stress-m5-rust"
+    adapted_source = source / str(adapted_source_contract["path"])
+    fixture_command = [
+        compiler,
+        "-std=c11",
+        *compile_flags,
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "test"),
+        "-I",
+        str(TEST_ADAPTER_ROOT),
+        str(adapted_source),
+        str(static_library),
+        *native_search_flags,
+        *native_libraries,
+        "-o",
+        str(fixture_binary),
+    ]
+    fixture_build = command_record(fixture_command, cwd=source)
+    require_success(fixture_build, "adapted upstream stress fixture against Rust adapter")
+    arguments = execution["arguments"]
+    watchdog_seconds = execution["watchdog_seconds"]
+    assert isinstance(arguments, list)
+    assert isinstance(watchdog_seconds, int)
+    fixture_run_command = [str(fixture_binary), *arguments]
+    fixture_run = command_record(
+        fixture_run_command,
+        cwd=source,
+        timeout_seconds=watchdog_seconds,
+    )
+    if (
+        fixture_run["status"] != 0
+        or fixture_run["stdout"] != execution["expected_stdout"]
+        or fixture_run["stderr"] != execution["expected_stderr"]
+    ):
+        raise HarnessError(
+            "adapted upstream stress fixture failed: "
+            f"status={fixture_run['status']} stdout={fixture_run['stdout']!r} "
+            f"stderr={fixture_run['stderr']!r}"
+        )
+    excluded_modes = contract["excluded_upstream_modes"]
+    assert isinstance(excluded_modes, list)
+    rejected_compile_modes: list[str] = []
+    for mode in excluded_modes:
+        assert isinstance(mode, dict)
+        macro = mode["macro"]
+        assert isinstance(macro, str)
+        rejection_command = [
+            compiler,
+            "-std=c11",
+            *compile_flags,
+            f"-D{macro}=1",
+            "-fsyntax-only",
+            "-I",
+            str(source / "include"),
+            "-I",
+            str(source / "test"),
+            "-I",
+            str(TEST_ADAPTER_ROOT),
+            str(adapted_source),
+        ]
+        rejection = command_record(rejection_command, cwd=source)
+        if (
+            rejection["status"] == 0
+            or "the adapted stress fixture" not in str(rejection["stderr"])
+        ):
+            raise HarnessError(
+                "adapted upstream stress mode was not rejected by its reviewed source guard: "
+                f"{macro}; status={rejection['status']} stderr={rejection['stderr']!r}"
+            )
+        rejected_compile_modes.append(macro)
+    return {
+        "artifact": artifact_record(fixture_binary),
+        "arguments": list(arguments),
+        "build_command": fixture_command,
+        "compile_defines": list(execution["compile_defines"]),
+        "rejected_compile_modes": rejected_compile_modes,
+        "run_command": fixture_run_command,
+        "stderr": str(fixture_run["stderr"]),
+        "stdout": str(fixture_run["stdout"]),
+        "watchdog": {
+            "seconds": watchdog_seconds,
+            "status": "passed",
+        },
+    }
+
+
 def runtime_ticket_zero_stress_schedule(
     *,
     worker_cycles: int,
@@ -4943,6 +5513,31 @@ def runtime_ticket_zero_fixture_command(
     ]
 
 
+def parse_runtime_ticket_zero_lifecycle_audit(stdout: str) -> dict[str, int]:
+    """Parse the fixture's one scalar-only lifecycle stability record."""
+
+    lines = stdout.splitlines()
+    if len(lines) != 2 or lines[-1] != RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_SUCCESS_LINE:
+        raise HarnessError("runtime ticket-zero fixture emitted an invalid lifecycle audit record")
+    audit_line = lines[0]
+    if not audit_line.startswith(RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX):
+        raise HarnessError("runtime ticket-zero fixture omitted its lifecycle audit record")
+    fields: dict[str, int] = {}
+    for token in audit_line.removeprefix(RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_PREFIX).split():
+        name, separator, value = token.partition("=")
+        if (
+            separator != "="
+            or not name
+            or name in fields
+            or not re.fullmatch(r"[0-9]+", value)
+        ):
+            raise HarnessError("runtime ticket-zero fixture has a malformed lifecycle audit field")
+        fields[name] = int(value)
+    if tuple(fields) != RUNTIME_TICKET_ZERO_LIFECYCLE_AUDIT_FIELDS:
+        raise HarnessError("runtime ticket-zero fixture lifecycle audit fields differ from the contract")
+    return fields
+
+
 def run_runtime_ticket_zero_adapter_fixture(
     compiler: str,
     static_library: Path,
@@ -4994,20 +5589,48 @@ def run_runtime_ticket_zero_adapter_fixture(
         cwd=ROOT,
         timeout_seconds=watchdog_seconds,
     )
-    if (
-        fixture_run["status"] != 0
-        or fixture_run["stdout"] != "runtime ticket-zero allocator ok\n"
-    ):
+    if fixture_run["status"] != 0:
         raise HarnessError(
             "runtime ticket-zero C fixture failed: "
             f"status={fixture_run['status']} stdout={fixture_run['stdout']!r} "
             f"stderr={fixture_run['stderr']!r}"
         )
+    try:
+        lifecycle_audit = parse_runtime_ticket_zero_lifecycle_audit(
+            str(fixture_run["stdout"])
+        )
+    except HarnessError as error:
+        raise HarnessError(
+            "runtime ticket-zero C fixture failed: "
+            f"status={fixture_run['status']} stdout={fixture_run['stdout']!r} "
+            f"stderr={fixture_run['stderr']!r}; {error}"
+        ) from error
+    if lifecycle_audit["worker_cycles"] != worker_cycles:
+        raise HarnessError("runtime ticket-zero lifecycle audit names the wrong worker cycle count")
+    required_quiescent_values = {
+        "process_active": 1,
+        "page_owner_ready": 1,
+        "page_map_registered_entries": 0,
+        "arena_registry_entries": 1,
+        "live_tlds": 1,
+        "metadata_live_capabilities": 0,
+        "shared_later_theaps": 0,
+        "abandoned_regular_pages": 0,
+        "os_abandoned_pages_empty": 1,
+    }
+    if any(lifecycle_audit[name] != value for name, value in required_quiescent_values.items()):
+        raise HarnessError("runtime ticket-zero lifecycle audit is not quiescent")
     return {
         "artifact": artifact_record(fixture_binary),
         "build_command": fixture_command,
         "run_command": fixture_run_command,
         "stdout": str(fixture_run["stdout"]),
+        "lifecycle_stability": {
+            "audit_snapshot_count": worker_cycles + 1,
+            "post_warm_cycle_count": worker_cycles - 1,
+            "status": "passed",
+            "warm_baseline": lifecycle_audit,
+        },
         "watchdog": {
             "seconds": watchdog_seconds,
             "status": "passed",
@@ -5198,6 +5821,7 @@ def run_milestone0(
     generate_contracts: bool,
     check_only: bool,
     include_test_adapter: bool = False,
+    include_adapted_stress: bool = False,
     architecture: str = "aarch64",
     runtime_ticket_zero_worker_cycles: int = RUNTIME_TICKET_ZERO_DEFAULT_WORKER_CYCLES,
     runtime_ticket_zero_watchdog_seconds: int = RUNTIME_TICKET_ZERO_CHURN_WATCHDOG_SECONDS,
@@ -5209,6 +5833,10 @@ def run_milestone0(
         # Refuse an accidental foreign/emulated invocation before downloading
         # or compiling anything for the native-only profile.
         require_native_x86_64()
+    if include_adapted_stress and not include_test_adapter:
+        raise HarnessError("adapted upstream stress requires the prefixed test adapter")
+    if architecture == "x86_64" and include_adapted_stress:
+        raise HarnessError("adapted upstream stress is available only in the AArch64 allocator profile")
     pin = load_pin()
     archive = fetch_archive(pin, offline)
     x86_64_source_map: Mapping[str, Any] | None = None
@@ -5297,6 +5925,17 @@ def run_milestone0(
             adapted_contract,
             require_tool("patch"),
         )
+        adapted_stress_contract = read_json(ADAPTED_STRESS_TEST_CONTRACT)
+        adapted_stress_summary = validate_adapted_stress_test_contract(
+            adapted_stress_contract,
+            pin,
+            TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+        )
+        adapted_stress_patch = apply_and_verify_adapted_stress_test_patch(
+            source,
+            adapted_stress_contract,
+            require_tool("patch"),
+        )
         runtime_ticket_zero_contract = read_json(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
         runtime_ticket_zero_summary = validate_runtime_ticket_zero_adapter_contract(
             runtime_ticket_zero_contract,
@@ -5310,6 +5949,8 @@ def run_milestone0(
             return {
                 "adapted_test_contract": adapted_summary,
                 "adapted_test_patch": adapted_patch,
+                "adapted_stress_test_contract": adapted_stress_summary,
+                "adapted_stress_test_patch": adapted_stress_patch,
                 "m5_gate_contract": m5_gate_summary,
                 "runtime_ticket_zero_test_contract": runtime_ticket_zero_summary,
                 "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
@@ -5345,6 +5986,8 @@ def run_milestone0(
         report["rust_release_layout"] = rust_layout
         report["adapted_test_contract"] = adapted_summary
         report["adapted_test_patch"] = adapted_patch
+        report["adapted_stress_test_contract"] = adapted_stress_summary
+        report["adapted_stress_test_patch"] = adapted_stress_patch
         report["m5_gate_contract"] = m5_gate_summary
         report["runtime_ticket_zero_test_contract"] = runtime_ticket_zero_summary
         if include_test_adapter:
@@ -5364,6 +6007,16 @@ def run_milestone0(
                     adapted_contract,
                 ),
             }
+            if include_adapted_stress:
+                report["m5_source_derived_stress_adapter"] = {
+                    "fixture": run_adapted_stress_fixture(
+                        compiler,
+                        source,
+                        static_library,
+                        native_libraries,
+                        adapted_stress_contract,
+                    ),
+                }
             runtime_static_library, runtime_native_libraries, runtime_adapter_build = (
                 build_runtime_ticket_zero_adapter(readelf, nm, runtime_ticket_zero_contract)
             )
@@ -5477,6 +6130,7 @@ def main() -> int:
             generate_contracts=False,
             check_only=False,
             include_test_adapter=arguments.full or arguments.churn or arguments.soak,
+            include_adapted_stress=arguments.full,
             runtime_ticket_zero_worker_cycles=(
                 RUNTIME_TICKET_ZERO_SOAK_WORKER_CYCLES
                 if arguments.soak

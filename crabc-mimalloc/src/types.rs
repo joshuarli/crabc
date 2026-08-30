@@ -341,7 +341,7 @@ impl Heap {
         false
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn abandoned_count(&self, bin: usize) -> Option<usize> {
         (bin < BIN_COUNT).then(|| self.abandoned_count[bin].load(Ordering::Relaxed))

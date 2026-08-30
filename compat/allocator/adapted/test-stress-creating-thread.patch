@@ -1,0 +1,186 @@
+--- a/test/test-stress.c
++++ b/test/test-stress.c
+@@ -22,9 +22,34 @@
+ #include <string.h>
+ #include <assert.h>
+ 
+-#include <mimalloc.h>
+-#include <mimalloc-stats.h>
++#include "crabc-mimalloc-test-adapter.h"
+ 
++/*
++ * The reviewed single-creating-thread adaptation never enters the upstream
++ * subprocess path. Keep the otherwise-default argument plumbing source-shaped
++ * without inventing a subprocess API in the prefixed adapter.
++ */
++typedef struct mi_subproc_id_s {
++  void* _mi_subproc_id;
++} mi_subproc_id_t;
++
++/* The prefixed adapter only models the default process-owned allocator. */
++#if defined(USE_STD_MALLOC)
++#error "the adapted stress fixture must use the crabc allocator adapter"
++#endif
++#if defined(MI_USE_HEAPS)
++#error "the adapted stress fixture excludes upstream heap APIs"
++#endif
++#if defined(MI_HEAP_WALK)
++#error "the adapted stress fixture excludes upstream theap traversal APIs"
++#endif
++#if defined(TEST_STRESS_SUBPROCS) && TEST_STRESS_SUBPROCS
++#error "the adapted stress fixture excludes upstream subprocess stress"
++#endif
++#if defined(TEST_LEAK) && TEST_LEAK
++#error "the adapted stress fixture excludes the upstream leak mode"
++#endif
++
+ // #define MI_GUARDED         1
+ // #define USE_STD_MALLOC     1
+ 
+@@ -39,6 +64,10 @@
+ #define NTHREADS               32
+ #endif
+ 
++#if NTHREADS != 1
++#error "the adapted stress fixture requires one creating worker"
++#endif
++
+ // > mimalloc-test-stress [THREADS] [SCALE] [ITER]
+ //
+ // argument defaults
+@@ -76,12 +105,21 @@
+ #define ALLOW_LARGE  false
+ #endif
+ 
++#if ALLOW_LARGE
++#error "the adapted stress fixture excludes large-object mode"
++#endif
+ 
++
+ static bool   allow_large_objects = ALLOW_LARGE;    // allow very large objects? (set to `true` if SCALE>100)
+ 
+ static size_t use_one_size = 0;               // use single object size of `N * sizeof(uintptr_t)`?
+ 
+-static bool   main_participates = false;       // main thread participates as a worker too
++/*
++ * The adapter contract permits only its creating thread. The harness passes
++ * THREADS=1, so this preserves the source scheduler while avoiding a pthread
++ * entry into a separate allocator context.
++ */
++static bool   main_participates = true;
+ 
+ #ifdef USE_STD_MALLOC
+ 
+@@ -105,12 +143,8 @@
+ #define custom_free(p)        mi_free(p)
+ #endif
+ 
+-#ifndef NDEBUG
+-#define xMI_HEAP_WALK             // walk the theap objects?
+ #endif
+ 
+-#endif
+-
+ // transfer pointer between threads
+ #define TRANSFERS     (1000)
+ // static volatile void* transfer[TRANSFERS];
+@@ -312,22 +346,9 @@
+     #if !defined(NDEBUG) || defined(MI_TSAN)
+     if ((n + 1) % 10 == 0) {
+       printf("- iterations left: %3d\n", ITER - (n + 1));
+-      #ifndef USE_STD_MALLOC
+-      mi_debug_show_arenas();
+-      #endif
+-      //mi_collect(true);
+-      //mi_debug_show_arenas();
+     }
+     #endif
+   }
+-
+-  #ifndef USE_STD_MALLOC
+-  #ifdef MI_USE_HEAPS
+-  mi_subproc_heap_stats_print_out(mi_subproc_current(),NULL,NULL);
+-  #else
+-  mi_stats_print(NULL);
+-  #endif
+-  #endif
+ 
+   // clean up  (a bit too early in order to test if the final `free_items` still works correctly)
+   #ifdef MI_USE_HEAPS
+@@ -398,18 +419,6 @@
+ #endif
+ 
+ int main(int argc, char** argv) {
+-  #ifdef MI_LINK_VERSION
+-    mi_version();
+-  #endif  
+-  #if !defined(NDEBUG) && !defined(USE_STD_MALLOC)
+-    mi_option_set(mi_option_arena_reserve, (long)(mi_arena_min_size()/1024) /* in KiB ! */);
+-    // mi_option_set(mi_option_purge_delay,1);
+-  #endif
+-  #if defined(NDEBUG) && !defined(USE_STD_MALLOC)
+-    // mi_option_set(mi_option_purge_delay,-1);
+-    mi_option_set(mi_option_page_reclaim_on_free, 0);
+-  #endif
+-
+   // > mimalloc-test-stress [THREADS] [SCALE] [ITER]
+   if (argc >= 2) {
+     char* end;
+@@ -435,9 +444,14 @@
+   #endif
+   printf("\n"); fflush(stdout);
+ 
+-  #if !defined(NDEBUG) && !defined(USE_STD_MALLOC)
+-  mi_stats_reset();
+-  #endif
++  if (THREADS != 1 || SCALE != 1 || ITER != 2 || !main_participates || allow_large_objects) {
++    fprintf(stderr, "the adapted stress contract requires one creating worker, scale 1, and two iterations\n");
++    return 1;
++  }
++  if (crabc_test_init() != 0) {
++    fprintf(stderr, "crabc_test_init failed\n");
++    return 1;
++  }
+ 
+   //mi_reserve_os_memory(1024*1024*1024ULL, false, true);
+   //int res = mi_reserve_huge_os_pages(4,1);
+@@ -456,21 +470,12 @@
+     test_leak();
+ #endif
+ 
+-#ifndef USE_STD_MALLOC
+-  #ifndef NDEBUG
+-  mi_collect(true);
+-  mi_debug_show_arenas();
+-  //mi_collect(true);
+-  //char* json = mi_stats_get_json(0, NULL);
+-  //if (json != NULL) {
+-  //  fputs(json,stderr);
+-  //  mi_free(json);
+-  //}
+-  #endif
+-  // mi_collect(true);
+-  mi_stats_print(NULL);
+-#endif
+-  //bench_end_program();
++  const int shutdown_status = crabc_test_shutdown();
++  if (shutdown_status != 0) {
++    fprintf(stderr, "crabc_test_shutdown failed: %d\n", shutdown_status);
++    return 1;
++  }
++  printf("crabc adapted stress ok\n");
+   return 0;
+ }
+ 
+@@ -484,11 +489,6 @@
+ 
+ static void* thread_entry(void* param) {
+   callback_t* cb = (callback_t*)param;
+-  #ifndef USE_STD_MALLOC
+-  if (cb->subproc._mi_subproc_id != NULL) {
+-    mi_subproc_add_current_thread(cb->subproc);
+-  }
+-  #endif
+   cb->fun(cb->tid,cb->arg);
+   return NULL;
+ }

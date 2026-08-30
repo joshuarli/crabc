@@ -814,9 +814,9 @@ pub(crate) struct MetaAllocator {
     fail_next_direct_zeroed_size: AtomicUsize,
     #[cfg(test)]
     fail_next_aligned_zeroed_size: AtomicUsize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     test_live_allocation_count: AtomicUsize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     test_allocation_high_water: AtomicUsize,
     _pin: PhantomPinned,
 }
@@ -828,7 +828,7 @@ pub(crate) struct MetaAllocator {
 /// inside its reusable page. It lets lifecycle regressions prove that repeated
 /// TLD/Theap construction returns every explicit metadata capability and that
 /// the maximum concurrent capability count plateaus after warmup.
-#[cfg(test)]
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MetaAllocationAudit {
     pub(crate) live_capability_count: usize,
@@ -889,9 +889,9 @@ impl MetaAllocator {
             fail_next_direct_zeroed_size: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_aligned_zeroed_size: AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             test_live_allocation_count: AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             test_allocation_high_water: AtomicUsize::new(0),
             _pin: PhantomPinned,
         }
@@ -953,7 +953,7 @@ impl MetaAllocator {
     /// Returns the capability-level metadata lifetime audit used by bounded
     /// worker-churn regressions. The atomics are diagnostic only: they grant
     /// no dereference, allocation, or release authority.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn test_allocation_audit(self: Pin<&'static Self>) -> MetaAllocationAudit {
         let this = self.get_ref();
@@ -1022,7 +1022,7 @@ impl MetaAllocator {
             size,
             MetaAllocationOrigin::DirectZeroed,
         );
-        #[cfg(test)]
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
         self.get_ref().test_note_allocation_created();
         Ok(allocation)
     }
@@ -1098,7 +1098,7 @@ impl MetaAllocator {
             size,
             MetaAllocationOrigin::AlignedZeroed,
         );
-        #[cfg(test)]
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
         self.get_ref().test_note_allocation_created();
         Ok(allocation)
     }
@@ -1164,7 +1164,7 @@ impl MetaAllocator {
                 new_size,
                 MetaAllocationOrigin::Replacement,
             );
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             self.get_ref().test_note_allocation_created();
             (replacement, new_size.min(old_usable))
         };
@@ -1190,17 +1190,17 @@ impl MetaAllocator {
             let mut replacement = replacement;
             replacement.state.store(ALLOCATION_RELEASING, Ordering::Release);
             let cleanup = self.release_claimed(&mut replacement);
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             if cleanup.is_ok() {
                 self.get_ref().test_note_allocation_released();
             }
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "native-runtime-test-audit")))]
             let _ = cleanup;
             old.reject();
             return Err(error);
         }
         old.release();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "native-runtime-test-audit"))]
         self.get_ref().test_note_allocation_released();
         Ok(replacement)
     }
@@ -1222,7 +1222,7 @@ impl MetaAllocator {
         match self.release_claimed(allocation) {
             Ok(()) => {
                 allocation.release();
-                #[cfg(test)]
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
                 self.get_ref().test_note_allocation_released();
                 Ok(())
             }
@@ -1282,7 +1282,7 @@ impl MetaAllocator {
         unsafe { entry.allocator().free(allocation.pointer) }.map_err(MetaError::Free)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn test_note_allocation_created(&self) {
         let live = self
             .test_live_allocation_count
@@ -1303,7 +1303,7 @@ impl MetaAllocator {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     fn test_note_allocation_released(&self) {
         let previous = self
             .test_live_allocation_count

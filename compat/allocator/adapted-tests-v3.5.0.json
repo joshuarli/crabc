@@ -20,10 +20,10 @@
     "test/testhelper.h": "ab1421bf38c423c38ed3e91c2e803d2bda6cac4335d4f90a8e3555083350e681"
   },
   "patch": {
-    "path": "compat/allocator/adapted/test-api-m4.patch",
+    "path": "compat/allocator/adapted/test-api-selected.patch",
     "sha256": "d05008d162424140042631a7b38a25d6fe8d28c9a6d9fdd6672eaa254d7a4113",
     "apply_from": "the extracted mimalloc-3.5.0 root",
-    "apply_command": "patch -p1 < /path/to/crabc/compat/allocator/adapted/test-api-m4.patch"
+    "apply_command": "patch -p1 < /path/to/crabc/compat/allocator/adapted/test-api-selected.patch"
   },
   "adapted_source": {
     "path": "test/test-api.c",

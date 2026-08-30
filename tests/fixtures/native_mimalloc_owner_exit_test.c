@@ -156,6 +156,8 @@ static void *owner_worker(void *opaque)
 
 static void *release_worker(void *opaque)
 {
+    unsigned char *local;
+
     (void)opaque;
     if (shared_blocks.small == NULL || shared_blocks.non_direct_small == NULL
             || shared_blocks.medium == NULL || shared_blocks.large == NULL
@@ -174,16 +176,32 @@ static void *release_worker(void *opaque)
             || shared_blocks.os_aligned[0] != 0x49
             || shared_blocks.os_aligned[6] != 0x4a)
         return (void *)(uintptr_t)2;
-    /* The fresh B may inspect only its exact C inputs. The selected native
-     * route answers from A's private recorded extents without giving B a
-     * page, ledger, or route capability before the later frees. */
+    /* B must not be forced back to a no-page façade merely because it later
+     * receives an exact A-side route address. This live B allocation creates
+     * B's own parked session before any opaque A free. The route still owns
+     * every A client and may only hand B its terminal completion after the
+     * final exact free; B then releases this local client and lets its normal
+     * pthread finish settle both lifecycle claims. */
+    local = malloc(53);
+    if (local == NULL)
+        return (void *)(uintptr_t)4;
+    local[0] = 0x71;
+    local[52] = 0x72;
+    if (local[0] != 0x71 || local[52] != 0x72
+            || malloc_usable_size(local) < 53)
+        return (void *)(uintptr_t)5;
+
+    /* B may inspect only its exact C inputs. This happens after B has
+     * established its own parked session: the selected route answers from
+     * A's private recorded extents without lending B a page, ledger, or route
+     * capability before the later frees. */
     if (malloc_usable_size(shared_blocks.small) < 37
             || malloc_usable_size(shared_blocks.non_direct_small) < 1025
             || malloc_usable_size(shared_blocks.medium) < 64 * 1024
             || malloc_usable_size(shared_blocks.large) < 128 * 1024
             || malloc_usable_size(shared_blocks.arena_singleton) < 1024 * 1024
             || malloc_usable_size(shared_blocks.os_aligned) < 7)
-        return (void *)(uintptr_t)3;
+        return (void *)(uintptr_t)6;
 
     free(shared_blocks.os_aligned);
     free(shared_blocks.arena_singleton);
@@ -197,6 +215,7 @@ static void *release_worker(void *opaque)
     shared_blocks.medium = NULL;
     shared_blocks.non_direct_small = NULL;
     shared_blocks.small = NULL;
+    free(local);
     return NULL;
 }
 

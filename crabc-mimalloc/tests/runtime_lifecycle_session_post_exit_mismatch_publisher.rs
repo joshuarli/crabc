@@ -1,6 +1,6 @@
 use crabc_mimalloc::__crabc_runtime::{
     TicketZeroLaterThreadPageResult, TicketZeroOwnerExitFreeOutcome,
-    TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitRemoteFreeProducerPair,
+    TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair,
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, TicketZeroRemoteFreeProducerPair,
     initialize_process,
     ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish,
@@ -32,50 +32,29 @@ fn publish_before_owner_exit<'owner>(
     Ok(())
 }
 
-fn publish_after_owner_exit<'owner>(
-    producers: TicketZeroOwnerExitRemoteFreeProducerPair<'owner>,
-) -> Result<(), TicketZeroOwnerExitRemoteFreeProducerPair<'owner>> {
-    let (first, second) = producers.split();
-    std::thread::scope(|scope| {
-        assert!(
-            scope
-                .spawn(move || first.publish())
-                .join()
-                .expect("the first post-exit publisher remains scoped to B's direct source free")
-                .is_ok(),
-            "the first post-exit client publishes before B resumes collection"
-        );
-    });
-    std::thread::scope(|scope| {
-        assert!(
-            scope
-                .spawn(move || second.publish())
-                .join()
-                .expect("the second post-exit publisher remains scoped to B's direct source free")
-                .is_ok(),
-            "the second post-exit client appends before B resumes collection"
-        );
-    });
-    Ok(())
+fn mapped_medium_publisher_must_not_receive_direct_small_clients<'owner>(
+    _: TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'owner>,
+) -> Result<(), TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair<'owner>> {
+    panic!("a mapped-medium publisher must not consume a direct-small source group")
 }
 
-fn free_owner_exit_route_with_joined_post_exit_publisher<'owner>(
+fn reject_direct_small_route_with_mapped_medium_publisher<'owner>(
     route: TicketZeroOwnerExitFreeRoute<'owner>,
 ) -> TicketZeroOwnerExitFreeOutcome<'owner> {
     std::thread::scope(|scope| {
         scope
             .spawn(move || {
-                route.free_remaining_in_fresh_runtime_worker_with_post_exit_publisher(
-                    publish_after_owner_exit,
+                route.free_remaining_in_fresh_runtime_worker_with_post_exit_mapped_medium_publisher(
+                    mapped_medium_publisher_must_not_receive_direct_small_clients,
                 )
             })
             .join()
-            .expect("the fresh post-exit consumer joins its scoped publisher")
+            .expect("the fresh B consumer rejects the mismatched publisher before invoking it")
     })
 }
 
 #[test]
-fn parked_session_keeps_scoped_post_exit_publication_inside_the_typed_route() {
+fn direct_small_post_exit_group_rejects_a_mapped_medium_publisher() {
     assert!(
         initialize_process(4096),
         "the ticket-zero owner initializes before the parked session"
@@ -91,33 +70,26 @@ fn parked_session_keeps_scoped_post_exit_publication_inside_the_typed_route() {
     assert_eq!(
         unsafe { ticket_zero_free(warm) },
         TicketZeroPageFreeResult::Freed,
-        "ticket zero is dormant before the A/B/C source route"
+        "ticket zero is dormant before the A/B source route"
     );
 
     assert_eq!(
         std::thread::spawn(|| {
             ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish(
                 publish_before_owner_exit,
-                free_owner_exit_route_with_joined_post_exit_publisher,
+                reject_direct_small_route_with_mapped_medium_publisher,
             )
         })
         .join()
-        .expect("the parked source owner, fresh B, and scoped C publisher join"),
-        TicketZeroLaterThreadPageResult::Completed,
-        "B collects C's private source publication before terminally releasing A's session route"
+        .expect("the parked source owner and mismatched B consumer join"),
+        TicketZeroLaterThreadPageResult::Retained,
+        "a direct-small group cannot be consumed by the nominally distinct mapped-medium publisher"
     );
-
-    let resumed = match ticket_zero_allocate(41, false) {
-        TicketZeroPageAllocationResult::Allocated(block) => block,
-        TicketZeroPageAllocationResult::Unavailable
-        | TicketZeroPageAllocationResult::AllocationFailed
-        | TicketZeroPageAllocationResult::Retained => {
-            panic!("the terminal typed route returns ticket zero to ready")
-        }
-    };
-    assert_eq!(
-        unsafe { ticket_zero_free(resumed) },
-        TicketZeroPageFreeResult::Freed,
-        "the completed session A/B/C route leaves no admission or page-owner residue"
+    assert!(
+        matches!(
+            ticket_zero_allocate(41, false),
+            TicketZeroPageAllocationResult::Retained
+        ),
+        "the mismatched publisher leaves A's worker-admission claim retained instead of reopening ticket zero"
     );
 }

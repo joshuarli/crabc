@@ -562,6 +562,39 @@ impl<'route> ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route> {
     }
 }
 
+/// Two distinct synchronous post-exit publications into the same regular
+/// page while its direct freeing thread holds `xthread_free`'s low owner bit.
+///
+/// This is the bounded multi-producer form of
+/// [`ThreadExitMappedRegularPagesPostExitRemoteFreeProducer`]. It does not
+/// expose the page, collector, or route: splitting it grants exactly two
+/// single-use atomic appends, each tied to the one higher-ranked callback
+/// that B must join before it resumes `mi_free_try_collect_mt`.
+#[must_use = "both post-exit remote publishers must publish or the pair must return to the direct route"]
+pub(crate) struct ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> {
+    first: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+    second: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+}
+
+// SAFETY: each component has the same proof as the one-producer token, and
+// the pair owns two different canonical blocks. Moving it grants neither a
+// PageMap reference nor a route/collector capability.
+unsafe impl Send for ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'_> {}
+
+impl<'route> ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> {
+    /// Separates the two opaque atomic-only publications. Each resulting
+    /// token remains scoped to B's synchronous direct source transition.
+    #[inline]
+    pub(crate) fn split(
+        self,
+    ) -> (
+        ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+        ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
+    ) {
+        (self.first, self.second)
+    }
+}
+
 /// Generic private ordinary-allocation engine over one narrow page owner.
 ///
 /// This value owns either the static [`ExclusiveTheapSession`], a ticket-zero
@@ -1509,8 +1542,8 @@ pub(crate) struct ThreadExitMappedRegularPagesPostExitDetach<'attachment, 'main,
 }
 
 /// One-shot proof that every pre-existing member of the static main Heap's
-/// private `os_abandoned_pages` list remains owned by a live bounded
-/// post-exit route.
+/// private `os_abandoned_pages` list remains owned by a live typed post-exit
+/// route in the native runtime registry.
 ///
 /// The token grants no list, page, client, or allocator access. It only lets
 /// the source-shaped aggregate owner-exit preflight accept those already
@@ -1526,19 +1559,19 @@ pub(crate) struct ThreadExitKnownPostExitOsAbandonedList {
 }
 
 impl ThreadExitKnownPostExitOsAbandonedList {
-    /// Creates the one-shot source preflight proof for a bounded higher-level
-    /// post-exit router.
+    /// Creates the one-shot source preflight proof for the higher-level
+    /// native post-exit registry.
     ///
     /// # Safety
     ///
     /// Every current private OS-list member must remain owned by one active
     /// typed post-exit route whose exact terminal free will unlink that same
     /// member before its mapping release. The caller must also hold a bounded
-    /// route admission for the source traversal that consumes this proof.
+    /// registry admission for the source traversal that consumes this proof.
     /// This does not authorize a list walk, foreign-member removal, a normal
     /// allocator engine, or a no-page finalizer after source abandonment.
     #[inline]
-    pub(crate) unsafe fn from_bounded_post_exit_router() -> Self {
+    pub(crate) unsafe fn from_native_post_exit_route_registry() -> Self {
         Self {
             _not_send_or_sync: PhantomData,
         }
@@ -11888,8 +11921,8 @@ impl<'attachment, 'main, 'arena, 'map>
         unsafe { self.abandon_mapped_regular_pages_to_process_route_inner(None) }
     }
 
-    /// Runs the aggregate source traversal when a bounded higher-level
-    /// post-exit router has proved that any existing private OS-list members
+    /// Runs the aggregate source traversal when the higher-level native
+    /// post-exit registry has proved that any existing private OS-list members
     /// remain owned by its own live typed routes.
     ///
     /// This is deliberately distinct from
@@ -15997,30 +16030,29 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         }
     }
 
-    /// Routes one direct regular client free while one joined publisher adds a
-    /// second exact client to the same source-abandoned page after the direct
-    /// free has claimed its low owner bit.
+    /// Routes one direct-small client free while two joined publishers add two
+    /// further exact direct-small clients to that same source-abandoned page
+    /// after the direct free has claimed its low owner bit.
     ///
     /// This is the source `mi_free_block_mt` -> `mi_free_try_collect_mt`
     /// interleaving, not a general concurrent aggregate API. The caller must
     /// synchronously join the callback before it returns; the direct route
     /// then owns the only ordinary collector and terminal-release decision.
-    /// Both blocks must be distinct current canonical allocations of one
-    /// regular Small, Medium, or Large aggregate member. Neither client
-    /// address becomes visible to the callback.
     ///
     /// # Safety
     ///
-    /// `direct_block` and `published_block` must be distinct exact current
-    /// clients in the same regular page of this route. `publisher` must use
-    /// its token exactly once, join every worker it starts, and return only
-    /// after that atomic publication completes. It must not retain the token
-    /// or access another route/allocator state.
-    pub(crate) unsafe fn remote_free_after_thread_exit_with_same_page_publisher<F>(
+    /// `direct_block`, `first_published_block`, and `second_published_block`
+    /// must be distinct exact current direct-small clients in one regular
+    /// page of this route. `publisher` must use each token exactly once, join
+    /// every worker it starts, and return only after both atomic publications
+    /// complete. It must not retain either token or access another
+    /// route/allocator state.
+    pub(crate) unsafe fn remote_free_after_thread_exit_with_direct_small_publishers<F>(
         &mut self,
         page_map: &PageMap,
         direct_block: NonNull<u8>,
-        published_block: NonNull<u8>,
+        first_published_block: NonNull<u8>,
+        second_published_block: NonNull<u8>,
         publisher: F,
     ) -> Result<
         ThreadExitMappedRegularPagesPostExitFreeOutcome,
@@ -16028,10 +16060,94 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
     >
     where
         F: for<'route> FnOnce(
-            ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>,
-        ) -> Result<(), ThreadExitMappedRegularPagesPostExitRemoteFreeProducer<'route>>,
+            ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+        ) -> Result<(), ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>>,
     {
-        if self.remaining_pages == 0 || direct_block == published_block {
+        unsafe {
+            self.remote_free_after_thread_exit_with_same_page_publishers_for_kind(
+                page_map,
+                direct_block,
+                first_published_block,
+                second_published_block,
+                PageKind::Small,
+                false,
+                publisher,
+            )
+        }
+    }
+
+    /// Routes one direct mapped, non-full medium client free while two joined
+    /// publishers add two further exact clients to that same source-abandoned
+    /// medium page after the direct free has claimed its low owner bit.
+    ///
+    /// The route is purpose-bound to the force-normalized mapped-medium
+    /// source state. It neither accepts a full medium page nor turns this
+    /// bounded callback into a general concurrent aggregate route.
+    ///
+    /// # Safety
+    ///
+    /// `direct_block`, `first_published_block`, and `second_published_block`
+    /// must be distinct exact current clients in one mapped, non-full medium
+    /// page of this route. `publisher` must use each token exactly once, join
+    /// every worker it starts, and return only after both atomic publications
+    /// complete. It must not retain either token or access another
+    /// route/allocator state.
+    pub(crate) unsafe fn remote_free_after_thread_exit_with_mapped_medium_publishers<F>(
+        &mut self,
+        page_map: &PageMap,
+        direct_block: NonNull<u8>,
+        first_published_block: NonNull<u8>,
+        second_published_block: NonNull<u8>,
+        publisher: F,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitFreeOutcome,
+        ThreadExitMappedRegularPagesPostExitFreeError,
+    >
+    where
+        F: for<'route> FnOnce(
+            ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+        ) -> Result<(), ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>>,
+    {
+        unsafe {
+            self.remote_free_after_thread_exit_with_same_page_publishers_for_kind(
+                page_map,
+                direct_block,
+                first_published_block,
+                second_published_block,
+                PageKind::Medium,
+                true,
+                publisher,
+            )
+        }
+    }
+
+    /// Shared source preflight for the two nominally distinct bounded B/C/D
+    /// publication routes. The only caller-controlled choice is private to
+    /// their typed wrappers above; callbacks still receive no address or page
+    /// lifecycle capability.
+    unsafe fn remote_free_after_thread_exit_with_same_page_publishers_for_kind<F>(
+        &mut self,
+        page_map: &PageMap,
+        direct_block: NonNull<u8>,
+        first_published_block: NonNull<u8>,
+        second_published_block: NonNull<u8>,
+        expected_kind: PageKind,
+        require_nonfull: bool,
+        publisher: F,
+    ) -> Result<
+        ThreadExitMappedRegularPagesPostExitFreeOutcome,
+        ThreadExitMappedRegularPagesPostExitFreeError,
+    >
+    where
+        F: for<'route> FnOnce(
+            ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>,
+        ) -> Result<(), ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route>>,
+    {
+        if self.remaining_pages == 0
+            || direct_block == first_published_block
+            || direct_block == second_published_block
+            || first_published_block == second_published_block
+        {
             return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
         }
         // SAFETY: the enclosing short PageMap access pins both exact entries
@@ -16039,22 +16155,24 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         // source low owner bit has changed.
         let page = NonNull::new(unsafe { page_map.checked_lookup(direct_block.as_ptr()) })
             .ok_or(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped)?;
-        let published_page =
-            NonNull::new(unsafe { page_map.checked_lookup(published_block.as_ptr()) })
+        let first_published_page =
+            NonNull::new(unsafe { page_map.checked_lookup(first_published_block.as_ptr()) })
                 .ok_or(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped)?;
-        if page != published_page {
+        let second_published_page =
+            NonNull::new(unsafe { page_map.checked_lookup(second_published_block.as_ptr()) })
+                .ok_or(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped)?;
+        if page != first_published_page || page != second_published_page {
             return Err(ThreadExitMappedRegularPagesPostExitFreeError::Unmapped);
         }
         // The linear aggregate route is still the only owner at this point,
         // so this source preflight may classify the same page before it lends
-        // C its atomic-only producer. Reject singleton/non-arena tails before
+        // C and D their atomic-only producers. Reject singleton/non-arena,
+        // wrong-kind, and (for the mapped-medium route) full-page tails before
         // a callback could publish into a different low-level protocol.
         let page_ref = unsafe { page.as_ref() };
         if page_ref.memid().kind() != MemoryKind::Arena
-            || !matches!(
-                size_class::page_kind_for_block_size(page_ref.block_size()),
-                Some(PageKind::Small | PageKind::Medium | PageKind::Large)
-            )
+            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(expected_kind)
+            || (require_nonfull && page_is_in_full(page_ref))
         {
             return Err(ThreadExitMappedRegularPagesPostExitFreeError::Release);
         }
@@ -16063,22 +16181,31 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         // ownership fact. The higher-ranked publisher can observe only the
         // page's atomic remote head and returns before this helper resumes
         // source collection.
-        let mut publisher_scope = ();
+        let mut first_publisher_scope = ();
+        let mut second_publisher_scope = ();
         unsafe {
             self.remote_free_regular_after_thread_exit_with_after_claim(
                 page_map,
                 page,
                 direct_block,
                 || {
-                    publisher(ThreadExitMappedRegularPagesPostExitRemoteFreeProducer {
-                        page,
-                        canonical_block: published_block,
-                        // Borrow a stack-local scope token so a safe callback
-                        // cannot retain this producer beyond its synchronous
-                        // call. The route itself remains private to the
-                        // direct source owner.
-                        _scope: &mut publisher_scope,
-                        _not_sync: PhantomData,
+                    publisher(ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair {
+                        first: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer {
+                            page,
+                            canonical_block: first_published_block,
+                            // Borrow separate stack-local scope tokens so a
+                            // safe callback cannot retain either producer
+                            // beyond its synchronous call. The route itself
+                            // remains private to the direct source owner.
+                            _scope: &mut first_publisher_scope,
+                            _not_sync: PhantomData,
+                        },
+                        second: ThreadExitMappedRegularPagesPostExitRemoteFreeProducer {
+                            page,
+                            canonical_block: second_published_block,
+                            _scope: &mut second_publisher_scope,
+                            _not_sync: PhantomData,
+                        },
                     })
                     .is_ok()
                 },

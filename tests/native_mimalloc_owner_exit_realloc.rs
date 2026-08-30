@@ -34,7 +34,7 @@ fn run(binary: &std::path::Path) -> Output {
 }
 
 #[test]
-fn native_mimalloc_owner_exit_realloc_preserves_the_detached_client() {
+fn native_mimalloc_owner_exit_realloc_moves_the_detached_client_into_b() {
     let candidate = test_support::TempArtifact::new("native-mimalloc-owner-exit-realloc-candidate");
     compile_fixture(&candidate);
 
@@ -47,7 +47,7 @@ fn native_mimalloc_owner_exit_realloc_preserves_the_detached_client() {
     );
     assert_eq!(
         output.stdout,
-        b"native mimalloc owner exit realloc unavailable ok\n"
+        b"native mimalloc owner exit realloc ok\n"
     );
     assert_eq!(output.stderr, b"");
 }

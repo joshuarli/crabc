@@ -109,12 +109,29 @@ pub use test_context::{
 // source-shaped owners without depending on libc or public pthread APIs.
 #[doc(hidden)]
 pub mod __crabc_runtime {
+    #[cfg(feature = "native-runtime-test-audit")]
+    pub use crate::runtime_lifecycle::{
+        NativeLiveRemoteOwnerRegistryAudit, NativePostExitRouteRegistryAudit,
+        NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
+        native_live_remote_owner_registry_test_audit, native_post_exit_registry_test_audit,
+        native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
+    };
+
+    #[cfg(feature = "native-runtime-test-fault")]
+    pub use crate::runtime_lifecycle::{
+        NativeRuntimeTestUnmapFailure, native_runtime_test_fail_next_unmap,
+    };
+
     pub use crate::runtime_lifecycle::{
         ThreadAttachResult, ThreadFinishResult, TicketZeroLaterThreadPageResult,
         TicketZeroOwnerExitFreeConsumer, TicketZeroOwnerExitFreeOutcome,
         TicketZeroOwnerExitFreeRoute, TicketZeroOwnerExitRemoteFreeProducer,
+        TicketZeroOwnerExitRemoteFreeProducerPair,
         TicketZeroOwnerExitRemoteFreePublisher, TicketZeroOwnerExitReclaimConsumer,
         TicketZeroOwnerExitReclaimOutcome, TicketZeroOwnerExitReclaimRoute,
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducer,
+        TicketZeroOwnerExitMappedMediumRemoteFreeProducerPair,
+        TicketZeroOwnerExitMappedMediumRemoteFreePublisher,
         TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
         NativePageAllocationResult, NativePageFreeResult,
         TicketZeroRemoteFreeProducer, TicketZeroRemoteFreeProducerPair,
@@ -137,6 +154,7 @@ pub mod __crabc_runtime {
         ticket_zero_later_thread_mapped_regular_owner_exit_through_normal_finish,
         ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_through_normal_finish,
+        ticket_zero_later_thread_session_owner_exit_with_post_exit_mapped_medium_publisher_through_normal_finish,
         ticket_zero_later_thread_session_owner_exit_with_post_exit_publisher_through_normal_finish,
         ticket_zero_later_thread_persistent_local_workload,
         ticket_zero_later_thread_remote_free_roundtrip, ticket_zero_reallocate,

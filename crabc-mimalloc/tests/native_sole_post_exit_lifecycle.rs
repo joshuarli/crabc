@@ -37,7 +37,8 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_until_b_finishes
         };
         unsafe {
             medium.as_ptr().write(0x52);
-            medium.as_ptr().add(64 * 1024 - 1).write(0x53);
+            medium.as_ptr().add(4095).write(0x53);
+            medium.as_ptr().add(64 * 1024 - 1).write(0x54);
         }
         // The source sole-page result is not a one-live-block shortcut. It
         // requires one still-live medium client and a current immediate local
@@ -80,14 +81,28 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_until_b_finishes
         );
         assert!(
             matches!(
-                unsafe { native_reallocate(Some(medium), 4096) },
-                NativePageAllocationResult::Unavailable
+                unsafe { native_reallocate(Some(medium), usize::MAX) },
+                NativePageAllocationResult::AllocationFailed
             ),
-            "the post-exit sole route declines realloc without opening a B-side allocator"
+            "a rejected detached replacement leaves A's exact client live"
         );
         assert_eq!(unsafe { medium.as_ptr().read() }, 0x52);
-        assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x53);
-        assert_eq!(unsafe { native_free(medium) }, NativePageFreeResult::Freed);
+        assert_eq!(unsafe { medium.as_ptr().add(4095).read() }, 0x53);
+        assert_eq!(unsafe { medium.as_ptr().add(64 * 1024 - 1).read() }, 0x54);
+        let replacement = match unsafe { native_reallocate(Some(medium), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("the detached sole route reallocates through B's local session"),
+        };
+        assert_ne!(
+            replacement, medium,
+            "an exited A Theap cannot reuse its detached source page in B"
+        );
+        assert!(
+            unsafe { native_usable_size(replacement) }.is_some_and(|size| size >= 4096),
+            "B records the normal-alignment replacement in its own parked session"
+        );
+        assert_eq!(unsafe { replacement.as_ptr().read() }, 0x52);
+        assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x53);
         assert!(
             matches!(
                 native_allocate_aligned(73, 16, false),
@@ -95,6 +110,7 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_until_b_finishes
             ),
             "B stays a no-page finisher after the sole route releases until it consumes A's proof"
         );
+        assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
         terminal_sender
             .send(())
             .expect("B reports its terminal sole-route free before finish");

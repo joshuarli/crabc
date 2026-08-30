@@ -277,7 +277,7 @@ impl MainStaticAttachmentStorage {
         self.theap.image.get().addr()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn test_shared_later_theap_count(&self) -> usize {
         self.shared_later_theap_count.load(Ordering::Acquire)
@@ -414,6 +414,15 @@ impl<'main> MainStaticHeapLease<'main> {
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
+    }
+
+    /// Returns scalar-only shared-Theap accounting for the default-off native
+    /// lifecycle audit. It exposes neither the Heap projection nor a list
+    /// mutation capability.
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[inline]
+    pub(crate) fn test_shared_later_theap_count(self) -> usize {
+        self.storage.test_shared_later_theap_count()
     }
 
     /// Acquires the Rust aliasing guard for one short source heap operation.

@@ -209,11 +209,11 @@ pub(crate) struct PageMap {
     header: NonNull<PageMapHeader>,
     reserved_count: usize,
     active: bool,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     submap_allocations: AtomicUsize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     published_submap_count: AtomicUsize,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     registered_entry_count: AtomicUsize,
     #[cfg(test)]
     fail_next_top_release: bool,
@@ -327,11 +327,11 @@ impl PageMap {
             header,
             reserved_count,
             active: true,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             submap_allocations: AtomicUsize::new(0),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             published_submap_count: AtomicUsize::new(1),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             registered_entry_count: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_top_release: false,
@@ -348,7 +348,7 @@ impl PageMap {
     /// PageMap's normal external no-mutation boundary. This test-only view
     /// counts source-plain live registrations rather than treating retained
     /// process-lifetime submaps as worker-owned leaks.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     pub(crate) fn test_registered_entry_count(&self) -> Result<usize> {
         self.header()?;
         Ok(self.registered_entry_count.load(Ordering::Acquire))
@@ -356,13 +356,13 @@ impl PageMap {
 
     /// Counts published submaps and the lazy publications that created them.
     /// Both are process-map ownership observations, not allocator policy.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     pub(crate) fn test_published_submap_count(&self) -> Result<usize> {
         self.header()?;
         Ok(self.published_submap_count.load(Ordering::Acquire))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn test_lazy_submap_allocation_count(&self) -> usize {
         self.submap_allocations.load(Ordering::Relaxed)
@@ -432,7 +432,7 @@ impl PageMap {
         let result = if let Some(submap) = self.submap_at(index)? {
             Ok(submap)
         } else {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
             self.submap_allocations.fetch_add(1, Ordering::Relaxed);
             let mut candidate = Mapping::map_aligned_for_allocator(
                 self.config,
@@ -454,7 +454,7 @@ impl PageMap {
             ) {
                 Ok(_) => {
                     candidate.into_published()?;
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "native-runtime-test-audit"))]
                     self.published_submap_count.fetch_add(1, Ordering::Release);
                     NonNull::new(candidate_base).ok_or(Errno::NOMEM)
                 }
@@ -542,7 +542,7 @@ impl PageMap {
                 let entry = unsafe { (*submap.as_ptr().add(sub_index)).0.get() };
                 // SAFETY: the iterator bounds the entry, and the caller owns
                 // the source-plain registration synchronization contract.
-                #[cfg(test)]
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
                 // SAFETY: the same synchronized source-plain ownership that
                 // permits the write also permits this audit-only old-value
                 // observation.
@@ -550,7 +550,7 @@ impl PageMap {
                 // SAFETY: this is the one synchronized source-plain entry
                 // write for the current register or unregister transition.
                 unsafe { entry.write(page) };
-                #[cfg(test)]
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
                 match (previous.is_null(), page.is_null()) {
                     (true, false) => {
                         self.registered_entry_count.fetch_add(1, Ordering::Release);

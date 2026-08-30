@@ -881,20 +881,21 @@ where
 /// the abandoned low owner bit and before it reads ordinary page fields or
 /// detaches the remote list.
 ///
-/// The callback may only publish a second already-proved client through this
-/// page's atomic abandoned remote-free head and must return before this
-/// function continues. It cannot inspect or mutate ordinary page state, map
-/// membership, a bitmap, or a former Theap. A false result keeps the claimed
-/// low owner bit terminally held: pretending the second publication never
-/// existed would let the caller unown a page with an unresolved client.
+/// The callback may only publish a bounded set of already-proved distinct
+/// clients through this page's atomic abandoned remote-free head and must
+/// return before this function continues. It cannot inspect or mutate ordinary
+/// page state, map membership, a bitmap, or a former Theap. A false result
+/// keeps the claimed low owner bit terminally held: pretending a missing
+/// publication never existed would let the caller unown a page with an
+/// unresolved client.
 ///
 /// # Safety
 ///
 /// `page`, `block`, and `select_map` have the exact contract of
 /// [`free_regular_after_failed_reclaim_select_map`]. `after_claim` must run
-/// synchronously, may publish only one distinct exact current client from the
-/// same stable page, and must return true only after that publication has
-/// completed. It must not retain aliases past its return.
+/// synchronously, may publish only the caller's bounded distinct exact current
+/// clients from the same stable page, and must return true only after every
+/// such publication has completed. It must not retain aliases past its return.
 pub(crate) unsafe fn free_regular_after_failed_reclaim_select_map_with_after_claim<M, F, H>(
     page: NonNull<Page>,
     block: NonNull<u8>,
