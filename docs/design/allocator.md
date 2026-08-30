@@ -980,8 +980,11 @@ The separate `runtime_lifecycle_retired_session` regression keeps this same
 generic route honest when A first locally retires an empty direct-small page
 and then leaves one medium client live in another source bin. Its ordinary
 prepared finish must run the source retired-page prepass before it publishes
-the live page to B. `PreparedOwnerExitClients` observes a force-collectable
-local-free fact only while A still owns the engine and carries that private
+the live page to B. The selected-C `native_mimalloc_retired_owner_exit`
+companion repeats that source order through the shadow ABI: A's local free
+leaves no C client for the retired page, and B can free only the surviving
+medium client after the prepass has completed. `PreparedOwnerExitClients`
+observes a force-collectable local-free fact only while A still owns the engine and carries that private
 fact in the detached ledger. `TicketZeroOwnerExitFreeRoute::free_remaining_clients` may
 try the existing final-member adoption only for such a candidate; all other
 remaining clients take the normal sequential-free path rather than risking an

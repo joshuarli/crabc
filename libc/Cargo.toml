@@ -71,6 +71,10 @@ name = "native_mimalloc_owner_exit"
 path = "../tests/native_mimalloc_owner_exit.rs"
 
 [[test]]
+name = "native_mimalloc_retired_owner_exit"
+path = "../tests/native_mimalloc_retired_owner_exit.rs"
+
+[[test]]
 name = "native_mimalloc_two_owner_exit"
 path = "../tests/native_mimalloc_two_owner_exit.rs"
 

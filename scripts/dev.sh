@@ -527,6 +527,7 @@ case "$command" in
             -- cargo test -q -p crabc-libc --features native-mimalloc-shadow \
             --test allocator \
             --test native_mimalloc_owner_exit \
+            --test native_mimalloc_retired_owner_exit \
             --test native_mimalloc_two_owner_exit \
             --test native_mimalloc_three_owner_exit \
             --test native_mimalloc_post_exit_split_releaser \

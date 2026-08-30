@@ -129,7 +129,11 @@ public callback registration/re-entry remains outside this checkpoint. The
 aggregate and all-free continuations then share the source retired-page
 prepass, so an already-empty retired page releases before generic force
 collection; the direct continuation has no source-retired sibling in its
-validated one-page entrance.
+validated one-page entrance. The selected-C
+`tests/fixtures/native_mimalloc_retired_owner_exit_test.c` fixture repeats the
+active-session case through the shadow ABI: A retires a direct-small page,
+then exits with a live medium client that fresh B can free only after the
+source prepass completes.
 
 The implementation has reached an important phase boundary.
 

@@ -2083,7 +2083,10 @@ afterward. The selected `native_mimalloc_post_exit_split_releaser` fixture
 repeats the same route through two C worker lifecycles: nonterminal B frees
 the OS, arena, and large tails and exits, then fresh C frees the remaining
 medium and small clients before its normal finish returns A's completion. The
-owner-exit releaser also creates one local B allocation before
+selected `native_mimalloc_retired_owner_exit` fixture instead exercises the
+source prepass in A's ordinary session: a locally freed direct-small page must
+release before that session transfers its remaining medium client to B's
+opaque route. The owner-exit releaser also creates one local B allocation before
 it offers any A address, then keeps that parked session through A's terminal
 free and frees its own client before pthread teardown. This proves the route
 can transfer A's completion beside one independently parked B session without
