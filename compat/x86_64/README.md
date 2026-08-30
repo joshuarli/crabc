@@ -438,6 +438,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-image
 ./scripts/dev-x86_64.sh ldso-initial-graph
 ./scripts/dev-x86_64.sh ldso-initial-tls
+./scripts/dev-x86_64.sh ldso-initial-exec-tls
 ./scripts/dev-x86_64.sh ldso-owned-crt-handoff
 ```
 
@@ -3385,6 +3386,17 @@ musl's static resolver object, not a libc dependency. Mutations reject bad
 `R_X86_64_TPOFF64`, and `DF_STATIC_TLS`. It does not select initial-exec or
 TLSDESC, DTV growth, `dl*`, pthread/TCB parity, a general loader, dynamic
 CRT/sysroot, full x86-64 parity, or public x86 support.
+
+`ldso-initial-exec-tls` is a cfg-isolated private sibling of that exact
+initial-TLS graph. It retains the two GNU-Dynamic DSO TLS images and their
+DTPMOD/DTPOFF/`__tls_get_addr` evidence, while admitting only the leaf's one
+named `tls_model(initial-exec)` value through `DF_STATIC_TLS` plus one
+leaf-local `R_X86_64_TPOFF64` relocation. The native runner compares the same
+clean-environment topology with pinned musl 1.2.6, proves the initialized and
+mutated TPOFF value, and rejects a substituted dynamic-TLS TPOFF, nonzero
+TPOFF addend, absent leaf flag, or a static-TLS GNU-Dynamic mid. It is not a
+general static-TLS namespace, broader initial-exec/TLSDESC support, pthread or
+TCB parity, dynamic CRT/sysroot, full x86-64 parity, or public x86 support.
 
 The separately launched `./crt/run-x86_64.sh static-pie` gate proves the
 private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` no-TLS static-PIE foundation.

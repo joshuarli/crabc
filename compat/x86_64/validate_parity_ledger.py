@@ -5686,6 +5686,77 @@ def require_ldso_initial_tls_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ldso_initial_exec_tls_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one fixed initial-exec leaf without loader-family promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "ldso-initial-exec-tls"]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-initial-exec-tls artifact",
+    )
+    artifact = matching[0]
+    require(
+        family.get("status") == "planned",
+        "ldso-initial-exec-tls must not promote ldso.dynamic-runtime",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "cfg-isolated initial-exec TLS sibling",
+        "still-planned `ldso.dynamic-runtime`",
+        "main PIE (without PT_TLS) -> mid.so -> leaf.so",
+        "GNU-Dynamic TLS",
+        "Variant-II",
+        "DTV",
+        "R_X86_64_DTPMOD64",
+        "R_X86_64_DTPOFF64",
+        "__tls_get_addr",
+        "tls_model(initial-exec)",
+        "DF_STATIC_TLS",
+        "R_X86_64_TPOFF64",
+        "pinned musl 1.2.6",
+        "nonzero TPOFF addend",
+        "DF_STATIC_TLS on the GNU-Dynamic mid",
+        "general static-TLS admission policy",
+        "TLSDESC",
+        "pthread/TCB parity",
+        "dynamic CRT/sysroot",
+        "public x86 support",
+    ):
+        require(phrase in description, f"ldso-initial-exec-tls description omits {phrase}")
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_initial_tls_leaf.c",
+        "compat/x86_64/ldso_initial_tls_mid.c",
+        "compat/x86_64/ldso_initial_tls_main.c",
+        "compat/x86_64/run_ldso_initial_tls.sh",
+        "compat/x86_64/run_ldso_initial_exec_tls.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "ldso-initial-exec-tls source owners"))
+        == expected_sources,
+        "ldso-initial-exec-tls source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-initial-exec-tls"},
+        "ldso-initial-exec-tls must use the dedicated native command",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text()
+    require(
+        "run_ldso_initial_exec_tls.sh" in dispatcher,
+        "ldso-initial-exec-tls dispatcher binding is missing",
+    )
+
+
 def require_ldso_owned_crt_handoff_publication_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet one checked ldso publication wire without loader promotion."""
     artifacts = require_verified_artifacts(
@@ -15266,6 +15337,7 @@ def validate_ledger(
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_initial_exec_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])

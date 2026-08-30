@@ -13,7 +13,7 @@
 //! directories, maps the two ET_DYN images, and processes RELATIVE,
 //! GLOB_DAT, JUMP_SLOT, and the GNU dynamic-TLS DTPMOD64/DTPOFF64 ELF64 RELA
 //! records plus one bounded packed `DT_RELR` stream in the leaf dependency.
-//! The TLS sibling graph first lays out every initial `PT_TLS` image below an
+//! The TLS sibling graphs first lay out every initial `PT_TLS` image below an
 //! x86 Variant-II TP, installs the minimal `%fs:0` self / `%fs:8` DTV prefix,
 //! and resolves `__tls_get_addr`; the original no-TLS graph remains a
 //! deliberately independent fixture. Once all mappings are relocated and
@@ -24,9 +24,11 @@
 //! `src/thread/__tls_get_addr.c`, and `arch/x86_64/reloc.h`. The narrow
 //! relocation set and all exclusions are
 //! deliberate evidence boundaries: the interpreter's own pre-Rust bootstrap
-//! remains `DT_RELA`-only; the one-thread initial TLS slice accepts only GNU
-//! DTPMOD64/DTPOFF64 plus `__tls_get_addr`, and rejects initial-exec/TPOFF,
-//! TLSDESC, DTV growth, `DT_INIT`, main-image constructor dispatch (that
+//! remains `DT_RELA`-only; the GNU-Dynamic initial-TLS slice accepts only
+//! DTPMOD64/DTPOFF64 plus `__tls_get_addr`. Its cfg-isolated initial-exec
+//! sibling additionally admits exactly one leaf-local `R_X86_64_TPOFF64`
+//! definition under `DF_STATIC_TLS`; both reject TLSDESC, DTV growth,
+//! `DT_INIT`, main-image constructor dispatch (that
 //! remains CRT-owned), preload/environment search, `dl*`, audit, secure-exec
 //! filtering, symbolic versioning, or a general dependency graph.
 
@@ -241,6 +243,8 @@ struct Object {
     tls_align: usize,
     tls_offset_below_tp: usize,
     tls_module_id: usize,
+    #[cfg(crabc_initial_exec_tls_graph)]
+    static_tls: bool,
 }
 
 const EMPTY_OBJECT: Object = Object {
@@ -272,6 +276,8 @@ const EMPTY_OBJECT: Object = Object {
     tls_align: 1,
     tls_offset_below_tp: 0,
     tls_module_id: 0,
+    #[cfg(crabc_initial_exec_tls_graph)]
+    static_tls: false,
 };
 
 // The record itself is immutable RELRO data.  The two dynamic values it needs
@@ -426,6 +432,13 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         if objects[2].needed_count != 0 || objects[2].relrsz == 0 {
             fail(b"leafshape\n");
         }
+        // The initial-exec sibling does not turn DF_STATIC_TLS into ambient
+        // admission.  This one fixed graph has exactly one static-TLS leaf;
+        // the TLS-free main and GNU-Dynamic mid are required to remain so.
+        #[cfg(crabc_initial_exec_tls_graph)]
+        if objects[0].static_tls || objects[1].static_tls || !objects[2].static_tls {
+            fail(b"ieshape\n");
+        }
         // Keep module IDs stable in this fixed main -> mid -> leaf graph
         // before relocation writes their GNU-Dynamic DTPMOD/DTPOFF slots. The
         // no-TLS graph retains its old behavior: a layout with no PT_TLS image
@@ -496,9 +509,9 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     let mut dynamic_virtual_address = None;
     let mut dynamic_byte_len = None;
     let mut relro = None;
-    #[cfg(crabc_initial_tls_graph)]
+    #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
     let mut tls: Option<(u64, u64, u64, usize)> = None;
-    #[cfg(not(crabc_initial_tls_graph))]
+    #[cfg(not(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph)))]
     let tls: Option<(u64, u64, u64, usize)> = None;
     for index in 0..phnum {
         let header = phdr.add(index * 56);
@@ -527,9 +540,9 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             // Compile the sibling initial-TLS graph with the explicit cfg so
             // this shared bootstrap source cannot silently widen the older
             // fixture's contract.
-            #[cfg(not(crabc_initial_tls_graph))]
+            #[cfg(not(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph)))]
             PT_TLS => return None,
-            #[cfg(crabc_initial_tls_graph)]
+            #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
             PT_TLS => {
                 if tls.is_some() {
                     return None;
@@ -677,14 +690,24 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
-            // The fixtures use eager relocation; only its corresponding flag
-            // bits are inert here. Symbolic lookup, text relocations, and the
-            // static-TLS admission bit would alter unsupported loader modes.
-            // Initial-exec TLS needs a complete static-TLS admission policy,
-            // so reject DF_STATIC_TLS rather than silently accepting a
-            // TPOFF-encoded object under this GNU-Dynamic-only boundary.
-            DT_FLAGS if value & DF_STATIC_TLS != 0 => return None,
-            DT_FLAGS if value & !DF_BIND_NOW != 0 => return None,
+            // The fixed graphs use eager relocation.  Only the cfg-isolated
+            // initial-exec sibling admits DF_STATIC_TLS, and then the caller
+            // admits it solely for the one fixed leaf below; the established
+            // GNU-Dynamic artifact continues to reject it before any layout
+            // or relocation work.
+            DT_FLAGS => {
+                #[cfg(not(crabc_initial_exec_tls_graph))]
+                if value & DF_STATIC_TLS != 0 {
+                    return None;
+                }
+                if value & !(DF_BIND_NOW | DF_STATIC_TLS) != 0 {
+                    return None;
+                }
+                #[cfg(crabc_initial_exec_tls_graph)]
+                {
+                    object.static_tls = value & DF_STATIC_TLS != 0;
+                }
+            }
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE) != 0 => return None,
             // These imply relocation, finalization, hash, or initialization
             // semantics outside the closed fixture ABI.  Reject before any
@@ -1404,7 +1427,7 @@ unsafe fn relocation_value(
         R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             add_signed(resolve_symbol(requestor, objects, symbol)?, addend)
         }
-        #[cfg(crabc_initial_tls_graph)]
+        #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
         R_X86_64_DTPMOD64 => {
             if addend != 0 {
                 return None;
@@ -1412,7 +1435,7 @@ unsafe fn relocation_value(
             let (module_id, _, _) = resolve_tls_symbol(requestor, objects, symbol)?;
             u64::try_from(module_id).ok()
         }
-        #[cfg(crabc_initial_tls_graph)]
+        #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
         R_X86_64_DTPOFF64 => {
             let (_, symbol_offset, module_memsz) = resolve_tls_symbol(requestor, objects, symbol)?;
             let offset = add_signed(symbol_offset, addend)?;
@@ -1421,19 +1444,74 @@ unsafe fn relocation_value(
             }
             Some(offset)
         }
-        #[cfg(not(crabc_initial_tls_graph))]
+        #[cfg(not(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph)))]
         R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 => None,
+        #[cfg(crabc_initial_exec_tls_graph)]
+        R_X86_64_TPOFF64 => {
+            // The admitted initial-exec relocation is intentionally more
+            // constrained than a generic static-TLS policy: it must be the
+            // fixed leaf's local definition and uses no addend.  That keeps
+            // the established GNU-Dynamic graph and every other TPOFF route
+            // on the fail-closed side of the boundary.
+            if addend != 0
+                || !requestor.static_tls
+                || !relocation_symbol_name_is(requestor, symbol, b"leaf_initial_exec_tls")
+            {
+                return None;
+            }
+            let (module_id, symbol_offset, module_memsz) =
+                resolve_tls_symbol(requestor, objects, symbol)?;
+            let owner = objects
+                .iter()
+                .find(|object| object.tls_module_id == module_id)?;
+            if !owner.static_tls
+                || module_id != requestor.tls_module_id
+                || symbol_offset >= module_memsz as u64
+                || owner.tls_offset_below_tp < owner.tls_memsz
+            {
+                return None;
+            }
+            let symbol_offset = i64::try_from(symbol_offset).ok()?;
+            let placement = i64::try_from(owner.tls_offset_below_tp).ok()?;
+            Some(symbol_offset.checked_sub(placement)? as u64)
+        }
         // Naming these rejected forms makes this source's boundary auditable:
-        // no `DF_STATIC_TLS`/TPOFF admission and no TLSDESC resolver are
-        // implied by the GNU-Dynamic DTV implementation above.
+        // no GOTTPOFF/TPOFF32 admission and no TLSDESC resolver are implied
+        // by the GNU-Dynamic DTV implementation or its fixed-TPOFF sibling.
+        #[cfg(not(crabc_initial_exec_tls_graph))]
         R_X86_64_TPOFF64
         | R_X86_64_GOTTPOFF
         | R_X86_64_TPOFF32
         | R_X86_64_GOTPC32_TLSDESC
         | R_X86_64_TLSDESC_CALL
         | R_X86_64_TLSDESC => None,
+        #[cfg(crabc_initial_exec_tls_graph)]
+        R_X86_64_GOTTPOFF
+        | R_X86_64_TPOFF32
+        | R_X86_64_GOTPC32_TLSDESC
+        | R_X86_64_TLSDESC_CALL
+        | R_X86_64_TLSDESC => None,
         _ => None,
     }
+}
+
+/// The fixed initial-exec sibling admits one named leaf definition.  This is
+/// intentionally fixture topology, not a global symbol-lookup rule.
+#[cfg(crabc_initial_exec_tls_graph)]
+unsafe fn relocation_symbol_name_is(requestor: &Object, index: usize, wanted: &[u8]) -> bool {
+    if index == 0 || index >= requestor.symcount {
+        return false;
+    }
+    let symbol = requestor.symtab.add(index * 24);
+    let name_offset = read_u32(symbol) as usize;
+    if name_offset >= requestor.strsz || *symbol.add(4) & 0x0f != 6 {
+        return false;
+    }
+    let name = requestor.strtab.add(name_offset);
+    matches!(
+        bounded_nul(name, requestor.strsz - name_offset),
+        Some(length) if length == wanted.len() && bytes_eq(name, wanted.as_ptr(), length)
+    )
 }
 
 unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], index: usize) -> Option<u64> {
@@ -1447,7 +1525,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
     // import is resolved by that interpreter only; compile this special scope
     // out of the older no-TLS artifact so it cannot silently widen its
     // ordinary GLOB_DAT/JUMP_SLOT lookup contract.
-    #[cfg(crabc_initial_tls_graph)]
+    #[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
     if len == b"__tls_get_addr".len() && bytes_eq(name, b"__tls_get_addr".as_ptr(), len) {
         return Some(__tls_get_addr as *const () as usize as u64);
     }
@@ -1499,7 +1577,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
 
 /// Resolve a dynamic-symbol-table TLS definition to its fixed-graph module
 /// index and module-relative `st_value` offset.
-#[cfg(crabc_initial_tls_graph)]
+#[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
 unsafe fn resolve_tls_symbol(
     requestor: &Object,
     objects: &[Object; MAX_OBJECTS],
@@ -1785,7 +1863,7 @@ unsafe fn virtual_range_in_page_mapped_load(
 /// segment. `p_memsz` may legitimately extend through BSS, but copying
 /// `p_filesz` from that extension would turn a malformed ELF record into a
 /// speculative read from whatever virtual mapping happens to follow it.
-#[cfg(crabc_initial_tls_graph)]
+#[cfg(any(crabc_initial_tls_graph, crabc_initial_exec_tls_graph))]
 unsafe fn virtual_range_in_readable_file_load(
     phdr: *const u8,
     phnum: usize,

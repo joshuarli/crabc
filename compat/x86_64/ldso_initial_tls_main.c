@@ -2,6 +2,10 @@ extern int mid_tls_value(void);
 extern int mid_tls_bump(void);
 extern long mid_leaf_tls_alignment(void);
 extern int mid_leaf_zero_tls_value(void);
+#if defined(CRABC_INITIAL_EXEC_TLS)
+extern int mid_leaf_initial_exec_tls_value(void);
+extern int mid_leaf_initial_exec_tls_bump(void);
+#endif
 
 #if defined(CRABC_CANDIDATE_TLS_LAYOUT)
 struct crabc_tls_index {
@@ -69,5 +73,9 @@ int main(int argc, char **argv) {
     if (mid_leaf_tls_alignment() != 0) return 43;
     if (mid_leaf_zero_tls_value() != 0) return 44;
     if (mid_tls_bump() != 96) return 45;
+#if defined(CRABC_INITIAL_EXEC_TLS)
+    if (mid_leaf_initial_exec_tls_value() != 31) return 48;
+    if (mid_leaf_initial_exec_tls_bump() != 37) return 49;
+#endif
     return mid_leaf_zero_tls_value() == 5 ? 0 : 46;
 }

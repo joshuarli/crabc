@@ -17,6 +17,29 @@ readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_initial_tls_main.c"
 readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
 readonly MUSL_LIBC_ARCHIVE="/opt/musl-1.2.6/lib/libc.a"
 
+# `run_ldso_initial_exec_tls.sh` selects the cfg-isolated fixed initial-exec
+# sibling.  The established GNU-Dynamic command leaves this unset, so its
+# reject-DF_STATIC_TLS/TPOFF contract remains independently executable.
+readonly INITIAL_EXEC_MODE="${CRABC_LDSO_INITIAL_EXEC_TLS:-0}"
+case "$INITIAL_EXEC_MODE" in
+    0)
+        RUST_TLS_CFG="crabc_initial_tls_graph"
+        LEAF_CPPFLAGS=()
+        MAIN_CPPFLAGS=()
+        artifact_label="initial-TLS"
+        ;;
+    1)
+        RUST_TLS_CFG="crabc_initial_exec_tls_graph"
+        LEAF_CPPFLAGS=(-DCRABC_INITIAL_EXEC_TLS)
+        MAIN_CPPFLAGS=(-DCRABC_INITIAL_EXEC_TLS)
+        artifact_label="initial-exec-TLS"
+        ;;
+    *)
+        printf '%s\n' 'ERROR: CRABC_LDSO_INITIAL_EXEC_TLS must be 0 or 1' >&2
+        exit 2
+        ;;
+esac
+
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     printf '%s\n' 'ERROR: initial-TLS evidence requires native Linux/x86-64' >&2
     exit 2
@@ -37,7 +60,7 @@ fi
 
 # The interpreter itself stays TLS-free: it owns application TLS explicitly
 # and must not accidentally inherit a host thread-runtime contract.
-rustc --edition=2021 --crate-type staticlib --cfg crabc_initial_tls_graph -C panic=abort -C relocation-model=pic \
+rustc --edition=2021 --crate-type staticlib --cfg "$RUST_TLS_CFG" -C panic=abort -C relocation-model=pic \
     "$SOURCE" -o "$work_dir/libinitial_tls_graph.a"
 cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
     -Wl,--whole-archive "$work_dir/libinitial_tls_graph.a" -Wl,--no-whole-archive \
@@ -55,9 +78,10 @@ if grep -Eq '\(NEEDED\)|\(INTERP\)' <<<"$interpreter_dynamic"; then
 fi
 
 cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu -Wl,--hash-style=sysv -Wl,-z,now \
-    -Wl,-z,pack-relative-relocs -Wl,-soname,libleaf-tls.so "$LEAF" -o "$work_dir/libleaf-tls.so"
+    -Wl,-z,pack-relative-relocs -Wl,-soname,libleaf-tls.so "${LEAF_CPPFLAGS[@]}" \
+    "$LEAF" -o "$work_dir/libleaf-tls.so"
 cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu -Wl,--hash-style=sysv -Wl,-z,now \
-    -Wl,-soname,libmid-tls.so -Wl,-rpath,"$work_dir" "$MID" \
+    -Wl,-soname,libmid-tls.so -Wl,-rpath,"$work_dir" "${MAIN_CPPFLAGS[@]}" "$MID" \
     -L"$work_dir" -Wl,--no-as-needed -l:libleaf-tls.so -o "$work_dir/libmid-tls.so"
 
 build_main() {
@@ -70,7 +94,9 @@ build_main() {
         # musl's static __tls_get_addr object into the reference main so its
         # DTV lookup remains a pinned-oracle implementation rather than a
         # harness reimplementation. The candidate receives no such input.
-        musl-reference) linker_inputs=(-Wl,-u,__tls_get_addr "$MUSL_LIBC_ARCHIVE") ;;
+        musl-reference)
+            linker_inputs=(-Wl,-u,__tls_get_addr "$MUSL_LIBC_ARCHIVE")
+            ;;
         # The candidate main directly probes the private resolver's invalid
         # module/offset behavior. Permit that one executable import at link
         # time; the checks below require it to remain exactly an undefined
@@ -83,7 +109,7 @@ build_main() {
     esac
     cc -nostdlib -fPIE -pie -mtls-dialect=gnu -Wl,--hash-style=sysv -Wl,-z,now -Wl,--allow-shlib-undefined \
         -Wl,--dynamic-linker,"$interpreter" -Wl,-rpath,"$work_dir" \
-        "$START" "$MAIN" -L"$work_dir" -Wl,--no-as-needed -l:libmid-tls.so "${linker_inputs[@]}" -o "$output"
+        "${MAIN_CPPFLAGS[@]}" "$START" "$MAIN" -L"$work_dir" -Wl,--no-as-needed -l:libmid-tls.so "${linker_inputs[@]}" -o "$output"
 }
 build_main "$MUSL_LOADER" "$work_dir/main-musl" musl-reference
 build_main "$work_dir/ld-crabc-x86_64-initial-tls.so" "$work_dir/main-crabc" candidate
@@ -153,10 +179,21 @@ for binary in "$work_dir/libmid-tls.so" "$work_dir/libleaf-tls.so"; do
         exit 1
     fi
 done
-require_undefined_dynamic_names "$work_dir/main-crabc" \
-    __tls_get_addr mid_leaf_tls_alignment mid_leaf_zero_tls_value mid_tls_bump mid_tls_value
-require_undefined_dynamic_names "$work_dir/libmid-tls.so" \
-    __tls_get_addr leaf_aligned_tls_alignment leaf_general_tls leaf_tls_bump leaf_tls_value leaf_zero_tls_value
+if [ "$INITIAL_EXEC_MODE" = 0 ]; then
+    require_undefined_dynamic_names "$work_dir/main-crabc" \
+        __tls_get_addr mid_leaf_tls_alignment mid_leaf_zero_tls_value mid_tls_bump mid_tls_value
+else
+    require_undefined_dynamic_names "$work_dir/main-crabc" \
+        __tls_get_addr mid_leaf_initial_exec_tls_bump mid_leaf_initial_exec_tls_value \
+        mid_leaf_tls_alignment mid_leaf_zero_tls_value mid_tls_bump mid_tls_value
+    require_undefined_dynamic_names "$work_dir/libmid-tls.so" \
+        __tls_get_addr leaf_aligned_tls_alignment leaf_general_tls leaf_initial_exec_tls_bump \
+        leaf_initial_exec_tls_value leaf_tls_bump leaf_tls_value leaf_zero_tls_value
+fi
+if [ "$INITIAL_EXEC_MODE" = 0 ]; then
+    require_undefined_dynamic_names "$work_dir/libmid-tls.so" \
+        __tls_get_addr leaf_aligned_tls_alignment leaf_general_tls leaf_tls_bump leaf_tls_value leaf_zero_tls_value
+fi
 require_undefined_dynamic_names "$work_dir/libleaf-tls.so" __tls_get_addr
 
 for binary in "$work_dir/libmid-tls.so" "$work_dir/libleaf-tls.so"; do
@@ -183,9 +220,22 @@ if ! grep -Fq '(RELR)' <<<"$leaf_dynamic"; then
     printf '%s\n' 'ERROR: TLS leaf did not retain the fixed graph RELR boundary' >&2
     exit 1
 fi
-if grep -Eq 'R_X86_64_(TPOFF64|TPOFF32|GOTTPOFF|TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$relocations"; then
-    printf '%s\n' 'ERROR: initial-TLS fixture escaped its GNU-Dynamic relocation boundary' >&2
-    exit 1
+if [ "$INITIAL_EXEC_MODE" = 0 ]; then
+    if grep -Eq 'R_X86_64_(TPOFF64|TPOFF32|GOTTPOFF|TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$relocations"; then
+        printf '%s\n' 'ERROR: initial-TLS fixture escaped its GNU-Dynamic relocation boundary' >&2
+        exit 1
+    fi
+else
+    leaf_relocations="$(readelf -rW "$work_dir/libleaf-tls.so")"
+    if ! grep -Fq 'R_X86_64_TPOFF64' <<<"$leaf_relocations" \
+        || grep -Eq 'R_X86_64_(TPOFF32|GOTTPOFF|TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$relocations"; then
+        printf '%s\n' 'ERROR: initial-exec fixture did not retain exactly its TPOFF64 boundary' >&2
+        exit 1
+    fi
+    if ! grep -Fq 'STATIC_TLS' <<<"$leaf_dynamic"; then
+        printf '%s\n' 'ERROR: initial-exec leaf lacks DF_STATIC_TLS' >&2
+        exit 1
+    fi
 fi
 
 main_musl_interpreter="$(readelf -lW "$work_dir/main-musl" | sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p')"
@@ -404,22 +454,61 @@ write_u64_le "$work_dir/libleaf-tls.so" $((dtpoff_info_offset + 8)) $((tls_memsz
 expect_candidate_rejection 'reloc'
 mv "$work_dir/libleaf-tls-valid.so" "$work_dir/libleaf-tls.so"
 
-# DF_STATIC_TLS would authorize the unsupported TPOFF static-layout route.
-# Change only the leaf's otherwise inert eager-binding flags word and require
-# parse-time rejection before this fixed graph reaches relocation or main.
+# DF_STATIC_TLS is rejected by the GNU-Dynamic artifact.  The cfg-isolated
+# initial-exec sibling instead requires it only on the one static leaf, so
+# clearing it proves that TPOFF cannot bypass the fixed topology check.
 cp "$work_dir/libleaf-tls.so" "$work_dir/libleaf-tls-valid.so"
 flags_dynamic_entry="$(dynamic_entry_offset "$work_dir/libleaf-tls.so" 000000000000001e || true)"
 if [ -z "$flags_dynamic_entry" ]; then
     printf '%s\n' 'ERROR: fixture has no DT_FLAGS entry for static-TLS mutation' >&2
     exit 1
 fi
-printf '\020\000\000\000\000\000\000\000' | dd of="$work_dir/libleaf-tls.so" bs=1 seek=$((flags_dynamic_entry + 8)) conv=notrunc status=none
-leaf_dynamic="$(readelf -dW "$work_dir/libleaf-tls.so")"
-if ! grep -Fq 'STATIC_TLS' <<<"$leaf_dynamic"; then
-    printf '%s\n' 'ERROR: DF_STATIC_TLS mutation did not take effect' >&2
-    exit 1
+if [ "$INITIAL_EXEC_MODE" = 0 ]; then
+    printf '\020\000\000\000\000\000\000\000' | dd of="$work_dir/libleaf-tls.so" bs=1 seek=$((flags_dynamic_entry + 8)) conv=notrunc status=none
+else
+    printf '\010\000\000\000\000\000\000\000' | dd of="$work_dir/libleaf-tls.so" bs=1 seek=$((flags_dynamic_entry + 8)) conv=notrunc status=none
 fi
-expect_candidate_rejection 'leafmap'
+leaf_dynamic="$(readelf -dW "$work_dir/libleaf-tls.so")"
+if [ "$INITIAL_EXEC_MODE" = 0 ]; then
+    if ! grep -Fq 'STATIC_TLS' <<<"$leaf_dynamic"; then
+        printf '%s\n' 'ERROR: DF_STATIC_TLS mutation did not take effect' >&2
+        exit 1
+    fi
+    expect_candidate_rejection 'leafmap'
+else
+    if grep -Fq 'STATIC_TLS' <<<"$leaf_dynamic"; then
+        printf '%s\n' 'ERROR: initial-exec DF_STATIC_TLS clearing did not take effect' >&2
+        exit 1
+    fi
+    expect_candidate_rejection 'ieshape'
+fi
 mv "$work_dir/libleaf-tls-valid.so" "$work_dir/libleaf-tls.so"
 
-printf '%s\n' 'x86 initial TLS loader graph PT_TLS/DTPMOD/DTPOFF/TPOFF/static-TLS boundary: PASS'
+if [ "$INITIAL_EXEC_MODE" = 1 ]; then
+    # The one admitted TPOFF64 carries no addend.  A nonzero addend would
+    # escape this artifact's exact one-definition layout even though it stays
+    # numerically inside the leaf's PT_TLS image.
+    cp "$work_dir/libleaf-tls.so" "$work_dir/libleaf-tls-valid.so"
+    tpoff_info_offset="$(rela_info_offset_for_type "$work_dir/libleaf-tls.so" 18 || true)"
+    if [ -z "$tpoff_info_offset" ]; then
+        printf '%s\n' 'ERROR: initial-exec leaf has no TPOFF64 record to mutate' >&2
+        exit 1
+    fi
+    write_u64_le "$work_dir/libleaf-tls.so" $((tpoff_info_offset + 8)) 1
+    expect_candidate_rejection 'reloc'
+    mv "$work_dir/libleaf-tls-valid.so" "$work_dir/libleaf-tls.so"
+
+    # A static-TLS flag on the GNU-Dynamic mid would widen the fixed leaf-only
+    # policy.  Mutate no relocation or dependency edge and require rejection.
+    cp "$work_dir/libmid-tls.so" "$work_dir/libmid-tls-valid.so"
+    mid_flags_dynamic_entry="$(dynamic_entry_offset "$work_dir/libmid-tls.so" 000000000000001e || true)"
+    if [ -z "$mid_flags_dynamic_entry" ]; then
+        printf '%s\n' 'ERROR: initial-exec mid has no DT_FLAGS entry to mutate' >&2
+        exit 1
+    fi
+    printf '\030\000\000\000\000\000\000\000' | dd of="$work_dir/libmid-tls.so" bs=1 seek=$((mid_flags_dynamic_entry + 8)) conv=notrunc status=none
+    expect_candidate_rejection 'ieshape'
+    mv "$work_dir/libmid-tls-valid.so" "$work_dir/libmid-tls.so"
+fi
+
+printf '%s\n' "x86 $artifact_label loader graph PT_TLS/DTPMOD/DTPOFF/TPOFF/static-TLS boundary: PASS"
