@@ -119,6 +119,12 @@ using crabc_pthread_self_signature = pthread_t (*)();
 using crabc_pthread_equal_signature = int (*)(pthread_t, pthread_t);
 using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
 using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
+using crabc_pthread_mutex_init_signature = int (*)(
+	pthread_mutex_t *, const pthread_mutexattr_t *);
+using crabc_pthread_mutex_destroy_signature = int (*)(pthread_mutex_t *);
+using crabc_pthread_mutex_lock_signature = int (*)(pthread_mutex_t *);
+using crabc_pthread_mutex_trylock_signature = int (*)(pthread_mutex_t *);
+using crabc_pthread_mutex_unlock_signature = int (*)(pthread_mutex_t *);
 using crabc_thrd_create_signature = int (*)(thrd_t *, thrd_start_t, void *);
 using crabc_thrd_detach_signature = int (*)(thrd_t);
 using crabc_thrd_join_signature = int (*)(thrd_t, int *);
@@ -140,6 +146,16 @@ static_assert(__is_same(decltype(&pthread_equal), crabc_pthread_equal_signature)
 	"pthread_equal signature");
 static_assert(__is_same(decltype(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+static_assert(__is_same(decltype(&pthread_mutex_init),
+	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
+static_assert(__is_same(decltype(&pthread_mutex_destroy),
+	crabc_pthread_mutex_destroy_signature), "pthread_mutex_destroy signature");
+static_assert(__is_same(decltype(&pthread_mutex_lock),
+	crabc_pthread_mutex_lock_signature), "pthread_mutex_lock signature");
+static_assert(__is_same(decltype(&pthread_mutex_trylock),
+	crabc_pthread_mutex_trylock_signature), "pthread_mutex_trylock signature");
+static_assert(__is_same(decltype(&pthread_mutex_unlock),
+	crabc_pthread_mutex_unlock_signature), "pthread_mutex_unlock signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
 static_assert(__is_same(decltype(&pthread_sigmask),
 	crabc_pthread_sigmask_signature), "pthread_sigmask signature");
@@ -180,6 +196,16 @@ static crabc_pthread_self_signature const crabc_force_pthread_self
 	__attribute__((used)) = &pthread_self;
 static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
+static crabc_pthread_mutex_init_signature const crabc_force_pthread_mutex_init
+	__attribute__((used)) = &pthread_mutex_init;
+static crabc_pthread_mutex_destroy_signature const crabc_force_pthread_mutex_destroy
+	__attribute__((used)) = &pthread_mutex_destroy;
+static crabc_pthread_mutex_lock_signature const crabc_force_pthread_mutex_lock
+	__attribute__((used)) = &pthread_mutex_lock;
+static crabc_pthread_mutex_trylock_signature const crabc_force_pthread_mutex_trylock
+	__attribute__((used)) = &pthread_mutex_trylock;
+static crabc_pthread_mutex_unlock_signature const crabc_force_pthread_mutex_unlock
+	__attribute__((used)) = &pthread_mutex_unlock;
 static crabc_thrd_create_signature const crabc_force_thrd_create
 	__attribute__((used)) = &thrd_create;
 static crabc_thrd_detach_signature const crabc_force_thrd_detach

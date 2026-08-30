@@ -221,6 +221,9 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate retains a dynamic TLS model or unowned runtime dependency"
 fi
+# The archive carries a separately recorded private normal-mutex artifact,
+# but this final Static Initial TLS v1 candidate must not pull that sibling
+# block merely to establish its template/bootstrap contract.
 for unselected in clone __clone \
     pthread_cancel pthread_key_create pthread_mutex_init malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$candidate_symbols"; then

@@ -137,6 +137,12 @@ typedef int (*crabc_pthread_detach_signature)(pthread_t);
 typedef int (*crabc_pthread_equal_signature)(pthread_t, pthread_t);
 typedef int (*crabc_pthread_getcpuclockid_signature)(pthread_t, clockid_t *);
 typedef int (*crabc_pthread_sigmask_signature)(int, const sigset_t *, sigset_t *);
+typedef int (*crabc_pthread_mutex_init_signature)(
+	pthread_mutex_t *, const pthread_mutexattr_t *);
+typedef int (*crabc_pthread_mutex_destroy_signature)(pthread_mutex_t *);
+typedef int (*crabc_pthread_mutex_lock_signature)(pthread_mutex_t *);
+typedef int (*crabc_pthread_mutex_trylock_signature)(pthread_mutex_t *);
+typedef int (*crabc_pthread_mutex_unlock_signature)(pthread_mutex_t *);
 typedef int (*crabc_thrd_create_signature)(thrd_t *, thrd_start_t, void *);
 typedef int (*crabc_thrd_detach_signature)(thrd_t);
 typedef int (*crabc_thrd_join_signature)(thrd_t, int *);
@@ -158,6 +164,16 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_equal), crabc_pthread_equal_sig
 	"pthread_equal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_init),
+	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_destroy),
+	crabc_pthread_mutex_destroy_signature), "pthread_mutex_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_lock),
+	crabc_pthread_mutex_lock_signature), "pthread_mutex_lock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_trylock),
+	crabc_pthread_mutex_trylock_signature), "pthread_mutex_trylock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_mutex_unlock),
+	crabc_pthread_mutex_unlock_signature), "pthread_mutex_unlock signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_sigmask),
 	crabc_pthread_sigmask_signature), "pthread_sigmask signature");

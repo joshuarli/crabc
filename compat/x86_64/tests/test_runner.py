@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-thrd-sleep|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-thrd-sleep|libc-pthread-mutex-normal|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -99,6 +99,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-create-join-tls", source)
         self.assertIn("libc-pthread-detach", source)
         self.assertIn("libc-thrd-sleep", source)
+        self.assertIn("libc-pthread-mutex-normal", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -2968,7 +2969,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(symbol, static_export_names)
         for forbidden in (
             "pthread_cancel",
-            "pthread_mutex_init",
+            "pthread_cond_init",
         ):
             self.assertNotIn(forbidden, static_export_names)
         self.assertIn("libc-pthread-create-join-tls", runner)
@@ -3435,6 +3436,234 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-thrd-sleep)\n        [ "$#" -eq 0 ] || fail "libc-thrd-sleep takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
+        self,
+    ) -> None:
+        """Keep the selected normal mutex apart from pthread/C11 promotion."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        atomic = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "atomic.rs"
+        ).read_text(encoding="utf-8")
+        pthread_mutex = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_mutex.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_mutex_normal_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_mutex_normal_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_mutex_normal.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing normal mutex artifact input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "atomic.rs"]', static_root)
+        self.assertIn('#[path = "pthread_mutex.rs"]', static_root)
+        for required in (
+            "AtomicI32::from_ptr",
+            "x86_64_load_acquire_i32",
+            "x86_64_load_relaxed_i32",
+            "x86_64_compare_exchange_acqrel_i32",
+            "x86_64_swap_acqrel_i32",
+            "x86_64_fetch_add_acqrel_i32",
+            "x86_64_fetch_sub_acqrel_i32",
+            "normal-mutex artifact",
+        ):
+            self.assertIn(required, atomic)
+        self.assertNotIn("#[no_mangle]", atomic)
+
+        for required in (
+            "1.2.6 release commit",
+            "src/thread/pthread_mutex_init.c",
+            "src/thread/pthread_mutex_trylock.c::__pthread_mutex_trylock",
+            "src/thread/pthread_mutex_lock.c::__pthread_mutex_lock",
+            "src/thread/pthread_mutex_timedlock.c::__pthread_mutex_timedlock",
+            "src/thread/pthread_mutex_unlock.c::__pthread_mutex_unlock",
+            "src/thread/pthread_mutex_destroy.c",
+            "process-private `PTHREAD_MUTEX_NORMAL`",
+            "struct PublicPthreadMutex",
+            "#[repr(C, align(8))]",
+            "MUTEX_TYPE_WORD: usize = 0",
+            "MUTEX_LOCK_WORD: usize = 1",
+            "MUTEX_WAITERS_WORD: usize = 2",
+            "MUTEX_WORD_COUNT: usize = 10",
+            "MUTEX_WAITER_BIT: c_int = c_int::MIN",
+            "size_of::<PublicPthreadMutex>() == 40",
+            "align_of::<PublicPthreadMutex>() == 8",
+            "FUTEX_WAIT_PRIVATE",
+            "FUTEX_WAKE_PRIVATE",
+            "raw_syscall::SYS_FUTEX",
+            "raw_syscall::syscall4(",
+            "x86_64_compare_exchange_acqrel_i32",
+            "x86_64_swap_acqrel_i32",
+            "x86_64_fetch_add_acqrel_i32",
+            "x86_64_fetch_sub_acqrel_i32",
+            "pub unsafe extern \"C\" fn pthread_mutex_init",
+            "pub unsafe extern \"C\" fn pthread_mutex_destroy",
+            "pub unsafe extern \"C\" fn pthread_mutex_trylock",
+            "pub unsafe extern \"C\" fn pthread_mutex_lock",
+            "pub unsafe extern \"C\" fn pthread_mutex_unlock",
+            "return ENOTSUP;",
+            "public pthread boundary never writes C `errno`",
+            "public x86 support",
+        ):
+            self.assertIn(required, pthread_mutex)
+        mutex_exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                pthread_mutex,
+            )
+        )
+        self.assertSetEqual(
+            mutex_exports,
+            {
+                "pthread_mutex_init",
+                "pthread_mutex_destroy",
+                "pthread_mutex_trylock",
+                "pthread_mutex_lock",
+                "pthread_mutex_unlock",
+            },
+        )
+        for forbidden in (
+            "pub unsafe extern \"C\" fn pthread_mutexattr_",
+            "pub unsafe extern \"C\" fn pthread_mutex_timedlock",
+            "pub unsafe extern \"C\" fn pthread_cond_",
+            "pub unsafe extern \"C\" fn pthread_rwlock_",
+            "pub unsafe extern \"C\" fn pthread_once",
+            "pub unsafe extern \"C\" fn mtx_",
+            "pthread_self",
+            "SYS_GETTID",
+            "__tls_get_addr",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, pthread_mutex)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "WORKER_COUNT = 2",
+            "CONTENTION_ROUNDS = 6",
+            "static pthread_mutex_t static_normal_mutex = PTHREAD_MUTEX_INITIALIZER;",
+            "run_static_initializer_probe",
+            "pthread_mutex_init(&round.mutex, 0)",
+            "pthread_mutex_trylock(&round.mutex) != EBUSY",
+            "critical_overlap",
+            "errno = E2BIG",
+            "errno != E2BIG",
+            "CRABC_PTHREAD_MUTEX_NORMAL_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("#include <threads.h>", probe)
+
+        for required in (
+            ".globl _start",
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_mutex_normal_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_types_header_abi.sh",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-DCRABC_PTHREAD_MUTEX_NORMAL_FREESTANDING",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "timeout \"$EXECUTION_TIMEOUT\"",
+            "lock[[:space:]]+cmpxchg",
+            "futex syscall number 202",
+            "FUTEX_WAIT_PRIVATE",
+            "FUTEX_WAKE_PRIVATE",
+            "atomic exchange release",
+            "pthread_mutexattr_init",
+            "pthread_cond_init",
+            "pthread_rwlock_init",
+            "pthread_once",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {
+                "pthread_mutex_init",
+                "pthread_mutex_destroy",
+                "pthread_mutex_trylock",
+                "pthread_mutex_lock",
+                "pthread_mutex_unlock",
+            }
+            <= static_exports
+        )
+        self.assertTrue(
+            {
+                "pthread_mutexattr_init",
+                "pthread_mutex_timedlock",
+                "pthread_cond_init",
+                "pthread_rwlock_init",
+                "pthread_once",
+                "mtx_init",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_mutex_init_signature",
+                "crabc_pthread_mutex_destroy_signature",
+                "crabc_pthread_mutex_lock_signature",
+                "crabc_pthread_mutex_trylock_signature",
+                "crabc_pthread_mutex_unlock_signature",
+                "pthread_mutex_init signature",
+                "pthread_mutex_destroy signature",
+                "pthread_mutex_lock signature",
+                "pthread_mutex_trylock signature",
+                "pthread_mutex_unlock signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn('id = "static-c-pthread-normal-mutex"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-mutex-normal"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_mutex_normal_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_mutex_normal.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-mutex-normal)\n        [ "$#" -eq 0 ] || fail "libc-pthread-mutex-normal takes no arguments"',
             runner,
         )
 
@@ -7046,8 +7275,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
             excluded_exports: set[str] = set()
             for match in re.finditer(
-                r"for unselected in\s+(.*?);\s*do", source, re.DOTALL
+                r"for unselected in\s+(.*?);\s*do\s*(.*?)\s*done",
+                source,
+                re.DOTALL,
             ):
+                # A freestanding candidate may deliberately prove that it did
+                # not pull an unrelated archive sibling. Only archive-surface
+                # exclusions must track the shared export manifest.
+                if "$candidate_symbols" in match.group(2):
+                    continue
                 excluded_exports.update(
                     token for token in match.group(1).split() if token != "\\"
                 )

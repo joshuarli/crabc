@@ -1,15 +1,49 @@
-//! Linux/x86-64 source-only C-ABI atomic helpers.
+//! Linux/x86-64 C-ABI atomic helpers.
 //!
-//! This leaf is deliberately not selected by the separately evidenced x86
-//! static `crabc-libc` composition. The complete public C runtime remains
-//! Linux/AArch64-only until the x86 runtime is proven. The standalone native
-//! probe includes this exact module to establish the i32 helper contract
-//! without claiming a general x86 libc artifact.
+//! The standalone native probe established this exact i32 helper contract
+//! before it was admitted to the selected static archive. It now serves the
+//! private normal-mutex artifact as well, but remains far smaller than a
+//! general C atomic or pthread synchronization runtime. The complete public
+//! C runtime remains Linux/AArch64-only until every x86 promotion gate passes.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 atomic leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
+use core::sync::atomic::{AtomicI32, Ordering};
+
+/// Load one aligned `i32` with acquire ordering.
+///
+/// x86's ordinary aligned 32-bit load is already acquire-compatible under
+/// TSO. Using `AtomicI32::from_ptr` makes the C object's concurrent-access
+/// contract explicit to Rust without manufacturing a mutable reference to
+/// caller-owned storage.
+///
+/// # Safety
+///
+/// `address` must point to live, four-byte-aligned atomic storage. Every
+/// concurrent access to that storage must be atomic and compatible with this
+/// acquire ordering.
+#[inline(always)]
+pub(crate) unsafe fn x86_64_load_acquire_i32(address: *const c_int) -> c_int {
+    // SAFETY: the caller supplies a live aligned C atomic word and retains
+    // the complete concurrent-access contract for its lifetime.
+    unsafe { AtomicI32::from_ptr(address.cast_mut()) }.load(Ordering::Acquire)
+}
+
+/// Load one aligned `i32` as a relaxed bookkeeping hint.
+///
+/// # Safety
+///
+/// `address` must point to live, four-byte-aligned atomic storage. Every
+/// concurrent access to that storage must be atomic and compatible with this
+/// relaxed operation.
+#[inline(always)]
+pub(crate) unsafe fn x86_64_load_relaxed_i32(address: *const c_int) -> c_int {
+    // SAFETY: the caller supplies a live aligned C atomic word and retains
+    // the complete concurrent-access contract for its lifetime.
+    unsafe { AtomicI32::from_ptr(address.cast_mut()) }.load(Ordering::Relaxed)
+}
 
 /// Compare one aligned `i32` with an x86 locked `cmpxchg`.
 ///

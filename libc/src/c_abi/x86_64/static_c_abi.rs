@@ -7,7 +7,8 @@
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask
 //! and bounded process-signal execution, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
-//! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, both backed by the private
+//! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
+//! process-private normal `pthread_mutex_*` block, all backed by the private
 //! Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
@@ -30,7 +31,9 @@
 //! C++/DSO destruction, or a concurrent process-exit protocol. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path, plus prompt detach with later
-//! clear-child-tid reaping and opaque current/equality identity. The C11
+//! clear-child-tid reaping and opaque current/equality identity. The mutex
+//! block is limited to all-zero/NULL-attribute process-private normal mutexes
+//! and private futex contention; it is not C11 synchronization. The C11
 //! lifecycle/sleep sibling likewise remains a static-only typed worker and
 //! direct non-cancellation realtime-sleep slice;
 //! neither is a claim for broader pthread/C11 header support.
@@ -45,6 +48,8 @@ compile_error!("the selected static C ABI requires little-endian Linux/x86-64");
 
 #[path = "errno.rs"]
 mod errno;
+#[path = "atomic.rs"]
+mod atomic;
 #[allow(dead_code)]
 #[path = "syscall.rs"]
 mod raw_syscall;
@@ -94,6 +99,8 @@ mod signal_execution;
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
+#[path = "pthread_mutex.rs"]
+mod pthread_mutex;
 #[path = "c11_thread_lifecycle.rs"]
 mod c11_thread_lifecycle;
 #[path = "termios_control.rs"]

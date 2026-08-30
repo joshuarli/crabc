@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has eight private static artifacts inside still-planned
+The x86 lane now has nine private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -68,7 +68,21 @@ candidate-only diagnostics, not pthread/C11 parity. The separate
 `errno`. Its pinned-musl/reference and static-candidate route also proves a
 SIGALRM interruption with a positive remaining interval. It does not select
 `thrd_yield`, cancellation cleanup, C11 lifecycle/synchronization/TSS,
-dynamic/loader TLS, CRT, sysroot, or public x86 support. The CRT-composition artifact,
+dynamic/loader TLS, CRT, sysroot, or public x86 support. The separate
+`./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a ninth private static
+`verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
+`pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record
+through `pthread_mutex_init`/`destroy`/`lock`/`trylock`/`unlock`. Its exact
+lock word progresses from `0` to `EBUSY` and, under contention, to
+`EBUSY|INT_MIN`; private `FUTEX_WAIT_PRIVATE`/`FUTEX_WAKE_PRIVATE` handoff
+coordinates the selected workers. The pinned-musl and true static-candidate
+fixture proves held-lock `EBUSY`, caller-`errno` preservation, and mutual
+exclusion across six bounded two-worker rounds. Non-null attributes or a
+nonzero type word return `ENOTSUP` rather than selecting another mutex type.
+It excludes mutex attributes, recursive/error-checking/robust/PI/
+process-shared/timed mutexes, C11 mutexes, condition variables, cancellation,
+dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
+full pthread/TLS or x86-64 parity, and public x86 support. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls
