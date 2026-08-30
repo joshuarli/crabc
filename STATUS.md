@@ -1102,6 +1102,11 @@ through the no-page finalizer, and neither does a typed post-exit route or its
 admission claim. Isolated source-published-session regressions warm ticket
 zero, publish either one or two joined private clients, and prove that normal
 finish force-collects them before it tears down A and reopens ticket zero.
+When a joined source-published client coexists with a distinct live native
+client, the native finish still selects the typed route for the live subset:
+the source drain consumes the published head before A detaches, and only B's
+terminal route proof plus B's own finish releases A's admission. The direct
+`native_source_published_live_owner_exit` regression proves that split.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

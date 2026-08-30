@@ -122,6 +122,9 @@ pub mod __crabc_runtime {
         NativeRuntimeTestUnmapFailure, native_runtime_test_fail_next_unmap,
     };
 
+    #[cfg(feature = "native-runtime-test-published-source")]
+    pub use crate::runtime_lifecycle::native_test_prepare_source_published_live_owner_exit;
+
     pub use crate::runtime_lifecycle::{
         ThreadAttachResult, ThreadFinishResult, TicketZeroLaterThreadPageResult,
         TicketZeroOwnerExitFreeConsumer, TicketZeroOwnerExitFreeOutcome,

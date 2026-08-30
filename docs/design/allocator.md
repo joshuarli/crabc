@@ -967,6 +967,11 @@ zero to ready. The selected-C `native_mimalloc_source_published_exit` companion
 narrows that same boundary to one A/B handoff: B publishes A's sole direct-small
 client, A performs no later local allocator operation, and its ordinary pthread
 finish must still complete the typed all-free drain before ticket zero resumes.
+When a joined source-published client has a distinct live native sibling, the
+native destructor force-collects the source head during the same exit traversal
+and transfers only the live sibling into the deferred route. B cannot name the
+collected source client, and its terminal route proof still precedes release of
+A's admission.
 For the two source-valid post-exit B/C/D interleavings, the same session can
 move exactly three generation-checked opaque ledger keys into either its
 direct-small group or its separately typed mapped, non-full medium group.

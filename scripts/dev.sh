@@ -520,6 +520,14 @@ case "$command" in
             --features native-runtime-test-audit,native-runtime-test-fault \
             --test native_post_exit_failed_os_release \
             -- --test-threads=1
+        # A joined source publication remains A-only even when one distinct
+        # native client must cross A's deferred post-exit route. The direct
+        # setup seam is feature-gated so normal builds expose no publication
+        # capability.
+        run_in_container cargo test -p crabc-mimalloc \
+            --features native-runtime-test-published-source \
+            --test native_source_published_live_owner_exit \
+            -- --test-threads=1
         run_in_container env RUSTC_WRAPPER="/workspace/scripts/rustc_test_host_tool_wrapper.sh" \
             python3 scripts/run_owned_test_suite.py \
             --sysroot target/crabc-sysroot \

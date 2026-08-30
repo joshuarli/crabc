@@ -2106,6 +2106,13 @@ A performs no further allocator operation, so its ordinary pthread destructor
 must still force-collect the source head through the typed all-free drain
 before ticket zero can reactivate. It exposes no additional pointer or page
 capability.
+The feature-gated direct
+`native_source_published_live_owner_exit` regression covers the mixed
+ownership boundary: A's joined direct-small source publication remains solely
+for A's collector while a distinct live medium client enters the typed native
+post-exit route. B receives only that medium address, and its terminal free
+plus normal finish is still required before A's admission and ticket zero can
+release.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The

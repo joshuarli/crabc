@@ -53,7 +53,11 @@ source-published client is not a no-page
 finalizer input. A session with no locally live client may instead enter a
 distinct all-free page drain: locally freed entries no longer own a client,
 while any retired source page releases in its `_mi_theap_collect_retired`
-prepass and joined source-published entries remain for source collection. It resumes its exact parked
+prepass and joined source-published entries remain for source collection. If a
+joined source-published entry coexists with a locally live native client, the
+same source drain collects the former before the latter alone transfers into
+the typed post-exit route; B's terminal proof still gates A's admission
+release. It resumes its exact parked
 engine, clears the source fast slot, finishes its PageMap/attachment teardown,
 and only then releases its worker admission. A prepared-exit state enters the
 aggregate traversal
@@ -2443,7 +2447,10 @@ low-bit claim. This keeps every client address and route selection private and
 prevents a live session from reaching the no-page finalizer. A
 source-published-only session likewise stays page-bearing: its typed all-free
 drain runs the source retired-page prepass, then force-collects the joined
-remote heads before it releases A's admission.
+remote heads before it releases A's admission. When that joined source head
+has a distinct live native sibling, the native destructor takes the same
+source traversal but moves only the sibling into its deferred route; the
+source-published client remains unnameable to B.
 Separate isolated regressions warm ticket zero, publish either one or two
 joined private clients from an active session without preparing exit, and prove
 normal finish collects them, tears down A, and returns ticket zero to ready.
