@@ -891,11 +891,6 @@ SYSV_SEMAPHORE_NO_ARGUMENT_COMMANDS = (
 )
 
 SYSV_SEMAPHORE_UNSELECTED_SYMBOLS = (
-    "ftok",
-    "msgctl",
-    "msgget",
-    "msgrcv",
-    "msgsnd",
     "sem_close",
     "sem_destroy",
     "sem_getvalue",
@@ -906,10 +901,41 @@ SYSV_SEMAPHORE_UNSELECTED_SYMBOLS = (
     "sem_trywait",
     "sem_unlink",
     "sem_wait",
-    "shmat",
-    "shmctl",
-    "shmdt",
+)
+
+SYSV_MESSAGE_SHARED_MEMORY_SYMBOLS = (
+    "ftok",
+    "msgget",
+    "msgsnd",
+    "msgrcv",
+    "msgctl",
     "shmget",
+    "shmat",
+    "shmdt",
+    "shmctl",
+)
+
+SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS = (
+    "mq_close",
+    "mq_getattr",
+    "mq_notify",
+    "mq_open",
+    "mq_receive",
+    "mq_send",
+    "mq_setattr",
+    "mq_timedreceive",
+    "mq_timedsend",
+    "mq_unlink",
+    "sem_close",
+    "sem_destroy",
+    "sem_getvalue",
+    "sem_init",
+    "sem_open",
+    "sem_post",
+    "sem_timedwait",
+    "sem_trywait",
+    "sem_unlink",
+    "sem_wait",
 )
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -7074,7 +7100,7 @@ def require_sysv_semaphore_artifact(family: Mapping[str, Any]) -> None:
     selected = set(SYSV_SEMAPHORE_SYMBOLS)
     require(
         selected <= static_exports,
-        "static-c-sysv-semaphore must retain exactly its four selected exports",
+        "static-c-sysv-semaphore must retain its four selected exports",
     )
     require(
         not (static_exports & set(SYSV_SEMAPHORE_UNSELECTED_SYMBOLS)),
@@ -7132,6 +7158,243 @@ def require_sysv_semaphore_artifact(family: Mapping[str, Any]) -> None:
             )
         ),
         "static-c-sysv-semaphore evidence must retain its exact variadic IPC_CMD runtime regression",
+    )
+
+
+def require_sysv_message_shared_memory_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected SysV message/shared-memory artifact private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-sysv-message-shared-memory"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sysv-message-shared-memory artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sysv-message-shared-memory must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in SYSV_MESSAGE_SHARED_MEMORY_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-sysv-message-shared-memory description omits {symbol}",
+        )
+    for phrase in (
+        "SysV message/shared-memory block",
+        "message queues",
+        "shared memory",
+        "POSIX message queues",
+        "cancellation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sysv-message-shared-memory description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-sysv-message-shared-memory.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stat_compat.rs",
+        "libc/src/c_abi/x86_64/sysv_message_shared_memory.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/stdint.h",
+        "include/sys/ipc.h",
+        "include/sys/msg.h",
+        "include/sys/prctl.h",
+        "include/sys/shm.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sysv_message_shared_memory_header_abi_probe.c",
+        "compat/x86_64/sysv_message_shared_memory_header_abi_probe.cpp",
+        "compat/x86_64/run_sysv_message_shared_memory_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sysv_message_shared_memory_probe.c",
+        "compat/x86_64/libc_sysv_message_shared_memory_start.S",
+        "compat/x86_64/run_libc_sysv_message_shared_memory.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sysv-message-shared-memory source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sysv-message-shared-memory.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "msgget=68" in item
+            and "msgsnd=69" in item
+            and "msgrcv=70" in item
+            and "msgctl=71" in item
+            and "shmget=29" in item
+            and "shmat=30" in item
+            and "shmdt=67" in item
+            and "shmctl=31" in item
+            and "r10" in item
+            and "r8" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-message-shared-memory must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "src/ipc/ftok.c" in item
+            and "st_ino" in item
+            and "st_dev" in item
+            and "project-id" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-message-shared-memory must record the ftok source formula",
+    )
+    require(
+        any(
+            "arch/x86_64/syscall_arch.h" in item
+            and "src/ipc/ipc.h" in item
+            and "`IPC_64=0`" in item
+            and "`IPC_TIME64=0`" in item
+            and "`IPC_CMD(cmd)=((cmd & ~IPC_TIME64) | IPC_64)=cmd`" in item
+            and "no `0x100` marker" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-message-shared-memory must record exact musl x86 IPC_CMD normalization",
+    )
+    require(
+        any(
+            "PTRDIFF_MAX" in item
+            and "SIZE_MAX" in item
+            and "shmget" in item
+            and "MAP_FAILED" in item
+            and "(void *)-1" in item
+            and "shmat" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-message-shared-memory must record musl shmget and shmat behavior",
+    )
+    require(
+        any(
+            "msgsnd" in item
+            and "msgrcv" in item
+            and "cancellation" in item
+            and "direct static leaf" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-message-shared-memory must record its cancellation boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sysv-message-shared-memory.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "sys/ipc.h" in item
+            and "sys/msg.h" in item
+            and "sys/shm.h" in item
+            and "msgbuf" in item
+            and "GNU-only" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-sysv-message-shared-memory must record its direct SysV header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SYSV_MESSAGE_SHARED_MEMORY_SYMBOLS) <= static_exports,
+        "static-c-sysv-message-shared-memory must retain its nine selected exports",
+    )
+    require(
+        not (static_exports & set(SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS)),
+        "static-c-sysv-message-shared-memory must not add unselected POSIX IPC or semaphore exports",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/ipc/ftok.c",
+                    "src/ipc/msgget.c",
+                    "msgsnd.c",
+                    "msgrcv.c",
+                    "msgctl.c",
+                    "src/ipc/shmget.c",
+                    "shmat.c",
+                    "shmdt.c",
+                    "shmctl.c",
+                    "src/ipc/ipc.h",
+                    "arch/x86_64/syscall_arch.h",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-sysv-message-shared-memory must retain its pinned-musl IPC source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sysv-message-shared-memory"},
+        "static-c-sysv-message-shared-memory must use the closed libc-sysv-message-shared-memory command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "ftok",
+                "message queue",
+                "shared-memory",
+                "r10/r8",
+                "PTRDIFF_MAX",
+                "MAP_FAILED",
+                "cancellation",
+                "public x86 support",
+            )
+        ),
+        "static-c-sysv-message-shared-memory evidence must retain its exact static IPC runtime regression",
     )
 
 
@@ -7946,6 +8209,7 @@ def validate_ledger(
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
+    require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])

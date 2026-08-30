@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#include <features.h>
 #include <sys/ipc.h>
 #include <sys/types.h>
 
@@ -26,6 +27,15 @@ struct shmid_ds {
 struct shminfo {
 	unsigned long shmmax, shmmin, shmmni, shmseg, shmall, __unused[4];
 };
+
+/* GNU exposes the non-underscored Linux compatibility spellings only. Keep
+ * the backing record names visible for strict/POSIX consumers, matching the
+ * pinned musl namespace contract. */
+#ifdef _GNU_SOURCE
+#define __used_ids used_ids
+#define __swap_attempts swap_attempts
+#define __swap_successes swap_successes
+#endif
 
 struct shm_info {
 	int __used_ids;

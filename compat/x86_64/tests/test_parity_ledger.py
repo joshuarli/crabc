@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 53)
+        self.assertEqual(report["verified_artifact_count"], 54)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1154,7 +1154,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 35
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 36
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -6766,6 +6766,171 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh ipc-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sysv-semaphore command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sysv_message_shared_memory_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sysv-message-shared-memory"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stat_compat.rs",
+            "libc/src/c_abi/x86_64/sysv_message_shared_memory.rs",
+            "include/sys/ipc.h",
+            "include/sys/msg.h",
+            "include/sys/shm.h",
+            "compat/x86_64/sysv_message_shared_memory_header_abi_probe.c",
+            "compat/x86_64/sysv_message_shared_memory_header_abi_probe.cpp",
+            "compat/x86_64/run_sysv_message_shared_memory_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_sysv_message_shared_memory_probe.c",
+            "compat/x86_64/libc_sysv_message_shared_memory_start.S",
+            "compat/x86_64/run_libc_sysv_message_shared_memory.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sysv-message-shared-memory"},
+        )
+        for phrase in (
+            "SysV message/shared-memory block",
+            "`ftok`",
+            "`msgget`",
+            "`msgsnd`",
+            "`msgrcv`",
+            "`msgctl`",
+            "`shmget`",
+            "`shmat`",
+            "`shmdt`",
+            "`shmctl`",
+            "POSIX message queues",
+            "POSIX shared memory",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        for symbol in (
+            "ftok",
+            "msgget",
+            "msgsnd",
+            "msgrcv",
+            "msgctl",
+            "shmget",
+            "shmat",
+            "shmdt",
+            "shmctl",
+        ):
+            self.assertIn(symbol, static_exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "msgget=68" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in (
+            "msgsnd=69",
+            "msgrcv=70",
+            "msgctl=71",
+            "shmget=29",
+            "shmat=30",
+            "shmdt=67",
+            "shmctl=31",
+            "r10",
+            "r8",
+        ):
+            self.assertIn(phrase, syscall_abi)
+        normalization = next(item for item in prerequisites if "`IPC_64=0`" in item)
+        assert isinstance(normalization, str)
+        for phrase in (
+            "arch/x86_64/syscall_arch.h",
+            "src/ipc/ipc.h",
+            "`IPC_TIME64=0`",
+            "`IPC_CMD(cmd)=((cmd & ~IPC_TIME64) | IPC_64)=cmd`",
+            "no `0x100` marker",
+        ):
+            self.assertIn(phrase, normalization)
+        range_and_sentinel = next(item for item in prerequisites if "PTRDIFF_MAX" in item)
+        assert isinstance(range_and_sentinel, str)
+        for phrase in ("SIZE_MAX", "MAP_FAILED", "(void *)-1", "shmat"):
+            self.assertIn(phrase, range_and_sentinel)
+        cancellation = next(item for item in prerequisites if "direct static leaf" in item)
+        assert isinstance(cancellation, str)
+        self.assertIn("msgsnd", cancellation)
+        self.assertIn("msgrcv", cancellation)
+        self.assertIn("cancellation", cancellation)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "sys/ipc.h",
+            "sys/msg.h",
+            "sys/shm.h",
+            "msgbuf",
+            "GNU-only",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        scope = evidence[0]["scope"]
+        assert isinstance(scope, str)
+        for phrase in (
+            "ftok",
+            "message queue",
+            "shared-memory",
+            "r10/r8",
+            "PTRDIFF_MAX",
+            "MAP_FAILED",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, scope)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sysv-message-shared-memory"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "msgget=68" in item)
+        prerequisites[index] = prerequisites[index].replace("msgget=68", "msgget=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sysv-message-shared-memory"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "MAP_FAILED", "MISSING_SENTINEL"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact static IPC runtime regression"
         ):
             ledger.validate_ledger(data)
 

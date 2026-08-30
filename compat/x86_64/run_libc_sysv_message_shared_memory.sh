@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc SysV-semaphore evidence.
+# Native Linux/x86-64 selected static crabc-libc SysV message/shared-memory evidence.
 #
-# The same project-header fixture first runs against pinned musl 1.2.6, then
-# as a true `-nostdlib -static` candidate linked only with the selected crabc
-# archive.  It proves the bounded single-set semget/semop/semtimedop/semctl
-# lifecycle, including SETVAL/GETVAL scalar unions, SETALL/GETALL array
-# unions, IPC_STAT semid_ds output, direct Linux errno, stale errno after
-# success, and explicit IPC_RMID cleanup.  It is not full SysV IPC,
-# cross-process coordination, SEM_UNDO, IPC_SET, allocator, CRT, loader,
-# sysroot, or public x86 support.
+# The project-header fixture first runs against pinned musl 1.2.6, then as a
+# true `-nostdlib -static` candidate linked only with the selected crabc
+# archive. It proves ftok, one nonblocking local message-queue lifecycle, one
+# local shared-memory lifecycle, raw errno/stale-errno behavior, precise
+# x86 syscall-register placement, musl's shmget size rewrite, and the shmat
+# MAP_FAILED sentinel. It is not complete SysV IPC, POSIX IPC, cancellation,
+# a namespace/permission policy, libc.so, CRT, loader, sysroot, or public x86
+# support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,7 +17,7 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
 
 fail() {
-    printf 'ERROR: x86 static libc SysV semaphore: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc SysV message/shared-memory: %s\n' "$*" >&2
     exit 1
 }
 
@@ -40,8 +40,6 @@ assert_selected_c_abi_surface() {
     local members_path="$work_dir/selected-c-abi-members"
     local -a members
 
-    # Inspect crate-owned C object members only.  Compiler-builtins is
-    # toolchain support, not a selected static C ABI export surface.
     mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
     [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
     mkdir "$members_path"
@@ -66,73 +64,27 @@ assert_named_syscall() {
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
     grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\\$)" "$disassembly" ||
-        fail "${symbol} lacks Linux syscall ${syscall_word}"
+        fail "$symbol lacks Linux syscall $syscall_word"
     grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks its Linux syscall instruction"
+        fail "$symbol lacks its Linux syscall instruction"
 }
 
-helper_symbol() {
-    local fragment="$1"
-    local symbols="$work_dir/${fragment}-symbols"
-    local count
+assert_x86_message_register_paths() {
+    local send_disassembly="$work_dir/msgsnd-register-disassembly"
+    local receive_disassembly="$work_dir/msgrcv-register-disassembly"
 
-    nm --defined-only --format=posix "$candidate" |
-        awk -v fragment="$fragment" 'index($1, fragment) && $2 ~ /^[Tt]$/ { print $1 }' \
-        >"$symbols"
-    count="$(awk 'END { print NR }' "$symbols")"
-    [ "$count" -eq 1 ] || {
-        awk '{ print }' "$symbols" >&2
-        fail "expected exactly one ${fragment} helper symbol"
-    }
-    awk 'NR == 1 { print; exit }' "$symbols"
-}
-
-assert_semctl_dispatch_paths() {
-    local dispatcher="$work_dir/semctl-dispatcher-disassembly"
-    local no_argument_helper
-    local no_argument_disassembly="$work_dir/semctl-no-argument-disassembly"
-    local word_helper
-    local word_disassembly="$work_dir/semctl-word-disassembly"
-
-    # `semctl` itself is an ABI dispatcher.  SETVAL, GETALL, SETALL, IPC_SET,
-    # IPC_INFO, SEM_INFO, IPC_STAT, SEM_STAT, and SEM_STAT_ANY retain the
-    # supplied fourth C union word.  Every other command, including the five
-    # known no-vararg commands and unknown values, takes the default branch.
-    # That branch must occur before Linux so it never reads an unspecified C
-    # register; the runtime seccomp regression below proves its r10 result.
-    objdump -d --disassemble=semctl "$candidate" >"$dispatcher"
-    for command in 0x10 0xd 0x11 0x1 0x3 0x13 0x2 0x12 0x14; do
-        grep -Eq "\\\$${command},%edx" "$dispatcher" ||
-            fail "semctl lacks union-word command ${command} dispatch"
-    done
-    grep -Fq 'semctl_no_argument' "$dispatcher" ||
-        fail "semctl lacks its no-vararg helper path"
-    grep -Fq 'semctl_word' "$dispatcher" ||
-        fail "semctl lacks its union-word helper path"
-    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$dispatcher"; then
-        fail "semctl dispatcher must not enter Linux before argument dispatch"
-    fi
-
-    no_argument_helper="$(helper_symbol semctl_no_argument)"
-    objdump -d --disassemble="$no_argument_helper" "$candidate" \
-        >"$no_argument_disassembly"
-    grep -Eq 'xor[[:space:]]+%ecx,%ecx|mov[[:space:]]+\\$0x0,%ecx' \
-        "$no_argument_disassembly" ||
-        fail "semctl no-vararg helper does not supply rcx=0"
-    grep -Fq 'semctl_word' "$no_argument_disassembly" ||
-        fail "semctl no-vararg helper does not reach the union-word helper"
-    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$no_argument_disassembly"; then
-        fail "semctl no-vararg helper must delegate its syscall boundary"
-    fi
-
-    word_helper="$(helper_symbol semctl_word)"
-    objdump -d --disassemble="$word_helper" "$candidate" >"$word_disassembly"
-    grep -Eq '\$0x42,%(e|r)ax' "$word_disassembly" ||
-        fail "semctl union-word helper lacks Linux semctl=66"
-    grep -Fq '%r10' "$word_disassembly" ||
-        fail "semctl union-word helper lacks the x86 fourth-argument r10 path"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$word_disassembly" ||
-        fail "semctl union-word helper lacks its Linux syscall"
+    objdump -d --disassemble=msgsnd "$candidate" >"$send_disassembly"
+    grep -Fq '%r10' "$send_disassembly" ||
+        fail "msgsnd lacks the x86 fourth-argument r10 path"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$send_disassembly" ||
+        fail "msgsnd lacks its Linux syscall"
+    objdump -d --disassemble=msgrcv "$candidate" >"$receive_disassembly"
+    grep -Fq '%r10' "$receive_disassembly" ||
+        fail "msgrcv lacks the x86 fourth-argument r10 path"
+    grep -Fq '%r8' "$receive_disassembly" ||
+        fail "msgrcv lacks the x86 fifth-argument r8 path"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$receive_disassembly" ||
+        fail "msgrcv lacks its Linux syscall"
 }
 
 require_native_linux_x86_64
@@ -142,13 +94,13 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_sysv_semaphore_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_sysv_message_shared_memory_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sysv-semaphore.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sysv-message-shm.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-sysv-semaphore-reference"
-candidate="$work_dir/crabc-static-sysv-semaphore-candidate"
+reference="$work_dir/musl-sysv-message-shm-reference"
+candidate="$work_dir/crabc-static-sysv-message-shm-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -166,22 +118,21 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_sysv_semaphore_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h stdint.h sys/ipc.h sys/sem.h sys/syscall.h sys/types.h \
-    time.h bits/alltypes.h bits/syscall.h; do
+    compat/x86_64/libc_sysv_message_shared_memory_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h stdint.h sys/ipc.h sys/msg.h sys/prctl.h sys/shm.h \
+    sys/stat.h sys/syscall.h sys/types.h bits/alltypes.h bits/stat.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_sysv_semaphore_probe.c \
-    compat/x86_64/libc_sysv_semaphore_start.S \
-    -o "$reference"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_sysv_message_shared_memory_probe.c \
+    compat/x86_64/libc_sysv_message_shared_memory_start.S -o "$reference"
 if timeout "$EXECUTION_TIMEOUT" "$reference"; then
     :
 else
     reference_status=$?
-    fail "pinned-musl reference execution exited ${reference_status}"
+    fail "pinned-musl reference execution exited $reference_status"
 fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
@@ -193,17 +144,19 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    semget semop semtimedop semctl; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftok msgctl msgget \
+    msgrcv msgsnd shmat shmctl shmdt shmget; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
-        fail "archive does not define ${symbol}"
+        fail "archive does not define $symbol"
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in sem_close sem_destroy sem_init sem_open sem_post sem_unlink sem_wait \
-    sem_trywait sem_timedwait malloc free calloc realloc __tls_get_addr; do
+for unselected in mq_close mq_getattr mq_notify mq_open mq_receive mq_send mq_setattr \
+    mq_timedreceive mq_timedsend mq_unlink sem_close sem_destroy sem_init sem_open \
+    sem_post sem_unlink sem_wait sem_trywait sem_timedwait malloc free calloc realloc \
+    __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
-        fail "archive accidentally exports unselected ${unselected}"
+        fail "archive accidentally exports unselected $unselected"
     fi
 done
 readelf --relocs --wide "$archive" >"$archive_relocations"
@@ -215,21 +168,22 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SYSV_SEMAPHORE_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -DCRABC_SYSV_MESSAGE_SHARED_MEMORY_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_sysv_semaphore_probe.c \
-    compat/x86_64/libc_sysv_semaphore_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_sysv_message_shared_memory_probe.c \
+    compat/x86_64/libc_sysv_message_shared_memory_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    semget semop semtimedop semctl; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftok msgctl msgget \
+    msgrcv msgsnd shmat shmctl shmdt shmget; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
-        fail "candidate does not define ${symbol}"
+        fail "candidate does not define $symbol"
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
@@ -254,23 +208,28 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_sysv_semaphore_start.S ||
+    compat/x86_64/libc_sysv_message_shared_memory_start.S ||
     fail "fixture start does not delegate first-thread TLS to libc"
 if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
-    compat/x86_64/libc_sysv_semaphore_start.S; then
+    compat/x86_64/libc_sysv_message_shared_memory_start.S; then
     fail "fixture start must not install a private FS base"
 fi
 
-assert_named_syscall semget 40
-assert_named_syscall semop 41
-assert_named_syscall semtimedop dc
-assert_semctl_dispatch_paths
+assert_named_syscall msgget 44
+assert_named_syscall msgsnd 45
+assert_named_syscall msgrcv 46
+assert_named_syscall msgctl 47
+assert_named_syscall shmget 1d
+assert_named_syscall shmat 1e
+assert_named_syscall shmdt 43
+assert_named_syscall shmctl 1f
+assert_x86_message_register_paths
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :
 else
     candidate_status=$?
-    fail "candidate execution exited ${candidate_status}"
+    fail "candidate execution exited $candidate_status"
 fi
 
-printf 'x86 static crabc-libc SysV semaphore: PASS\n'
+printf 'x86 static crabc-libc SysV message/shared-memory: PASS\n'

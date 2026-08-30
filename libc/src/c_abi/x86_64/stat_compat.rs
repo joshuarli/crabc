@@ -53,6 +53,30 @@ pub struct Stat {
     unused: [i64; 3],
 }
 
+/// Return the two metadata words consumed by musl's `ftok` formula.
+///
+/// This keeps the x86 `struct stat` layout in its sole owner while allowing
+/// the separately selected SysV IPC leaf to reproduce `src/ipc/ftok.c`
+/// without defining a second, drifting copy of that private Rust record.
+/// `stat` itself owns C errno publication, so a failed lookup returns `None`
+/// after preserving its normal C ABI failure result.
+///
+/// # Safety
+///
+/// `path` must meet the public `stat` pathname-pointer contract.
+pub(super) unsafe fn stat_device_and_inode(path: *const c_char) -> Option<(u64, u64)> {
+    // SAFETY: zero is a valid initial representation for private output
+    // storage and `stat` fills the kernel-defined x86 record on success.
+    let mut metadata: Stat = unsafe { core::mem::zeroed() };
+    // SAFETY: the caller upholds the pathname contract and this local owns one
+    // complete private x86 `struct stat` output record.
+    if unsafe { stat(path, &mut metadata) } < 0 {
+        None
+    } else {
+        Some((metadata.device, metadata.inode))
+    }
+}
+
 const _: () = {
     assert!(size_of::<Timespec>() == 16);
     assert!(align_of::<Timespec>() == 8);

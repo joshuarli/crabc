@@ -254,10 +254,26 @@ pinned-musl and freestanding-static C fixture selects exactly `semget`,
 `union semun` scalar/pointer forms, no-vararg cleanup, the musl oversized-count
 precheck, direct syscall/errno behavior, and the x86 fourth-argument route.
 It is a bounded semaphore ABI/archive vertical, not closure of
-`libc.headers-layouts` or `libc.posix-runtime`: SysV message queues and shared
-memory, POSIX semaphores, cross-process synchronization/permission policy,
-`SEM_UNDO` lifecycle, cancellation, libc.so, CRT, loader, sysroot, family or
-platform parity, promotion, and public x86 support remain unselected.
+`libc.headers-layouts` or `libc.posix-runtime`. The paired
+`./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi` gate now
+compares selected `sys/ipc.h`/`sys/msg.h`/`sys/shm.h` declarations,
+feature-visible member spellings, x86 LP64 layouts and constants, and C++
+linkage across the same eight project-header/pinned-musl profiles. Its
+accompanying `./scripts/dev-x86_64.sh libc-sysv-message-shared-memory` command
+records the separate private `static-c-sysv-message-shared-memory` artifact
+inside planned `libc.posix-runtime`: its pinned-musl and freestanding-static C
+fixture selects exactly `ftok`, `msgget`, `msgsnd`, `msgrcv`, `msgctl`,
+`shmget`, `shmat`, `shmdt`, and `shmctl`. It proves one local nonblocking
+message-queue lifecycle, one local shared-memory attach/status/detach/remove
+lifecycle, raw errors and stale `errno`, the x86 `r10`/`r8` message argument
+paths, musl's oversized-`shmget` rewrite, and `shmat`'s `(void *)-1` failure
+sentinel. The direct `msgsnd`/`msgrcv` leaves intentionally omit musl's
+pthread cancellation machinery. These are two bounded private ABI/archive
+verticals, not complete SysV IPC or closure of either planned family: POSIX
+message queues/shared memory/semaphores, broader SysV operations and
+namespace/permission policy, `SEM_UNDO` lifecycle, cancellation, libc.so,
+CRT, loader, sysroot, family or platform parity, promotion, full x86-64
+parity, and public x86 support remain unselected.
 
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned

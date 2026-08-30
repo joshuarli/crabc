@@ -23,8 +23,8 @@
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
-//! `nanosleep` and `clock_nanosleep`
-//! artifacts.
+//! `nanosleep` and `clock_nanosleep` artifacts, plus one bounded System V
+//! message-queue/shared-memory artifact.
 //! It deliberately shares only the raw
 //! Linux syscall register boundary, one initial-TLS C `errno` slot, and the
 //! private Static Initial TLS v1 owner. The
@@ -168,6 +168,8 @@ mod uts_identity;
 mod socket_transport;
 #[path = "sysv_semaphore.rs"]
 mod sysv_semaphore;
+#[path = "sysv_message_shared_memory.rs"]
+mod sysv_message_shared_memory;
 
 use core::ffi::{c_int, c_void};
 

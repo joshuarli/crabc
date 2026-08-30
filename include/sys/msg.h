@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#include <features.h>
 #include <sys/ipc.h>
 #include <sys/types.h>
 
@@ -24,8 +25,9 @@ struct msqid_ds {
 	unsigned long __unused[2];
 };
 
+#define __msg_cbytes msg_cbytes
+
 #define MSG_NOERROR 010000
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define MSG_EXCEPT  020000
 #define MSG_STAT (11 | (IPC_STAT & 0x100))
 #define MSG_INFO 12
@@ -34,6 +36,11 @@ struct msqid_ds {
 struct msginfo {
 	int msgpool, msgmap, msgmax, msgmnb, msgmni, msgssz, msgtql;
 	unsigned short msgseg;
+};
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+struct msgbuf {
+	long mtype;
+	char mtext[1];
 };
 #endif
 

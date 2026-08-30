@@ -239,6 +239,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
+./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -357,6 +358,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-access
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
+./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
 ./scripts/dev-x86_64.sh libc-timestamp-updates
@@ -707,6 +709,14 @@ visibility across eight feature profiles. It records the installed
 `_SEM_SEMUN_UNDEFINED` boundary: applications define `union semun`; this is
 header evidence only and does not select SysV IPC behavior, `crabc-libc`, or
 public x86 support.
+
+`sysv-message-shared-memory-header-abi` compile-checks project-first and
+pinned-musl C and C++ `sys/ipc.h`/`sys/msg.h`/`sys/shm.h` declarations,
+feature-visible member spellings, selected x86 LP64 records and constants,
+and unmangled C linkage across eight feature profiles. It covers only the
+selected header surface for `ftok`, message queues, and shared memory; it does
+not select archive linkage, runtime behavior, header-family completion, full
+x86-64 parity, or public x86 support.
 
 `mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mremap`/`mprotect`/
 `munmap` numbers and the closed mapping/remapping constants used by the native
@@ -2329,9 +2339,26 @@ the caller-supplied `union semun` machine-word ABI, selected scalar/pointer comm
 and the five no-vararg commands with an explicit zero union word. It proves
 the `semget` oversized-count `EINVAL` precheck, operation/timeout forwarding,
 raw errors, stale errno on success, and `IPC_RMID` cleanup. It excludes SysV
-message queues and shared memory, POSIX semaphores, `SEM_UNDO` and
-cross-process lifecycle policy, cancellation, dynamic runtime, family
-completion, and public x86 support.
+message queues and shared memory from this semaphore artifact itself; the
+separate `libc-sysv-message-shared-memory` artifact selects their bounded
+adjacent C routes. POSIX semaphores, `SEM_UNDO` and cross-process lifecycle
+policy, cancellation, dynamic runtime, family completion, full x86-64 parity,
+and public x86 support remain excluded.
+
+`libc-sysv-message-shared-memory` is a separately recorded private
+`static-c-sysv-message-shared-memory` `verified_artifact` gate over that
+archive, not complete SysV IPC. Its project-header C body first executes
+through pinned musl and then through a `-nostdlib -static` candidate. It
+selects only `ftok`, `msgget`, `msgsnd`, `msgrcv`, `msgctl`, `shmget`, `shmat`,
+`shmdt`, and `shmctl`. The fixture proves an `IPC_PRIVATE` nonblocking local
+message-queue lifecycle, a local shared-memory attach/status/detach/remove
+lifecycle, raw errors and stale errno on success, the x86 `r10`/`r8` syscall
+argument paths, musl's `shmget` rewrite above `PTRDIFF_MAX`, and the exact
+`shmat` `(void *)-1` error sentinel. `msgsnd` and `msgrcv` deliberately omit
+musl's cancellation machinery because that runtime lifecycle remains
+unselected. It excludes POSIX IPC and semaphores, broader SysV operations and
+namespace/permission policy, cancellation, dynamic runtime, header/runtime
+family completion, promotion, full x86-64 parity, and public x86 support.
 
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
@@ -2794,6 +2821,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-fcntl-status-control`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
+`libc-sysv-message-shared-memory`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-timestamp-updates`,

@@ -67,10 +67,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "string-copy-header-abi",
             "random-entropy-header-abi",
             "sysv-semaphore-header-abi",
+            "sysv-message-shared-memory-header-abi",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-sysv-semaphore",
+            "libc-sysv-message-shared-memory",
         )
         self.assertEqual(actual_groups, expected_groups)
 
@@ -111,6 +113,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-descriptor-lifecycle", source)
         self.assertIn("libc-timestamp-updates", source)
         self.assertIn("libc-sysv-semaphore", source)
+        self.assertIn("libc-sysv-message-shared-memory", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -8661,7 +8664,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "semctl_word",
             "0x10 0xd 0x11 0x1 0x3 0x13 0x2 0x12 0x14",
             "runtime seccomp regression",
-            "unselected in msgget",
+            "unselected in sem_close",
             "SEM_UNDO",
             "unowned runtime dependency",
         ):
@@ -8672,21 +8675,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertFalse(
             static_export_names
             & {
-                "ftok",
-                "msgctl",
-                "msgget",
-                "msgrcv",
-                "msgsnd",
                 "sem_close",
                 "sem_destroy",
                 "sem_init",
                 "sem_open",
                 "sem_post",
                 "sem_wait",
-                "shmat",
-                "shmctl",
-                "shmdt",
-                "shmget",
             }
         )
         self.assertIn('id = "static-c-sysv-semaphore"', parity_ledger)
@@ -8708,6 +8702,225 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sysv-semaphore)\n        [ "$#" -eq 0 ] || fail "libc-sysv-semaphore takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_sysv_message_shared_memory_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "sysv_message_shared_memory.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "sysv_message_shared_memory_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "sysv_message_shared_memory_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_sysv_message_shared_memory_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_sysv_message_shared_memory_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_sysv_message_shared_memory_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sysv_message_shared_memory.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sysv_message_shared_memory.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 System V message-queue/shared-memory C boundary",
+            "musl 1.2.6 release commit",
+            "src/ipc/ftok.c",
+            "src/ipc/msgget.c",
+            "src/ipc/shmget.c",
+            "arch/x86_64/syscall_arch.h",
+            "IPC_64",
+            "IPC_TIME64",
+            "ipc_command",
+            "stat_device_and_inode",
+            "SYS_MSGGET",
+            "SYS_MSGSND",
+            "SYS_MSGRCV",
+            "SYS_MSGCTL",
+            "SYS_SHMGET",
+            "SYS_SHMAT",
+            "SYS_SHMDT",
+            "SYS_SHMCTL",
+            "c_pointer_status",
+            "c_ssize_status",
+            "isize::MAX",
+            "usize::MAX",
+            "(void *)-1",
+            "cancellation",
+        ):
+            self.assertIn(required, implementation)
+        for symbol in (
+            "ftok",
+            "msgget",
+            "msgsnd",
+            "msgrcv",
+            "msgctl",
+            "shmget",
+            "shmat",
+            "shmdt",
+            "shmctl",
+        ):
+            self.assertIn(f"fn {symbol}(", implementation)
+        for forbidden in ("mq_open", "sem_open", "__tls_get_addr", "pthread_"):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "sys/ipc.h",
+                "sys/msg.h",
+                "sys/shm.h",
+                "struct ipc_perm",
+                "struct msqid_ds",
+                "struct msginfo",
+                "struct shmid_ds",
+                "struct shminfo",
+                "struct shm_info",
+                "msgbuf",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "STRICT_IPC_PROFILES",
+            "STRICT_MSGBUF_PROFILES",
+            "NON_GNU_SHM_PROFILES",
+            "sys/msg.h",
+            "sys/shm.h",
+            "C++ probe",
+            "mangled SysV IPC reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <sys/msg.h>",
+            "#include <sys/shm.h>",
+            "CRABC_SECCOMP_ARGUMENT_THREE_LOW",
+            "CRABC_SECCOMP_ARGUMENT_FOUR_LOW",
+            "SYS_seccomp",
+            "msgsnd(message_queue_id",
+            "msgrcv(message_queue_id",
+            "PTRDIFF_MAX",
+            "SIZE_MAX",
+            "(void *)-1",
+            "shmat(removed_shared_memory_id",
+            "CRABC_SYSV_MESSAGE_SHARED_MEMORY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sysv_message_shared_memory_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sysv_message_shared_memory_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall msgget 44",
+            "assert_named_syscall msgsnd 45",
+            "assert_named_syscall msgrcv 46",
+            "assert_named_syscall msgctl 47",
+            "assert_named_syscall shmget 1d",
+            "assert_named_syscall shmat 1e",
+            "assert_named_syscall shmdt 43",
+            "assert_named_syscall shmctl 1f",
+            "assert_x86_message_register_paths",
+            "unselected in mq_close",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        expected_symbols = {
+            "ftok",
+            "msgget",
+            "msgsnd",
+            "msgrcv",
+            "msgctl",
+            "shmget",
+            "shmat",
+            "shmdt",
+            "shmctl",
+        }
+        self.assertTrue(expected_symbols <= static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "mq_close",
+                "mq_getattr",
+                "mq_notify",
+                "mq_open",
+                "mq_receive",
+                "mq_send",
+                "mq_setattr",
+                "mq_timedreceive",
+                "mq_timedsend",
+                "mq_unlink",
+                "sem_close",
+                "sem_open",
+            }
+        )
+        self.assertIn('id = "static-c-sysv-message-shared-memory"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sysv-message-shared-memory"',
+            parity_ledger,
+        )
+        self.assertIn("run_sysv_message_shared_memory_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_sysv_message_shared_memory_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_sysv_message_shared_memory()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_sysv_message_shared_memory.sh",
+            runner,
+        )
+        self.assertIn(
+            '    sysv-message-shared-memory-header-abi)\n        [ "$#" -eq 0 ] || fail "sysv-message-shared-memory-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sysv-message-shared-memory)\n        [ "$#" -eq 0 ] || fail "libc-sysv-message-shared-memory takes no arguments"',
             runner,
         )
 
