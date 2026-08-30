@@ -58,6 +58,17 @@ class EvidenceError(RuntimeError):
     """The canonical workload could not establish its one recorded fact."""
 
 
+class BlockedPrerequisite(EvidenceError):
+    """A required native execution boundary was unavailable before stress began."""
+
+    def __init__(
+        self, prerequisite: str, message: str, details: Mapping[str, str]
+    ) -> None:
+        super().__init__(message)
+        self.prerequisite = prerequisite
+        self.details = dict(details)
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -354,33 +365,77 @@ def extract_exact_archive(archive: Path, pin: Mapping[str, str], destination: Pa
 
 def require_native_aarch64() -> None:
     if platform.system() != "Linux" or platform.machine() != "aarch64":
-        raise EvidenceError(
+        raise BlockedPrerequisite(
+            "native-linux-aarch64",
             "canonical upstream stress requires native Linux/AArch64; "
-            f"observed {platform.system()}/{platform.machine()}"
+            f"observed {platform.system()}/{platform.machine()}",
+            {
+                "observed_architecture": platform.machine(),
+                "observed_system": platform.system(),
+                "required_architecture": "aarch64",
+                "required_system": "Linux",
+            },
         )
 
 
 def require_runtime_inputs(target_dir: Path) -> tuple[Path, Path, Path]:
     raw_sysroot = os.environ.get("CRABC_TEST_SYSROOT")
     if not raw_sysroot:
-        raise EvidenceError(
+        raise BlockedPrerequisite(
+            "owned-test-suite-environment",
             "canonical upstream stress requires CRABC_TEST_SYSROOT from "
-            "scripts/run_owned_test_suite.py"
+            "scripts/run_owned_test_suite.py",
+            {
+                "environment_variable": "CRABC_TEST_SYSROOT",
+                "required_launcher": "scripts/run_owned_test_suite.py",
+            },
         )
     sysroot = Path(raw_sysroot).expanduser().resolve()
     manifest = sysroot / "share/crabc/manifest.json"
     compiler = sysroot / "bin/crabc-cc"
-    if not manifest.is_file() or not compiler.is_file() or not os.access(compiler, os.X_OK):
-        raise EvidenceError("canonical upstream stress requires a complete owned crabc sysroot")
+    if not manifest.is_file():
+        raise BlockedPrerequisite(
+            "owned-sysroot-manifest",
+            "canonical upstream stress requires a complete owned crabc sysroot; "
+            f"missing manifest: {manifest}",
+            {"manifest": str(manifest), "sysroot": str(sysroot)},
+        )
+    if not compiler.is_file() or not os.access(compiler, os.X_OK):
+        raise BlockedPrerequisite(
+            "owned-sysroot-driver",
+            "canonical upstream stress requires the owned crabc C driver; "
+            f"unavailable or not executable: {compiler}",
+            {"compiler": str(compiler), "sysroot": str(sysroot)},
+        )
     target_dir = target_dir.expanduser().resolve()
-    for name in ("libc.so", "libldso.so"):
-        artifact = target_dir / name
-        if not artifact.is_file() or artifact.is_symlink():
-            raise EvidenceError(f"selected crabc runtime artifact is unavailable: {artifact}")
+    selected_libc = target_dir / "libc.so"
+    if not selected_libc.is_file() or selected_libc.is_symlink():
+        raise BlockedPrerequisite(
+            "selected-native-shadow-libc",
+            "canonical upstream stress requires the selected native-mimalloc-shadow libc; "
+            f"unavailable: {selected_libc}",
+            {
+                "artifact": str(selected_libc),
+                "required_feature": "native-mimalloc-shadow",
+            },
+        )
+    selected_loader = target_dir / "libldso.so"
+    if not selected_loader.is_file() or selected_loader.is_symlink():
+        raise BlockedPrerequisite(
+            "selected-crabc-loader",
+            "canonical upstream stress requires the selected crabc loader; "
+            f"unavailable: {selected_loader}",
+            {"artifact": str(selected_loader)},
+        )
     if not CANONICAL_LOADER.is_file() or CANONICAL_LOADER.is_symlink():
-        raise EvidenceError(
+        raise BlockedPrerequisite(
+            "owned-canonical-loader-staging",
             "canonical upstream stress must run under scripts/run_owned_test_suite.py "
-            "canonical-loader staging"
+            "canonical-loader staging",
+            {
+                "canonical_loader": str(CANONICAL_LOADER),
+                "required_launcher": "scripts/run_owned_test_suite.py",
+            },
         )
     return sysroot, compiler, target_dir
 
@@ -561,6 +616,7 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
         },
         "execution": {
             "arguments": list(execution["arguments"]),
+            "attempted": False,
             "process_attempt_count": execution["process_attempt_count"],
             "watchdog_seconds": execution["watchdog_seconds"],
         },
@@ -570,8 +626,22 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
             "output_dir": relative_path(args.output_dir, ROOT),
         },
         "target": {"architecture": platform.machine(), "system": platform.system()},
+        "blocked": None,
         "first_fact": None,
         "upstream_pin": dict(pin),
+    }
+
+
+def blocked_record(error: BlockedPrerequisite) -> dict[str, Any]:
+    """Describe one unavailable prerequisite without fabricating a stress result."""
+
+    return {
+        "format": 1,
+        "kind": "execution-prerequisite",
+        "message": str(error),
+        "prerequisite": error.prerequisite,
+        "details": dict(error.details),
+        "stress_process_started": False,
     }
 
 
@@ -652,6 +722,7 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
         environment=runtime_environment(target_dir),
         timeout=int(execution["watchdog_seconds"]),
     )
+    report["execution"]["attempted"] = True
     report["execution"]["attempts"] = [run]
     if successful_run(run, execution):
         report["status"] = "passed"
@@ -697,6 +768,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         report = report_base(contract, pin, args)
         try:
             execute(contract, pin, args, report)
+        except BlockedPrerequisite as error:
+            report["status"] = "blocked"
+            report["blocked"] = blocked_record(error)
         except EvidenceError as error:
             report["first_fact"] = {
                 "kind": "first-failure",

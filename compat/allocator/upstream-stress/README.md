@@ -42,6 +42,13 @@ archive and annotated-tag attestation already present in
 `compat/allocator/.cache/`; `--check` validates the closed source/build/ownership
 contract without compiling or executing it.
 
+If a native prerequisite is unavailable, the runner still atomically writes a
+report with `status: "blocked"`. Its `blocked` record names the exact missing
+boundary—such as the owned-sysroot manifest/driver, selected shadow libc,
+selected loader, owned canonical-loader staging, or native Linux/AArch64 host—
+and declares that no stress process started. A blocked report is neither a
+pass nor a skipped workload result.
+
 This is intentionally separate from `native-shadow-stress-v3.5.0.json` and
 its patched fresh-pthread cleanup witness. That witness may remain useful as a
 narrow regression, but it cannot stand in for this canonical upstream lane.

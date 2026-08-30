@@ -175,6 +175,53 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(report["first_fact"]["process_attempt"], 1)
         self.assertEqual(report["execution"]["attempts"], [failed_run])
 
+    def test_owned_sysroot_prerequisite_is_a_structured_blocked_report(self) -> None:
+        contract, pin = RUNNER.load_contract()
+        with tempfile.TemporaryDirectory() as temporary:
+            report_path = Path(temporary) / "upstream-stress.json"
+            with mock.patch.object(
+                RUNNER,
+                "execute",
+                side_effect=RUNNER.BlockedPrerequisite(
+                    "owned-sysroot-manifest",
+                    "missing owned sysroot manifest",
+                    {"manifest": "/missing/share/crabc/manifest.json", "sysroot": "/missing"},
+                ),
+            ):
+                status = RUNNER.main(["--report", str(report_path)])
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(status, 1)
+        self.assertEqual(report["status"], "blocked")
+        self.assertIsNone(report["first_fact"])
+        self.assertFalse(report["execution"]["attempted"])
+        self.assertNotIn("attempts", report["execution"])
+        self.assertEqual(
+            report["blocked"],
+            {
+                "format": 1,
+                "kind": "execution-prerequisite",
+                "message": "missing owned sysroot manifest",
+                "prerequisite": "owned-sysroot-manifest",
+                "details": {
+                    "manifest": "/missing/share/crabc/manifest.json",
+                    "sysroot": "/missing",
+                },
+                "stress_process_started": False,
+            },
+        )
+        self.assertNotIn("passed", json.dumps(report["blocked"]))
+        self.assertNotIn("skipped", json.dumps(report["blocked"]))
+
+    def test_missing_owned_sysroot_environment_names_its_prerequisite(self) -> None:
+        with mock.patch.dict(RUNNER.os.environ, {}, clear=True):
+            with self.assertRaises(RUNNER.BlockedPrerequisite) as failure:
+                RUNNER.require_runtime_inputs(Path("/target/debug"))
+        self.assertEqual(failure.exception.prerequisite, "owned-test-suite-environment")
+        self.assertEqual(
+            failure.exception.details["required_launcher"],
+            "scripts/run_owned_test_suite.py",
+        )
+
     def test_report_is_atomic_json_with_a_single_fact_field(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             report_path = Path(temporary) / "nested/latest.json"
