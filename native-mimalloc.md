@@ -10,6 +10,14 @@ The project remains a compatibility-engineering project, not allocator research.
 
 ## Current checkpoint — 2026-08-30
 
+### Delivery discipline
+
+Commit each independently validated native-mimalloc behavior milestone
+separately. Name fixtures, patches, reports, and other evidence for the
+behavior they prove—not for a milestone number or delivery order. Gate IDs
+remain useful in governing contracts and roadmap prose, but names such as
+`test-stress-m5.patch` are not evidence identifiers.
+
 Current capability checkpoint: Gates 5A through 5C are complete. Gate 5C's
 accepted direct-engine evidence is the checked
 `compat/allocator/native-owner-exit-lifecycle-v3.5.0.json` contract: it runs
@@ -261,9 +269,12 @@ regression, while `native_mimalloc_three_owner_exit` has A1, A2, and A3 all
 exit before any fresh B begins. The third OS-singleton tail is installed beside
 two route-owned list members; its C fixture releases the owners in non-FIFO
 order, while the Rust counterpart interleaves all three B workers' exact frees
-and finishes them in a different order. Neither form exposes a sibling page or
-client, and ticket zero remains unavailable until the final B completes its
-own no-page lifecycle.
+and finishes them in a different order. The two-route companion also proves
+that ticket zero may complete only its own private operation while all A routes
+remain source-active; that operation preserves every route's scheduler token
+and exposes no sibling page or client. Once a B terminally releases any route,
+ticket zero remains unavailable until the final pending B completes its own
+no-page lifecycle; a terminally retained route remains a permanent blocker.
 
 The critical path is now Gate 5D: lifecycle churn and stability, followed by
 Gate 5E's selected shadow acceptance. Do not add another owner-exit shape
@@ -1341,6 +1352,16 @@ final PageMap release, then places that typed completion in B's TLS until B
 completes its own no-page lifecycle. The sole branch uses the existing mapped
 regular failed-reclaim free path and does not expose adoption, reclaim, or
 allocation-time authority to C.
+The same selected lane runs the separately reviewed
+`native-shadow-stress-v3.5.0.json` source witness: the pinned upstream
+`test/test-stress.c` allocation, transfer, realloc, cookie, and cleanup
+workload calls standard C allocation names through the selected shadow
+`libc.so`, with exactly two source pthread workers, fixed `2 1 2` inputs,
+and 128 fresh process epochs. Each selected transfer cleanup runs in one
+fresh source-shaped pthread after the producing workers join. The contract
+rejects unsupported heap, walk, subprocess, leak, and large-object modes; it
+does not grant a general pointer domain, concurrent PageMap mutation, or a
+Gate 5E/default-backend completion claim.
 The live route keeps addresses private to each A ledger. Its
 `NativeLiveRemoteOwnerRegistry` has stable metadata-backed entries that store
 only one A TLS slot/generation; an empty entry is reused and a new node is
@@ -1417,7 +1438,10 @@ workers have exited, then finishes those B lifecycles in a different order.
 three-route shape through the selected C ABI with a non-FIFO release order.
 Together they prove the metadata-backed registry can retain three independently
 published A routes: each B removes only its own clients and parked scheduler
-count, and the final B lifecycle is the only one that restores ticket zero.
+count. Ticket zero may complete its private operation while every route remains
+source-active, but a terminal B completion blocks it; only the final B
+lifecycle then restores it. A terminally retained route instead remains a
+permanent blocker.
 `crabc-mimalloc/tests/native_post_exit_registry_reuse.rs` additionally holds
 B1 after its terminal source release, publishes A3 beside a still-live sibling
 route, and proves that reusing B1's now-empty registry entry neither consumes
@@ -1508,11 +1532,13 @@ resumes and re-parks only its own session to source-publish the client, then
 continues its ordinary local free/finish while A later collects the remote
 head. This adds no client enumeration, A-session borrowing, or concurrent
 PageMap mutation.
-The selected C comparison repeats 128 fresh process epochs, so a scheduler
-CAS that loses only because a peer changed `PARKED(n)` remains retryable while
-the runtime still records `BUSY` or a nonzero parked count; `READY` and
-terminal states remain failures. This does not broaden the two-worker local
-boundary into concurrent PageMap mutation.
+The selected C comparison repeats 128 fresh process epochs. An already parked
+session retries a lost scheduler CAS only while the runtime still records
+`BUSY` or a nonzero parked count; `READY` and terminal states mean its own
+token is no longer represented. A first session has no token yet, so if a
+peer completes between its sampled CAS and retry it may reattempt from
+`READY`. This does not broaden the two-worker local boundary into concurrent
+PageMap mutation.
 
 Once 5A-5D work through the prefixed allocator harness, route the existing crabc allocator fixture through the compile-time Rust backend.
 

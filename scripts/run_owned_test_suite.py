@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Run Cargo tests with an owned canonical-loader execution boundary.
+"""Run one command with an owned canonical-loader execution boundary.
 
 The installed `crabc-cc` driver intentionally emits the fixed normal-kernel
 interpreter `/lib/ld-crabc-aarch64.so.1`. The development container is
 disposable and does not preinstall that loader, so this test-only launcher
 copies the already-built debug crabc loader there for the duration of one
-Cargo invocation. It refuses to replace an existing path and verifies the
+command. It refuses to replace an existing path and verifies the
 copy before removing it, keeping the staging operation explicit and bounded.
 
 This launcher does not set `LD_LIBRARY_PATH`: Rust test binaries continue to
-use their normal host runtime, while individual C fixture tests retain their
+use their normal host runtime, while individual C fixture commands retain their
 explicit crabc debug-library search paths.  Cargo emits only `libc.so` in that
 debug directory, so the launcher temporarily supplies the deliberate installed
 libc aliases there as well.  This keeps those fixtures on one debug runtime
@@ -134,12 +134,12 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sysroot", type=Path, required=True, help="installed owned crabc sysroot")
     parser.add_argument("--loader", type=Path, required=True, help="owned debug loader copied to the canonical path")
-    parser.add_argument("command", nargs=argparse.REMAINDER, help="Cargo command after --")
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="command after --")
     args = parser.parse_args(arguments)
     if args.command[:1] == ["--"]:
         args.command = args.command[1:]
     if not args.command:
-        parser.error("a Cargo command is required after --")
+        parser.error("a command is required after --")
     return args
 
 

@@ -112,7 +112,12 @@ admission claim. Empty entries are reused, while a new process-lived entry is
 appended only when every existing entry is occupied. A focused direct
 regression holds one B completion in TLS after its entry has become empty,
 then admits a later A and proves that only the held B finish may release its
-admission or ticket zero. Fresh attached B workers, including one with an
+admission or ticket zero. While all entries remain source-active, ticket zero
+may complete only its own private operation beside their separate scheduler
+tokens; it cannot inspect, consume, or settle any route. Once an exact free
+moves any route into B's terminal completion, ticket zero remains unavailable
+until every pending B completion has finished; a terminally retained route is a
+permanent blocker. Fresh attached B workers, including one with an
 independently parked local session, may query an exact source-recorded usable
 extent, present an exact C address for free, or use the one exact detached `realloc`
 transition. For that last operation the entry remains private and `BUSY` while
@@ -220,14 +225,22 @@ and none is retained. Its audit reveals no entry identity, TLS address, route,
 client, page, allocator, or release capability. The
 separate `native_mimalloc_parallel_local_workers` fixture pauses a local B
 beside A's live entry, then runs 128 fresh process epochs through B's local
-finish, A's finish, and ticket-zero reactivation. A stale parked-count CAS is
-retryable only while the scheduler still records `BUSY` or a nonzero parked
-count; `READY` and terminal states remain non-retryable. These witnesses do
-not admit a cross-worker pointer or concurrent PageMap mutation.
+finish, A's finish, and ticket-zero reactivation. An already parked session
+retries a lost scheduler CAS only while the scheduler still records `BUSY` or
+a nonzero parked count; `READY` and terminal states mean its own token is no
+longer represented. A first session has no token yet, so it may retry from
+`READY` after a peer completes between its sampled CAS and retry. These
+witnesses do not admit a cross-worker pointer or concurrent PageMap mutation.
 `./scripts/dev.sh allocator-shadow` rebuilds that selected libc after the
 ordinary owned sysroot and runs the allocator, owner-exit, and pthread
-TSD-destructor fixtures; it is bounded early-shadow evidence, not Gate 5E
-completion or default-promotion evidence.
+TSD-destructor fixtures. It also runs the reviewed
+`native-shadow-stress-v3.5.0.json` source witness: patched pinned upstream
+`test/test-stress.c` uses standard C allocation names against the selected
+shadow `libc.so`, exactly two source pthread workers, fixed `2 1 2` inputs,
+and 128 fresh process epochs; every selected transfer cleanup occurs in one
+fresh pthread after the producers join. Unsupported heap, walk, subprocess,
+leak, and large-object modes are rejected. This remains bounded early-shadow
+evidence, not Gate 5E completion or default-promotion evidence.
 
 `process_page_map.rs` owns the separate process-static source-page-map
 publication boundary. It freezes one `MemoryConfig` and selected

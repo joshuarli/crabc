@@ -51,6 +51,8 @@ X86_64_SOURCE_MAP_CONTRACT = ALLOCATOR_ROOT / "x86_64-source-map-v3.5.0.json"
 X86_64_SOURCE_MAP_RUNNER = ALLOCATOR_ROOT / "x86_64_source_map.py"
 X86_64_TEST_ADAPTER_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-x86_64-v3.5.0.json"
 ADAPTED_STRESS_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-stress-test-v3.5.0.json"
+NATIVE_SHADOW_STRESS_CONTRACT = ALLOCATOR_ROOT / "native-shadow-stress-v3.5.0.json"
+NATIVE_SHADOW_STRESS_REPORT = REPORT_ROOT / "native-shadow-stress-latest.json"
 TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
 TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
 TEST_ADAPTER_FIXTURE = TEST_ADAPTER_ROOT / "allocator-fixture-wrapper.c"
@@ -2374,6 +2376,208 @@ def validate_adapted_stress_test_contract(
     }
 
 
+def validate_native_shadow_stress_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str]
+) -> dict[str, int]:
+    """Validate the selected-libc, source-derived pthread stress contract.
+
+    Unlike the prefixed test adapter, this route intentionally invokes the
+    standard C allocation names so the selected ``native-mimalloc-shadow``
+    ``libc.so`` owns the complete source workload. Its fixed scheduler is
+    evidence for two source workers and fresh post-exit transfer releasers;
+    it is not a general worker, pointer, heap, or subprocess admission API.
+    """
+
+    if (
+        contract.get("format") != 1
+        or contract.get("schema") != "crabc-mimalloc-native-shadow-stress"
+        or contract.get("fixture_source") != "test/test-stress.c"
+    ):
+        raise HarnessError("unsupported native-shadow stress contract")
+
+    upstream = contract.get("upstream")
+    if not isinstance(upstream, dict):
+        raise HarnessError("native-shadow stress contract lacks upstream identity")
+    expected_upstream = {
+        "archive_root": pin["archive_root"],
+        "archive_sha256": pin["sha256"],
+        "archive_source": pin["source"],
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "version": pin["version"],
+    }
+    for key, expected in expected_upstream.items():
+        if upstream.get(key) != expected:
+            raise HarnessError(f"native-shadow stress upstream identity mismatch: {key}")
+    if (
+        upstream.get("project") != "microsoft/mimalloc"
+        or upstream.get("archive_path") != relative(archive_path(pin))
+    ):
+        raise HarnessError("native-shadow stress project/archive path changed")
+
+    expected_source_hashes = {
+        "test/test-stress.c": "e2bed5f2be12239b1fa696dafffda384d19140cb50a6ee2f6e096f70934d73df"
+    }
+    if contract.get("source_hashes") != expected_source_hashes:
+        raise HarnessError("native-shadow stress source-hash set changed")
+    if contract.get("source_regions") != [
+        "test/test-stress.c:16-110",
+        "test/test-stress.c:144-385",
+        "test/test-stress.c:400-523",
+    ]:
+        raise HarnessError("native-shadow stress source regions changed")
+    expected_provenance = {
+        "upstream_file_license": "MIT",
+        "upstream_notice": "Copyright (c) 2018-2026 Microsoft Research, Daan Leijen",
+        "adaptation_owner": "crabc",
+        "rust_boundary": "crabc-libc native-mimalloc-shadow standard C allocation ABI",
+    }
+    if contract.get("provenance") != expected_provenance:
+        raise HarnessError("native-shadow stress provenance changed")
+
+    patch = contract.get("patch")
+    adapted = contract.get("adapted_source")
+    if (
+        not isinstance(patch, dict)
+        or patch.get("path")
+        != "compat/allocator/adapted/test-stress-native-shadow-pthreads.patch"
+    ):
+        raise HarnessError("native-shadow stress patch path changed")
+    if not isinstance(adapted, dict) or adapted.get("path") != "test/test-stress.c":
+        raise HarnessError("native-shadow stress output path changed")
+    for label, value in (
+        ("patch", patch.get("sha256")),
+        ("adapted source", adapted.get("sha256")),
+    ):
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise HarnessError(f"native-shadow stress {label} hash is invalid")
+    if (
+        patch.get("apply_from") != "the extracted mimalloc-3.5.0 root"
+        or patch.get("apply_command")
+        != "patch -p1 < /path/to/crabc/compat/allocator/adapted/test-stress-native-shadow-pthreads.patch"
+    ):
+        raise HarnessError("native-shadow stress patch application contract changed")
+
+    execution = contract.get("execution")
+    expected_execution = {
+        "arguments": ["2", "1", "2"],
+        "compile_defines": ["USE_STD_MALLOC", "NTHREADS=2"],
+        "expected_stderr": "",
+        "expected_stdout": (
+            "Using 2 threads with a 1% load-per-thread and 2 iterations\n"
+            "crabc native shadow pthread stress ok\n"
+        ),
+        "main_participates": False,
+        "post_exit_transfer_releaser": (
+            "one fresh pthread runs the source free_items cleanup for every selected transfer slot"
+        ),
+        "process_epochs": 128,
+        "source_iterations": 2,
+        "source_worker_count": 2,
+        "watchdog_seconds": 30,
+    }
+    if not isinstance(execution, dict):
+        raise HarnessError("native-shadow stress execution contract is absent")
+    for key, expected in expected_execution.items():
+        if execution.get(key) != expected:
+            raise HarnessError(f"native-shadow stress execution contract changed: {key}")
+    expected_scheduler_assertions = [
+        "With NTHREADS=2 and main_participates false, the source scheduler creates exactly two pthread workers for every source iteration.",
+        "The retained source transfer buffer carries exact live allocation pointers across source workers and source iterations.",
+        "Each selected transfer cleanup runs free_items in one fresh source-shaped pthread after the producing workers have joined, exercising the typed post-exit release route without exposing a client address or page capability.",
+    ]
+    if execution.get("scheduler_assertions") != expected_scheduler_assertions:
+        raise HarnessError("native-shadow stress scheduler assertions changed")
+
+    excluded_modes = contract.get("excluded_upstream_modes")
+    expected_mode_names = [
+        "ALLOW_LARGE",
+        "MI_HEAP_WALK",
+        "MI_USE_HEAPS",
+        "TEST_LEAK",
+        "TEST_STRESS_SUBPROCS",
+    ]
+    if (
+        not isinstance(excluded_modes, list)
+        or [mode.get("macro") if isinstance(mode, dict) else None for mode in excluded_modes]
+        != expected_mode_names
+        or not all(
+            isinstance(mode, dict)
+            and isinstance(mode.get("reason"), str)
+            and bool(mode["reason"])
+            for mode in excluded_modes
+        )
+    ):
+        raise HarnessError("native-shadow stress excluded-mode contract changed")
+
+    expected_markers = [
+        "#if !defined(USE_STD_MALLOC)",
+        "#if NTHREADS != 2",
+        "#if ALLOW_LARGE",
+        "#if defined(MI_USE_HEAPS)",
+        "#if defined(MI_HEAP_WALK)",
+        "#if defined(TEST_STRESS_SUBPROCS) && TEST_STRESS_SUBPROCS",
+        "#if defined(TEST_LEAK) && TEST_LEAK",
+        "static bool   main_participates = false;",
+        "const size_t start = (main_participates ? 1 : 0);",
+        "free_transferred_item_in_fresh_worker",
+        "run_os_threads(subproc_null, 1, &free_transferred_item, p);",
+        "if (THREADS != 2 || SCALE != 1 || ITER != 2 || main_participates || allow_large_objects)",
+        'printf("crabc native shadow pthread stress ok\\n");',
+    ]
+    if contract.get("required_source_markers") != expected_markers:
+        raise HarnessError("native-shadow stress source-marker contract changed")
+
+    compile_requirements = contract.get("compile_requirements")
+    expected_compile = {
+        "allocator_feature": "native-mimalloc-shadow",
+        "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
+        "compiler": "crabc-cc from the installed owned crabc sysroot",
+        "compile_flags": [
+            "-O2",
+            "-DNDEBUG",
+            "-fPIE",
+            "-pie",
+            "-ftls-model=initial-exec",
+            "-pthread",
+        ],
+        "expected_dynamic_dependencies": ["libc.so"],
+        "language": "C11",
+        "link_flags": ["-Wl,--allow-shlib-undefined"],
+        "link_libraries": ["-lc"],
+        "owned_test_launcher": "scripts/run_owned_test_suite.py",
+        "runtime_directory": "target/debug",
+    }
+    if not isinstance(compile_requirements, dict):
+        raise HarnessError("native-shadow stress compile requirements are absent")
+    for key, expected in expected_compile.items():
+        if compile_requirements.get(key) != expected:
+            raise HarnessError(f"native-shadow stress compile requirement changed: {key}")
+    if not isinstance(compile_requirements.get("notes"), str) or not compile_requirements["notes"]:
+        raise HarnessError("native-shadow stress compile notes are absent")
+
+    verification = contract.get("verification")
+    expected_verification = {
+        "patch_applies_cleanly": True,
+        "patch_round_trip_stable": True,
+        "adapted_source_sha256_verified": True,
+        "unsupported_modes_rejected": True,
+        "selected_shadow_dynamic_link_verified": True,
+        "native_execution_verified": True,
+        "fresh_process_epochs_verified": True,
+    }
+    if verification != expected_verification:
+        raise HarnessError("native-shadow stress verification record changed")
+
+    return {
+        "excluded_upstream_mode_count": len(excluded_modes),
+        "process_epochs": execution["process_epochs"],
+        "source_worker_count": execution["source_worker_count"],
+    }
+
+
 def apply_and_verify_adapted_test_patch(
     source: Path, contract: Mapping[str, Any], patch_tool: str
 ) -> dict[str, Any]:
@@ -2533,6 +2737,73 @@ def apply_and_verify_adapted_stress_test_patch(
         "required_prefixed_adapter_symbol_count": len(
             contract["required_prefixed_adapter_symbols"]
         ),
+    }
+
+
+def apply_and_verify_native_shadow_stress_patch(
+    source: Path, contract: Mapping[str, Any], patch_tool: str
+) -> dict[str, Any]:
+    """Apply the selected-shadow stress adaptation in an isolated source tree."""
+
+    source_hashes = contract["source_hashes"]
+    assert isinstance(source_hashes, dict)
+    for relative_source, expected_hash in source_hashes.items():
+        source_path = source / relative_source
+        if not source_path.is_file() or sha256_file(source_path) != expected_hash:
+            raise HarnessError(
+                f"native-shadow stress source identity mismatch: {relative_source}"
+            )
+
+    patch_contract = contract["patch"]
+    assert isinstance(patch_contract, dict)
+    patch_path = ROOT / str(patch_contract["path"])
+    if not patch_path.is_file() or sha256_file(patch_path) != patch_contract["sha256"]:
+        raise HarnessError("native-shadow stress patch identity mismatch")
+    apply_record = command_record(
+        (patch_tool, "-p1", "-f", "-i", str(patch_path)),
+        cwd=source,
+    )
+    require_success(apply_record, "native-shadow upstream stress patch")
+
+    adapted_contract = contract["adapted_source"]
+    assert isinstance(adapted_contract, dict)
+    adapted_path = source / str(adapted_contract["path"])
+    if not adapted_path.is_file() or sha256_file(adapted_path) != adapted_contract["sha256"]:
+        raise HarnessError(
+            "native-shadow stress source differs from the reviewed patch result"
+        )
+    adapted_text = adapted_path.read_text(encoding="utf-8")
+    if "<mimalloc.h>" in adapted_text or "<mimalloc-stats.h>" in adapted_text:
+        raise HarnessError("native-shadow stress source retains an upstream mimalloc include")
+    required_markers = contract["required_source_markers"]
+    assert isinstance(required_markers, list)
+    missing_markers = [marker for marker in required_markers if marker not in adapted_text]
+    if missing_markers:
+        raise HarnessError(
+            "native-shadow stress source omits required markers: "
+            + ", ".join(missing_markers)
+        )
+    required_standard_macros = [
+        "#define custom_calloc(n,s)    calloc(n,s)",
+        "#define custom_realloc(p,s)   realloc(p,s)",
+        "#define custom_free(p)        free(p)",
+    ]
+    if any(marker not in adapted_text for marker in required_standard_macros):
+        raise HarnessError("native-shadow stress source no longer routes the workload through libc")
+    if "crabc_test_" in adapted_text:
+        raise HarnessError("native-shadow stress source must not route through the prefixed test adapter")
+    if adapted_text.count("free_transferred_item_in_fresh_worker(p);") != 2:
+        raise HarnessError("native-shadow stress source changed its fresh post-exit cleanup boundary")
+    return {
+        "adapted_source": {
+            "bytes": adapted_path.stat().st_size,
+            "path": str(adapted_contract["path"]),
+            "sha256": sha256_file(adapted_path),
+        },
+        "apply_command": apply_record["command"],
+        "arguments": list(contract["execution"]["arguments"]),
+        "compile_defines": list(contract["execution"]["compile_defines"]),
+        "excluded_upstream_mode_count": len(contract["excluded_upstream_modes"]),
     }
 
 
@@ -3238,6 +3509,7 @@ def ratchet_measurement_regressions(
         "adapted_omitted_test_count",
         "adapted_selected_test_count",
         "adapted_stress_fixture_count",
+        "native_shadow_stress_fixture_count",
         "api_total_item_count",
         "configuration_profile_count",
         "upstream_test_source_count",
@@ -3247,7 +3519,7 @@ def ratchet_measurement_regressions(
         new_value = current.get(key)
         if old_value is None and new_value is None:
             continue
-        if key.startswith("adapted_") and old_value is None and type(new_value) is int:
+        if key.startswith(("adapted_", "native_shadow_")) and old_value is None and type(new_value) is int:
             continue
         if type(old_value) is not int or type(new_value) is not int or new_value < old_value:
             regressions.append(key)
@@ -3275,12 +3547,15 @@ def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
     tests = read_json(UPSTREAM_TEST_CONTRACT)
     adapted_tests = read_json(ADAPTED_TEST_CONTRACT)
     adapted_stress = read_json(ADAPTED_STRESS_TEST_CONTRACT)
+    native_shadow_stress = read_json(NATIVE_SHADOW_STRESS_CONTRACT)
     return {
         "adapted_omitted_test_count": len(adapted_tests["omitted_tests"]),
         "adapted_selected_test_count": len(adapted_tests["selected_tests"]),
         "adapted_test_contract_sha256": file_digest(ADAPTED_TEST_CONTRACT),
         "adapted_stress_fixture_count": len(adapted_stress["source_hashes"]),
         "adapted_stress_test_contract_sha256": file_digest(ADAPTED_STRESS_TEST_CONTRACT),
+        "native_shadow_stress_fixture_count": len(native_shadow_stress["source_hashes"]),
+        "native_shadow_stress_contract_sha256": file_digest(NATIVE_SHADOW_STRESS_CONTRACT),
         "api_contract_sha256": file_digest(API_CONTRACT),
         "api_total_item_count": api["summary"]["total_item_count"],
         "configuration_profile_count": len(CONFIGURATION_PROFILES),
@@ -3331,6 +3606,7 @@ def check_ratchet(port_map: Mapping[str, Any]) -> None:
     for key in (
         "adapted_test_contract_sha256",
         "adapted_stress_test_contract_sha256",
+        "native_shadow_stress_contract_sha256",
         "api_contract_sha256",
         "port_map_sha256",
         "upstream_test_contract_sha256",
@@ -5738,6 +6014,196 @@ def run_adapted_stress_fixture(
     }
 
 
+def run_native_shadow_stress_fixture(
+    source: Path, contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Build and execute the source workload through the selected debug libc.
+
+    The owning shell lane must enter through ``run_owned_test_suite.py`` first.
+    That launcher stages exactly the canonical interpreter and libc aliases;
+    this function then narrows the fixture process to the selected debug
+    ``libc.so`` with no inherited preload or library-search override.
+    """
+
+    compile_requirements = contract["compile_requirements"]
+    execution = contract["execution"]
+    adapted_source_contract = contract["adapted_source"]
+    assert isinstance(compile_requirements, dict)
+    assert isinstance(execution, dict)
+    assert isinstance(adapted_source_contract, dict)
+
+    raw_sysroot = os.environ.get("CRABC_TEST_SYSROOT")
+    if not raw_sysroot:
+        raise HarnessError(
+            "native-shadow stress requires CRABC_TEST_SYSROOT from scripts/run_owned_test_suite.py"
+        )
+    sysroot = Path(raw_sysroot).expanduser().resolve()
+    manifest = sysroot / "share/crabc/manifest.json"
+    compiler = sysroot / "bin/crabc-cc"
+    if not manifest.is_file() or not compiler.is_file():
+        raise HarnessError("native-shadow stress requires a complete owned crabc sysroot")
+    runtime_directory = ROOT / str(compile_requirements["runtime_directory"])
+    debug_libc = runtime_directory / "libc.so"
+    debug_loader = runtime_directory / "libldso.so"
+    if not debug_libc.is_file() or not debug_loader.is_file():
+        raise HarnessError(
+            "native-shadow stress requires target/debug/libc.so and target/debug/libldso.so"
+        )
+    canonical_loader = Path(str(compile_requirements["canonical_loader"]))
+    if not canonical_loader.is_file() or canonical_loader.is_symlink():
+        raise HarnessError(
+            "native-shadow stress must run under scripts/run_owned_test_suite.py's canonical-loader staging"
+        )
+
+    artifact_root = REPORT_ROOT / "native-shadow-stress"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    fixture_binary = artifact_root / "upstream-test-stress-native-shadow-pthreads"
+    adapted_source = source / str(adapted_source_contract["path"])
+    compile_flags = compile_requirements["compile_flags"]
+    link_flags = compile_requirements["link_flags"]
+    link_libraries = compile_requirements["link_libraries"]
+    compile_defines = execution["compile_defines"]
+    assert isinstance(compile_flags, list)
+    assert isinstance(link_flags, list)
+    assert isinstance(link_libraries, list)
+    assert isinstance(compile_defines, list)
+    fixture_command = [
+        str(compiler),
+        "-std=c11",
+        *compile_flags,
+        *(f"-D{define}" for define in compile_defines),
+        "-L",
+        str(runtime_directory),
+        str(adapted_source),
+        *link_flags,
+        *link_libraries,
+        "-o",
+        str(fixture_binary),
+    ]
+    fixture_build = command_record(fixture_command, cwd=source)
+    require_success(fixture_build, "native-shadow upstream pthread stress fixture")
+
+    readelf = require_tool("readelf")
+    dependencies = dynamic_dependencies(readelf, fixture_binary)
+    expected_dependencies = compile_requirements["expected_dynamic_dependencies"]
+    assert isinstance(expected_dependencies, list)
+    if dependencies != expected_dependencies:
+        raise HarnessError(
+            "native-shadow stress fixture dynamic dependency set differs from the contract"
+        )
+
+    excluded_modes = contract["excluded_upstream_modes"]
+    assert isinstance(excluded_modes, list)
+    rejected_compile_modes: list[str] = []
+    for mode in excluded_modes:
+        assert isinstance(mode, dict)
+        macro = mode["macro"]
+        assert isinstance(macro, str)
+        rejection_object = artifact_root / f"rejected-{macro.lower()}.o"
+        rejection_command = [
+            str(compiler),
+            "-std=c11",
+            *compile_flags,
+            *(f"-D{define}" for define in compile_defines),
+            f"-D{macro}=1",
+            "-c",
+            str(adapted_source),
+            "-o",
+            str(rejection_object),
+        ]
+        rejection = command_record(rejection_command, cwd=source)
+        if (
+            rejection["status"] == 0
+            or "the native-shadow stress fixture" not in str(rejection["stderr"])
+        ):
+            raise HarnessError(
+                "native-shadow stress mode was not rejected by its reviewed source guard: "
+                f"{macro}; status={rejection['status']} stderr={rejection['stderr']!r}"
+            )
+        rejected_compile_modes.append(macro)
+
+    arguments = execution["arguments"]
+    watchdog_seconds = execution["watchdog_seconds"]
+    process_epochs = execution["process_epochs"]
+    assert isinstance(arguments, list)
+    assert isinstance(watchdog_seconds, int)
+    assert isinstance(process_epochs, int)
+    fixture_run_command = [str(fixture_binary), *arguments]
+    fixture_environment = dict(os.environ)
+    for key in ("LD_AUDIT", "LD_LIBRARY_PATH", "LD_PRELOAD"):
+        fixture_environment.pop(key, None)
+    fixture_environment["LD_LIBRARY_PATH"] = str(runtime_directory)
+    for epoch in range(process_epochs):
+        fixture_run = command_record(
+            fixture_run_command,
+            cwd=source,
+            env=fixture_environment,
+            timeout_seconds=watchdog_seconds,
+        )
+        if (
+            fixture_run["status"] != 0
+            or fixture_run["stdout"] != execution["expected_stdout"]
+            or fixture_run["stderr"] != execution["expected_stderr"]
+        ):
+            raise HarnessError(
+                "native-shadow stress fixture failed at fresh process epoch "
+                f"{epoch + 1}/{process_epochs}: status={fixture_run['status']} "
+                f"stdout={fixture_run['stdout']!r} stderr={fixture_run['stderr']!r}"
+            )
+
+    return {
+        "artifact": artifact_record(fixture_binary),
+        "arguments": list(arguments),
+        "build_command": fixture_command,
+        "compile_defines": list(compile_defines),
+        "dynamic_dependencies": dependencies,
+        "rejected_compile_modes": rejected_compile_modes,
+        "run_command": fixture_run_command,
+        "selected_runtime_library": artifact_record(debug_libc),
+        "stderr": execution["expected_stderr"],
+        "stdout": execution["expected_stdout"],
+        "successful_process_epochs": process_epochs,
+        "watchdog": {
+            "seconds": watchdog_seconds,
+            "status": "passed",
+        },
+    }
+
+
+def run_native_shadow_stress(*, offline: bool) -> dict[str, Any]:
+    """Run the isolated two-pthread source stress evidence lane."""
+
+    require_native_aarch64()
+    pin = load_pin()
+    archive = fetch_archive(pin, offline)
+    contract = read_json(NATIVE_SHADOW_STRESS_CONTRACT)
+    summary = validate_native_shadow_stress_contract(contract, pin)
+    with tempfile.TemporaryDirectory(prefix="crabc-native-shadow-stress-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        patch = apply_and_verify_native_shadow_stress_patch(
+            source,
+            contract,
+            require_tool("patch"),
+        )
+        fixture = run_native_shadow_stress_fixture(source, contract)
+    report = {
+        "contract": {
+            "format": contract["format"],
+            "path": relative(NATIVE_SHADOW_STRESS_CONTRACT),
+            "schema": contract["schema"],
+            "sha256": file_digest(NATIVE_SHADOW_STRESS_CONTRACT),
+            "upstream": dict(contract["upstream"]),
+        },
+        "fixture": fixture,
+        "format": 1,
+        "patch": patch,
+        "summary": summary,
+        "target": {"architecture": platform.machine(), "system": platform.system()},
+    }
+    write_json(NATIVE_SHADOW_STRESS_REPORT, report)
+    return report
+
+
 def runtime_ticket_zero_stress_schedule(
     *,
     worker_cycles: int,
@@ -6216,6 +6682,21 @@ def run_milestone0(
             adapted_stress_contract,
             require_tool("patch"),
         )
+        native_shadow_stress_contract = read_json(NATIVE_SHADOW_STRESS_CONTRACT)
+        native_shadow_stress_summary = validate_native_shadow_stress_contract(
+            native_shadow_stress_contract,
+            pin,
+        )
+        native_shadow_stress_source = safe_extract(
+            archive,
+            Path(temporary) / "native-shadow-stress",
+            pin["archive_root"],
+        )
+        native_shadow_stress_patch = apply_and_verify_native_shadow_stress_patch(
+            native_shadow_stress_source,
+            native_shadow_stress_contract,
+            require_tool("patch"),
+        )
         runtime_ticket_zero_contract = read_json(RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
         runtime_ticket_zero_summary = validate_runtime_ticket_zero_adapter_contract(
             runtime_ticket_zero_contract,
@@ -6238,6 +6719,8 @@ def run_milestone0(
                 "adapted_test_patch": adapted_patch,
                 "adapted_stress_test_contract": adapted_stress_summary,
                 "adapted_stress_test_patch": adapted_stress_patch,
+                "native_shadow_stress_contract": native_shadow_stress_summary,
+                "native_shadow_stress_patch": native_shadow_stress_patch,
                 "m5_gate_contract": m5_gate_summary,
                 "native_owner_exit_lifecycle_contract": native_owner_exit_lifecycle_summary,
                 "runtime_ticket_zero_test_contract": runtime_ticket_zero_summary,
@@ -6276,6 +6759,8 @@ def run_milestone0(
         report["adapted_test_patch"] = adapted_patch
         report["adapted_stress_test_contract"] = adapted_stress_summary
         report["adapted_stress_test_patch"] = adapted_stress_patch
+        report["native_shadow_stress_contract"] = native_shadow_stress_summary
+        report["native_shadow_stress_patch"] = native_shadow_stress_patch
         report["m5_gate_contract"] = m5_gate_summary
         report["native_owner_exit_lifecycle_contract"] = native_owner_exit_lifecycle_summary
         report["runtime_ticket_zero_test_contract"] = runtime_ticket_zero_summary
@@ -6344,6 +6829,11 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="run the larger ticket-zero pthread lifecycle soak lane",
     )
+    mode.add_argument(
+        "--native-shadow-stress",
+        action="store_true",
+        help="run the selected-libc two-pthread upstream stress evidence lane",
+    )
     perf = parser.add_mutually_exclusive_group()
     perf.add_argument("--perf-smoke", action="store_true", help="attempt the later allocator performance smoke gate")
     perf.add_argument("--perf-full", action="store_true", help="attempt the later allocator performance full gate")
@@ -6377,10 +6867,10 @@ def parse_arguments() -> argparse.Namespace:
         )
     )
     arguments = parser.parse_args()
-    if not any((arguments.quick, arguments.full, arguments.churn, arguments.soak, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
-        parser.error("choose --quick, --full, --churn, --soak, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
+    if not any((arguments.quick, arguments.full, arguments.churn, arguments.soak, arguments.native_shadow_stress, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
+        parser.error("choose --quick, --full, --churn, --soak, --native-shadow-stress, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
     if arguments.generate_contracts or arguments.snapshot_ratchet:
-        if arguments.quick or arguments.full or arguments.churn or arguments.soak or arguments.perf_smoke or arguments.perf_full:
+        if arguments.quick or arguments.full or arguments.churn or arguments.soak or arguments.native_shadow_stress or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
         arguments.full
@@ -6409,6 +6899,10 @@ def main() -> int:
             port_map = load_port_map()
             snapshot_ratchet(port_map)
             print(RATCHET)
+            return 0
+        if arguments.native_shadow_stress:
+            run_native_shadow_stress(offline=arguments.offline)
+            print(NATIVE_SHADOW_STRESS_REPORT)
             return 0
         if arguments.check:
             result = run_milestone0(

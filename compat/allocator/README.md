@@ -1939,6 +1939,8 @@ snapshot after review; the normal gate never updates its own baseline.
 | `adapted/test-api-selected.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `adapted-stress-test-v3.5.0.json` | Reviewed creating-thread stress source/provenance map, exact patch/hash, fixed `NTHREADS=1`/`1 1 2` invocation, unsupported-mode rejections, and native link contract for the constrained upstream `test/test-stress.c` route. |
 | `adapted/test-stress-creating-thread.patch` | Minimal source adaptation of the exact upstream stress fixture; it keeps the source workload but intentionally excludes every unsupported scheduler or allocator mode rather than copying a C fork. |
+| `native-shadow-stress-v3.5.0.json` | Reviewed selected-libc source-stress provenance map, behavior-named patch/hash, fixed two-pthread `2 1 2` execution, fresh-process count, source-transfer cleanup boundary, and unsupported-mode rejections. |
+| `adapted/test-stress-native-shadow-pthreads.patch` | Minimal selected-shadow adaptation of the exact upstream stress fixture; standard C allocation names bind to the native shadow `libc.so`, while unsupported upstream modes fail at compile time. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, eleven-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus retained narrow, persistent mixed-local, live-owner remote-free, a fresh-B mixed post-exit owner route, and alternating sole-medium/direct-small reclamation worker round trips through one existing export. |
 | `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, twelve focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
@@ -2176,6 +2178,11 @@ private-list members only under the opaque registry proof; each B removes only
 its own member and its ordinary attachment finish removes only its route's parked
 count. The Rust witness interleaves three B frees and finishes them in a
 different order; the selected C fixture releases all three in non-FIFO order.
+While every route remains source-active, ticket zero may complete only its own
+private operation beside their separate scheduler tokens; it cannot consume a
+route or its worker-admission claim. A terminal B completion blocks ticket zero
+until every pending B completion has finished; a terminally retained route is a
+permanent blocker.
 The routes take short serialized PageMap access, and neither may consume that
 access into a long engine while a sibling route remains live. Metadata-growth
 or terminal-route failure retains the exact source owner rather than publishing
@@ -2222,10 +2229,12 @@ and leave A's route valid for A's later local free. While A is temporarily
 active, its moved `CurrentThreadPageOwnerSession` retains A's matching entry
 `BUSY` until A re-parks, so B cannot borrow that A in the resume interval. The
 fixture then proves ticket-zero reactivation after A finishes across 128 fresh
-process epochs. A lost parked-count CAS is retryable only while the scheduler
-still records `BUSY` or a nonzero parked count; `READY` and terminal states
-remain non-retryable. It does not create a pointer handoff or concurrent
-PageMap mutation.
+process epochs. An already parked session retries a lost scheduler CAS only
+while the scheduler still records `BUSY` or a nonzero parked count; `READY`
+and terminal states mean its own token is no longer represented. A first
+session has no token yet, so it may retry from `READY` when a peer completed
+between its sampled CAS and retry. This does not create a pointer handoff or
+concurrent PageMap mutation.
 `tests/native_mimalloc_live_remote_owner_exit.rs` composes that exact live
 publication with A-side source collection and a later deferred A exit: a
 separate fresh worker frees the remaining small/medium aggregate only through
@@ -2258,6 +2267,15 @@ beyond the exact detached-owner transition, usable-size outside the exact
 detached route or parked live owner, general
 concurrent owner-exit traversal or arbitrary worker allocation beyond the
 bounded live-entry witnesses, and is not a Gate 5E or promotion pass.
+The same command ends with the separately reviewed
+`native-shadow-stress-v3.5.0.json` witness. It applies a behavior-named patch
+to pinned upstream `test/test-stress.c`, routes standard C allocation calls
+through the selected shadow `libc.so`, and runs exactly two source pthread
+workers with fixed `2 1 2` inputs for 128 fresh process epochs. Each selected
+source transfer cleanup runs in one fresh pthread after its producing workers
+join. The contract rejects unsupported heap, walk, subprocess, leak, and
+large-object modes; this is bounded source-derived lifecycle evidence, not a
+general pointer-routing, concurrent-PageMap, or promotion claim.
 
 ## Separate completion tracks
 

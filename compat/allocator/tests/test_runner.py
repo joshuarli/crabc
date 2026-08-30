@@ -1428,6 +1428,17 @@ class ContractTests(unittest.TestCase):
             },
         )
 
+    def test_native_shadow_stress_contract_is_exact_and_reviewed(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_SHADOW_STRESS_CONTRACT)
+        self.assertEqual(
+            RUNNER.validate_native_shadow_stress_contract(contract, RUNNER.load_pin()),
+            {
+                "excluded_upstream_mode_count": 5,
+                "process_epochs": 128,
+                "source_worker_count": 2,
+            },
+        )
+
     def test_runtime_ticket_zero_adapter_contract_is_exact_and_reviewed(self) -> None:
         contract = RUNNER.read_json(RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_CONTRACT)
         header = RUNNER.RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8")
@@ -1784,6 +1795,12 @@ class ContractTests(unittest.TestCase):
             RUNNER.validate_adapted_stress_test_contract(
                 contract, RUNNER.load_pin(), header
             )
+
+    def test_native_shadow_stress_rejects_scope_drift(self) -> None:
+        contract = RUNNER.read_json(RUNNER.NATIVE_SHADOW_STRESS_CONTRACT)
+        contract["execution"]["process_epochs"] = 127
+        with self.assertRaisesRegex(RUNNER.HarnessError, "execution contract changed"):
+            RUNNER.validate_native_shadow_stress_contract(contract, RUNNER.load_pin())
 
     def test_checked_in_api_inventory_has_audited_linux_aarch64_boundaries(self) -> None:
         inventory = RUNNER.read_json(RUNNER.API_CONTRACT)

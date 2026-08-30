@@ -563,6 +563,14 @@ case "$command" in
             --test pthread_atfork \
             --test pthread_create_join_tls_regression \
             -- --test-threads=1
+        # Keep the source-derived pthread workload outside the one-thread
+        # prefixed adapter. This wrapper stages the exact owned loader and
+        # debug libc aliases before the runner selects the native-shadow
+        # `libc.so` for all standard C allocation calls.
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- python3 compat/allocator/run.py --native-shadow-stress
         ;;
     allocator-tls)
         ensure_image
