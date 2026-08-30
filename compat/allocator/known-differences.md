@@ -404,6 +404,61 @@ result may refine it only when it can prove retained ownership.
   or NUMA policy, generic arena management, raw page-map access, or process
   teardown.
 
+### `CRABC-MI-ABANDONED-BIT-ORDINARY-PAGE-GUARD` — accepted checked invariant
+
+- **Upstream/Rust:** pinned `src/arena.c:655-671`
+  `mi_arena_try_claim_abandoned`, `src/arena.c:684-696`
+  `mi_page_arena_pages`, `src/arena.c:725-778`
+  `mi_arenas_page_try_find_abandoned`, `src/arena.c:1304-1337`
+  `_mi_arenas_page_abandon`, and `src/arena.c:1383-1409`
+  `_mi_arenas_page_unabandon`; plus `src/bitmap.c:1306-1328`
+  `mi_bitmap_find`, `src/bitmap.c:1340-1380`
+  `mi_bitmap_try_find_and_claim_visit`/
+  `mi_bitmap_try_find_and_claim`, and `src/bitmap.c:1425-1432`
+  `mi_bitmap_clear_once_set`. Rust represents this in
+  `BitmapView::try_find_and_claim_abandoned`/`clear_once_set`,
+  `ArenaAbandonedPages::main_page_is_set`, and the exact static-main and
+  dynamic `MappedAbandonedPages` capabilities.
+- **Category:** source-backed private invariant. It has no C ABI surface and
+  does not constitute general abandoned-page reclaim or allocation support.
+- **Difference:** C treats a missing heap-local ordinary `pages` bit at
+  `mi_page_arena_pages` as an internal assertion failure. The checked Rust
+  capabilities instead reject that stale `pages_abandoned[bin]` candidate.
+  The rejection returns `KeepSet`: it restores the abandoned bit and its
+  conservative chunk-map entry, does not call the ownership closure, and does
+  not decrement the paired `Heap::abandoned_count[bin]`. A successful claim
+  alone consumes that count. If an `unabandon` observes the reader's temporary
+  clear, `clear_once_set` waits until the rejection restores the bit before it
+  permanently clears it; only then may the owning lifecycle clear the mapped
+  identity and decrement the count. The source snapshot visits a rejected
+  candidate once, while an independent reader can claim a later set atomic
+  word; the guard preserves both facts.
+- **Evidence:**
+  `arena::tests::abandoned_reclaim_main_map_rejects_an_orphan_bit_without_consuming_it`
+  proves an ordinary-bit-missing candidate neither reaches ownership nor loses
+  its abandoned bit/count.
+  `arena::tests::abandoned_reclaim_main_map_retains_rejected_boundary_candidate_count`
+  proves rejection retains the first boundary candidate and count until the
+  source-order unabandon transition, after which a fresh search may claim the
+  later-word candidate.
+  `bitmap::tests::abandoned_reclaim_bitmap_rejected_reader_quiesces_before_later_word_retry`
+  proves the temporary clear/restore quiescence at adjacent bitmap-word
+  boundaries while another reader claims the later candidate.
+- **Remaining dependency:** this ordinary-bit check is not a PageMap lookup or
+  a page-identity proof. The caller still has to prove that the exact
+  arena/slice names a live PageMap entry and matching page metadata for the
+  entire claim/reclaim operation. The lifecycle owner must preserve failed
+  claim restoration before an `unabandon` clear, then the source
+  `unabandon` order of bitmap clear -> mapped-identity clear -> count
+  decrement; its final release remains the owner-specific PageMap removal ->
+  ordinary-page-bit clear -> metadata retirement -> arena slice release.
+  General arena scanning, reclaim/adoption routing, concurrent
+  PageMap consumers, and terminal lifecycle wiring remain unimplemented.
+- **Decision/removal:** retain this checked guard until a complete source
+  PageMap/lifecycle owner can supply those identity and release proofs. It does
+  not authorize a fallback lookup, a global owner registry, or a claim of
+  allocator parity.
+
 ### `CRABC-MI-STATIC-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted bounded page-owner slice
 
 - **Upstream/Rust:** static main-heap setup and thread attachment in
