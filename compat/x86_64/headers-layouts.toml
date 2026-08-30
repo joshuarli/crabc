@@ -432,6 +432,18 @@ sources = [
 headers = ["include/netinet/in.h", "include/stddef.h", "include/sys/socket.h"]
 
 [[probe]]
+id = "inet-address"
+command = "./scripts/dev-x86_64.sh inet-address-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/inet_address_header_abi_probe.c",
+  "compat/x86_64/inet_address_header_abi_probe.cpp",
+  "compat/x86_64/run_inet_address_header_abi.sh",
+]
+headers = ["include/arpa/inet.h", "include/stddef.h"]
+
+[[probe]]
 id = "epoll"
 command = "./scripts/dev-x86_64.sh epoll-header-abi"
 state = "required"

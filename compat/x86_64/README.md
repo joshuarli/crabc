@@ -249,6 +249,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh memfd-create-header-abi
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
+./scripts/dev-x86_64.sh inet-address-header-abi
 ./scripts/dev-x86_64.sh socket-messages-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
 ./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
@@ -397,6 +398,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
+./scripts/dev-x86_64.sh libc-inet-address
 ./scripts/dev-x86_64.sh libc-random-entropy
 ./scripts/dev-x86_64.sh libc-memory-search
 ./scripts/dev-x86_64.sh libc-string-copy
@@ -441,7 +443,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the thirty-nine selected
+`headers-layouts.toml` is the checked-in contract for the forty-one selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -862,6 +864,28 @@ bind/listen/accept/`accept4`/connect, send/receive, name-query, and shutdown
 signatures, and the named IPv6 macro classifications. It is source-only header
 evidence: it does not select socket options, vector or ancillary-message APIs,
 address-conversion or socket behavior, `crabc-libc`, or public x86 support.
+
+`inet-address-header-abi` compile-checks project-first and pinned-musl
+default/GNU/strict C and C++ `<arpa/inet.h>` profiles. It ratchets the exact
+`inet_pton`, `inet_ntop`, `inet_aton`, and `inet_addr` declarations, the x86
+`in_addr_t`/`in_port_t`/`struct in_addr` layouts, `INET_ADDRSTRLEN` and
+`INET6_ADDRSTRLEN`, and unmangled C++ C spellings. It is declaration/layout
+evidence only: it does not establish archive linkage, numeric-address runtime
+behavior, DNS/resolver state, netdb, installed-header completion, family
+promotion, or public x86 support.
+
+`libc-inet-address` is the separate private static C numeric-address artifact
+under still-planned `libc.resolver`. Its project-header C body executes first
+through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate. It selects only `inet_pton`, `inet_ntop`, hidden global
+`__inet_aton`, the same-address weak `inet_aton` alias, and `inet_addr`; the
+fixture pins strict IPv4/IPv6 grammar, historical base-zero and abbreviated
+`inet_aton` forms, network bytes, `INADDR_NONE` ambiguity, partial parse and
+output writes, mapped-v4/longest-zero-run text, AF-family errors, and the
+different short-buffer behavior for AF_INET and AF_INET6 `inet_ntop`. It does
+not select DNS/resolver state, netdb, interface lookup, `inet_ntoa` scratch
+storage, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
+behavior, family promotion, or public x86 support.
 
 `socket-messages-header-abi` compile-checks project-first and pinned-musl
 POSIX/GNU/BSD C/C++ `<sys/socket.h>` message/options declarations. It covers

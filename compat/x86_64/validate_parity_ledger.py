@@ -648,6 +648,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "mman": "./scripts/dev-x86_64.sh mman-header-abi",
     "resource": "./scripts/dev-x86_64.sh resource-header-abi",
     "socket": "./scripts/dev-x86_64.sh socket-header-abi",
+    "inet-address": "./scripts/dev-x86_64.sh inet-address-header-abi",
     "epoll": "./scripts/dev-x86_64.sh epoll-header-abi",
     "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
     "sys-time-direct": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
@@ -820,6 +821,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/socket_header_abi_probe.cpp",
         "compat/x86_64/socket_header_ipv6_macro_probe.c",
         "compat/x86_64/run_socket_header_abi.sh",
+    ),
+    "inet-address": (
+        "compat/x86_64/inet_address_header_abi_probe.c",
+        "compat/x86_64/inet_address_header_abi_probe.cpp",
+        "compat/x86_64/run_inet_address_header_abi.sh",
     ),
     "epoll": (
         "compat/x86_64/epoll_header_abi_probe.c",
@@ -1184,6 +1190,31 @@ DIRECTORY_STREAM_UNSELECTED_SYMBOLS = (
     "malloc",
     "realloc",
     "scandir",
+)
+
+INET_ADDRESS_SYMBOLS = (
+    "__inet_aton",
+    "inet_addr",
+    "inet_aton",
+    "inet_ntop",
+    "inet_pton",
+)
+
+INET_ADDRESS_UNSELECTED_SYMBOLS = (
+    "calloc",
+    "free",
+    "freeaddrinfo",
+    "getaddrinfo",
+    "gethostbyaddr",
+    "gethostbyname",
+    "getnameinfo",
+    "inet_lnaof",
+    "inet_makeaddr",
+    "inet_netof",
+    "inet_network",
+    "inet_ntoa",
+    "malloc",
+    "realloc",
 )
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -4312,6 +4343,65 @@ def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
         "libc-header-layouts-baseline)" in dispatch_source,
         "libc-header-layouts-baseline is absent from the native dispatcher",
     )
+
+
+def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the selected numeric-address declarations below header promotion."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matches = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == "./scripts/dev-x86_64.sh inet-address-header-abi"
+    ]
+    require(
+        len(matches) == 1,
+        "libc.headers-layouts must retain exactly one inet-address-header-abi evidence command",
+    )
+    record = matches[0]
+    scope = record.get("scope")
+    require(
+        record.get("state") == "required"
+        and isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "default/GNU/strict C/C++",
+                "<arpa/inet.h>",
+                "`inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`",
+                "`in_addr_t`/`in_port_t`/`struct in_addr`",
+                "INET text-buffer constants",
+                "archive linkage",
+                "address-conversion runtime behavior",
+                "DNS/resolver state",
+                "netdb",
+                "installed-header completion",
+                "family completion",
+                "public x86 support",
+            )
+        ),
+        "libc.headers-layouts inet-address-header-abi evidence must retain its narrow non-completion boundary",
+    )
+    owners = set(
+        nonempty_strings(
+            family["source_owners"], "family[libc.headers-layouts].source_owners"
+        )
+    )
+    for owner in (
+        "compat/x86_64/inet_address_header_abi_probe.c",
+        "compat/x86_64/inet_address_header_abi_probe.cpp",
+        "compat/x86_64/run_inet_address_header_abi.sh",
+        "include/arpa/inet.h",
+        "include/stddef.h",
+    ):
+        require(
+            owner in owners,
+            f"libc.headers-layouts inet-address-header-abi source owners omit {owner}",
+        )
 
 
 def require_evidence_state(
@@ -11253,6 +11343,283 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
+    """Keep selected numeric address codecs private and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-inet-address-codecs"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-inet-address-codecs artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-inet-address-codecs must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in INET_ADDRESS_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-inet-address-codecs description omits {symbol}",
+        )
+    for phrase in (
+        "Private native x86 static numeric Internet-address codec artifact",
+        "still-planned `libc.resolver`",
+        "same-address weak `inet_aton` alias",
+        "strict IPv4/IPv6 text grammar",
+        "historical base-zero and abbreviated `inet_aton` forms",
+        "network-byte storage",
+        "`INADDR_NONE` ambiguity",
+        "partial parse and output writes",
+        "longest-zero-run text compression",
+        "mapped-v4 dotted text",
+        "AF-family errors",
+        "AF_INET versus AF_INET6 `inet_ntop`",
+        "DNS/resolver state",
+        "netdb",
+        "inet_ntoa scratch storage",
+        "allocation",
+        "stdio",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-inet-address-codecs description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-inet-address-codecs.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/inet_address.rs",
+        "libc/src/c_abi/x86_64/integer_parse.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/arpa/inet.h",
+        "include/errno.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/inet_address_header_abi_probe.c",
+        "compat/x86_64/inet_address_header_abi_probe.cpp",
+        "compat/x86_64/run_inet_address_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_inet_address_probe.c",
+        "compat/x86_64/libc_inet_address_start.S",
+        "compat/x86_64/run_libc_inet_address.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-inet-address-codecs source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-inet-address-codecs.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "socklen_t" in item
+            and "in_addr_t" in item
+            and "in_port_t" in item
+            and "struct in_addr" in item
+            and "AF_UNIX=1" in item
+            and "AF_INET=2" in item
+            and "AF_INET6=10" in item
+            and "INET_ADDRSTRLEN=16" in item
+            and "INET6_ADDRSTRLEN=46" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-address-codecs must record its x86 numeric-address C ABI",
+    )
+    require(
+        any(
+            "src/network/inet_pton.c" in item
+            and "inet_ntop.c" in item
+            and "inet_aton.c" in item
+            and "inet_addr.c" in item
+            and "strtoul" in item
+            and "resolver or DNS source is selected" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-address-codecs must record its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "strict decimal IPv4" in item
+            and "strict IPv6" in item
+            and "network-order bytes" in item
+            and "partial writes" in item
+            and "IPv4-mapped" in item
+            and "EAFNOSUPPORT" in item
+            and "ENOSPC" in item
+            and "AF_INET snprintf-style" in item
+            and "AF_INET6 route leaves" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-address-codecs must record its parsing and output boundary",
+    )
+    require(
+        any(
+            "global hidden ELF function" in item
+            and "weak default same-address alias" in item
+            and "inet_addr" in item
+            and "all ones" in item
+            and "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "dynamic TLS resolver" in item
+            for item in prerequisites
+        ),
+        "static-c-inet-address-codecs must record its alias and initial-TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-inet-address-codecs.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "six-profile" in item
+            and "project-first/pinned-musl" in item
+            and "<arpa/inet.h>" in item
+            and "`inet_pton`" in item
+            and "`inet_ntop`" in item
+            and "`inet_aton`" in item
+            and "`inet_addr`" in item
+            and "unmangled C++" in item
+            and "public x86 support" in item
+            for item in headers
+        ),
+        "static-c-inet-address-codecs must record its direct numeric-address header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(INET_ADDRESS_SYMBOLS) <= static_exports,
+        "static-c-inet-address-codecs must retain its five selected exports",
+    )
+    require(
+        not (static_exports & set(INET_ADDRESS_UNSELECTED_SYMBOLS)),
+        "static-c-inet-address-codecs must not add unselected resolver/allocation exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "inet_address.rs"]\nmod inet_address;' in static_root,
+        "x86 static C ABI must compose the inet_address leaf",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/network/inet_pton.c",
+                    "inet_ntop.c",
+                    "inet_aton.c",
+                    "inet_addr.c",
+                )
+            )
+            and "partial writes" in entry["role"]
+            and "hidden/weak alias intent" in entry["role"]
+            and "DNS/resolver and netdb behavior" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-inet-address-codecs must retain its pinned-musl address source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "hidden-global helper" in entry["role"]
+            and "weak-default same-address alias" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-inet-address-codecs must retain its ELF alias contract",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-inet-address"},
+        "static-c-inet-address-codecs must use the closed libc-inet-address command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C execution",
+                "`-nostdlib -static` candidate",
+                "`inet_pton`/`inet_ntop`/`__inet_aton`/weak same-address `inet_aton`/`inet_addr`",
+                "initial-TLS errno",
+                "dynamic TLS resolver",
+                "no interpreter/DT_NEEDED/unresolved",
+                "strict IPv4/IPv6 grammar",
+                "historical base-zero and abbreviated inet_aton forms",
+                "network-byte storage",
+                "INADDR_NONE ambiguity",
+                "partial parse and output writes",
+                "mapped-v4 and longest-zero-run output",
+                "EAFNOSUPPORT/ENOSPC",
+                "AF_INET truncated-output versus AF_INET6 untouched-short-buffer",
+                "DNS/resolver state",
+                "netdb",
+                "inet_ntoa",
+                "public x86 support",
+            )
+        ),
+        "static-c-inet-address-codecs evidence must retain its exact static numeric-address regression",
+    )
+
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-inet-address)" in dispatch_source,
+        "libc-inet-address is absent from the native dispatcher",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -12036,6 +12403,7 @@ def validate_ledger(
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
+    require_inet_address_header_evidence(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
@@ -12091,6 +12459,7 @@ def validate_ledger(
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
+    require_inet_address_artifact(by_id["libc.resolver"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])

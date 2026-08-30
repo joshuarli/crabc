@@ -92,6 +92,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   memfd-create-header-abi  verify selected x86 GNU memfd_create C/C++ declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
+  inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
@@ -250,6 +251,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
+  libc-inet-address  run the static x86 crabc-libc numeric Internet-address codec slice
   libc-random-entropy  run the static x86 crabc-libc random-entropy slice
   libc-memory-search  run the static x86 crabc-libc memory-search slice
   libc-string-copy  run the static x86 crabc-libc C-string-copy slice
@@ -1794,6 +1796,10 @@ run_socket_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_socket_header_abi.sh
 }
 
+run_inet_address_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_inet_address_header_abi.sh
+}
+
 run_socket_messages_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_socket_messages_header_abi.sh
 }
@@ -2708,6 +2714,7 @@ shift
 
 case "$command" in
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff) ;;
+    inet-address-header-abi) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
     memory-locking-header-abi) ;;
@@ -2744,7 +2751,7 @@ case "$command" in
     libc-memory-sync) ;;
     libc-memory-locking) ;;
     libc-memfd-create) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-vector-io) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -3030,6 +3037,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "socket-header-abi takes no arguments"
         ensure_image
         run_socket_header_abi
+        ;;
+    inet-address-header-abi)
+        [ "$#" -eq 0 ] || fail "inet-address-header-abi takes no arguments"
+        ensure_image
+        run_inet_address_header_abi
         ;;
     socket-messages-header-abi)
         [ "$#" -eq 0 ] || fail "socket-messages-header-abi takes no arguments"
@@ -3864,6 +3876,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_byte_strings.sh
+        ;;
+    libc-inet-address)
+        [ "$#" -eq 0 ] || fail "libc-inet-address takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_inet_address.sh
         ;;
     libc-random-entropy)
         [ "$#" -eq 0 ] || fail "libc-random-entropy takes no arguments"

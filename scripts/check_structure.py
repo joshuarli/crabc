@@ -3694,6 +3694,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memfd_create.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
+        '#[path = "inet_address.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "byte_strings.rs"]',
         '#[path = "random_entropy.rs"]',
@@ -6277,6 +6278,146 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named socket-message/options symbols"
         )
 
+    inet_address_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_inet_address_probe.c"
+    )
+    inet_address_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_inet_address_start.S"
+    )
+    inet_address_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_inet_address.sh"
+    )
+    for path in (
+        inet_address_probe_source,
+        inet_address_start_source,
+        inet_address_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static numeric address-codec artifact is missing "
+                f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    inet_address_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "inet_address.rs"
+    )
+    inet_address_text = inet_address_source.read_text(errors="replace")
+    inet_address_probe = inet_address_probe_source.read_text(errors="replace")
+    inet_address_start = inet_address_start_source.read_text(errors="replace")
+    inet_address_runner = inet_address_runner_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/network/inet_pton.c",
+        "src/network/inet_ntop.c",
+        "src/network/inet_aton.c",
+        "src/network/inet_addr.c",
+        "partial output writes",
+        "partial IPv4 output",
+        "integer_parse::strtoul",
+        "errno::set_errno(EAFNOSUPPORT)",
+        "errno::set_errno(ENOSPC)",
+        ".hidden __inet_aton",
+        ".weak inet_aton",
+        ".set inet_aton, __inet_aton",
+        "pub unsafe extern \"C\" fn inet_pton",
+        "pub unsafe extern \"C\" fn inet_ntop",
+        "pub unsafe extern \"C\" fn __inet_aton",
+        "pub unsafe extern \"C\" fn inet_addr",
+    ):
+        if required not in inet_address_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_address.rs: selected static "
+                f"numeric address-codec boundary is missing {required!r}"
+            )
+    for forbidden in ("std::", "alloc::", "raw_syscall::", "crabc_core"):
+        if forbidden in inet_address_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/inet_address.rs: selected static "
+                f"numeric address-codec boundary must not select {forbidden!r}"
+            )
+    inet_address_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            inet_address_text,
+        )
+    )
+    expected_inet_address_exports = {
+        "inet_pton",
+        "inet_ntop",
+        "__inet_aton",
+        "inet_addr",
+    }
+    if inet_address_exports != expected_inet_address_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/inet_address.rs: selected static "
+            "artifact must export only its named numeric address-codec symbols"
+        )
+    inet_address_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*__inet_aton",\s*$',
+            inet_address_text,
+        )
+    )
+    if inet_address_aliases != {"inet_aton"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/inet_address.rs: selected static artifact "
+            "must retain inet_aton as musl's same-address assembler alias"
+        )
+    for required in (
+        "#include <arpa/inet.h>",
+        '"01.2.3.4"',
+        '"1.2.3.4x"',
+        '"::192.0.2.1"',
+        '"::ffff:192.0.2.999"',
+        '"::c000:280"',
+        '"::1:0:0:1:1:1"',
+        '"0177.1"',
+        '"18446744073709551616"',
+        "AF_INET6, ipv6, output, 12",
+        "AF_INET6, ipv6, output, 11",
+        "CRABC_INET_ADDRESS_FREESTANDING",
+    ):
+        if required not in inet_address_probe:
+            errors.append(
+                "compat/x86_64/libc_inet_address_probe.c: static numeric "
+                f"address-codec regression is missing {required!r}"
+            )
+    for required in (
+        "__crabc_x86_static_tls_bootstrap",
+        "crabc_x86_64_inet_address_probe",
+        "mov $231, %eax",
+    ):
+        if required not in inet_address_start:
+            errors.append(
+                "compat/x86_64/libc_inet_address_start.S: static numeric "
+                f"address-codec TLS shim is missing {required!r}"
+            )
+    for required in (
+        "assert_selected_c_abi_surface",
+        "assert_musl_inet_aton_alias",
+        "-print-file-name=libc.a",
+        "inet_aton.lo",
+        "pinned-musl static archive",
+        "R_X86_64_TPOFF",
+        "-nostdlib -static",
+        "-Wl,-e,_start",
+        "static_c_abi_exports.txt",
+        "inet_ntoa",
+        "getaddrinfo",
+        "__tls_get_addr",
+    ):
+        if required not in inet_address_runner:
+            errors.append(
+                "compat/x86_64/run_libc_inet_address.sh: static numeric "
+                f"address-codec evidence is missing {required!r}"
+            )
+    if "--whole-archive" in inet_address_runner:
+        errors.append(
+            "compat/x86_64/run_libc_inet_address.sh: static numeric "
+            "address-codec evidence must not force-link the whole archive"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -6840,6 +6981,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         readiness_waits_text,
         socket_transport_text,
         socket_messages_text,
+        inet_address_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -6887,6 +7029,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | assembly_exports
         | callback_algorithms_aliases
         | filesystem_access_aliases
+        | inet_address_aliases
         | timestamp_aliases
         | pthread_identity_exports
     )
@@ -7107,6 +7250,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sendmmsg",
         "recvmmsg",
         "sockatmark",
+        "inet_pton",
+        "inet_ntop",
+        "__inet_aton",
+        "inet_aton",
+        "inet_addr",
         "uname",
         "sysinfo",
         "gethostname",
@@ -7245,6 +7393,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("readiness_waits.rs", readiness_waits_text),
         ("socket_transport.rs", socket_transport_text),
         ("socket_messages.rs", socket_messages_text),
+        ("inet_address.rs", inet_address_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

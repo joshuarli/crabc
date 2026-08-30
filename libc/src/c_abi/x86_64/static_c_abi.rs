@@ -205,6 +205,8 @@ mod system_information;
 mod uts_identity;
 #[path = "socket_transport.rs"]
 mod socket_transport;
+#[path = "inet_address.rs"]
+mod inet_address;
 #[path = "socket_messages.rs"]
 mod socket_messages;
 #[path = "sysv_semaphore.rs"]

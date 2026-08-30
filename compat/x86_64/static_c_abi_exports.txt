@@ -20,6 +20,7 @@ __funcs_on_exit
 __futimesat
 __fxstat
 __fxstatat
+__inet_aton
 __libc_current_sigrtmax
 __libc_start_main
 __lxstat
@@ -160,6 +161,10 @@ getuid
 imaxabs
 imaxdiv
 index
+inet_addr
+inet_aton
+inet_ntop
+inet_pton
 inotify_add_watch
 inotify_init
 inotify_init1

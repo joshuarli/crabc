@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 78)
-        self.assertEqual(report["header_layout_probe_count"], 40)
+        self.assertEqual(report["verified_artifact_count"], 79)
+        self.assertEqual(report["header_layout_probe_count"], 41)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -284,7 +284,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 40)
+        self.assertEqual(report["header_layout_probe_count"], 41)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -313,6 +313,20 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/socket_header_abi_probe.cpp",
                 "compat/x86_64/socket_header_ipv6_macro_probe.c",
                 "compat/x86_64/run_socket_header_abi.sh",
+            ],
+        )
+        inet_address = next(probe for probe in probes if probe["id"] == "inet-address")
+        assert isinstance(inet_address, dict)
+        self.assertEqual(inet_address["kind"], "compile-only")
+        self.assertEqual(
+            inet_address["headers"], ["include/arpa/inet.h", "include/stddef.h"]
+        )
+        self.assertEqual(
+            inet_address["sources"],
+            [
+                "compat/x86_64/inet_address_header_abi_probe.c",
+                "compat/x86_64/inet_address_header_abi_probe.cpp",
+                "compat/x86_64/run_inet_address_header_abi.sh",
             ],
         )
         math_complex = next(probe for probe in probes if probe["id"] == "math-complex")
@@ -515,6 +529,50 @@ class X86ParityLedgerTests(unittest.TestCase):
         probes[0]["command"] = "./scripts/dev-x86_64.sh libc-foundation"
         with self.assertRaisesRegex(ledger.LedgerError, "command drifted"):
             ledger.validate_ledger(data, header_layout_manifest=manifest)
+
+    def test_inet_address_header_gate_stays_compile_only_and_non_promoting(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertEqual(headers_layouts["status"], "planned")
+        for owner in (
+            "include/arpa/inet.h",
+            "include/stddef.h",
+            "compat/x86_64/inet_address_header_abi_probe.c",
+            "compat/x86_64/inet_address_header_abi_probe.cpp",
+            "compat/x86_64/run_inet_address_header_abi.sh",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
+        evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh inet-address-header-abi"
+        )
+        self.assertEqual(evidence["state"], "required")
+        for phrase in (
+            "default/GNU/strict C/C++",
+            "<arpa/inet.h>",
+            "`inet_pton`/`inet_ntop`/`inet_aton`/`inet_addr`",
+            "`in_addr_t`/`in_port_t`/`struct in_addr`",
+            "archive linkage",
+            "address-conversion runtime behavior",
+            "DNS/resolver state",
+            "netdb",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence["scope"])
+
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        header_evidence = next(
+            entry
+            for entry in headers_layouts["native_evidence"]
+            if entry["command"] == "./scripts/dev-x86_64.sh inet-address-header-abi"
+        )
+        header_evidence["scope"] = "header completion"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "inet-address-header-abi evidence must retain"
+        ):
+            ledger.validate_ledger(data)
 
     def test_header_foundation_manifest_accounts_for_all_paths_without_promotion(self) -> None:
         data = self.data()
@@ -8917,6 +8975,142 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static pathname runtime regression"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_inet_address_artifact_keeps_its_private_numeric_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-address-codecs"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/inet_address.rs",
+            "libc/src/c_abi/x86_64/integer_parse.rs",
+            "compat/x86_64/inet_address_header_abi_probe.c",
+            "compat/x86_64/inet_address_header_abi_probe.cpp",
+            "compat/x86_64/run_inet_address_header_abi.sh",
+            "compat/x86_64/libc_inet_address_probe.c",
+            "compat/x86_64/libc_inet_address_start.S",
+            "compat/x86_64/run_libc_inet_address.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-inet-address"},
+        )
+        for phrase in (
+            "still-planned `libc.resolver`",
+            "`inet_pton`",
+            "`inet_ntop`",
+            "`__inet_aton`",
+            "same-address weak `inet_aton` alias",
+            "`inet_addr`",
+            "strict IPv4/IPv6 text grammar",
+            "historical base-zero and abbreviated `inet_aton` forms",
+            "network-byte storage",
+            "`INADDR_NONE` ambiguity",
+            "partial parse and output writes",
+            "longest-zero-run text compression",
+            "mapped-v4 dotted text",
+            "AF_INET versus AF_INET6 `inet_ntop`",
+            "DNS/resolver state",
+            "netdb",
+            "inet_ntoa scratch storage",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertTrue(
+            {
+                "__inet_aton",
+                "inet_addr",
+                "inet_aton",
+                "inet_ntop",
+                "inet_pton",
+            }
+            <= exports
+        )
+        self.assertFalse(
+            exports
+            & {
+                "inet_ntoa",
+                "inet_network",
+                "inet_makeaddr",
+                "inet_lnaof",
+                "inet_netof",
+                "getaddrinfo",
+                "freeaddrinfo",
+                "getnameinfo",
+                "malloc",
+                "free",
+            }
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "SysV AMD64 LP64" in item)
+        assert isinstance(c_abi, str)
+        for phrase in (
+            "socklen_t",
+            "in_addr_t",
+            "in_port_t",
+            "struct in_addr",
+            "AF_UNIX=1",
+            "AF_INET=2",
+            "AF_INET6=10",
+            "INET_ADDRSTRLEN=16",
+            "INET6_ADDRSTRLEN=46",
+        ):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/inet_pton.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in ("inet_ntop.c", "inet_aton.c", "inet_addr.c", "strtoul"):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-address-codecs"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "same-address weak `inet_aton` alias", "different-address inet_aton alias"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "same-address weak `inet_aton` alias"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-inet-address-codecs"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "private numeric address probe"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact static numeric-address regression"
         ):
             ledger.validate_ledger(data)
 
