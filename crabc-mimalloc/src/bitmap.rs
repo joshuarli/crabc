@@ -2542,6 +2542,51 @@ mod tests {
     }
 
     #[test]
+    fn abandoned_reclaim_bitmap_restores_rejected_candidate_before_claiming_later_one() {
+        use core::cell::Cell;
+
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
+        let mut storage = BitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        assert_eq!(bitmap.set_range(17, 1), Some(RunTransition::all_clear(0)));
+        assert_eq!(bitmap.set_range(19, 1), Some(RunTransition::all_clear(0)));
+
+        let calls = Cell::new(0);
+        assert_eq!(
+            bitmap.try_find_and_claim_abandoned(0, |slice_index| {
+                let call = calls.get();
+                calls.set(call + 1);
+                match call {
+                    0 => {
+                        assert_eq!(slice_index, 17);
+                        // The bitmap visitor has already removed this bit,
+                        // but page ownership rejected it. Source order must
+                        // restore it before another candidate is considered.
+                        AbandonedBitmapClaim::KeepSet
+                    }
+                    1 => {
+                        assert_eq!(slice_index, 19);
+                        AbandonedBitmapClaim::Claimed
+                    }
+                    _ => panic!("one source snapshot visits each candidate once"),
+                }
+            }),
+            Some(19),
+        );
+        assert_eq!(calls.get(), 2);
+        assert_eq!(bitmap.is_set_range(17, 1), Some(true));
+        assert_eq!(bitmap.is_clear_range(19, 1), Some(true));
+    }
+
+    #[test]
     fn abandoned_clear_once_set_waits_for_a_failed_reader_to_restore_its_bit() {
         extern crate std;
 

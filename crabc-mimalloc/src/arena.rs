@@ -14,8 +14,8 @@
 // `src/arena.c:832-1037` (aligned page metadata selection, fresh-page prefix
 // commitment, and publication),
 // `src/arena.c:1433-1490` (arena slice release),
-// `src/arena.c:725-778,1304-1409` (mapped abandoned-page bitmap/count
-// publication, claim, and quiescent clear),
+// `src/arena.c:631-671,725-778,1304-1409` (ordinary-page proof plus mapped
+// abandoned-page bitmap/count publication, claim, and quiescent clear),
 // `src/arena.c:2238-2409` (default delayed arena purge scheduling and forced
 // collection), and
 // `src/arena.c:1676-1917` (in-place arena initialization, metadata
@@ -740,6 +740,12 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
     #[inline]
     fn is_clear(&self, slice_index: usize) -> bool {
         slice_index == self.slice_index
+            // `mi_page_arena_pages` asserts that the heap-local ordinary
+            // `pages` bit still names this page before the corresponding
+            // abandoned bit is observed. Do not make a stale dynamic bitmap
+            // entry an allocation/reclaim candidate after terminal release
+            // has removed that ordinary ownership record.
+            && self.owner.page_is_set(self.memory)
             && self
                 .owner
                 .with_abandoned(self.bin, |pages| pages.is_clear_range(slice_index, 1))
@@ -748,7 +754,12 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
 
     #[inline]
     fn publish(&self, slice_index: usize) -> bool {
-        if slice_index != self.slice_index {
+        // The ordinary page image is published before the abandoned image in
+        // `arena.c:_mi_arenas_page_abandon`; terminal release clears it only
+        // after the abandoned path has quiesced. Keeping that relation at
+        // this narrow capability prevents an already released dynamic slice
+        // from being republished by a delayed abandon path.
+        if slice_index != self.slice_index || !self.owner.page_is_set(self.memory) {
             return false;
         }
         let published = self.owner
@@ -769,9 +780,13 @@ impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
             .with_abandoned(self.bin, |pages| {
                 let mut claim = claim;
                 pages.try_find_and_claim_abandoned(thread_sequence, |slice_index| {
-                    if slice_index == self.slice_index {
+                    if slice_index == self.slice_index && self.owner.page_is_set(self.memory) {
                         claim(slice_index)
                     } else {
+                        // A rejected candidate must be returned to the
+                        // bitmap. In particular, never consume a stale
+                        // abandoned bit whose ordinary heap-local `pages`
+                        // authority has already disappeared.
                         AbandonedBitmapClaim::KeepSet
                     }
                 })
@@ -1656,6 +1671,33 @@ impl ArenaAbandonedPages<'_> {
         self.bitmap.is_clear_range(slice_index, 1) == Some(true)
     }
 
+    /// Returns whether the static-main ordinary `pages` image still names
+    /// this slice.
+    ///
+    /// This is the source assertion in `mi_page_arena_pages` that precedes
+    /// every `pages_abandoned[bin]` access. The bit is not an alternate
+    /// PageMap lookup: the caller still supplies the PageMap lifetime proof.
+    /// It only rejects a stale abandoned bitmap entry after the owner has
+    /// cleared the static-main ordinary page record. Rejected candidates must
+    /// remain set so a concurrent source `unabandon` can observe reader
+    /// quiescence instead of losing the only process-visible page owner.
+    #[inline]
+    fn main_page_is_set(&self, slice_index: usize) -> bool {
+        if slice_index >= self.bitmap.max_bits() {
+            return false;
+        }
+        // SAFETY: `ArenaAbandonedPages` borrows this same initialized arena
+        // for its full lifetime. `ArenaView::pages` only attaches to the
+        // immutable-size, in-place source bitmap and performs atomic reads.
+        let Some(arena) = (unsafe { ArenaView::from_ptr(self.arena.as_ptr()) }) else {
+            return false;
+        };
+        let Some(pages) = (unsafe { arena.pages() }) else {
+            return false;
+        };
+        pages.is_set_range(slice_index, 1) == Some(true)
+    }
+
     #[inline]
     pub(crate) const fn bin(&self) -> usize {
         self.bin
@@ -1722,11 +1764,19 @@ impl MappedAbandonedPages for MainArenaMappedAbandonedPage<'_> {
 
     #[inline]
     fn is_clear(&self, slice_index: usize) -> bool {
-        self.bitmap.bitmap_is_clear(slice_index)
+        self.bitmap.main_page_is_set(slice_index)
+            && self.bitmap.bitmap_is_clear(slice_index)
     }
 
     #[inline]
     fn publish(&self, slice_index: usize) -> bool {
+        // Source `mi_page_arena_pages` verifies that this main-Heap image
+        // still owns the ordinary page bit before it publishes the matching
+        // abandoned bit. Without that proof a delayed abandon could create a
+        // reclaimable bitmap entry after PageMap/metadata release.
+        if !self.bitmap.main_page_is_set(slice_index) {
+            return false;
+        }
         if !self.bitmap.publish(slice_index) {
             return false;
         }
@@ -1741,7 +1791,19 @@ impl MappedAbandonedPages for MainArenaMappedAbandonedPage<'_> {
     where
         F: FnMut(usize) -> AbandonedBitmapClaim,
     {
-        let Some(slice_index) = self.bitmap.try_claim(thread_sequence, claim) else {
+        let mut claim = claim;
+        let Some(slice_index) = self.bitmap.try_claim(thread_sequence, |slice_index| {
+            if self.bitmap.main_page_is_set(slice_index) {
+                claim(slice_index)
+            } else {
+                // This is the exact rejected-claim branch of
+                // `mi_arena_try_claim_abandoned`: restore the source bit and
+                // leave its paired count untouched. A caller may retain the
+                // stale owner for failure handling, but may not fabricate an
+                // adopted page from an ordinary-image mismatch.
+                AbandonedBitmapClaim::KeepSet
+            }
+        }) else {
             return MappedAbandonedClaim::None;
         };
         // SAFETY: a successful claim consumes exactly one prior publication
@@ -2676,6 +2738,127 @@ mod tests {
             view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
             0,
         );
+    }
+
+    #[test]
+    fn abandoned_reclaim_main_map_rejects_an_orphan_bit_without_consuming_it() {
+        // This deliberately injects the impossible-after-publication image
+        // that source assertions exclude: a `pages_abandoned` bit exists but
+        // the matching ordinary `pages` bit does not. The reclaim primitive
+        // must preserve that bit and its count for the terminal owner rather
+        // than hand out a page whose PageMap/metadata lifetime is no longer
+        // represented by the main Heap image.
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                false,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let bin = 1;
+        let slice_index = view.arena().info_slices;
+
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(subprocess, MemoryId::static_empty());
+        heap.install_main_arena_pages(
+            subprocess,
+            view.arena().arena_index,
+            NonNull::from(&view.arena().pages_main),
+        )
+        .unwrap();
+        let map = view
+            .main_heap_abandoned_page(NonNull::from(&heap), bin)
+            .expect("the static main Heap owns this arena's in-place image");
+
+        // Test-only raw setup models a fault after an abandoned-bit
+        // publication but before the ordinary image can prove page lifetime.
+        let raw = view.abandoned_pages(bin).unwrap();
+        assert!(raw.publish(slice_index));
+        heap.increment_abandoned_count(bin);
+
+        let mut ownership_attempts = 0;
+        assert_eq!(
+            map.try_claim(0, |_| {
+                ownership_attempts += 1;
+                AbandonedBitmapClaim::Claimed
+            }),
+            MappedAbandonedClaim::None,
+        );
+        assert_eq!(ownership_attempts, 0);
+        assert!(raw.is_published(slice_index));
+        assert_eq!(heap.abandoned_count(bin), Some(1));
+    }
+
+    #[test]
+    fn abandoned_reclaim_main_map_claims_registered_page_before_consuming_count() {
+        // This is the valid source order: the main Heap records ordinary
+        // page ownership first, then abandonment publishes its one matching
+        // bit and count. A successful bitmap/ownership claim can only then
+        // clear that bit and consume the paired counter.
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                false,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let bin = 1;
+        let slice_index = view.arena().info_slices;
+        let pages = unsafe { view.pages() }.unwrap();
+        assert!(pages.set_range(slice_index, 1).is_some());
+
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(subprocess, MemoryId::static_empty());
+        heap.install_main_arena_pages(
+            subprocess,
+            view.arena().arena_index,
+            NonNull::from(&view.arena().pages_main),
+        )
+        .unwrap();
+        let map = view
+            .main_heap_abandoned_page(NonNull::from(&heap), bin)
+            .expect("the static main Heap owns this arena's in-place image");
+
+        assert!(map.is_clear(slice_index));
+        assert!(map.publish(slice_index));
+        assert_eq!(heap.abandoned_count(bin), Some(1));
+
+        let mut ownership_attempts = 0;
+        assert_eq!(
+            map.try_claim(0, |candidate| {
+                ownership_attempts += 1;
+                assert_eq!(candidate, slice_index);
+                AbandonedBitmapClaim::Claimed
+            }),
+            MappedAbandonedClaim::Claimed(slice_index),
+        );
+        assert_eq!(ownership_attempts, 1);
+        assert!(!view.abandoned_pages(bin).unwrap().is_published(slice_index));
+        assert_eq!(heap.abandoned_count(bin), Some(0));
     }
 
     #[test]
