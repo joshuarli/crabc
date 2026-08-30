@@ -23,12 +23,14 @@
 //! object may be locked, tried, unlocked, and destroyed. Contention uses
 //! Linux `FUTEX_*_PRIVATE` on its exact public lock word. It excludes mutex
 //! attributes; recursive, error-checking, robust, PI, and process-shared
-//! types; timed locking; C11 `mtx_*`; general condition-variable behavior;
-//! cancellation; signal/fork coordination; dynamic TLS; loader/CRT
+//! types; timed locking; general condition-variable behavior; cancellation;
+//! signal/fork coordination; dynamic TLS; loader/CRT
 //! integration; a general pthread runtime; and public x86 support. The
 //! separately admitted private condition-variable sibling may use this exact
-//! state machine internally. Unsupported non-null attributes or nonzero type
-//! words return `ENOTSUP` without being interpreted.
+//! state machine internally, and the separate C11 plain-synchronization
+//! sibling translates this exact state machine through distinct `mtx_t`
+//! storage. Unsupported non-null attributes or nonzero type words return
+//! `ENOTSUP` without being interpreted.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 normal pthread-mutex leaf requires little-endian Linux/x86-64");
@@ -123,6 +125,45 @@ unsafe fn is_selected_normal_mutex(mutex: *mut PublicPthreadMutex) -> bool {
     unsafe { core::ptr::read(mutex_word(mutex, MUTEX_TYPE_WORD)) == 0 }
 }
 
+/// Initialize one selected all-zero normal/private mutex without crossing a
+/// public C ABI.
+///
+/// # Safety
+///
+/// `mutex` must designate writable, aligned storage for one complete public
+/// x86 mutex-shaped record that is not concurrently accessed. The caller owns
+/// any C API-specific attribute and result contract around this exact zeroed
+/// representation.
+#[inline(always)]
+pub(super) unsafe fn init_selected_normal_mutex(mutex: *mut c_void) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    // SAFETY: the caller supplies the complete writable non-concurrent public
+    // record; zero is the exact selected normal/private representation.
+    unsafe { core::ptr::write_bytes(mutex, 0, 1) };
+    0
+}
+
+/// Destroy one selected normal/private mutex without crossing a public C ABI.
+///
+/// The representation owns no allocation or kernel resource. A locked,
+/// invalid, or concurrently accessed record remains outside the caller's
+/// C-level object-lifetime contract.
+///
+/// # Safety
+///
+/// `mutex` must designate a complete aligned selected normal/private record
+/// that is quiescent and no longer used by any thread.
+#[inline(always)]
+pub(super) unsafe fn destroy_selected_normal_mutex(mutex: *mut c_void) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    // SAFETY: the caller supplies the complete quiescent record and its type
+    // word is initialized before use.
+    if !unsafe { is_selected_normal_mutex(mutex) } {
+        return ENOTSUP;
+    }
+    0
+}
+
 /// Resolve the raw words of one selected normal/private mutex.
 ///
 /// The condition-variable sibling uses this only after it has admitted the
@@ -206,7 +247,7 @@ unsafe fn futex_wake_private(lock: *mut c_int) {
 /// The held value is exactly `EBUSY`, as in musl's normal-mutex fast path.
 /// A marked waiter has the same low held bits, so it also reports `EBUSY`.
 #[inline(always)]
-unsafe fn try_lock_selected_normal_mutex(mutex: *mut PublicPthreadMutex) -> c_int {
+unsafe fn try_lock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
     let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
     // SAFETY: every concurrent lock-word operation in this artifact uses the
     // same raw atomic-helper protocol on this aligned public i32 field.
@@ -218,6 +259,26 @@ unsafe fn try_lock_selected_normal_mutex(mutex: *mut PublicPthreadMutex) -> c_in
     }
 }
 
+/// Try to acquire one selected normal/private mutex without crossing a public
+/// C ABI.
+///
+/// # Safety
+///
+/// `mutex` must designate a live, aligned public x86 mutex-shaped record. Its
+/// type word must remain immutable, and every concurrent lock-word operation
+/// must use the selected normal/private protocol.
+#[inline(always)]
+pub(super) unsafe fn try_lock_selected_normal_mutex(mutex: *mut c_void) -> c_int {
+    let mutex_record = mutex.cast::<PublicPthreadMutex>();
+    // SAFETY: the caller supplies the complete record and the selected type
+    // word is immutable during a valid mutex lifetime.
+    if !unsafe { is_selected_normal_mutex(mutex_record) } {
+        return ENOTSUP;
+    }
+    // SAFETY: the selected record has been admitted above.
+    unsafe { try_lock_selected_normal_mutex_record(mutex_record) }
+}
+
 /// Acquire an already-admitted selected normal/private mutex.
 ///
 /// This is the shared private state-machine body used by the direct C entry
@@ -227,7 +288,7 @@ unsafe fn try_lock_selected_normal_mutex(mutex: *mut PublicPthreadMutex) -> c_in
 unsafe fn lock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
     // SAFETY: the caller admits the selected record and all lock-word access
     // below uses the same aligned atomic protocol.
-    if unsafe { try_lock_selected_normal_mutex(mutex) } == 0 {
+    if unsafe { try_lock_selected_normal_mutex_record(mutex) } == 0 {
         return 0;
     }
 
@@ -249,7 +310,7 @@ unsafe fn lock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c
         // The retry is required after every handoff, spurious wake, signal,
         // or lost-race notification; it obtains the acquire edge when it
         // changes zero to the held `EBUSY` value.
-        if unsafe { try_lock_selected_normal_mutex(mutex) } == 0 {
+        if unsafe { try_lock_selected_normal_mutex_record(mutex) } == 0 {
             return 0;
         }
 
@@ -368,11 +429,9 @@ pub unsafe extern "C" fn pthread_mutex_init(
     if !attr.is_null() {
         return ENOTSUP;
     }
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    // SAFETY: the C caller supplies a complete, writable, non-concurrent
-    // public mutex object; zero is the exact selected normal/private shape.
-    unsafe { core::ptr::write_bytes(mutex, 0, 1) };
-    0
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // initialization seam.
+    unsafe { init_selected_normal_mutex(mutex) }
 }
 
 /// Destroy one selected normal/private mutex.
@@ -387,12 +446,9 @@ pub unsafe extern "C" fn pthread_mutex_init(
 /// longer used by any thread.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    // SAFETY: the caller provides the complete, quiescent public mutex record.
-    if !unsafe { is_selected_normal_mutex(mutex) } {
-        return ENOTSUP;
-    }
-    0
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // destruction seam.
+    unsafe { destroy_selected_normal_mutex(mutex) }
 }
 
 /// Try once to acquire one selected normal/private mutex.
@@ -403,13 +459,8 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut c_void) -> c_int {
 /// lifetime and protected-data synchronization remain with the C caller.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut c_void) -> c_int {
-    let mutex = mutex.cast::<PublicPthreadMutex>();
-    // SAFETY: the caller supplies a complete mutex whose type word is stable.
-    if !unsafe { is_selected_normal_mutex(mutex) } {
-        return ENOTSUP;
-    }
-    // SAFETY: the caller supplies the live mutex state machine this helper
-    // owns for the selected normal/private representation.
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // one-attempt acquisition seam.
     unsafe { try_lock_selected_normal_mutex(mutex) }
 }
 

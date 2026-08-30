@@ -4281,7 +4281,7 @@ def require_static_pthread_normal_mutex_artifact(family: Mapping[str, Any]) -> N
         "six bounded two-worker rounds",
         "ENOTSUP",
         "recursive/errorcheck/robust/PI/pshared behavior",
-        "C11 mtx/once",
+        "separately selected C11 plain-sync artifact",
         "thread.pthread-c11",
         "public x86 support",
     ):
@@ -4485,7 +4485,7 @@ def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> N
         "process-shared state",
         "timed waits",
         "cancellation",
-        "C11 conditions",
+        "C11 condition behavior beyond that plain adapter",
         "thread.pthread-c11",
         "public x86 support",
     ):
@@ -4657,6 +4657,248 @@ def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> N
         "run_libc_pthread_cond_private.sh"
         in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "static-c-pthread-cond-private dispatcher binding is missing",
+    )
+
+
+def require_static_c11_plain_sync_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one C11 plain-sync bridge without promoting pthread parity.
+
+    This is deliberately a narrow C11 spelling of the already selected normal
+    mutex and private condition engines. It keeps the C type distinction,
+    direct private sibling routing, and candidate-only non-plain boundary from
+    becoming an accidental C11 or pthread-family completion claim.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-c11-plain-sync"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-c11-plain-sync artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-c11-plain-sync must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "`mtx_init(..., mtx_plain)`/`mtx_destroy`/`mtx_lock`/`mtx_trylock`/`mtx_unlock`",
+        "`cnd_init`/`cnd_destroy`/`cnd_wait`/`cnd_signal`/`cnd_broadcast`",
+        "40-byte aligned `mtx_t`",
+        "48-byte aligned `cnd_t`",
+        "interposable pthread C ABI",
+        "`EBUSY` to `thrd_busy`",
+        "direct zero result",
+        "`thrd_success`/`thrd_error`",
+        "four bounded 64-handoff predicate ping-pong rounds",
+        "candidate-only `thrd_error` rejection",
+        "recursive/timed mutexes",
+        "static C11 initialization",
+        "cancellation",
+        "TSS",
+        "once",
+        "dynamic/loader TLS",
+        "C11-family completion",
+        "pthread/TLS parity",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-c11-plain-sync description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/atomic.rs",
+        "libc/src/c_abi/x86_64/pthread_mutex.rs",
+        "libc/src/c_abi/x86_64/pthread_cond.rs",
+        "libc/src/c_abi/x86_64/c11_sync.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "include/threads.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/run_types_header_abi.sh",
+        "compat/x86_64/run_libc_c11_lifecycle.sh",
+        "compat/x86_64/run_libc_thrd_sleep.sh",
+        "compat/x86_64/run_libc_pthread_cond_private.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_c11_plain_sync_probe.c",
+        "compat/x86_64/libc_c11_plain_sync_start.S",
+        "compat/x86_64/run_libc_c11_plain_sync.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "static-c-c11-plain-sync source owners",
+            )
+        )
+        == expected_sources,
+        "static-c-c11-plain-sync source owners drifted",
+    )
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "mtx_init.c",
+        "mtx_destroy.c",
+        "mtx_lock.c",
+        "mtx_trylock.c",
+        "mtx_unlock.c",
+        "cnd_init.c",
+        "cnd_destroy.c",
+        "cnd_wait.c",
+        "cnd_signal.c",
+        "cnd_broadcast.c",
+        "mtx_timedlock.c",
+        "cnd_timedwait.c",
+        "40 bytes",
+        "48 bytes",
+        "8-byte alignment",
+        "mtx_plain=0",
+        "EBUSY=16",
+        "thrd_busy=1",
+        "futex=202",
+        "FUTEX_WAIT_PRIVATE=128",
+        "FUTEX_WAKE_PRIVATE=129",
+        "FUTEX_REQUEUE_PRIVATE=131",
+        "r10",
+        "r8",
+        "without changing C errno",
+        "dynamic TLS",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-c11-plain-sync ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "threads.h",
+        "pthread.h",
+        "errno.h",
+        "bits/alltypes.h",
+        "bits/syscall.h",
+        "distinct mtx_t/pthread_mutex_t",
+        "cnd_t/pthread_cond_t",
+        "40-byte/48-byte",
+        "28-context C/C++",
+        "mtx_init/mtx_destroy/mtx_lock/mtx_trylock/mtx_unlock",
+        "cnd_init/cnd_destroy/cnd_wait/cnd_signal/cnd_broadcast",
+        "unmangled C linkage",
+        "does not claim all C11 headers or C11 runtime completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-c11-plain-sync header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-c11-plain-sync"},
+        "static-c-c11-plain-sync must use the closed libc-c11-plain-sync command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "mtx_plain initialization",
+        "held thrd_busy trylock",
+        "one-waiter cnd_signal",
+        "two-waiter cnd_broadcast",
+        "stale errno preservation",
+        "quiescent destruction",
+        "four bounded 64-handoff predicate ping-pong rounds",
+        "Candidate-only recursive/timed mtx_init rejection",
+        "exactly the ten selected C11 exports",
+        "direct private sibling routing",
+        "mtx lock cmpxchg",
+        "unlock exchange/xchg",
+        "futex=202",
+        "FUTEX_WAIT_PRIVATE=128",
+        "FUTEX_WAKE_PRIVATE=129",
+        "FUTEX_REQUEUE_PRIVATE=131",
+        "x86 r10/r8 requeue route",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "cancellation, TSS, once",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-c11-plain-sync evidence scope omits {phrase}",
+        )
+
+    static_exports = {
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    selected_mutex_exports = {
+        "mtx_init",
+        "mtx_destroy",
+        "mtx_lock",
+        "mtx_trylock",
+        "mtx_unlock",
+    }
+    selected_condition_exports = {
+        "cnd_init",
+        "cnd_destroy",
+        "cnd_wait",
+        "cnd_signal",
+        "cnd_broadcast",
+    }
+    require(
+        {symbol for symbol in static_exports if symbol.startswith("mtx_")}
+        == selected_mutex_exports,
+        "static-c-c11-plain-sync must expose exactly its five selected mtx symbols",
+    )
+    require(
+        {symbol for symbol in static_exports if symbol.startswith("cnd_")}
+        == selected_condition_exports,
+        "static-c-c11-plain-sync must expose exactly its five selected cnd symbols",
+    )
+    require(
+        "run_libc_c11_plain_sync.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-c11-plain-sync dispatcher binding is missing",
     )
 
 
@@ -6714,6 +6956,7 @@ def validate_ledger(
     require_static_thrd_sleep_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_normal_mutex_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_private_cond_artifact(by_id["libc.pthread-tls"])
+    require_static_c11_plain_sync_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

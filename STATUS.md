@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has ten private static artifacts inside still-planned
+The x86 lane now has eleven private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -80,7 +80,8 @@ fixture proves held-lock `EBUSY`, caller-`errno` preservation, and mutual
 exclusion across six bounded two-worker rounds. Non-null attributes or a
 nonzero type word return `ENOTSUP` rather than selecting another mutex type.
 It excludes mutex attributes, recursive/error-checking/robust/PI/
-process-shared/timed mutexes, C11 mutexes, C11 and general condition variables, cancellation,
+process-shared/timed mutexes, C11 mutex or condition behavior beyond the
+separately selected plain adapter, general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, and public x86 support. The separate
 `./scripts/dev-x86_64.sh libc-pthread-cond-private` artifact is a tenth
@@ -96,11 +97,25 @@ signal, a two-waiter broadcast, four bounded 64-handoff ping-pong rounds,
 caller-`errno` preservation, and quiescent destruction. Candidate-only
 evidence requires every non-NULL condition attribute to return `ENOTSUP`;
 that rejection is a selected-boundary diagnostic, not a musl-parity claim.
-Condition attributes, process-shared or timed waits, cancellation, C11 or
-general condition behavior, non-selected mutex kinds, destruction with live
+Condition attributes, process-shared or timed waits, cancellation, C11
+condition behavior beyond the selected plain adapter, general condition
+behavior, non-selected mutex kinds, destruction with live
 waiters, dynamic/loader TLS, CRT/sysroot integration, general pthread
 synchronization, full pthread/TLS or x86-64 parity, promotion, and public x86
-support remain excluded. The CRT-composition artifact,
+support remain excluded. The separate `./scripts/dev-x86_64.sh
+libc-c11-plain-sync` artifact is an eleventh private static
+`verified_artifact` in that same still-planned `libc.pthread-tls` family. It
+admits only the installed header's distinct 40-byte, eight-byte-aligned
+`mtx_t` and 48-byte, eight-byte-aligned `cnd_t` records: `mtx_plain`
+initialization, mutex init/destroy/lock/trylock/unlock, and condition
+init/destroy/wait/signal/broadcast. The C11 boundary routes directly through
+the selected private normal-mutex and condition waiter/barrier/requeue engines
+without calling an interposable pthread C symbol; a held trylock maps to
+`thrd_busy`. Recursive and timed kinds are candidate-only `thrd_error`
+rejections before their records are interpreted, not musl-differential
+behavior. Timed calls, static C11 initialization, cancellation, TSS, once,
+process-shared synchronization, C11-family completion, pthread/TLS or x86-64
+parity, promotion, and public x86 support remain excluded. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls

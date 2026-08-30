@@ -157,7 +157,17 @@ typedef int (*crabc_thrd_sleep_signature)(const struct timespec *,
 	struct timespec *);
 typedef thrd_t (*crabc_thrd_current_signature)(void);
 typedef int (*crabc_thrd_equal_signature)(thrd_t, thrd_t);
+typedef int (*crabc_mtx_init_signature)(mtx_t *, int);
+typedef void (*crabc_mtx_destroy_signature)(mtx_t *);
+typedef int (*crabc_mtx_lock_signature)(mtx_t *);
+typedef int (*crabc_mtx_trylock_signature)(mtx_t *);
+typedef int (*crabc_mtx_unlock_signature)(mtx_t *);
 typedef int (*crabc_mtx_timedlock_signature)(mtx_t *, const struct timespec *);
+typedef int (*crabc_cnd_init_signature)(cnd_t *);
+typedef void (*crabc_cnd_destroy_signature)(cnd_t *);
+typedef int (*crabc_cnd_wait_signature)(cnd_t *, mtx_t *);
+typedef int (*crabc_cnd_signal_signature)(cnd_t *);
+typedef int (*crabc_cnd_broadcast_signature)(cnd_t *);
 typedef int (*crabc_cnd_timedwait_signature)(
 	cnd_t *, mtx_t *, const struct timespec *);
 typedef int (*crabc_tss_create_signature)(tss_t *, tss_dtor_t);
@@ -208,8 +218,28 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_current), crabc_thrd_current_signa
 	"thrd_current signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_equal), crabc_thrd_equal_signature),
 	"thrd_equal signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_init), crabc_mtx_init_signature),
+	"mtx_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_destroy), crabc_mtx_destroy_signature),
+	"mtx_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_lock), crabc_mtx_lock_signature),
+	"mtx_lock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_trylock), crabc_mtx_trylock_signature),
+	"mtx_trylock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_unlock), crabc_mtx_unlock_signature),
+	"mtx_unlock signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_timedlock), crabc_mtx_timedlock_signature),
 	"mtx_timedlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_init), crabc_cnd_init_signature),
+	"cnd_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_destroy), crabc_cnd_destroy_signature),
+	"cnd_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_wait), crabc_cnd_wait_signature),
+	"cnd_wait signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_signal), crabc_cnd_signal_signature),
+	"cnd_signal signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_broadcast), crabc_cnd_broadcast_signature),
+	"cnd_broadcast signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&cnd_timedwait), crabc_cnd_timedwait_signature),
 	"cnd_timedwait signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&tss_create), crabc_tss_create_signature),

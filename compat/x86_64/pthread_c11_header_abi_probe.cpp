@@ -138,7 +138,17 @@ using crabc_thrd_exit_signature = void (*)(int);
 using crabc_thrd_sleep_signature = int (*)(const timespec *, timespec *);
 using crabc_thrd_current_signature = thrd_t (*)();
 using crabc_thrd_equal_signature = int (*)(thrd_t, thrd_t);
+using crabc_mtx_init_signature = int (*)(mtx_t *, int);
+using crabc_mtx_destroy_signature = void (*)(mtx_t *);
+using crabc_mtx_lock_signature = int (*)(mtx_t *);
+using crabc_mtx_trylock_signature = int (*)(mtx_t *);
+using crabc_mtx_unlock_signature = int (*)(mtx_t *);
 using crabc_mtx_timedlock_signature = int (*)(mtx_t *, const timespec *);
+using crabc_cnd_init_signature = int (*)(cnd_t *);
+using crabc_cnd_destroy_signature = void (*)(cnd_t *);
+using crabc_cnd_wait_signature = int (*)(cnd_t *, mtx_t *);
+using crabc_cnd_signal_signature = int (*)(cnd_t *);
+using crabc_cnd_broadcast_signature = int (*)(cnd_t *);
 using crabc_cnd_timedwait_signature = int (*)(cnd_t *, mtx_t *, const timespec *);
 using crabc_tss_create_signature = int (*)(tss_t *, tss_dtor_t);
 
@@ -190,8 +200,28 @@ static_assert(__is_same(decltype(&thrd_current), crabc_thrd_current_signature),
 	"thrd_current signature");
 static_assert(__is_same(decltype(&thrd_equal), crabc_thrd_equal_signature),
 	"thrd_equal signature");
+static_assert(__is_same(decltype(&mtx_init), crabc_mtx_init_signature),
+	"mtx_init signature");
+static_assert(__is_same(decltype(&mtx_destroy), crabc_mtx_destroy_signature),
+	"mtx_destroy signature");
+static_assert(__is_same(decltype(&mtx_lock), crabc_mtx_lock_signature),
+	"mtx_lock signature");
+static_assert(__is_same(decltype(&mtx_trylock), crabc_mtx_trylock_signature),
+	"mtx_trylock signature");
+static_assert(__is_same(decltype(&mtx_unlock), crabc_mtx_unlock_signature),
+	"mtx_unlock signature");
 static_assert(__is_same(decltype(&mtx_timedlock), crabc_mtx_timedlock_signature),
 	"mtx_timedlock signature");
+static_assert(__is_same(decltype(&cnd_init), crabc_cnd_init_signature),
+	"cnd_init signature");
+static_assert(__is_same(decltype(&cnd_destroy), crabc_cnd_destroy_signature),
+	"cnd_destroy signature");
+static_assert(__is_same(decltype(&cnd_wait), crabc_cnd_wait_signature),
+	"cnd_wait signature");
+static_assert(__is_same(decltype(&cnd_signal), crabc_cnd_signal_signature),
+	"cnd_signal signature");
+static_assert(__is_same(decltype(&cnd_broadcast), crabc_cnd_broadcast_signature),
+	"cnd_broadcast signature");
 static_assert(__is_same(decltype(&cnd_timedwait), crabc_cnd_timedwait_signature),
 	"cnd_timedwait signature");
 static_assert(__is_same(decltype(&tss_create), crabc_tss_create_signature),
@@ -246,6 +276,26 @@ static crabc_thrd_current_signature const crabc_force_thrd_current
 	__attribute__((used)) = &thrd_current;
 static crabc_thrd_equal_signature const crabc_force_thrd_equal
 	__attribute__((used)) = &thrd_equal;
+static crabc_mtx_init_signature const crabc_force_mtx_init
+	__attribute__((used)) = &mtx_init;
+static crabc_mtx_destroy_signature const crabc_force_mtx_destroy
+	__attribute__((used)) = &mtx_destroy;
+static crabc_mtx_lock_signature const crabc_force_mtx_lock
+	__attribute__((used)) = &mtx_lock;
+static crabc_mtx_trylock_signature const crabc_force_mtx_trylock
+	__attribute__((used)) = &mtx_trylock;
+static crabc_mtx_unlock_signature const crabc_force_mtx_unlock
+	__attribute__((used)) = &mtx_unlock;
+static crabc_cnd_init_signature const crabc_force_cnd_init
+	__attribute__((used)) = &cnd_init;
+static crabc_cnd_destroy_signature const crabc_force_cnd_destroy
+	__attribute__((used)) = &cnd_destroy;
+static crabc_cnd_wait_signature const crabc_force_cnd_wait
+	__attribute__((used)) = &cnd_wait;
+static crabc_cnd_signal_signature const crabc_force_cnd_signal
+	__attribute__((used)) = &cnd_signal;
+static crabc_cnd_broadcast_signature const crabc_force_cnd_broadcast
+	__attribute__((used)) = &cnd_broadcast;
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
 static crabc_pthread_sigmask_signature const crabc_force_pthread_sigmask
 	__attribute__((used)) = &pthread_sigmask;

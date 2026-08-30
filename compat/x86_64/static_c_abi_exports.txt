@@ -57,6 +57,11 @@ cimagl
 clock_gettime
 clock_nanosleep
 close
+cnd_broadcast
+cnd_destroy
+cnd_init
+cnd_signal
+cnd_wait
 confstr
 conj
 conjf
@@ -160,6 +165,11 @@ memset
 mincore
 mmap
 mprotect
+mtx_destroy
+mtx_init
+mtx_lock
+mtx_trylock
+mtx_unlock
 munmap
 nanosleep
 nice

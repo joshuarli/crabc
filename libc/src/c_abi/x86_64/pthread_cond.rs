@@ -30,11 +30,13 @@
 //! stack-local linked waiter list; it does not reuse the public `_c_seq` or
 //! `_c_waiters` words, which are process-shared overlays. It excludes
 //! condition attributes; process-shared state; timed waits; cancellation;
-//! C11 conditions; non-normal, robust, PI, or shared mutexes; destruction
-//! while waiters exist; dynamic TLS; loader/CRT integration; a general
-//! pthread runtime; and public x86 support. A non-null initialization
-//! attribute or a non-private marker fails closed with `ENOTSUP`; this is a
-//! selected-artifact boundary, not a musl-differential claim.
+//! non-normal, robust, PI, or shared mutexes; destruction while waiters
+//! exist; dynamic TLS; loader/CRT integration; a general pthread runtime; and
+//! public x86 support. The separate C11 plain-synchronization sibling maps
+//! distinct `cnd_t` storage through this exact private path. A non-null
+//! initialization attribute or a non-private marker fails closed with
+//! `ENOTSUP`; this is a selected-artifact boundary, not a musl-differential
+//! claim.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 private pthread-condition leaf requires little-endian Linux/x86-64");
@@ -487,6 +489,43 @@ unsafe fn private_cond_signal(condition: *mut PublicPthreadCond, mut count: c_in
     0
 }
 
+/// Initialize one selected all-zero private condition record without crossing
+/// a public C ABI.
+///
+/// # Safety
+///
+/// `condition` must designate writable, aligned storage for one complete
+/// public x86 condition-shaped record that is not concurrently accessed. The
+/// caller owns any C API-specific attribute/result contract around the exact
+/// all-zero private representation.
+#[inline(always)]
+pub(super) unsafe fn init_selected_private_cond(condition: *mut c_void) -> c_int {
+    let condition = condition.cast::<PublicPthreadCond>();
+    // SAFETY: the caller supplies a complete writable non-concurrent record;
+    // all-zero is musl's selected normal/private representation.
+    unsafe { core::ptr::write_bytes(condition, 0, 1) };
+    0
+}
+
+/// Destroy one selected private condition record without crossing a public C
+/// ABI.
+///
+/// # Safety
+///
+/// `condition` must designate a complete aligned selected private condition
+/// record that is quiescent and has no remaining waiter. Its immutable shared
+/// marker must remain valid for the record's complete lifetime.
+#[inline(always)]
+pub(super) unsafe fn destroy_selected_private_cond(condition: *mut c_void) -> c_int {
+    let condition = condition.cast::<PublicPthreadCond>();
+    // SAFETY: the caller supplies the complete quiescent record and its
+    // process-shared marker is immutable after initialization.
+    if !unsafe { is_selected_private_cond(condition) } {
+        return ENOTSUP;
+    }
+    0
+}
+
 /// Initialize one selected all-zero private condition object.
 ///
 /// # Safety
@@ -502,11 +541,9 @@ pub unsafe extern "C" fn pthread_cond_init(
     if !attr.is_null() {
         return ENOTSUP;
     }
-    let condition = condition.cast::<PublicPthreadCond>();
-    // SAFETY: the C caller supplies a complete writable non-concurrent public
-    // record; all-zero is musl's selected normal/private representation.
-    unsafe { core::ptr::write_bytes(condition, 0, 1) };
-    0
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // initialization seam.
+    unsafe { init_selected_private_cond(condition) }
 }
 
 /// Destroy one selected private condition object after quiescence.
@@ -521,13 +558,9 @@ pub unsafe extern "C" fn pthread_cond_init(
 /// object that is no longer used by any thread and has no remaining waiter.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
-    let condition = condition.cast::<PublicPthreadCond>();
-    // SAFETY: the caller supplies the complete quiescent public record and
-    // the process-shared marker is immutable after initialization.
-    if !unsafe { is_selected_private_cond(condition) } {
-        return ENOTSUP;
-    }
-    0
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // destruction seam.
+    unsafe { destroy_selected_private_cond(condition) }
 }
 
 /// Atomically enroll and wait on one selected private condition object.
@@ -543,8 +576,8 @@ pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
 /// objects. The caller owns object lifetimes, predicate discipline, signal and
 /// cancellation policy, and quiescent destruction. This direct static leaf is
 /// not a cancellation point and does not accept non-normal mutex state.
-#[no_mangle]
-pub unsafe extern "C" fn pthread_cond_wait(
+#[inline(always)]
+pub(super) unsafe fn wait_selected_private_cond(
     condition: *mut c_void,
     mutex: *mut c_void,
 ) -> c_int {
@@ -698,6 +731,45 @@ pub unsafe extern "C" fn pthread_cond_wait(
     0
 }
 
+/// Atomically enroll and wait through the selected private condition path.
+///
+/// # Safety
+///
+/// `condition` and `mutex` must designate live aligned selected public x86
+/// objects. The caller owns their lifetimes, predicate discipline, signal and
+/// cancellation policy, and quiescent destruction. This direct static leaf is
+/// not a cancellation point and does not accept non-normal mutex state.
+#[no_mangle]
+pub unsafe extern "C" fn pthread_cond_wait(
+    condition: *mut c_void,
+    mutex: *mut c_void,
+) -> c_int {
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // wait seam, including its raw C-shaped records.
+    unsafe { wait_selected_private_cond(condition, mutex) }
+}
+
+/// Signal the oldest enrolled selected private condition waiter, if any,
+/// without crossing a public C ABI.
+///
+/// # Safety
+///
+/// `condition` must designate a live aligned selected private condition
+/// record. The caller owns predicate/mutex discipline, object lifetime, and
+/// quiescent destruction for the complete wait/list/barrier protocol.
+#[inline(always)]
+pub(super) unsafe fn signal_selected_private_cond(condition: *mut c_void) -> c_int {
+    let condition = condition.cast::<PublicPthreadCond>();
+    // SAFETY: the caller supplies the complete record with immutable shared
+    // marker for the selected condition lifetime.
+    if !unsafe { is_selected_private_cond(condition) } {
+        return ENOTSUP;
+    }
+    // SAFETY: the selected condition lifetime keeps the waiter list and stack
+    // nodes valid through its private signal/release protocol.
+    unsafe { private_cond_signal(condition, 1) }
+}
+
 /// Signal the oldest enrolled selected private condition waiter, if any.
 ///
 /// # Safety
@@ -708,14 +780,29 @@ pub unsafe extern "C" fn pthread_cond_wait(
 /// implement process-shared or cancellation behavior.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_signal(condition: *mut c_void) -> c_int {
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // signal seam.
+    unsafe { signal_selected_private_cond(condition) }
+}
+
+/// Signal every enrolled selected private condition waiter without crossing a
+/// public C ABI.
+///
+/// # Safety
+///
+/// `condition` must designate a live aligned selected private condition
+/// record. The caller owns predicate/mutex discipline, object lifetime, and
+/// quiescent destruction for the complete wait/list/barrier protocol.
+#[inline(always)]
+pub(super) unsafe fn broadcast_selected_private_cond(condition: *mut c_void) -> c_int {
     let condition = condition.cast::<PublicPthreadCond>();
-    // SAFETY: caller supplies the complete record with immutable shared mark.
+    // SAFETY: the caller supplies the complete record with immutable shared
+    // marker for the selected condition lifetime.
     if !unsafe { is_selected_private_cond(condition) } {
         return ENOTSUP;
     }
-    // SAFETY: selected condition lifetime keeps the waiter list and stack
-    // nodes valid through its private signal/release protocol.
-    unsafe { private_cond_signal(condition, 1) }
+    // SAFETY: -1 is musl's all-waiters sentinel for the private signal path.
+    unsafe { private_cond_signal(condition, -1) }
 }
 
 /// Signal every enrolled selected private condition waiter.
@@ -728,11 +815,7 @@ pub unsafe extern "C" fn pthread_cond_signal(condition: *mut c_void) -> c_int {
 /// implement process-shared or cancellation behavior.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_broadcast(condition: *mut c_void) -> c_int {
-    let condition = condition.cast::<PublicPthreadCond>();
-    // SAFETY: caller supplies the complete record with immutable shared mark.
-    if !unsafe { is_selected_private_cond(condition) } {
-        return ENOTSUP;
-    }
-    // SAFETY: -1 is musl's all-waiters sentinel for the private signal path.
-    unsafe { private_cond_signal(condition, -1) }
+    // SAFETY: the C ABI obligations above exactly match the private selected
+    // broadcast seam.
+    unsafe { broadcast_selected_private_cond(condition) }
 }

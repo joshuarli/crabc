@@ -110,8 +110,9 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
 # primitives, narrow simple signal control, bounded process-signal execution,
 # one bounded pthread create/exit/
-# join initial-TLS worker, its selected process-private normal mutex sibling,
-# and its typed static C11 create/exit/join sibling,
+# join initial-TLS worker, its selected process-private normal mutex and
+# condition siblings, their distinct C11 plain-sync adapter, and its typed
+# static C11 create/exit/join sibling,
 # named termios control, selected
 # process context, child reaping, C11 immediate termination, bounded static
 # startup/ordinary exit, callback algorithms,
@@ -159,6 +160,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
+    Path("libc/src/c_abi/x86_64/c11_sync.rs"),
     Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
     Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_mutex.rs"),
@@ -3544,6 +3546,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',
         '#[path = "c11_thread_lifecycle.rs"]',
+        '#[path = "c11_sync.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "child_reaping.rs"]',
@@ -4610,6 +4613,94 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_cond.rs: selected private condition "
                 f"leaf must not select {forbidden!r}"
+            )
+
+    c11_sync_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_sync.rs"
+    c11_sync_text = c11_sync_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/thread/mtx_init.c",
+        "mtx_destroy.c",
+        "mtx_lock.c",
+        "mtx_trylock.c",
+        "mtx_unlock.c",
+        "src/thread/cnd_init.c",
+        "cnd_destroy.c",
+        "cnd_wait.c",
+        "cnd_signal.c",
+        "cnd_broadcast.c",
+        "mtx_timedlock.c",
+        "cnd_timedwait.c",
+        "struct PublicC11Mutex",
+        "struct PublicC11Condition",
+        "size_of::<PublicC11Mutex>() == 40",
+        "align_of::<PublicC11Mutex>() == 8",
+        "size_of::<PublicC11Condition>() == 48",
+        "align_of::<PublicC11Condition>() == 8",
+        "MTX_PLAIN: c_int = 0",
+        "THRD_SUCCESS: c_int = 0",
+        "THRD_BUSY: c_int = 1",
+        "THRD_ERROR: c_int = 2",
+        "pthread_mutex::init_selected_normal_mutex",
+        "pthread_mutex::destroy_selected_normal_mutex",
+        "pthread_mutex::lock_selected_normal_mutex",
+        "pthread_mutex::try_lock_selected_normal_mutex",
+        "pthread_mutex::unlock_selected_normal_mutex",
+        "pthread_cond::init_selected_private_cond",
+        "pthread_cond::destroy_selected_private_cond",
+        "pthread_cond::wait_selected_private_cond",
+        "pthread_cond::signal_selected_private_cond",
+        "pthread_cond::broadcast_selected_private_cond",
+        "interposable pthread C symbol",
+        "dynamic/loader TLS",
+        "general C11",
+        "pthread parity",
+        "public x86 support",
+    ):
+        if required not in c11_sync_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/c11_sync.rs: selected private C11 plain "
+                f"synchronization leaf is missing {required!r}"
+            )
+    c11_sync_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            c11_sync_text,
+        )
+    )
+    expected_c11_sync_exports = {
+        "mtx_init",
+        "mtx_destroy",
+        "mtx_lock",
+        "mtx_trylock",
+        "mtx_unlock",
+        "cnd_init",
+        "cnd_destroy",
+        "cnd_wait",
+        "cnd_signal",
+        "cnd_broadcast",
+    }
+    if c11_sync_exports != expected_c11_sync_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/c11_sync.rs: selected private C11 plain "
+            "synchronization leaf must export only its five mtx and five cnd symbols"
+        )
+    for forbidden in (
+        'pub unsafe extern "C" fn mtx_timedlock',
+        'pub unsafe extern "C" fn cnd_timedwait',
+        'pub unsafe extern "C" fn call_once',
+        'pub unsafe extern "C" fn tss_',
+        'pub unsafe extern "C" fn thrd_yield',
+        'pub unsafe extern "C" fn pthread_',
+        "__tls_get_addr",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in c11_sync_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/c11_sync.rs: selected private C11 plain "
+                f"synchronization leaf must not select {forbidden!r}"
             )
 
     termios_control_source = (
@@ -6085,6 +6176,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_mutex_text,
         pthread_cond_text,
         c11_thread_lifecycle_text,
+        c11_sync_text,
         termios_control_text,
         process_context_text,
         child_reaping_text,
@@ -6245,6 +6337,16 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "thrd_exit",
         "thrd_join",
         "thrd_sleep",
+        "mtx_init",
+        "mtx_destroy",
+        "mtx_lock",
+        "mtx_trylock",
+        "mtx_unlock",
+        "cnd_init",
+        "cnd_destroy",
+        "cnd_wait",
+        "cnd_signal",
+        "cnd_broadcast",
         "pthread_self",
         "pthread_equal",
         "thrd_current",
@@ -6422,7 +6524,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes and their musl private condition-variable handoff, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -6449,6 +6551,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_mutex.rs", pthread_mutex_text),
         ("pthread_cond.rs", pthread_cond_text),
         ("c11_thread_lifecycle.rs", c11_thread_lifecycle_text),
+        ("c11_sync.rs", c11_sync_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

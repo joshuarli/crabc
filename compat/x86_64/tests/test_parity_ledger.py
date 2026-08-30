@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 49)
+        self.assertEqual(report["verified_artifact_count"], 50)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4316,7 +4316,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 10)
+        self.assertEqual(len(artifacts), 11)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4331,6 +4331,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-thrd-sleep",
                 "static-c-pthread-normal-mutex",
                 "static-c-pthread-cond-private",
+                "static-c-c11-plain-sync",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4343,6 +4344,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         thrd_sleep = by_id["static-c-thrd-sleep"]
         normal_mutex = by_id["static-c-pthread-normal-mutex"]
         private_condition = by_id["static-c-pthread-cond-private"]
+        c11_plain_sync = by_id["static-c-c11-plain-sync"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4634,7 +4636,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "six bounded two-worker rounds",
             "ENOTSUP",
             "recursive/errorcheck/robust/PI/pshared behavior",
-            "C11 mtx/once",
+            "separately selected C11 plain-sync artifact",
             "thread.pthread-c11",
             "public x86 support",
         ):
@@ -4726,7 +4728,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "FIFO requeue handoff",
             "four bounded 64-handoff ping-pong rounds",
             "candidate-only `ENOTSUP` rejection",
-            "C11 conditions",
+            "C11 condition behavior beyond that plain adapter",
             "thread.pthread-c11",
             "public x86 support",
         ):
@@ -4813,6 +4815,111 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, private_condition_scope)
+        self.assertEqual(
+            c11_plain_sync["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-c11-plain-sync",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "`mtx_init(..., mtx_plain)`/`mtx_destroy`/`mtx_lock`/`mtx_trylock`/`mtx_unlock`",
+            "`cnd_init`/`cnd_destroy`/`cnd_wait`/`cnd_signal`/`cnd_broadcast`",
+            "distinct from their pthread counterparts",
+            "interposable pthread C ABI",
+            "`EBUSY` to `thrd_busy`",
+            "direct zero result",
+            "`thrd_success`/`thrd_error`",
+            "four bounded 64-handoff predicate ping-pong rounds",
+            "candidate-only `thrd_error` rejection",
+            "recursive/timed mutexes",
+            "static C11 initialization",
+            "cancellation, TSS, once",
+            "C11-family completion",
+            "pthread/TLS parity",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, c11_plain_sync["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/c11_sync.rs",
+            "libc/src/c_abi/x86_64/pthread_mutex.rs",
+            "libc/src/c_abi/x86_64/pthread_cond.rs",
+            "include/threads.h",
+            "compat/x86_64/libc_c11_plain_sync_probe.c",
+            "compat/x86_64/libc_c11_plain_sync_start.S",
+            "compat/x86_64/run_libc_c11_plain_sync.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, c11_plain_sync["source_owners"])
+        c11_plain_sync_abi = " ".join(c11_plain_sync["x86_abi_prerequisites"])
+        for phrase in (
+            "mtx_init.c",
+            "mtx_destroy.c",
+            "mtx_lock.c",
+            "mtx_trylock.c",
+            "mtx_unlock.c",
+            "cnd_init.c",
+            "cnd_destroy.c",
+            "cnd_wait.c",
+            "cnd_signal.c",
+            "cnd_broadcast.c",
+            "40 bytes",
+            "48 bytes",
+            "8-byte alignment",
+            "mtx_plain=0",
+            "EBUSY=16",
+            "thrd_busy=1",
+            "futex=202",
+            "FUTEX_REQUEUE_PRIVATE=131",
+            "r10",
+            "r8",
+            "without changing C errno",
+            "dynamic TLS",
+        ):
+            self.assertIn(phrase, c11_plain_sync_abi)
+        c11_plain_sync_headers = " ".join(
+            c11_plain_sync["x86_header_prerequisites"]
+        )
+        for phrase in (
+            "threads.h",
+            "pthread.h",
+            "errno.h",
+            "distinct mtx_t/pthread_mutex_t",
+            "cnd_t/pthread_cond_t",
+            "40-byte/48-byte",
+            "28-context C/C++",
+            "mtx_init/mtx_destroy/mtx_lock/mtx_trylock/mtx_unlock",
+            "cnd_init/cnd_destroy/cnd_wait/cnd_signal/cnd_broadcast",
+            "unmangled C linkage",
+            "does not claim all C11 headers or C11 runtime completion",
+        ):
+            self.assertIn(phrase, c11_plain_sync_headers)
+        c11_plain_sync_scope = c11_plain_sync["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "mtx_plain initialization",
+            "held thrd_busy trylock",
+            "one-waiter cnd_signal",
+            "two-waiter cnd_broadcast",
+            "stale errno preservation",
+            "quiescent destruction",
+            "four bounded 64-handoff predicate ping-pong rounds",
+            "Candidate-only recursive/timed mtx_init rejection",
+            "exactly the ten selected C11 exports",
+            "direct private sibling routing",
+            "mtx lock cmpxchg",
+            "unlock exchange/xchg",
+            "futex=202",
+            "FUTEX_WAIT_PRIVATE=128",
+            "FUTEX_WAKE_PRIVATE=129",
+            "FUTEX_REQUEUE_PRIVATE=131",
+            "x86 r10/r8 requeue route",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "cancellation, TSS, once",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, c11_plain_sync_scope)
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -5008,6 +5115,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-cond-private must use the closed libc-pthread-cond-private command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_c11_plain_sync = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-c11-plain-sync"
+        )
+        changed_c11_plain_sync["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-c11-plain-sync must use the closed libc-c11-plain-sync command",
         ):
             ledger.validate_ledger(changed)
 

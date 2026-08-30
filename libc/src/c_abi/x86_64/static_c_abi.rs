@@ -9,8 +9,9 @@
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! process-private normal `pthread_mutex_*` block and its paired private
-//! process-private condition-variable handoff, all backed by the private
-//! Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
+//! process-private condition-variable handoff, plus a distinct C11 plain
+//! mutex/condition adapter over those private engines, all backed by the
+//! private Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control,
@@ -36,11 +37,11 @@
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
-//! process-private conditions paired with those normal mutexes; it is not C11
-//! synchronization. The C11
-//! lifecycle/sleep sibling likewise remains a static-only typed worker and
-//! direct non-cancellation realtime-sleep slice;
-//! neither is a claim for broader pthread/C11 header support.
+//! process-private conditions paired with those normal mutexes. The C11 plain
+//! synchronization sibling maps only distinct `mtx_t`/`cnd_t` storage through
+//! those same private engines; the C11 lifecycle/sleep siblings likewise
+//! remain static-only typed-worker and direct non-cancellation realtime-sleep
+//! slices. None is a claim for broader pthread/C11 header support.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
 //! artifact evidence. The shared result translator is intentionally smaller
@@ -109,6 +110,8 @@ mod pthread_mutex;
 mod pthread_cond;
 #[path = "c11_thread_lifecycle.rs"]
 mod c11_thread_lifecycle;
+#[path = "c11_sync.rs"]
+mod c11_sync;
 #[path = "termios_control.rs"]
 mod termios_control;
 #[path = "process_context.rs"]

@@ -116,11 +116,10 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" |
     fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
- # The shared archive's separately evidenced normal private pthread-mutex and
- # private condition blocks are not C11 synchronization claims and are
- # intentionally not rejected here.
+# The shared archive's separately evidenced C11 plain synchronization sibling
+# now owns mtx/cnd operations, so this lifecycle runner deliberately does not
+# reject those independently selected exports.
 for unselected in thrd_yield call_once \
-    mtx_init mtx_lock mtx_unlock cnd_init cnd_wait cnd_signal cnd_broadcast \
     tss_create tss_delete tss_set tss_get pthread_cancel \
     pthread_key_create pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
