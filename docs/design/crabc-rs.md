@@ -90,8 +90,9 @@ buffers query the required length, and successful reads expose only initialized
 prefixes. `XattrFlags` retains unknown bits for Linux to validate. The evidence
 does not impose symlink-xattr storage policy—its no-follow form is exercised on
 a regular file—and it does not select the separately evidenced
-`filesystem.extended-metadata` boundary, file-handle xattrs, C
-`sys/xattr.h`/errno state, or public x86 support.
+`filesystem.extended-metadata` boundary or newer `*xattrat` forms. The separate
+private static C artifact owns the bounded `sys/xattr.h`/errno state; neither
+slice establishes public x86 support.
 
 The same private x86 lane separately selects the allocation-free
 `filesystem.directory` trio through `raw_dir.rs` and `fs_x86_64.rs`.

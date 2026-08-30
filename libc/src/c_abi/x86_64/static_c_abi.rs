@@ -38,6 +38,9 @@
 //! message-queue/shared-memory artifact and one bounded event-descriptor
 //! artifact, one bounded pathname-mutation/lifecycle artifact, and one
 //! bounded directory-stream/raw-directory artifact.
+//! The independently selected extended-attribute leaf owns the complete
+//! direct Linux path, no-follow-path, and descriptor xattr syscall family;
+//! it keeps values and lists caller-owned and does not select ACL policy.
 //! It deliberately shares only the raw
 //! Linux syscall register boundary, one initial-TLS C `errno` slot, and the
 //! private Static Initial TLS v1 owner. The
@@ -177,6 +180,8 @@ mod nanosleep;
 mod descriptor_entry;
 #[path = "filesystem_access.rs"]
 mod filesystem_access;
+#[path = "extended_attributes.rs"]
+mod extended_attributes;
 #[path = "descriptor_control.rs"]
 mod descriptor_control;
 #[path = "record_locks.rs"]

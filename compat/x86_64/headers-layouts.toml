@@ -523,6 +523,18 @@ sources = [
 headers = ["include/fcntl.h", "include/unistd.h"]
 
 [[probe]]
+id = "xattr-header"
+command = "./scripts/dev-x86_64.sh xattr-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/xattr_header_abi_probe.c",
+  "compat/x86_64/xattr_header_abi_probe.cpp",
+  "compat/x86_64/run_xattr_header_abi.sh",
+]
+headers = ["include/sys/xattr.h"]
+
+[[probe]]
 id = "machine-context"
 command = "./scripts/dev-x86_64.sh machine-context-header-abi"
 state = "required"

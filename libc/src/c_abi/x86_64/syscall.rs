@@ -11,7 +11,9 @@
 //! lifecycle, and pipe syscalls; the selected vector-I/O leaf uses readv,
 //! writev, and positioned split-offset vector transfer syscalls;
 //! the selected filesystem-access leaf uses direct `access`, legacy
-//! `faccessat`, and flags-bearing `faccessat2` requests;
+//! `faccessat`, and flags-bearing `faccessat2` requests; and the selected
+//! extended-attribute leaf uses the complete path, no-follow-path, and
+//! descriptor xattr syscall family;
 //! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
 //! and byte-transfer syscalls; the selected socket-message/options leaf uses
@@ -431,6 +433,18 @@ pub(crate) const SYS_GETGID: i64 = 104;
 pub(crate) const SYS_GETEUID: i64 = 107;
 pub(crate) const SYS_GETEGID: i64 = 108;
 pub(crate) const SYS_GETTID: i64 = 186;
+pub(crate) const SYS_SETXATTR: i64 = 188;
+pub(crate) const SYS_LSETXATTR: i64 = 189;
+pub(crate) const SYS_FSETXATTR: i64 = 190;
+pub(crate) const SYS_GETXATTR: i64 = 191;
+pub(crate) const SYS_LGETXATTR: i64 = 192;
+pub(crate) const SYS_FGETXATTR: i64 = 193;
+pub(crate) const SYS_LISTXATTR: i64 = 194;
+pub(crate) const SYS_LLISTXATTR: i64 = 195;
+pub(crate) const SYS_FLISTXATTR: i64 = 196;
+pub(crate) const SYS_REMOVEXATTR: i64 = 197;
+pub(crate) const SYS_LREMOVEXATTR: i64 = 198;
+pub(crate) const SYS_FREMOVEXATTR: i64 = 199;
 pub(crate) const SYS_GETDENTS64: i64 = 217;
 pub(crate) const SYS_CLOCK_SETTIME: i64 = 227;
 pub(crate) const SYS_CLONE: i64 = 56;

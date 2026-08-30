@@ -48,6 +48,7 @@ SYS_TIME_DIRECT_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_sys_time_direct_header_abi.sh"
 )
 ACCESS_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_access_header_abi.sh"
+XATTR_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_xattr_header_abi.sh"
 X86_64_EVIDENCE_DOCKERFILE_PATH = ROOT / "docker" / "Dockerfile.x86_64"
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
@@ -207,6 +208,23 @@ EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_PROFILES = (
     "cxx17-strict",
 )
 EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ROW_COUNT = 8
+EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ID = "x86-xattr-header-profile-matrix"
+EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh xattr-header-abi"
+EXPECTED_XATTR_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/xattr.h"
+EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES = (
+    "c-default",
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-strict",
+    "cxx17-strict",
+    "c11-posix-2008",
+    "cxx17-posix-2008",
+    "c11-xopen-700",
+    "cxx17-xopen-700",
+    "c11-bsd",
+    "cxx17-bsd",
+)
+EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ROW_COUNT = 11
 EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "daemon.h",
     "dn_expand.h",
@@ -308,6 +326,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "timeval-transitive-header-profile-matrix",
         "sys-time-direct-header-profile-matrix",
         "access-header-profile-matrix",
+        "xattr-header-profile-matrix",
         "candidate-transitive-closure",
         "cxx17-consumability",
         "feature-visibility",
@@ -557,6 +576,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         (EXPECTED_ACCESS_HEADER_PROFILE_MATRIX_ID,),
     ),
+    "xattr-header-profile-matrix": (
+        "partial-verified",
+        "sys/xattr.h complete selected declaration scalar flag visibility and C++ requested C-linkage subset",
+        "libc.headers-layouts",
+        (EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "uapi-input-provenance": (
         "partial-verified",
         "pinned-uapi-inputs",
@@ -681,6 +706,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
     "sys-time-direct": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
     "access-header": "./scripts/dev-x86_64.sh access-header-abi",
+    "xattr-header": "./scripts/dev-x86_64.sh xattr-header-abi",
     "machine-context": "./scripts/dev-x86_64.sh machine-context-header-abi",
     "event-descriptors": "./scripts/dev-x86_64.sh event-descriptors-header-abi",
     "dirent": "./scripts/dev-x86_64.sh dirent-header-abi",
@@ -884,6 +910,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/access_header_abi_probe.c",
         "compat/x86_64/access_header_abi_probe.cpp",
         "compat/x86_64/run_access_header_abi.sh",
+    ),
+    "xattr-header": (
+        "compat/x86_64/xattr_header_abi_probe.c",
+        "compat/x86_64/xattr_header_abi_probe.cpp",
+        "compat/x86_64/run_xattr_header_abi.sh",
     ),
     "machine-context": (
         "compat/x86_64/machine_context_header_abi_probe.c",
@@ -1254,6 +1285,36 @@ DIRECTORY_STREAM_UNSELECTED_SYMBOLS = (
     "malloc",
     "realloc",
     "scandir",
+)
+
+EXTENDED_ATTRIBUTE_SYMBOLS = (
+    "setxattr",
+    "lsetxattr",
+    "fsetxattr",
+    "getxattr",
+    "lgetxattr",
+    "fgetxattr",
+    "listxattr",
+    "llistxattr",
+    "flistxattr",
+    "removexattr",
+    "lremovexattr",
+    "fremovexattr",
+)
+
+EXTENDED_ATTRIBUTE_UNSELECTED_SYMBOLS = (
+    "fgetxattrat",
+    "flistxattrat",
+    "fremovexattrat",
+    "fsetxattrat",
+    "getxattrat",
+    "listxattrat",
+    "lgetxattrat",
+    "llistxattrat",
+    "lremovexattrat",
+    "lsetxattrat",
+    "removexattrat",
+    "setxattrat",
 )
 
 INET_ADDRESS_SYMBOLS = (
@@ -1650,6 +1711,7 @@ def validate_header_layout_foundation_manifest(
         "timeval_transitive_header_profile_matrix",
         "sys_time_direct_header_profile_matrix",
         "access_header_profile_matrix",
+        "xattr_header_profile_matrix",
         "closure_diagnostic",
         "language_profile",
         "profile_obligation",
@@ -1718,6 +1780,7 @@ def validate_header_layout_foundation_manifest(
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
             "access_header_profile_matrix_slice": True,
+            "xattr_header_profile_matrix_slice": True,
             "candidate_transitive_include_closure": True,
             "c11_consumer_matrix": True,
             "cxx17_consumer_matrix": True,
@@ -3571,6 +3634,154 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts access header matrix evidence must retain its non-completion boundary",
     )
 
+    xattr_header_profile_matrix = manifest["xattr_header_profile_matrix"]
+    require(
+        isinstance(xattr_header_profile_matrix, Mapping),
+        "header-foundation xattr header matrix must be a table",
+    )
+    require(
+        set(xattr_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_header",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation xattr header matrix keys drifted",
+    )
+    require(
+        xattr_header_profile_matrix["id"] == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation xattr header matrix id drifted",
+    )
+    require(
+        xattr_header_profile_matrix["state"] == "partial-verified"
+        and xattr_header_profile_matrix["required_result"] == "pass",
+        "header-foundation xattr header matrix must remain partial verified evidence",
+    )
+    require(
+        xattr_header_profile_matrix["command"]
+        == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation xattr header matrix command drifted",
+    )
+    require(
+        xattr_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation xattr header matrix must remain scoped to pinned non-UAPI headers",
+    )
+    require(
+        xattr_header_profile_matrix["subject_header"]
+        == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_SUBJECT_HEADER,
+        "header-foundation xattr header matrix subject header drifted",
+    )
+    xattr_header_profiles = string_list(
+        xattr_header_profile_matrix["profiles"],
+        "header-foundation xattr header matrix profiles",
+    )
+    require(
+        tuple(xattr_header_profiles) == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation xattr header matrix profiles drifted",
+    )
+    require(
+        xattr_header_profile_matrix["row_count"]
+        == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and xattr_header_profile_matrix["row_count"] == len(xattr_header_profiles),
+        "header-foundation xattr header matrix row count drifted",
+    )
+    xattr_header_scope = xattr_header_profile_matrix["scope"]
+    require(
+        isinstance(xattr_header_scope, str)
+        and all(
+            phrase in xattr_header_scope
+            for phrase in (
+                "twelve",
+                "unconditional",
+                "strict/POSIX/X/Open/GNU/BSD",
+                "unmangled C++",
+                "actual callable artifact linkage",
+                "runtime xattr behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation xattr header matrix scope must retain its non-completion boundary",
+    )
+    xattr_header_rows = xattr_header_profile_matrix["row"]
+    require(
+        isinstance(xattr_header_rows, list)
+        and len(xattr_header_rows) == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation xattr header matrix row roster drifted",
+    )
+    observed_xattr_header_rows: list[str] = []
+    for index, row in enumerate(xattr_header_rows):
+        location = f"header-foundation xattr_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(isinstance(profile, str), f"{location} profile is invalid")
+        require(
+            profile in EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES,
+            f"{location} profile is not a declared xattr-header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_xattr_header_rows.append(profile)
+    require(
+        tuple(observed_xattr_header_rows) == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation xattr header matrix row order or roster drifted",
+    )
+    require(
+        XATTR_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation xattr header matrix runner is missing",
+    )
+    require(
+        "xattr-header-abi)" in dispatch_source,
+        "xattr-header-abi is absent from the native dispatcher",
+    )
+    xattr_header_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_XATTR_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(xattr_header_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one xattr header matrix evidence command",
+    )
+    require(
+        xattr_header_matrix_evidence[0].get("state") == "required"
+        and isinstance(xattr_header_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in xattr_header_matrix_evidence[0]["scope"]
+            for phrase in (
+                "sys/xattr.h",
+                "twelve",
+                "unconditional",
+                "unmangled C++",
+                "actual callable artifact linkage",
+                "runtime behavior",
+                "all-header closure",
+                "runtime",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts xattr header matrix evidence must retain its non-completion boundary",
+    )
+
     inventory_text = inventory_path.read_text(encoding="utf-8")
     pinned_paths = inventory_text.splitlines()
     require(inventory_text.endswith("\n"), "header-foundation pinned inventory must end with a newline")
@@ -3598,6 +3809,11 @@ def validate_header_layout_foundation_manifest(
     require(
         set(access_header_subject_headers) <= pinned_path_set - uapi_header_set,
         "header-foundation access header subjects must remain pinned non-UAPI headers",
+    )
+    require(
+        xattr_header_profile_matrix["subject_header"]
+        in pinned_path_set - uapi_header_set,
+        "header-foundation xattr subject must remain a pinned non-UAPI header",
     )
     require(
         set(event_descriptor_subject_headers) <= pinned_path_set - uapi_header_set
@@ -3921,6 +4137,7 @@ def validate_header_layout_foundation_manifest(
         "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
         "access_header_profile_matrix_row_count": len(observed_access_header_rows),
+        "xattr_header_profile_matrix_row_count": len(observed_xattr_header_rows),
         "language_profile_count": len(profile_ids),
         "profile_obligation_count": len(obligation_keys),
         "profile_matrix_row_count": profile_matrix_row_count,
@@ -12034,6 +12251,324 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_extended_attributes_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the complete selected static C xattr family private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-extended-attributes"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-extended-attributes artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-extended-attributes must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in EXTENDED_ATTRIBUTE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-extended-attributes description omits {symbol}",
+        )
+    for phrase in (
+        "extended-attribute block",
+        "path, no-follow-path, and descriptor",
+        "binary values",
+        "zero-length values",
+        "NUL-separated names",
+        "CREATE/REPLACE",
+        "EOPNOTSUPP or ENOSYS",
+        "ACL",
+        "*xattrat",
+        "cancellation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-extended-attributes description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-extended-attributes.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/extended_attributes.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/sys/xattr.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/xattr_header_abi_probe.c",
+        "compat/x86_64/xattr_header_abi_probe.cpp",
+        "compat/x86_64/run_xattr_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_extended_attributes_probe.c",
+        "compat/x86_64/libc_extended_attributes_start.S",
+        "compat/x86_64/run_libc_extended_attributes.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-extended-attributes source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-extended-attributes.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            all(f"{name}={number}" in item for name, number in (
+                ("setxattr", 188),
+                ("lsetxattr", 189),
+                ("fsetxattr", 190),
+                ("getxattr", 191),
+                ("lgetxattr", 192),
+                ("fgetxattr", 193),
+                ("listxattr", 194),
+                ("llistxattr", 195),
+                ("flistxattr", 196),
+                ("removexattr", 197),
+                ("lremovexattr", 198),
+                ("fremovexattr", 199),
+            ))
+            and "rdi/rsi/rdx/r10/r8" in item
+            for item in prerequisites
+        ),
+        "static-c-extended-attributes must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "64-bit size_t/ssize_t" in item
+            and "caller-owned byte buffers" in item
+            and "XATTR_CREATE=1/XATTR_REPLACE=2" in item
+            for item in prerequisites
+        ),
+        "static-c-extended-attributes must record its x86 C buffer and flag ABI",
+    )
+    require(
+        any(
+            "src/linux/xattr.c" in item
+            and "ordinary syscall dispatch" in item
+            and "Linux 5.10" in item
+            and "ENOSYS fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-extended-attributes must record its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "EOPNOTSUPP or ENOSYS" in item
+            and "status 77" in item
+            and "regular file" in item
+            for item in prerequisites
+        ),
+        "static-c-extended-attributes must record its filesystem-policy branch",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-extended-attributes must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-extended-attributes.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "11-profile" in item
+            and "sys/xattr.h" in item
+            and "all twelve" in item
+            and "unconditional" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-extended-attributes must record its direct xattr header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(EXTENDED_ATTRIBUTE_SYMBOLS) <= static_exports,
+        "static-c-extended-attributes must retain its twelve selected exports",
+    )
+    require(
+        not (static_exports & set(EXTENDED_ATTRIBUTE_UNSELECTED_SYMBOLS)),
+        "static-c-extended-attributes must not add unselected xattrat exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "extended_attributes.rs"]\nmod extended_attributes;' in static_root,
+        "x86 static C ABI must compose the extended_attributes leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "extended_attributes.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in EXTENDED_ATTRIBUTE_SYMBOLS:
+        require(
+            f"fn {symbol}" in implementation,
+            f"extended_attributes leaf omits {symbol}",
+        )
+    for snippet in (
+        "src/linux/xattr.c",
+        "raw_syscall::SYS_SETXATTR",
+        "raw_syscall::SYS_FREMOVEXATTR",
+        "c_ssize_status",
+        "c_status",
+        "cancellation-point",
+    ):
+        require(
+            snippet in implementation,
+            f"extended_attributes leaf omits its closed {snippet} boundary",
+        )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/linux/xattr.c" in entry["role"]
+            and "ordinary syscall dispatch" in entry["role"]
+            and "ENOSYS fallback" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-extended-attributes must retain its pinned-musl xattr source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-extended-attributes"},
+        "static-c-extended-attributes must use the closed libc-extended-attributes command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static` candidate",
+                "setxattr=188",
+                "lsetxattr=189",
+                "fsetxattr=190",
+                "getxattr=191",
+                "lgetxattr=192",
+                "fgetxattr=193",
+                "listxattr=194",
+                "llistxattr=195",
+                "flistxattr=196",
+                "removexattr=197",
+                "lremovexattr=198",
+                "fremovexattr=199",
+                "setter r10/r8",
+                "getter r10",
+                "binary and zero-length values",
+                "NUL-separated lists",
+                "ERANGE/EEXIST/ENODATA/EINVAL",
+                "EOPNOTSUPP/ENOSYS",
+                "ACL",
+                "*xattrat",
+                "cancellation",
+                "public x86 support",
+            )
+        ),
+        "static-c-extended-attributes evidence must retain its exact static xattr runtime regression",
+    )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_extended_attributes.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "assert_named_syscall setxattr bc",
+        "assert_named_syscall fremovexattr c7",
+        "candidate_branch",
+        "EOPNOTSUPP",
+        "ENOSYS",
+    ):
+        require(
+            snippet in runner,
+            f"libc-extended-attributes runner omits {snippet}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_extended_attributes_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_EXTENDED_ATTRIBUTES_FREESTANDING",
+        "XATTR_PATH",
+        "XATTR_NOFOLLOW_PATH",
+        "XATTR_DESCRIPTOR",
+        "XATTR_CREATE",
+        "XATTR_REPLACE",
+        "ERANGE",
+        "EEXIST",
+        "ENODATA",
+        "EINVAL",
+        "CRABC_XATTR_UNAVAILABLE",
+    ):
+        require(
+            snippet in fixture,
+            f"extended-attributes fixture omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "xattr-header-abi)",
+        "libc-extended-attributes)",
+        "run_xattr_header_abi()",
+        "run_libc_extended_attributes()",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits {snippet}",
+        )
+
+
 def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
     """Keep selected numeric address codecs private and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -14172,6 +14707,7 @@ def validate_ledger(
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
+    require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
@@ -14282,6 +14818,9 @@ def validate_ledger(
         ],
         "header_foundation_access_header_profile_matrix_row_count": header_layout_foundation_report[
             "access_header_profile_matrix_row_count"
+        ],
+        "header_foundation_xattr_header_profile_matrix_row_count": header_layout_foundation_report[
+            "xattr_header_profile_matrix_row_count"
         ],
         "header_foundation_language_profile_count": header_layout_foundation_report[
             "language_profile_count"

@@ -51,6 +51,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
   sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
   access-header-abi  verify selected direct unistd/fcntl access C/C++ ABI profiles and C linkage
+  xattr-header-abi  verify selected direct sys/xattr.h C/C++ ABI profiles and C linkage
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
@@ -101,6 +102,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
+  libc-extended-attributes  run the static x86 crabc-libc extended-attribute slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
   libc-directory-streams  run the static x86 crabc-libc directory-stream slice
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
@@ -1556,6 +1558,10 @@ run_access_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_access_header_abi.sh
 }
 
+run_xattr_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_xattr_header_abi.sh
+}
+
 run_header_abi_project() {
     run_in_container bash /workspace/compat/x86_64/run_project_header_abi.sh
 }
@@ -1722,6 +1728,10 @@ run_libc_sysv_message_shared_memory() {
 
 run_libc_event_descriptors() {
     run_in_container bash /workspace/compat/x86_64/run_libc_event_descriptors.sh
+}
+
+run_libc_extended_attributes() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_extended_attributes.sh
 }
 
 run_libc_pathname_lifecycle() {
@@ -1973,7 +1983,7 @@ run_path_core_reference() {
 
 run_xattr_reference() {
     # This is the complete direct xattr family: path, no-follow-path, and
-    # descriptor forms. It intentionally excludes statx, file-handle xattrs,
+    # descriptor forms. It intentionally excludes statx, newer *xattrat forms,
     # directory/temporary abstractions, the C ABI, and public x86 support.
     run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
         -p crabc-rs --no-default-features --test x86_64_xattr -- --test-threads=1
@@ -2761,6 +2771,7 @@ case "$command" in
     timeval-transitive-header-abi) ;;
     sys-time-direct-header-abi) ;;
     access-header-abi) ;;
+    xattr-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi|locale-multibyte-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
@@ -2772,6 +2783,7 @@ case "$command" in
     sysv-semaphore-header-abi) ;;
     sysv-message-shared-memory-header-abi) ;;
     libc-event-descriptors) ;;
+    libc-extended-attributes) ;;
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-stdio-standard) ;;
@@ -2871,6 +2883,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "access-header-abi takes no arguments"
         ensure_image
         run_access_header_abi
+        ;;
+    xattr-header-abi)
+        [ "$#" -eq 0 ] || fail "xattr-header-abi takes no arguments"
+        ensure_image
+        run_xattr_header_abi
         ;;
     header-abi-project)
         [ "$#" -eq 0 ] || fail "header-abi-project takes no arguments"
@@ -3925,6 +3942,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-event-descriptors takes no arguments"
         ensure_image
         run_libc_event_descriptors
+        ;;
+    libc-extended-attributes)
+        [ "$#" -eq 0 ] || fail "libc-extended-attributes takes no arguments"
+        ensure_image
+        run_libc_extended_attributes
         ;;
     libc-pathname-lifecycle)
         [ "$#" -eq 0 ] || fail "libc-pathname-lifecycle takes no arguments"

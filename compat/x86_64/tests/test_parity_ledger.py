@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 84)
-        self.assertEqual(report["header_layout_probe_count"], 43)
+        self.assertEqual(report["verified_artifact_count"], 85)
+        self.assertEqual(report["header_layout_probe_count"], 44)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -84,10 +84,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             report["header_foundation_access_header_profile_matrix_row_count"],
             8,
         )
+        self.assertEqual(
+            report["header_foundation_xattr_header_profile_matrix_row_count"],
+            11,
+        )
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 21)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 22)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -288,7 +292,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 43)
+        self.assertEqual(report["header_layout_probe_count"], 44)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -634,6 +638,18 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/stdlib_header_abi_probe.cpp",
             headers_layouts["source_owners"],
         )
+        self.assertIn(
+            "compat/x86_64/run_xattr_header_abi.sh",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/xattr_header_abi_probe.c",
+            headers_layouts["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/xattr_header_abi_probe.cpp",
+            headers_layouts["source_owners"],
+        )
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
@@ -658,6 +674,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             report["header_foundation_sys_time_direct_header_profile_matrix_row_count"],
             7,
+        )
+        self.assertEqual(
+            report["header_foundation_xattr_header_profile_matrix_row_count"],
+            11,
         )
 
         classes = manifest["header_class"]
@@ -1087,6 +1107,37 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for row in access_header_rows
             )
         )
+        xattr_matrix = manifest["xattr_header_profile_matrix"]
+        assert isinstance(xattr_matrix, dict)
+        self.assertEqual(xattr_matrix["id"], "x86-xattr-header-profile-matrix")
+        self.assertEqual(xattr_matrix["state"], "partial-verified")
+        self.assertEqual(xattr_matrix["required_result"], "pass")
+        self.assertEqual(
+            xattr_matrix["command"], "./scripts/dev-x86_64.sh xattr-header-abi"
+        )
+        self.assertEqual(xattr_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(xattr_matrix["subject_header"], "sys/xattr.h")
+        self.assertEqual(
+            xattr_matrix["profiles"],
+            list(ledger.EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES),
+        )
+        self.assertEqual(xattr_matrix["row_count"], 11)
+        xattr_rows = xattr_matrix["row"]
+        assert isinstance(xattr_rows, list)
+        self.assertEqual(len(xattr_rows), 11)
+        self.assertEqual(
+            [row["profile"] for row in xattr_rows if isinstance(row, dict)],
+            list(ledger.EXPECTED_XATTR_HEADER_PROFILE_MATRIX_PROFILES),
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in xattr_rows
+            )
+        )
         completion = manifest["completion"]
         assert isinstance(completion, dict)
         policy = manifest["policy"]
@@ -1104,6 +1155,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(completion["timeval_transitive_header_profile_matrix_slice"])
         self.assertTrue(completion["sys_time_direct_header_profile_matrix_slice"])
         self.assertTrue(completion["access_header_profile_matrix_slice"])
+        self.assertTrue(completion["xattr_header_profile_matrix_slice"])
         self.assertTrue(completion["candidate_transitive_include_closure"])
         self.assertTrue(completion["c11_consumer_matrix"])
         self.assertTrue(completion["cxx17_consumer_matrix"])
@@ -1390,6 +1442,28 @@ class X86ParityLedgerTests(unittest.TestCase):
         access_header_matrix["subject_headers"] = ["sys/socket.h"]
         with self.assertRaisesRegex(
             ledger.LedgerError, "access header matrix subject headers drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        xattr_header_matrix = manifest["xattr_header_profile_matrix"]
+        assert isinstance(xattr_header_matrix, dict)
+        xattr_header_rows = xattr_header_matrix["row"]
+        assert isinstance(xattr_header_rows, list)
+        xattr_header_rows.pop()
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "xattr header matrix row roster drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        xattr_header_matrix = manifest["xattr_header_profile_matrix"]
+        assert isinstance(xattr_header_matrix, dict)
+        xattr_header_matrix["subject_header"] = "sys/socket.h"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "xattr header matrix subject header drifted"
         ):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
@@ -2207,7 +2281,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 52
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 53
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -9671,6 +9745,134 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["scope"] = "private numeric address probe"
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static numeric-address regression"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_extended_attributes_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-extended-attributes"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/extended_attributes.rs",
+            "include/sys/xattr.h",
+            "compat/x86_64/xattr_header_abi_probe.c",
+            "compat/x86_64/xattr_header_abi_probe.cpp",
+            "compat/x86_64/run_xattr_header_abi.sh",
+            "compat/x86_64/libc_extended_attributes_probe.c",
+            "compat/x86_64/libc_extended_attributes_start.S",
+            "compat/x86_64/run_libc_extended_attributes.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-extended-attributes"},
+        )
+        for phrase in (
+            "extended-attribute block",
+            "`setxattr`",
+            "`lsetxattr`",
+            "`fsetxattr`",
+            "`getxattr`",
+            "`lgetxattr`",
+            "`fgetxattr`",
+            "`listxattr`",
+            "`llistxattr`",
+            "`flistxattr`",
+            "`removexattr`",
+            "`lremovexattr`",
+            "`fremovexattr`",
+            "binary values",
+            "zero-length values",
+            "NUL-separated names",
+            "EOPNOTSUPP or ENOSYS",
+            "ACL",
+            "*xattrat",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        selected = {
+            "setxattr",
+            "lsetxattr",
+            "fsetxattr",
+            "getxattr",
+            "lgetxattr",
+            "fgetxattr",
+            "listxattr",
+            "llistxattr",
+            "flistxattr",
+            "removexattr",
+            "lremovexattr",
+            "fremovexattr",
+        }
+        self.assertTrue(selected <= exports)
+        self.assertFalse(
+            exports
+            & {
+                "setxattrat",
+                "lsetxattrat",
+                "fsetxattrat",
+                "getxattrat",
+                "lgetxattrat",
+                "fgetxattrat",
+                "listxattrat",
+                "llistxattrat",
+                "flistxattrat",
+                "removexattrat",
+                "lremovexattrat",
+                "fremovexattrat",
+            }
+        )
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "setxattr=188" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in (
+            "lsetxattr=189",
+            "fsetxattr=190",
+            "getxattr=191",
+            "lgetxattr=192",
+            "fgetxattr=193",
+            "listxattr=194",
+            "llistxattr=195",
+            "flistxattr=196",
+            "removexattr=197",
+            "lremovexattr=198",
+            "fremovexattr=199",
+            "rdi/rsi/rdx/r10/r8",
+        ):
+            self.assertIn(phrase, syscall_abi)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-extended-attributes"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "EOPNOTSUPP/ENOSYS", "missing unavailable-filesystem regression"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact static xattr runtime regression"
         ):
             ledger.validate_ledger(data)
 

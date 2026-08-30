@@ -877,6 +877,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",
             "access-header-abi",
+            "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-multibyte-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
@@ -888,6 +889,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sysv-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
             "libc-event-descriptors",
+            "libc-extended-attributes",
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-stdio-standard",
@@ -11898,6 +11900,161 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pathname-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-pathname-lifecycle takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_extended_attributes_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "extended_attributes.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_extended_attributes_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_extended_attributes_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_extended_attributes.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_xattr_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = (
+            "setxattr",
+            "lsetxattr",
+            "fsetxattr",
+            "getxattr",
+            "lgetxattr",
+            "fgetxattr",
+            "listxattr",
+            "llistxattr",
+            "flistxattr",
+            "removexattr",
+            "lremovexattr",
+            "fremovexattr",
+        )
+        self.assertIn('#[path = "extended_attributes.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C extended-attribute boundary",
+            "musl 1.2.6 release commit",
+            "src/linux/xattr.c",
+            "cancellation-point",
+            "Linux 5.10",
+            "initial-TLS C `errno`",
+        ):
+            self.assertIn(required, implementation)
+        for symbol in symbols:
+            self.assertIn(f"fn {symbol}", implementation)
+            self.assertIn(symbol, static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "setxattrat",
+                "lsetxattrat",
+                "fsetxattrat",
+                "getxattrat",
+                "lgetxattrat",
+                "fgetxattrat",
+                "listxattrat",
+                "llistxattrat",
+                "flistxattrat",
+                "removexattrat",
+                "lremovexattrat",
+                "fremovexattrat",
+            }
+        )
+
+        for required in (
+            "#include <sys/xattr.h>",
+            "SYS_setxattr == 188",
+            "SYS_fremovexattr == 199",
+            "XATTR_CREATE == 1 && XATTR_REPLACE == 2",
+            "XATTR_PATH",
+            "XATTR_NOFOLLOW_PATH",
+            "XATTR_DESCRIPTOR",
+            "CRABC_XATTR_UNAVAILABLE",
+            "EOPNOTSUPP",
+            "ENOSYS",
+            "ERANGE",
+            "EEXIST",
+            "ENODATA",
+            "EINVAL",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_extended_attributes_probe",
+            "mov $231, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_xattr_header_abi.sh",
+            "-nostdlib -static",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall setxattr bc",
+            "assert_named_syscall lsetxattr bd",
+            "assert_named_syscall fsetxattr be",
+            "assert_named_syscall getxattr bf",
+            "assert_named_syscall lgetxattr c0",
+            "assert_named_syscall fgetxattr c1",
+            "assert_named_syscall listxattr c2",
+            "assert_named_syscall llistxattr c3",
+            "assert_named_syscall flistxattr c4",
+            "assert_named_syscall removexattr c5",
+            "assert_named_syscall lremovexattr c6",
+            "assert_named_syscall fremovexattr c7",
+            "candidate_branch",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=11",
+            "sys/xattr.h",
+            "setxattr lsetxattr fsetxattr",
+            "getxattr lgetxattr fgetxattr",
+            "listxattr llistxattr flistxattr",
+            "removexattr lremovexattr fremovexattr",
+            "C++ probe does not retain C linkage",
+        ):
+            self.assertIn(required, header_runner)
+
+        self.assertIn('id = "static-c-extended-attributes"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-extended-attributes"',
+            parity_ledger,
+        )
+        self.assertIn("run_xattr_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_xattr_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_extended_attributes()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_extended_attributes.sh", runner
+        )
+        self.assertIn(
+            '    xattr-header-abi)\n        [ "$#" -eq 0 ] || fail "xattr-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-extended-attributes)\n        [ "$#" -eq 0 ] || fail "libc-extended-attributes takes no arguments"',
             runner,
         )
 

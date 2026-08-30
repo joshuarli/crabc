@@ -1,7 +1,7 @@
 # Forward-looking native x86-64 header/layout foundation contract.
 #
 # This is deliberately a planning and accounting manifest, not a promotion.
-# `headers-layouts.toml` remains the v1 inventory of forty-three direct probes.
+# `headers-layouts.toml` remains the v1 inventory of forty-four direct probes.
 # This v8 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, epoll, event-descriptor,
@@ -58,6 +58,7 @@ stdlib_header_profile_matrix_slice = true
 timeval_transitive_header_profile_matrix_slice = true
 sys_time_direct_header_profile_matrix_slice = true
 access_header_profile_matrix_slice = true
+xattr_header_profile_matrix_slice = true
 candidate_transitive_include_closure = true
 c11_consumer_matrix = true
 cxx17_consumer_matrix = true
@@ -1088,6 +1089,88 @@ reference = "compile-ok"
 candidate = "compile-ok"
 applicability = "applicable"
 
+# This fixed direct declaration slice verifies the complete selected xattr
+# header surface. All twelve operations and both setter flags are unconditional
+# in pinned musl, including strict C and C++ profiles; the expanded C++ rows
+# keep POSIX, X/Open, and BSD feature selection explicit instead of inheriting
+# the compiler's ambient GNU default.
+[xattr_header_profile_matrix]
+id = "x86-xattr-header-profile-matrix"
+state = "partial-verified"
+command = "./scripts/dev-x86_64.sh xattr-header-abi"
+required_result = "pass"
+header_class = "pinned-non-uapi"
+subject_header = "sys/xattr.h"
+profiles = ["c-default", "c11-gnu", "cxx17-gnu", "c11-strict", "cxx17-strict", "c11-posix-2008", "cxx17-posix-2008", "c11-xopen-700", "cxx17-xopen-700", "c11-bsd", "cxx17-bsd"]
+row_count = 11
+scope = "One fixed pinned non-UAPI sys/xattr.h header across one default-C plus ten isolated C11/C++17 profiles, compiled through pinned musl and raw-GCC project-header-first roots with all twelve get/list/set/remove path, no-follow-path, and descriptor declarations; x86 LP64 size_t/ssize_t scalars; XATTR_CREATE/XATTR_REPLACE values; unconditional strict/POSIX/X/Open/GNU/BSD visibility; and unmangled C++ declaration references. This excludes actual callable artifact linkage, runtime xattr behavior, unselected header surface, all-header closure, runtime completion, family promotion, and public support."
+
+[[xattr_header_profile_matrix.row]]
+profile = "c-default"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "c11-gnu"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "cxx17-gnu"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "c11-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "cxx17-strict"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "c11-posix-2008"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "cxx17-posix-2008"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "c11-xopen-700"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "cxx17-xopen-700"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "c11-bsd"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
+[[xattr_header_profile_matrix.row]]
+profile = "cxx17-bsd"
+reference = "compile-ok"
+candidate = "compile-ok"
+applicability = "applicable"
+
 # This is a live, source-derived empty-TU include diagnostic, not a frozen
 # baseline. Its command resolves the full seven-profile 1,337-row public
 # header consumer matrix after any header change. The two explicitly named
@@ -1322,7 +1405,7 @@ excluded_paths = ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"]
 expected_count = 180
 language_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 future_feature_profiles = []
-abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
+abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-prototype-layout", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
 linkage_owners = ["current-static-c-exports", "unlisted-public-callables", "noncallable-header-abi"]
 
 [[header_class]]
@@ -1457,6 +1540,14 @@ evidence = ["x86-access-header-profile-matrix"]
 description = "The selected direct access-header C/C++ matrix proves one default-C plus seven isolated C11/C++17 pinned-musl/project profile rows for access/faccessat declarations, selected access and AT values, GNU-only eaccess/euidaccess visibility, and unmangled C++ declaration references only; it excludes actual crabc artifact linkage, runtime behavior, unselected header surface, and header-family promotion."
 
 [[abi_facet]]
+id = "xattr-header-profile-matrix"
+state = "partial-verified"
+scope = "sys/xattr.h complete selected declaration scalar flag visibility and C++ requested C-linkage subset"
+owner = "libc.headers-layouts"
+evidence = ["x86-xattr-header-profile-matrix"]
+description = "The selected direct sys/xattr.h C/C++ matrix proves all twelve path, no-follow-path, and descriptor xattr declarations across strict, POSIX, X/Open, GNU, and BSD profiles; x86 LP64 size_t/ssize_t scalars; XATTR_CREATE/XATTR_REPLACE; and unmangled C++ declaration references only. It excludes actual callable artifact linkage, runtime behavior, unselected header surface, all-header closure, and header-family promotion."
+
+[[abi_facet]]
 id = "uapi-input-provenance"
 state = "partial-verified"
 scope = "pinned-uapi-inputs"
@@ -1526,8 +1617,8 @@ state = "partial-verified"
 scope = "v1-direct-probe-union"
 owner = "libc.headers-layouts"
 evidence = ["headers-layouts.toml"]
-legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "machine-context", "event-descriptors", "dirent"]
-description = "The existing forty-three direct gates remain required inputs and retain their bounded declaration/layout scopes."
+legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
+description = "The existing forty-four direct gates remain required inputs and retain their bounded declaration/layout scopes."
 
 [[abi_facet]]
 id = "static-c-cxx-composition"

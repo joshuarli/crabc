@@ -255,6 +255,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh socket-messages-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
 ./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
+./scripts/dev-x86_64.sh xattr-header-abi
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
@@ -390,6 +391,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
 ./scripts/dev-x86_64.sh libc-event-descriptors
 ./scripts/dev-x86_64.sh libc-pathname-lifecycle
+./scripts/dev-x86_64.sh libc-extended-attributes
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
 ./scripts/dev-x86_64.sh libc-timestamp-updates
@@ -448,7 +450,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the forty-three selected
+`headers-layouts.toml` is the checked-in contract for the forty-four selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -534,6 +536,15 @@ names. It is compile-only evidence: it does not prove actual archive linkage,
 directory-stream runtime behavior, directory/header-family promotion, or
 public x86 support. Full x86-64 parity remains the separate promotion goal.
 
+The separate private `xattr-header-abi` gate
+(`./scripts/dev-x86_64.sh xattr-header-abi`) compares project-header-first and
+pinned-musl 1.2.6 `<sys/xattr.h>` across eleven C11/C++17 feature profiles. It
+keeps all twelve selected path, no-follow-path, and descriptor
+`set`/`get`/`list`/`remove` declarations unconditional, fixes LP64 scalar
+types and `XATTR_CREATE=1`/`XATTR_REPLACE=2`, and verifies unmangled C++
+spellings. It is compile-only declaration evidence, not xattr runtime,
+header-family completion, promotion, or public x86 support.
+
 The separate private `stdlib-header-abi` gate
 (`./scripts/dev-x86_64.sh stdlib-header-abi`) compares raw-GCC
 project-header-first and pinned-musl 1.2.6 `<stdlib.h>` across twelve C11/C++17
@@ -572,6 +583,23 @@ not a C allocator. GNU `versionsort` delegates musl's scalar digit/leading-zero
 order to the selected public `strverscmp` byte-string leaf. `scandir`,
 directory walking, broader locale collation, cancellation, full C runtime/POSIX
 parity, family promotion, and public x86 support remain excluded.
+
+`libc-extended-attributes` is the separate private static C runtime artifact
+paired with that header gate. Its project-header fixture first runs through
+pinned musl 1.2.6 and then through the exact `crabc-libc` archive under
+`-nostdlib -static`, selecting exactly `setxattr`, `lsetxattr`, `fsetxattr`,
+`getxattr`, `lgetxattr`, `fgetxattr`, `listxattr`, `llistxattr`, `flistxattr`,
+`removexattr`, `lremovexattr`, and `fremovexattr`. It compares binary and
+zero-length values, size queries, initialized-prefix preservation,
+NUL-separated lists, `CREATE`/`REPLACE`, and direct `ERANGE`/`EEXIST`/
+`ENODATA`/`EINVAL` behavior, including a paired uniformly-unavailable
+`EOPNOTSUPP`/`ENOSYS` filesystem-policy branch. It exercises no-follow calls
+on a regular file without selecting symlink-storage policy. The runner also
+ratchets the exact archive export set, initial-TLS `errno`, direct x86 syscall
+numbers 188 through 199, and a candidate with no interpreter, `DT_NEEDED`,
+unresolved symbols, dynamic TLS, or unowned runtime dependency. ACL/namespace
+policy, `*xattrat`, cancellation, xattr family completion, promotion, full
+x86-64 parity, and public x86 support remain excluded.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete
@@ -1403,7 +1431,7 @@ invalid-operation outcomes. This is private staged evidence and does not make
 x86 runtime support public or select a C ABI/`errno` TLS. `AT_EMPTY_PATH`
 outside the separately evidenced statx-specific form, canonicalization, CWD
 mutation, C `DIR` APIs and bulk directory helpers, C temporary-file/directory
-APIs, xattr file-handle and symlink-storage policy, and broader filesystem
+APIs, xattr namespace/ACL and symlink-storage policy, and broader filesystem
 policy remain future work. The separately evidenced `xattr-reference`,
 `directory-reference`, `temporary-object-reference`, and `statx-reference`
 gates cover only their direct Rust boundaries.
@@ -1579,9 +1607,11 @@ and `EINVAL` visible. A filesystem which uniformly reports `EOPNOTSUPP` or
 `ENOSYS` for the initial paired musl/raw operation takes a recorded
 unavailable-policy branch. User xattrs on symlinks are not selected: the
 no-follow syscall form is exercised on a regular file rather than assuming a
-filesystem's symlink-xattr policy. This does not select the separately
-evidenced `filesystem.extended-metadata` slice, xattr file-handle APIs, C
-directory/temporary APIs, C `sys/xattr.h` or errno TLS, or public x86 support.
+filesystem's symlink-xattr policy. This Rust facade evidence does not select
+the separately evidenced `filesystem.extended-metadata` slice, additional
+xattr namespace/ACL policy, C directory/temporary APIs, or public x86 support;
+the separate static C artifact above owns its bounded `sys/xattr.h` and
+errno-TLS boundary, including the selected descriptor forms.
 
 `directory-reference` is the separate private x86 directory-record vertical
 slice. Its no-alloc Rust regressions and static probes cover `RawDir`'s
@@ -3224,7 +3254,7 @@ the named select/pselect and epoll operations, timerfd policy beyond the named
 typed descriptor operations,
 signalfd, target resource-limit mutation, C `struct rusage` or `struct tms` support, broader
   unselected filesystem behavior, C
-  directory/temporary facilities and xattr file-handle APIs,
+  directory/temporary facilities and xattr namespace/ACL policy,
 global locking policy, wider mapping policy, network interface/device,
 resolver, netdb, and other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
