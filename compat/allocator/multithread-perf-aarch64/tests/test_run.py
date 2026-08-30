@@ -121,6 +121,23 @@ class ReportContractTests(unittest.TestCase):
         with self.assertRaisesRegex(perf.HarnessError, "public or promotion"):
             perf.validate_report_contract(report)
 
+    def test_current_friend_boundary_lane_is_diagnostic_and_rejected_as_production_evidence(self) -> None:
+        report = perf.empty_report(label="baseline", host={})
+        classification = report["evidence_classification"]["current_rust_direct_engine_friend_boundary"]
+        self.assertEqual(classification["classification"], "diagnostic-only")
+        self.assertEqual(classification["production_scaling_evidence"]["status"], "rejected")
+        perf.validate_report_contract(report)
+
+        classification["production_scaling_evidence"]["status"] = "accepted"
+        with self.assertRaisesRegex(perf.HarnessError, "friend-boundary"):
+            perf.validate_report_contract(report)
+
+    def test_completed_comparison_cannot_relabel_raw_scaling_as_production_evidence(self) -> None:
+        report = perf.empty_report(label="baseline", host={})
+        report["comparison"] = {"production_scaling_evidence": {"status": "accepted"}, "status": "ok"}
+        with self.assertRaisesRegex(perf.HarnessError, "comparison production"):
+            perf.validate_report_contract(report)
+
     def test_serialization_report_marks_a_flat_multithread_throughput_shape(self) -> None:
         scales = {
             "1": {"summary": {"throughput_operations_per_second_median": 100.0}},
@@ -138,9 +155,11 @@ class ReportContractTests(unittest.TestCase):
         self.assertEqual(unavailable["status"], "unavailable")
         measured = perf.compare_lanes(
             c_lane,
-            {"status": "ok", "scales": {"1": {"summary": {"throughput_operations_per_second_median": 75.0}}}},
+            {"status": "ok", "scales": {"1": {"summary": {"throughput_operations_per_second_median": 300.0}}}},
         )
-        self.assertEqual(measured, {"status": "ok", "scales": {"1": {"rust_to_pinned_c_throughput_ratio": 0.75}}})
+        self.assertEqual(measured["status"], "ok")
+        self.assertEqual(measured["scales"], {"1": {"rust_to_pinned_c_throughput_ratio": 3.0}})
+        self.assertEqual(measured["production_scaling_evidence"]["status"], "rejected")
 
     def test_manifest_is_machine_readable_and_matches_the_report_kind(self) -> None:
         manifest = json.loads((SUITE / "manifest.json").read_text(encoding="utf-8"))

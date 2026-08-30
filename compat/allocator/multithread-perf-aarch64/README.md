@@ -49,6 +49,12 @@ direct native tests. It is built with the root workspace's locked dependency
 graph into the same isolated `/tmp` output directory, then compiled with
 `rustc`; it adds no production dependency or allocator API.
 
+Every report classifies this current direct-engine lane as `diagnostic-only`
+and records `production_scaling_evidence.status` as `rejected`, even if its
+raw C/Rust ratio or worker scaling improves. Only an equivalent measurement
+through the production `crabc-libc` allocator ABI can become production
+scaling evidence.
+
 An independently built replacement fixture may be passed explicitly:
 
 ```sh

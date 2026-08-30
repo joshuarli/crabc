@@ -489,15 +489,32 @@ def serialization_signatures(scales: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def current_friend_boundary_evidence_classification() -> dict[str, Any]:
+    """Keep raw direct-engine scaling distinct from production evidence."""
+
+    return {
+        "classification": "diagnostic-only",
+        "production_scaling_evidence": {
+            "reason": "the checked-in Rust fixture calls the documentation-hidden direct-engine friend boundary, not the production crabc-libc allocator ABI",
+            "status": "rejected",
+        },
+    }
+
+
 def compare_lanes(c_lane: Mapping[str, Any], rust_lane: Mapping[str, Any]) -> dict[str, Any]:
+    production_scaling_evidence = current_friend_boundary_evidence_classification()["production_scaling_evidence"]
     if rust_lane.get("status") != "ok":
-        return {"status": "unavailable", "reason": "Rust multithread fixture was not supplied"}
+        return {
+            "status": "unavailable",
+            "reason": "Rust multithread fixture was not supplied",
+            "production_scaling_evidence": production_scaling_evidence,
+        }
     scales: dict[str, Any] = {}
     for workers, c_result in c_lane["scales"].items():
         c_throughput = float(c_result["summary"]["throughput_operations_per_second_median"])
         rust_throughput = float(rust_lane["scales"][workers]["summary"]["throughput_operations_per_second_median"])
         scales[workers] = {"rust_to_pinned_c_throughput_ratio": rust_throughput / c_throughput}
-    return {"status": "ok", "scales": scales}
+    return {"status": "ok", "scales": scales, "production_scaling_evidence": production_scaling_evidence}
 
 
 def empty_report(*, label: str, host: Mapping[str, Any]) -> dict[str, Any]:
@@ -513,6 +530,9 @@ def empty_report(*, label: str, host: Mapping[str, Any]) -> dict[str, Any]:
             "public_crabc_allocator_integration": False,
             "public_mi_api": False,
             "public_support": False,
+        },
+        "evidence_classification": {
+            "current_rust_direct_engine_friend_boundary": current_friend_boundary_evidence_classification(),
         },
         "target": TARGET,
     }
@@ -530,6 +550,33 @@ def validate_report_contract(report: Mapping[str, Any]) -> None:
     for field in ("performance_qualification", "public_crabc_allocator_integration", "public_mi_api", "public_support"):
         if scope.get(field) is not False:
             raise HarnessError("multithread performance report attempted a public or promotion claim")
+    evidence = report.get("evidence_classification")
+    if not isinstance(evidence, Mapping):
+        raise HarnessError("multithread performance report has no evidence classification")
+    friend_boundary = evidence.get("current_rust_direct_engine_friend_boundary")
+    if not isinstance(friend_boundary, Mapping) or friend_boundary.get("classification") != "diagnostic-only":
+        raise HarnessError("multithread performance report lost its friend-boundary diagnostic classification")
+    production = friend_boundary.get("production_scaling_evidence")
+    if not isinstance(production, Mapping) or production.get("status") != "rejected":
+        raise HarnessError("multithread performance report accepted friend-boundary production scaling evidence")
+    comparison = report.get("comparison")
+    if comparison is not None:
+        if not isinstance(comparison, Mapping):
+            raise HarnessError("multithread performance report comparison is malformed")
+        comparison_production = comparison.get("production_scaling_evidence")
+        if not isinstance(comparison_production, Mapping) or comparison_production.get("status") != "rejected":
+            raise HarnessError("multithread performance report accepted comparison production scaling evidence")
+    lanes = report.get("lanes")
+    if isinstance(lanes, Mapping) and "rust" in lanes:
+        rust_lane = lanes["rust"]
+        if not isinstance(rust_lane, Mapping):
+            raise HarnessError("multithread performance report Rust lane is malformed")
+        lane_evidence = rust_lane.get("evidence_classification")
+        if not isinstance(lane_evidence, Mapping) or lane_evidence.get("classification") != "diagnostic-only":
+            raise HarnessError("multithread performance report Rust lane lost diagnostic-only classification")
+        lane_production = lane_evidence.get("production_scaling_evidence")
+        if not isinstance(lane_production, Mapping) or lane_production.get("status") != "rejected":
+            raise HarnessError("multithread performance report Rust lane accepted production scaling evidence")
 
 
 def unavailable_report(*, label: str, host: Mapping[str, Any], reason: str) -> dict[str, Any]:
@@ -632,6 +679,7 @@ def run(arguments: argparse.Namespace) -> Path:
             if engine_build["status"] != 0:
                 report["lanes"]["rust"] = {
                     **rust_provenance,
+                    "evidence_classification": current_friend_boundary_evidence_classification(),
                     "reason": "checked-in direct-engine fixture dependencies did not build: " + str(engine_build["stderr"]).strip(),
                     "status": "unavailable",
                 }
@@ -645,6 +693,7 @@ def run(arguments: argparse.Namespace) -> Path:
                 except HarnessError as error:
                     report["lanes"]["rust"] = {
                         **rust_provenance,
+                        "evidence_classification": current_friend_boundary_evidence_classification(),
                         "reason": "checked-in direct-engine fixture could not complete the current local-worker smoke: " + str(error),
                         "status": "unavailable",
                     }
@@ -652,6 +701,7 @@ def run(arguments: argparse.Namespace) -> Path:
                     report["lanes"]["rust"] = {
                         **rust_provenance,
                         "artifact": file_record(rust_fixture),
+                        "evidence_classification": current_friend_boundary_evidence_classification(),
                         "scales": rust_scales,
                         "serialization": serialization_signatures(rust_scales),
                         "status": "ok",
@@ -664,6 +714,13 @@ def run(arguments: argparse.Namespace) -> Path:
             report["lanes"]["rust"] = {
                 "artifact": file_record(rust_fixture),
                 "elf": audit_aarch64_fixture(readelf, rust_fixture, timeout=arguments.timeout),
+                "evidence_classification": {
+                    "classification": "diagnostic-only",
+                    "production_scaling_evidence": {
+                        "reason": "an externally supplied fixture has not established the production crabc-libc allocator ABI boundary",
+                        "status": "rejected",
+                    },
+                },
                 "scales": rust_scales,
                 "serialization": serialization_signatures(rust_scales),
                 "status": "ok",

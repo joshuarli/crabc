@@ -21,7 +21,9 @@
     },
     "rust": {
       "boundary": "documentation-hidden crabc_mimalloc::__crabc_runtime friend boundary",
+      "evidence_classification": "diagnostic-only",
       "fixture_protocol": "same --workers/--iterations/--cpus output grammar as fixture.c",
+      "production_scaling_evidence": "rejected: this direct-engine friend boundary is not the production crabc-libc allocator ABI",
       "status": "implemented_private_engine_smoke"
     }
   },
