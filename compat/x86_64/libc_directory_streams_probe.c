@@ -3,9 +3,9 @@
  * One project-header C body first runs through pinned musl 1.2.6 and then
  * through the selected freestanding crabc archive. It specifies a bounded
  * `DIR`/`dirent` slice: stream ownership, close-on-exec transfer, validated
- * readdir cursor/rewind behavior, readdir_r copying, C-locale alphasort, and
- * raw getdents/posix_getdents framing and errno behavior. It deliberately
- * does not select scandir, versionsort, C allocation, stdio, loader, CRT,
+ * readdir cursor/rewind behavior, readdir_r copying, C-locale alphasort, GNU
+ * versionsort, and raw getdents/posix_getdents framing and errno behavior. It
+ * deliberately does not select scandir, C allocation, stdio, loader, CRT,
  * sysroot, family completion, promotion, or public x86 support.
  */
 
@@ -62,6 +62,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&opendir), DIR *(*)(const char *)) &&
     CRABC_TYPE_IS(__typeof__(&seekdir), void (*)(DIR *, long)) &&
     CRABC_TYPE_IS(__typeof__(&telldir), long (*)(DIR *)) &&
     CRABC_TYPE_IS(__typeof__(&alphasort),
+        int (*)(const struct dirent **, const struct dirent **)) &&
+    CRABC_TYPE_IS(__typeof__(&versionsort),
         int (*)(const struct dirent **, const struct dirent **)) &&
     CRABC_TYPE_IS(__typeof__(&getdents), int (*)(int, struct dirent *, size_t)) &&
     CRABC_TYPE_IS(__typeof__(&posix_getdents),
@@ -394,6 +396,48 @@ static int check_alphasort(void)
         alphasort(&left, &left) == 0;
 }
 
+static int check_versionsort(void)
+{
+    static const struct {
+        const char *left;
+        const char *right;
+        int expected_sign;
+    } cases[] = {
+        { "file1", "file1", 0 },
+        { "file2", "file10", -1 },
+        { "000", "00", -1 },
+        { "00", "01", -1 },
+        { "foobar-1.1.2", "foobar-1.01.3", 1 },
+        { "foo", "foo~", -1 },
+    };
+    size_t index;
+
+    for (index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        struct dirent left = {0};
+        struct dirent right = {0};
+        const struct dirent *left_pointer = &left;
+        const struct dirent *right_pointer = &right;
+        int forward;
+        int reverse;
+
+        if (!copy_name(left.d_name, cases[index].left) ||
+            !copy_name(right.d_name, cases[index].right)) {
+            return 0;
+        }
+        forward = versionsort(&left_pointer, &right_pointer);
+        reverse = versionsort(&right_pointer, &left_pointer);
+        if ((cases[index].expected_sign < 0 &&
+                !(forward < 0 && reverse > 0)) ||
+            (cases[index].expected_sign > 0 &&
+                !(forward > 0 && reverse < 0)) ||
+            (cases[index].expected_sign == 0 &&
+                !(forward == 0 && reverse == 0))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int crabc_x86_64_directory_streams_probe(void)
 {
     char long_name[CRABC_DIRECTORY_NAME_MAX + 1];
@@ -429,6 +473,10 @@ int crabc_x86_64_directory_streams_probe(void)
     }
     if (!check_alphasort()) {
         status = 51;
+        goto cleanup;
+    }
+    if (!check_versionsort()) {
+        status = 52;
         goto cleanup;
     }
 

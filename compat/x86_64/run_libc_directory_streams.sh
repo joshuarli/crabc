@@ -4,7 +4,7 @@
 # One project-header fixture first runs against pinned musl 1.2.6, then as a
 # true `-nostdlib -static` candidate linked only with the selected crabc
 # archive. It proves a bounded C DIR/dirent runtime slice and direct x86
-# syscall forms. It does not prove scandir, versionsort, allocation, libc.so,
+# syscall forms. It does not prove scandir, allocation, libc.so,
 # a general C runtime, CRT, loader, sysroot, family completion, promotion, or
 # public x86 support.
 set -euo pipefail
@@ -129,13 +129,13 @@ assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap opendir fdopendir \
     closedir dirfd readdir readdir_r rewinddir seekdir telldir alphasort getdents \
-    posix_getdents; do
+    posix_getdents versionsort; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in scandir versionsort malloc free calloc realloc __tls_get_addr; do
+for unselected in scandir strverscmp malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
@@ -162,7 +162,7 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap opendir fdopendir \
     closedir dirfd readdir readdir_r rewinddir seekdir telldir alphasort getdents \
-    posix_getdents; do
+    posix_getdents versionsort; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done

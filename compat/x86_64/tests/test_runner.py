@@ -11178,6 +11178,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/dirent/opendir.c",
             "fdopendir.c",
             "readdir_r.c",
+            "versionsort.c",
+            "strverscmp.c",
             "posix_getdents.c",
             "private anonymous 4 KiB mapping",
             "C.UTF-8",
@@ -11200,15 +11202,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "seekdir",
             "telldir",
             "alphasort",
+            "versionsort",
             "getdents",
             "posix_getdents",
         ):
             self.assertIn(f"fn {symbol}", implementation)
             self.assertIn(symbol, static_export_names)
-        for forbidden in ("fn scandir", "fn versionsort", "fn malloc", "fn free"):
+        for forbidden in ("fn scandir", "fn malloc", "fn free"):
             self.assertNotIn(forbidden, implementation)
         self.assertFalse(
-            static_export_names & {"scandir", "versionsort", "malloc", "free"}
+            static_export_names & {"scandir", "malloc", "free"}
         )
 
         for required in (
@@ -11220,6 +11223,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "check_fdopendir",
             "check_getdents",
             "check_alphasort",
+            "check_versionsort",
+            "foobar-1.1.2",
             "CRABC_DIRECTORY_STREAMS_FREESTANDING",
             "255",
             "EOPNOTSUPP",
@@ -11248,7 +11253,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_named_syscall seekdir 8",
             "assert_named_syscall getdents d9",
             "assert_named_syscall posix_getdents d9",
-            "scandir versionsort malloc free calloc realloc",
+            "scandir strverscmp malloc free calloc realloc",
             "unowned runtime dependency",
         ):
             self.assertIn(required, artifact_runner)

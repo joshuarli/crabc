@@ -2,12 +2,12 @@
 //!
 //! This leaf owns one bounded native C `DIR`/`dirent` block: `opendir`,
 //! `fdopendir`, `closedir`, `dirfd`, `readdir`, `readdir_r`, `rewinddir`,
-//! `seekdir`, `telldir`, C-locale `alphasort`, GNU/BSD `getdents`, and
-//! `posix_getdents`. It composes only the raw Linux syscall-register boundary,
-//! selected initial-TLS C `errno`, and the private x86 `stat` layout owner. It
-//! is not `scandir`, `versionsort`, a C allocator, a general directory-walk
-//! policy, a general locale/collation subsystem, libc.so, CRT, pthread/TLS
-//! lifecycle, dynamic TLS, loader, sysroot, or public x86 support.
+//! `seekdir`, `telldir`, C-locale `alphasort`, GNU `versionsort`, GNU/BSD
+//! `getdents`, and `posix_getdents`. It composes only the raw Linux
+//! syscall-register boundary, selected initial-TLS C `errno`, and the private
+//! x86 `stat` layout owner. It is not `scandir`, a C allocator, a general
+//! directory-walk policy, a general locale/collation subsystem, libc.so, CRT,
+//! pthread/TLS lifecycle, dynamic TLS, loader, sysroot, or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -16,8 +16,11 @@
 //!   to descriptor acquisition, validation, ownership, and release below.
 //! - `src/dirent/readdir.c`, `readdir_r.c`, `rewinddir.c`, `seekdir.c`, and
 //!   `telldir.c` map to the private buffered record/cursor state machine.
-//! - `src/dirent/alphasort.c`, `getdents.c`, and `posix_getdents.c` map to
-//!   the selected comparator and raw-record wrappers.
+//! - `src/dirent/alphasort.c`, `versionsort.c`, `getdents.c`, and
+//!   `posix_getdents.c` map to the selected comparator and raw-record wrappers.
+//!   The `versionsort.c` callback uses the private literal translation of
+//!   `src/string/strverscmp.c` below; it does not select a public x86
+//!   `strverscmp` export or general string boundary.
 //!
 //! Musl allocates stream state through `calloc` and releases it through
 //! `free`. This deliberately allocation-free static archive does not select a
@@ -27,9 +30,10 @@
 //! selected direct syscall paths omit musl cancellation-point machinery. The
 //! project supports only `C`, `POSIX`, and `C.UTF-8` locale profiles, whose
 //! selected `alphasort` behavior is byte collation; broad locale collation is
-//! intentionally absent. `scandir` would return allocation-owned storage and
-//! `versionsort` requires the separately unselected `strverscmp`, so neither
-//! is exported here.
+//! intentionally absent. `scandir` would return allocation-owned storage, so
+//! it remains outside this archive. `versionsort` is a pure GNU comparison
+//! callback with the pinned-musl digit and leading-zero ordering, and keeps
+//! its string algorithm private to this directory leaf.
 //!
 //! Linux 5.10 is the project baseline. The source preserves musl's deleted
 //! directory `ENOENT`-as-end-of-stream behavior and record-length/NUL checks;
@@ -563,6 +567,89 @@ pub unsafe extern "C" fn alphasort(
         left_name = unsafe { left_name.add(1) };
         right_name = unsafe { right_name.add(1) };
     }
+}
+
+#[inline]
+fn is_decimal_digit(byte: u8) -> bool {
+    byte.wrapping_sub(b'0') < 10
+}
+
+/// Compare two NUL-terminated byte strings with musl's `strverscmp` state
+/// machine, retained privately for GNU `versionsort`.
+///
+/// The algorithm is a literal scalar translation of pinned musl
+/// `src/string/strverscmp.c`: a shared all-zero numeric prefix sorts digits
+/// before non-digits, while two nonzero numeric runs compare by length before
+/// their first unequal byte. This helper intentionally has no C export and
+/// does not create a general string ABI boundary.
+#[inline]
+unsafe fn version_name_compare(left: *const u8, right: *const u8) -> c_int {
+    let mut index = 0usize;
+    let mut digit_prefix = 0usize;
+    let mut all_zero = true;
+
+    // Find the maximal equal prefix, retaining the start of its final digit
+    // run and whether that run contains only zeros.
+    while unsafe { *left.add(index) } == unsafe { *right.add(index) } {
+        let byte = unsafe { *left.add(index) };
+        if byte == 0 {
+            return 0;
+        }
+        if !is_decimal_digit(byte) {
+            digit_prefix = index + 1;
+            all_zero = true;
+        } else if byte != b'0' {
+            all_zero = false;
+        }
+        index += 1;
+    }
+
+    if unsafe { (*left.add(digit_prefix)).wrapping_sub(b'1') } < 9
+        && unsafe { (*right.add(digit_prefix)).wrapping_sub(b'1') } < 9
+    {
+        // Non-degenerate digit strings which both begin nonzero sort by
+        // numeric-run length before the first unequal byte.
+        let mut scan = index;
+        while is_decimal_digit(unsafe { *left.add(scan) }) {
+            if !is_decimal_digit(unsafe { *right.add(scan) }) {
+                return 1;
+            }
+            scan += 1;
+        }
+        if is_decimal_digit(unsafe { *right.add(scan) }) {
+            return -1;
+        }
+    } else if all_zero
+        && digit_prefix < index
+        && (is_decimal_digit(unsafe { *left.add(index) })
+            || is_decimal_digit(unsafe { *right.add(index) }))
+    {
+        // A shared all-zero prefix sorts digit continuation before a
+        // non-digit/terminator, preserving musl's leading-zero behavior.
+        return i32::from(unsafe { (*left.add(index)).wrapping_sub(b'0') })
+            - i32::from(unsafe { (*right.add(index)).wrapping_sub(b'0') });
+    }
+
+    i32::from(unsafe { *left.add(index) }) - i32::from(unsafe { *right.add(index) })
+}
+
+/// Compare two directory entry names with GNU `versionsort` ordering.
+///
+/// # Safety
+///
+/// `left` and `right` must each point to one valid pointer to a `struct
+/// dirent` whose `d_name` is a readable NUL-terminated byte string. The
+/// callback has no allocation, locale state, or public `strverscmp` symbol.
+#[no_mangle]
+pub unsafe extern "C" fn versionsort(
+    left: *const *const Dirent,
+    right: *const *const Dirent,
+) -> c_int {
+    let left_name = unsafe { (*left).cast::<u8>().add(offset_of!(Dirent, name)) };
+    let right_name = unsafe { (*right).cast::<u8>().add(offset_of!(Dirent, name)) };
+    // SAFETY: the caller's documented pointers provide two readable
+    // NUL-terminated directory names for the retained scalar state machine.
+    unsafe { version_name_compare(left_name, right_name) }
 }
 
 /// Fill one caller buffer with raw Linux `getdents64` records.

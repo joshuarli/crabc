@@ -8941,11 +8941,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             "`seekdir`",
             "`telldir`",
             "`alphasort`",
+            "`versionsort`",
             "`getdents`",
             "`posix_getdents`",
             "private anonymous mapping",
             "scandir",
-            "versionsort",
+            "GNU versionsort",
             "public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -8967,12 +8968,13 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "seekdir",
                 "telldir",
                 "alphasort",
+                "versionsort",
                 "getdents",
                 "posix_getdents",
             }
             <= exports
         )
-        self.assertFalse(exports & {"scandir", "versionsort", "malloc", "free"})
+        self.assertFalse(exports & {"scandir", "strverscmp", "malloc", "free"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -8996,6 +8998,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "fdopendir.c",
             "readdir_r.c",
+            "versionsort.c",
+            "strverscmp.c",
             "posix_getdents.c",
             "mmap/munmap",
             "cancellation",

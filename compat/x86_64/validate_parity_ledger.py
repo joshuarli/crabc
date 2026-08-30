@@ -1172,6 +1172,7 @@ DIRECTORY_STREAM_SYMBOLS = (
     "seekdir",
     "telldir",
     "alphasort",
+    "versionsort",
     "getdents",
     "posix_getdents",
 )
@@ -1182,7 +1183,7 @@ DIRECTORY_STREAM_UNSELECTED_SYMBOLS = (
     "malloc",
     "realloc",
     "scandir",
-    "versionsort",
+    "strverscmp",
 )
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -10984,9 +10985,9 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
         "opaque cursor",
         "readdir_r",
         "C-locale alphasort",
+        "GNU versionsort",
         "private anonymous mapping",
         "scandir",
-        "versionsort",
         "C allocation",
         "public x86 support",
     ):
@@ -11075,6 +11076,8 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
             "src/dirent/opendir.c" in item
             and "fdopendir.c" in item
             and "readdir_r.c" in item
+            and "versionsort.c" in item
+            and "strverscmp.c" in item
             and "posix_getdents.c" in item
             and "mmap/munmap" in item
             and "cancellation" in item
@@ -11099,8 +11102,9 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
         any(
             "C/POSIX/C.UTF-8" in item
             and "alphasort" in item
-            and "scandir" in item
             and "versionsort" in item
+            and "strverscmp" in item
+            and "scandir" in item
             for item in prerequisites
         ),
         "static-c-directory-streams must record its collation/allocation boundary",
@@ -11138,11 +11142,11 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
     )
     require(
         set(DIRECTORY_STREAM_SYMBOLS) <= static_exports,
-        "static-c-directory-streams must retain its twelve selected exports",
+        "static-c-directory-streams must retain its thirteen selected exports",
     )
     require(
         not (static_exports & set(DIRECTORY_STREAM_UNSELECTED_SYMBOLS)),
-        "static-c-directory-streams must not add unselected allocation/sort exports",
+        "static-c-directory-streams must not add unselected allocation/string exports",
     )
 
     static_root = (
@@ -11173,6 +11177,8 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
                     "seekdir.c",
                     "telldir.c",
                     "alphasort.c",
+                    "versionsort.c",
+                    "strverscmp.c",
                     "getdents.c",
                     "posix_getdents.c",
                 )
@@ -11180,7 +11186,8 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
             and "mmap/munmap" in entry["role"]
             and "cancellation" in entry["role"]
             and "scandir" in entry["role"]
-            and "versionsort" in entry["role"]
+            and "versionsort.c" in entry["role"]
+            and "strverscmp.c" in entry["role"]
             for entry in oracle
         ),
         "static-c-directory-streams must retain its pinned-musl directory source mapping",
@@ -11212,12 +11219,12 @@ def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
                 "readdir/telldir/seekdir/rewinddir",
                 "readdir_r copying",
                 "C-locale alphasort",
+                "GNU versionsort",
                 "255-byte names",
                 "undersized-buffer EINVAL",
                 "ENOTDIR",
                 "EOPNOTSUPP",
                 "scandir",
-                "versionsort",
                 "cancellation",
                 "public x86 support",
             )

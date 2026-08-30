@@ -529,14 +529,16 @@ that follows that compile-only header evidence. One project-header fixture runs
 first through pinned musl 1.2.6 and then through a true `-nostdlib -static`
 candidate, covering only `opendir`, `fdopendir`, `closedir`, `dirfd`,
 `readdir`, `readdir_r`, `rewinddir`, `seekdir`, `telldir`, C-locale
-`alphasort`, `getdents`, and `posix_getdents`. It ratchets the x86
+`alphasort`, GNU `versionsort`, `getdents`, and `posix_getdents`. It ratchets the x86
 `openat=257`, `fstat=5`, `fcntl=72`, `mmap=9`, `munmap=11`, `close=3`,
 `getdents64=217`, and `lseek=8` paths plus close-on-exec descriptor transfer,
 255-byte names, cursor/EOF behavior, raw record framing, `ENOTDIR`, and
 nonzero-flag `EOPNOTSUPP`. Its `DIR` state owns one private anonymous mapping,
-not a C allocator. `scandir`, `versionsort`, directory walking, broader locale
-collation, cancellation, full C runtime/POSIX parity, family promotion, and
-public x86 support remain excluded.
+not a C allocator. GNU `versionsort` retains musl's scalar digit/leading-zero
+order privately, without selecting public `strverscmp` or a general string
+ABI. `scandir`, directory walking, broader locale collation, cancellation,
+full C runtime/POSIX parity, family promotion, and public x86 support remain
+excluded.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete

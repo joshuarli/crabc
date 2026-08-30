@@ -393,6 +393,7 @@ unlink
 utime
 utimensat
 utimes
+versionsort
 wait
 waitid
 waitpid
