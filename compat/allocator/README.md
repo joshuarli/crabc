@@ -2034,7 +2034,12 @@ exclusion. The child receives the immutable process pair for one local
 allocation/free operation, not the initial engine, session, or address. After
 the child returns all-free, the initial thread resumes to query, reallocate,
 validate, free, and reuse its client. This is a serialized initial-live/local-worker witness, not
-a concurrent allocator or general pointer handoff. In the
+a concurrent allocator or general pointer handoff. Its companion
+`native_mimalloc_initial_live_parallel_workers` fixture parks two distinct
+later local sessions beside that same initial client, releases and joins them
+one at a time, and proves ticket zero resumes only after both all-free thread
+finishes. It likewise admits no concurrent PageMap mutation or pointer
+handoff. In the
 owner-exit fixture A leaves a
 direct-small block, a non-direct-small block, a medium block, a regular-large
 block, an unaligned arena singleton, and an OS-aligned singleton live; a fresh

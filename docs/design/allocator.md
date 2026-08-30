@@ -886,7 +886,12 @@ before an allocation, reallocation, usable-size query, or free; its all-free
 finish returns to the existing dormant first-arena state. The selected
 `native_mimalloc_initial_live_local_worker` C regression proves one
 initial-live/local-worker/initial-reuse sequence. It does not admit concurrent
-initial/worker mutation, a general worker scheduler, or pointer handoff.
+initial/worker mutation, a general worker scheduler, or pointer handoff. Its
+companion `native_mimalloc_initial_live_parallel_workers` regression holds two
+independently parked later local sessions beside the same parked ticket-zero
+engine, releases them one at a time, and proves ticket zero resumes only after
+both ordinary all-free finishes. It adds no concurrent map mutation or
+cross-thread client authority.
 Separately,
 the lower later-main engine boundary has a Rust-only persistent storage form:
 `MainHeapThreadProcessPageAllocator::suspend_persistent` splits the exact
