@@ -149,8 +149,8 @@ def source_matches(root: Path, relative_path: str, pattern: str) -> list[SourceM
     return matches
 
 
-def rust_function_body(source: str, function: str) -> tuple[int, str]:
-    """Return one Rust function body's offset and comment-masked source.
+def rust_function_body(source: str, function: str) -> tuple[int, str, str]:
+    """Return one Rust function body's offset plus raw and comment-masked bodies.
 
     This intentionally recognizes only the narrow free-dispatch boundary
     named by the manifest.  It is not a general Rust parser; the brace walk
@@ -174,7 +174,11 @@ def rust_function_body(source: str, function: str) -> tuple[int, str]:
         elif code[index] == "}":
             depth -= 1
             if depth == 0:
-                return opening_brace + 1, code[opening_brace + 1 : index]
+                return (
+                    opening_brace + 1,
+                    source[opening_brace + 1 : index],
+                    code[opening_brace + 1 : index],
+                )
     raise RatchetError(f"selected function has an unclosed body: {function}")
 
 
@@ -194,7 +198,7 @@ def function_match_offsets(
     if not path.is_file():
         raise RatchetError(f"selected production source is absent: {relative_path}")
     source = path.read_text(encoding="utf-8")
-    body_offset, body = rust_function_body(source, function)
+    body_offset, _, body = rust_function_body(source, function)
     return [
         (
             match.start(),
@@ -206,6 +210,35 @@ def function_match_offsets(
         )
         for match in re.finditer(pattern, body, flags=re.MULTILINE)
     ]
+
+
+def function_literal_match_offsets(
+    root: Path, relative_path: str, function: str, literal: str
+) -> list[tuple[int, SourceMatch]]:
+    """Find literal documentation markers in the selected function body only."""
+
+    path = root / relative_path
+    if not path.is_file():
+        raise RatchetError(f"selected production source is absent: {relative_path}")
+    source = path.read_text(encoding="utf-8")
+    body_offset, raw_body, _ = rust_function_body(source, function)
+    matches: list[tuple[int, SourceMatch]] = []
+    start = 0
+    while True:
+        offset = raw_body.find(literal, start)
+        if offset < 0:
+            return matches
+        matches.append(
+            (
+                offset,
+                SourceMatch(
+                    path=relative_path,
+                    line=source.count("\n", 0, body_offset + offset) + 1,
+                    pattern=literal,
+                ),
+            )
+        )
+        start = offset + len(literal)
 
 
 def required_mapping(value: object, name: str) -> Mapping[str, Any]:
@@ -254,8 +287,8 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
         ):
             raise RatchetError(f"architecture manifest caller-identity dispatch {name} is invalid")
     maximum_identity_matches = caller_dispatch.get("maximum_phase_a_identity_matches")
-    if type(maximum_identity_matches) is not int or maximum_identity_matches < 1:
-        raise RatchetError("architecture manifest caller-identity bridge maximum is invalid")
+    if maximum_identity_matches != 1:
+        raise RatchetError("architecture manifest Phase-A bridge must permit its sole identity branch")
     phase_a_bridge = required_mapping(
         caller_dispatch.get("phase_a_bridge"),
         "caller_identity_first_free_dispatch.phase_a_bridge",
@@ -395,6 +428,17 @@ def caller_identity_first_free_dispatch(
         policy["phase_a_bridge"],
         "caller_identity_first_free_dispatch.phase_a_bridge",
     )
+    marker = required_string(
+        bridge.get("marker"),
+        "caller_identity_first_free_dispatch.phase_a_bridge.marker",
+    )
+    marker_matches_with_offsets = function_literal_match_offsets(root, path, function, marker)
+    marker_matches = [match for _, match in marker_matches_with_offsets]
+    marker_matches_before_or_at_identity = [
+        match
+        for offset, match in marker_matches_with_offsets
+        if identity_matches_with_offsets and offset <= identity_matches_with_offsets[0][0]
+    ]
     bridge_anchor_matches = function_matches(
         root,
         path,
@@ -406,8 +450,9 @@ def caller_identity_first_free_dispatch(
     )
     bridge_active = (
         caller_identity_first
-        and len(identity_matches) <= policy["maximum_phase_a_identity_matches"]
+        and len(identity_matches) == policy["maximum_phase_a_identity_matches"]
         and bool(bridge_anchor_matches)
+        and bool(marker_matches_before_or_at_identity)
     )
     if bridge_active:
         status = "phase_a_bridge"
@@ -428,7 +473,11 @@ def caller_identity_first_free_dispatch(
         "function": function,
         "phase_a_bridge": {
             "active": bridge_active,
-            "marker": bridge["marker"],
+            "marker": marker,
+            "marker_matches": [match.as_dict() for match in marker_matches],
+            "marker_matches_before_or_at_identity": [
+                match.as_dict() for match in marker_matches_before_or_at_identity
+            ],
             "phase": bridge["phase"],
             "removal_condition": bridge["removal_condition"],
             "source_anchor_matches": [match.as_dict() for match in bridge_anchor_matches],
@@ -739,10 +788,10 @@ def main() -> int:
         report = evaluate(root, manifest, runtime_evidence)
         write_json(report_path, report)
         print(report_path)
-        if report["ratchet"]["regressions"]:
-            raise RatchetError("architecture ratchet regressed: " + "; ".join(report["ratchet"]["regressions"]))
         if report["structural_violations"]:
             raise RatchetError("architecture structural prohibition: " + "; ".join(report["structural_violations"]))
+        if report["ratchet"]["regressions"]:
+            raise RatchetError("architecture ratchet regressed: " + "; ".join(report["ratchet"]["regressions"]))
         if arguments.gate and not report["summary"]["final_architecture_passed"]:
             raise RatchetError("architecture gate unmet: " + "; ".join(report["summary"]["unmet"]))
         return 0

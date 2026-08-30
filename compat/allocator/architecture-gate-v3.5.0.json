@@ -45,7 +45,7 @@
       "phase": "A",
       "marker": "CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE",
       "source_anchor_pattern": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\(",
-      "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under production_general evidence.",
+      "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under production_general evidence. Until then, the exact marker text must occur inside native_free before or at its sole caller-identity branch.",
       "final_acceptance": false
     }
   },

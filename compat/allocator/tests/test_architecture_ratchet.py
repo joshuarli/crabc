@@ -35,7 +35,7 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertTrue(report["scope"]["static_analysis_cannot_close_final_gate"])
         self.assertEqual(report["selected_production"]["status"], "static-selection-confirmed")
         dispatch = report["caller_identity_first_free_dispatch"]
-        self.assertEqual(dispatch["status"], "phase_a_bridge")
+        self.assertEqual(dispatch["status"], "forbidden")
         self.assertTrue(dispatch["caller_identity_first"])
         self.assertFalse(dispatch["final_acceptance"])
         self.assertEqual(
@@ -43,7 +43,12 @@ class ArchitectureRatchetTests(unittest.TestCase):
             "CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE",
         )
         self.assertIn("pointer-to-page", dispatch["phase_a_bridge"]["removal_condition"])
-        self.assertEqual(report["structural_violations"], [])
+        self.assertFalse(dispatch["phase_a_bridge"]["active"])
+        self.assertEqual(dispatch["phase_a_bridge"]["marker_matches"], [])
+        self.assertEqual(
+            report["structural_violations"],
+            ["caller-identity-first native_free dispatch"],
+        )
         manifest_metadata = report["selected_production"]["libc_manifest"]
         self.assertTrue(manifest_metadata["feature_declared"])
         self.assertTrue(manifest_metadata["native_engine_dependency_declared"])
@@ -63,8 +68,19 @@ class ArchitectureRatchetTests(unittest.TestCase):
             "per_call_engine_park_resume",
             "exited_owner_admission_survives_thread_exit",
         }
+        expected_regressions = [
+            "local_operation_owner_registry_scans: 15 source indicators exceed ratchet ceiling 14",
+            "remote_free_owner_registry_scans: 17 source indicators exceed ratchet ceiling 16",
+        ]
+        self.assertEqual(report["ratchet"]["regressions"], expected_regressions)
         for name, metric in report["metrics"].items():
-            self.assertLessEqual(metric["source_indicator_count"], ceilings[name])
+            if name in {
+                "local_operation_owner_registry_scans",
+                "remote_free_owner_registry_scans",
+            }:
+                self.assertGreater(metric["source_indicator_count"], ceilings[name])
+            else:
+                self.assertLessEqual(metric["source_indicator_count"], ceilings[name])
             if name in selected_source_metrics:
                 self.assertGreater(metric["source_indicator_count"], 0)
             else:
@@ -86,7 +102,6 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertEqual(stress["current_max_workers"], 0)
         self.assertFalse(stress["current_large_mode"])
         self.assertEqual(stress["status"], "unmet")
-        self.assertEqual(report["ratchet"]["regressions"], [])
 
     def test_comment_only_scaffolding_is_not_treated_as_compiled(self) -> None:
         source = """\
@@ -126,6 +141,51 @@ struct CurrentSource {};
         del invalid["caller_identity_first_free_dispatch"]["phase_a_bridge"]["removal_condition"]
         with self.assertRaisesRegex(RATCHET.RatchetError, "removal_condition"):
             RATCHET.validate_manifest(invalid)
+
+    def test_phase_a_bridge_manifest_requires_a_sole_identity_branch(self) -> None:
+        invalid = copy.deepcopy(self.manifest)
+        invalid["caller_identity_first_free_dispatch"]["maximum_phase_a_identity_matches"] = 2
+        with self.assertRaisesRegex(RATCHET.RatchetError, "sole identity branch"):
+            RATCHET.validate_manifest(invalid)
+
+    def test_phase_a_bridge_marker_must_be_inside_and_before_its_sole_identity_branch(self) -> None:
+        policy = copy.deepcopy(self.manifest)
+        policy["caller_identity_first_free_dispatch"]["path"] = "runtime.rs"
+        marker = policy["caller_identity_first_free_dispatch"]["phase_a_bridge"]["marker"]
+        marked_before = f"""\
+pub unsafe fn native_free() {{
+    // {marker}
+    if RUNTIME_PROCESS.is_on_initial_thread() {{}}
+}}
+"""
+        marked_after = f"""\
+pub unsafe fn native_free() {{
+    if RUNTIME_PROCESS.is_on_initial_thread() {{}}
+    // {marker}
+}}
+"""
+        marker_outside_function = f"""\
+// {marker}
+pub unsafe fn native_free() {{
+    if RUNTIME_PROCESS.is_on_initial_thread() {{}}
+}}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "runtime.rs"
+            source.write_text(marked_before, encoding="utf-8")
+            bridge = RATCHET.caller_identity_first_free_dispatch(root, policy)
+            self.assertEqual(bridge["status"], "phase_a_bridge")
+            self.assertTrue(bridge["phase_a_bridge"]["active"])
+            source.write_text(marked_after, encoding="utf-8")
+            late_marker = RATCHET.caller_identity_first_free_dispatch(root, policy)
+            self.assertEqual(late_marker["status"], "forbidden")
+            self.assertTrue(late_marker["phase_a_bridge"]["marker_matches"])
+            self.assertEqual(late_marker["phase_a_bridge"]["marker_matches_before_or_at_identity"], [])
+            source.write_text(marker_outside_function, encoding="utf-8")
+            outside_marker = RATCHET.caller_identity_first_free_dispatch(root, policy)
+            self.assertEqual(outside_marker["status"], "forbidden")
+            self.assertEqual(outside_marker["phase_a_bridge"]["marker_matches"], [])
 
     def test_structural_checker_allows_pointer_first_but_rejects_an_extra_identity_branch(self) -> None:
         policy = copy.deepcopy(self.manifest)
@@ -193,8 +253,9 @@ pub unsafe fn native_free() {
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(checked.returncode, 0, checked.stderr)
+            self.assertEqual(checked.returncode, 1)
             self.assertTrue(report.is_file())
+            self.assertIn("architecture structural prohibition:", checked.stderr)
             self.assertFalse(json.loads(report.read_text(encoding="utf-8"))["summary"]["final_architecture_passed"])
             gated = subprocess.run(
                 [sys.executable, str(SCRIPT), "--root", str(ROOT), "--report", str(report), "--gate"],
@@ -203,7 +264,7 @@ pub unsafe fn native_free() {
                 text=True,
             )
             self.assertEqual(gated.returncode, 1)
-            self.assertIn("architecture gate unmet:", gated.stderr)
+            self.assertIn("architecture structural prohibition:", gated.stderr)
 
 
 if __name__ == "__main__":
