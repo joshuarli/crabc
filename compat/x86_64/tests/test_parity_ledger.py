@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 46)
+        self.assertEqual(report["verified_artifact_count"], 47)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4316,7 +4316,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 7)
+        self.assertEqual(len(artifacts), 8)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4328,6 +4328,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-identity",
                 "static-c-c11-lifecycle",
                 "static-c-pthread-c11-detach",
+                "static-c-thrd-sleep",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4337,6 +4338,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         identity = by_id["static-c-pthread-identity"]
         c11_lifecycle = by_id["static-c-c11-lifecycle"]
         detach = by_id["static-c-pthread-c11-detach"]
+        thrd_sleep = by_id["static-c-thrd-sleep"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4553,6 +4555,68 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, detach_scope)
+        self.assertEqual(
+            thrd_sleep["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-thrd-sleep",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "C11 `thrd_sleep`",
+            "clock_nanosleep(CLOCK_REALTIME, 0, ...)",
+            "`EINTR` is `-1`",
+            "`-2`",
+            "without mutating C errno",
+            "cancellation-point machinery",
+            "`thrd_yield`",
+            "thread.pthread-c11",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, thrd_sleep["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+            "libc/src/c_abi/x86_64/clock_nanosleep.rs",
+            "include/threads.h",
+            "include/time.h",
+            "compat/x86_64/libc_thrd_sleep_probe.c",
+            "compat/x86_64/libc_thrd_sleep_start.S",
+            "compat/x86_64/run_libc_thrd_sleep.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, thrd_sleep["source_owners"])
+        thrd_sleep_abi = " ".join(thrd_sleep["x86_abi_prerequisites"])
+        for phrase in (
+            "thrd_sleep.c",
+            "clock_nanosleep(CLOCK_REALTIME, 0, duration, remaining)",
+            "EINTR to -1",
+            "every other failure to -2",
+            "clock_nanosleep=230",
+            "r10",
+            "direct positive errno",
+            "c_status",
+            "SIGALRM",
+            "cancellation point",
+        ):
+            self.assertIn(phrase, thrd_sleep_abi)
+        thrd_sleep_scope = thrd_sleep["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "zero-duration",
+            "invalid tv_nsec",
+            "null-duration -2",
+            "SIGALRM interruption as -1",
+            "positive remaining interval",
+            "preserving errno",
+            "clock_nanosleep=230",
+            "r10 fourth-argument path",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "cancellation",
+            "thrd_yield",
+            "general pthread/C11 behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, thrd_sleep_scope)
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -4694,6 +4758,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-c11-detach must use the closed libc-pthread-detach command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_thrd_sleep = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-thrd-sleep"
+        )
+        changed_thrd_sleep["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-thrd-sleep must use the closed libc-thrd-sleep command",
         ):
             ledger.validate_ledger(changed)
 

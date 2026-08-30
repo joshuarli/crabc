@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-thrd-sleep|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -98,6 +98,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-crt-static-tls", source)
         self.assertIn("libc-pthread-create-join-tls", source)
         self.assertIn("libc-pthread-detach", source)
+        self.assertIn("libc-thrd-sleep", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -3146,6 +3147,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/thread/thrd_join.c",
             "src/thread/thrd_exit.c",
             "src/thread/thrd_detach.c",
+            "src/thread/thrd_sleep.c",
             "C11StartRoutine",
             "SelectedWorkerStart::C11",
             "THRD_NOMEM",
@@ -3153,7 +3155,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn thrd_join(",
             "fn thrd_exit(",
             "fn thrd_detach(",
+            "fn thrd_sleep(",
             "detach_selected_worker",
+            "super::clock_nanosleep::clock_nanosleep",
+            "super::clock_nanosleep::CLOCK_REALTIME",
             "exit_selected_c11_worker",
             "SelectedWorkerResultKind::C11",
             "INT_MIN",
@@ -3163,7 +3168,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, c11_lifecycle)
         for forbidden in (
-            "fn thrd_sleep(",
             "fn thrd_yield(",
             "fn call_once(",
             "fn mtx_",
@@ -3259,12 +3263,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "thrd_exit noreturn signature",
             "crabc_thrd_detach_signature",
             "thrd_detach signature",
+            "crabc_thrd_sleep_signature",
+            "thrd_sleep signature",
         ):
             self.assertIn(required, c_header_probe)
             self.assertIn(required, cxx_header_probe)
         for required in (
-            "thrd_create thrd_detach thrd_join thrd_exit thrd_current thrd_equal",
-            "thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_current|thrd_equal",
+            "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_current thrd_equal",
+            "thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_sleep|thrd_current|thrd_equal",
         ):
             self.assertIn(required, header_runner)
 
@@ -3287,10 +3293,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertTrue(
-            {"thrd_create", "thrd_detach", "thrd_join", "thrd_exit"} <= static_exports
+            {"thrd_create", "thrd_detach", "thrd_join", "thrd_exit", "thrd_sleep"}
+            <= static_exports
         )
         self.assertTrue(
-            {"thrd_sleep", "thrd_yield", "mtx_init", "cnd_init", "tss_create"}
+            {"thrd_yield", "mtx_init", "cnd_init", "tss_create"}
             .isdisjoint(static_exports)
         )
         self.assertIn("run_libc_c11_lifecycle_probe()", runner)
@@ -3299,6 +3306,135 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-c11-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-c11-lifecycle takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_thrd_sleep_artifact_stays_narrow(self) -> None:
+        """Keep C11 sleep as a direct static errno-neutral adapter only."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        c11_lifecycle = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_thread_lifecycle.rs"
+        ).read_text(encoding="utf-8")
+        clock_nanosleep = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_nanosleep.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = ROOT / "compat" / "x86_64" / "libc_thrd_sleep_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_thrd_sleep_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_thrd_sleep.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing thrd_sleep artifact input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "c11_thread_lifecycle.rs"]', static_root)
+        for required in (
+            "src/thread/thrd_sleep.c",
+            "const THRD_SLEEP_INTR: c_int = -1;",
+            "const THRD_SLEEP_ERROR: c_int = -2;",
+            "pub unsafe extern \"C\" fn thrd_sleep(",
+            "super::clock_nanosleep::clock_nanosleep(",
+            "super::clock_nanosleep::CLOCK_REALTIME",
+            "EINTR => THRD_SLEEP_INTR",
+            "_ => THRD_SLEEP_ERROR",
+            "not a cancellation",
+            "thrd_yield",
+            "public x86 support",
+        ):
+            self.assertIn(required, c11_lifecycle)
+        thrd_sleep_body = c11_lifecycle.split(
+            'pub unsafe extern "C" fn thrd_sleep', 1
+        )[1].split("/// End the current selected C11 worker", 1)[0]
+        for forbidden in (
+            "c_status",
+            "set_errno",
+            "super::nanosleep",
+            "pthread_",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, thrd_sleep_body)
+        for required in (
+            "pub(super) const CLOCK_REALTIME: c_int = 0;",
+            "raw_syscall::SYS_CLOCK_NANOSLEEP",
+            "raw_syscall::syscall4(",
+            "positive errno",
+        ):
+            self.assertIn(required, clock_nanosleep)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <signal.h>",
+            "#include <threads.h>",
+            "thrd_sleep(&zero, 0) != thrd_success",
+            "thrd_sleep(&invalid, 0) != thrd_sleep_error",
+            "thrd_sleep(0, 0) != thrd_sleep_error",
+            "thrd_sleep(&requested, &remaining)",
+            "thrd_sleep_interrupted",
+            "positive_remainder",
+            "errno != preserved_errno",
+            "CRABC_THRD_SLEEP_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_thrd_sleep_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_thrd_sleep_path",
+            "clock_nanosleep syscall 230",
+            "fourth-argument r10 path",
+            "thrd_sleep must not mutate errno TLS",
+            "thrd_yield",
+            "malloc free calloc realloc",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("thrd_sleep", static_exports)
+        for header_probe in (c_header_probe, cxx_header_probe):
+            self.assertIn("crabc_thrd_sleep_signature", header_probe)
+            self.assertIn("thrd_sleep signature", header_probe)
+        self.assertIn('id = "static-c-thrd-sleep"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-thrd-sleep"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_thrd_sleep_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_thrd_sleep.sh", runner
+        )
+        self.assertIn(
+            '    libc-thrd-sleep)\n        [ "$#" -eq 0 ] || fail "libc-thrd-sleep takes no arguments"',
             runner,
         )
 
@@ -3436,7 +3572,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             <= static_exports
         )
         self.assertTrue(
-            {"pthread_cancel", "thrd_sleep", "mtx_init", "tss_create"}.isdisjoint(
+            {"pthread_cancel", "thrd_yield", "mtx_init", "tss_create"}.isdisjoint(
                 static_exports
             )
         )

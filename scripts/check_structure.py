@@ -4355,16 +4355,22 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "src/thread/thrd_join.c",
         "src/thread/thrd_exit.c",
         "src/thread/thrd_detach.c",
+        "src/thread/thrd_sleep.c",
         "C11StartRoutine",
         "SelectedWorkerStart::C11",
         "THRD_SUCCESS",
         "THRD_ERROR",
         "THRD_NOMEM",
+        "THRD_SLEEP_INTR",
+        "THRD_SLEEP_ERROR",
         "fn thrd_create(",
         "fn thrd_join(",
         "fn thrd_exit(",
         "fn thrd_detach(",
+        "fn thrd_sleep(",
         "detach_selected_worker",
+        "super::clock_nanosleep::clock_nanosleep",
+        "super::clock_nanosleep::CLOCK_REALTIME",
         "exit_selected_c11_worker",
         "SelectedWorkerResultKind::C11",
         "decode_c11_result",
@@ -4389,13 +4395,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "thrd_join",
         "thrd_exit",
         "thrd_detach",
+        "thrd_sleep",
     }:
         errors.append(
             "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs: bounded static C11 "
-            "leaf must export only thrd_create, thrd_join, thrd_exit, and thrd_detach"
+            "leaf must export only thrd_create, thrd_join, thrd_exit, thrd_detach, and thrd_sleep"
         )
     for forbidden in (
-        "fn thrd_sleep(",
         "fn thrd_yield(",
         "fn call_once(",
         "fn mtx_",
@@ -6032,6 +6038,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "thrd_detach",
         "thrd_exit",
         "thrd_join",
+        "thrd_sleep",
         "pthread_self",
         "pthread_equal",
         "thrd_current",

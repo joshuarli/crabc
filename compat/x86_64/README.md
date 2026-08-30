@@ -334,6 +334,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-identity
 ./scripts/dev-x86_64.sh libc-c11-lifecycle
 ./scripts/dev-x86_64.sh libc-pthread-detach
+./scripts/dev-x86_64.sh libc-thrd-sleep
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1839,8 +1840,8 @@ two simultaneously live workers, and 64-slot exhaustion/reuse. Pinned musl
 covers only standard normal and `thrd_exit` paths. Candidate-only null-start
 and unsupported C11-to-`pthread_exit` / pthread-to-`thrd_exit` routes fail
 closed after safe reclamation without exposing an incompatible result. It does
-not select detachment beyond the separately recorded artifact, sleep/yield,
-once, mutexes/conditions, TSS, cancellation, dynamic/loader TLS, broader
+not select detachment or sleep beyond the separately recorded artifacts,
+`thrd_yield`, once, mutexes/conditions, TSS, cancellation, dynamic/loader TLS, broader
 pthread/C11 behavior, CRT, sysroot, or public x86 support.
 
 `libc-pthread-detach` is a seventh separately recorded private static
@@ -1858,6 +1859,18 @@ Self-detach, null/repeated/racing ownership attempts, join-after-detach, and
 or portable post-detach-handle behavior. This does not select detached-at-create
 attributes, general pthread/C11 or detached-thread behavior, cancellation,
 TSS, synchronization, dynamic/loader TLS, CRT, sysroot, or public x86 support.
+
+`libc-thrd-sleep` is an eighth separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
+project-header C body first runs through pinned musl and then through a
+`-nostdlib -static` candidate. It selects only the direct non-cancellation C11
+`thrd_sleep` adapter over `clock_nanosleep(CLOCK_REALTIME, 0, ...)`: completion
+returns zero, `EINTR` returns `-1`, and invalid-nanosecond or null-duration
+failures return `-2`, without changing `errno`. The fixture proves those
+routes plus a deterministic SIGALRM interruption with a positive remaining
+interval. It does not select `thrd_yield`, cancellation cleanup, C11
+lifecycle/synchronization/TSS, dynamic/loader TLS, CRT, sysroot, or public x86
+support.
 
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
@@ -2327,7 +2340,10 @@ That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 or `libc-pthread-detach`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
-owner instead of writing an FS base themselves. All candidates have no
+owner instead of writing an FS base themselves. `libc-thrd-sleep` deliberately
+retains the fixture-local errno/TLS setup because it proves that its adapter
+preserves `errno`; that start shim is test-only and not a CRT or TLS ownership
+claim. All candidates have no
 interpreter, `DT_NEEDED`, unresolved symbols, dynamic TLS resolver, allocator,
 or ambient C runtime. Apart from the bounded child mapping established by
 `libc-pthread-create-join-tls` and its separately recorded detach sibling,
@@ -2633,7 +2649,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`,
+`libc-pthread-detach`, `libc-thrd-sleep`,
 `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,

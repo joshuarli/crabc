@@ -4089,6 +4089,166 @@ def require_static_pthread_c11_detach_artifact(family: Mapping[str, Any]) -> Non
     )
 
 
+def require_static_thrd_sleep_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one direct C11 sleep adapter without promoting C11 parity."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-thrd-sleep"]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-thrd-sleep artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-thrd-sleep must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "C11 `thrd_sleep`",
+        "clock_nanosleep(CLOCK_REALTIME, 0, ...)",
+        "`EINTR` is `-1`",
+        "`-2`",
+        "without mutating C errno",
+        "cancellation-point machinery",
+        "`thrd_yield`",
+        "thread.pthread-c11",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-thrd-sleep description omits {phrase}",
+        )
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+        "libc/src/c_abi/x86_64/clock_nanosleep.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/signal.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/threads.h",
+        "include/time.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_thrd_sleep_probe.c",
+        "compat/x86_64/libc_thrd_sleep_start.S",
+        "compat/x86_64/run_libc_thrd_sleep.sh",
+        "compat/x86_64/run_libc_c11_lifecycle.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "static-c-thrd-sleep source owners"))
+        == expected_sources,
+        "static-c-thrd-sleep source owners drifted",
+    )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "src/thread/thrd_sleep.c",
+        "clock_nanosleep(CLOCK_REALTIME, 0, duration, remaining)",
+        "EINTR to -1",
+        "every other failure to -2",
+        "clock_nanosleep=230",
+        "r10",
+        "direct positive errno",
+        "c_status",
+        "SIGALRM",
+        "cancellation point",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-thrd-sleep ABI prerequisites omit {phrase}",
+        )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "threads.h",
+        "time.h",
+        "errno.h",
+        "signal.h",
+        "sys/syscall.h",
+        "28-context C/C++",
+        "thrd_sleep signature",
+        "unmangled C linkage",
+        "not a broad header or pthread/C11 implementation claim",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-thrd-sleep header prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-thrd-sleep"},
+        "static-c-thrd-sleep must use the closed libc-thrd-sleep command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "zero-duration",
+        "invalid tv_nsec",
+        "null-duration -2",
+        "SIGALRM interruption as -1",
+        "positive remaining interval",
+        "preserving errno",
+        "clock_nanosleep=230",
+        "r10 fourth-argument path",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "cancellation",
+        "thrd_yield",
+        "general pthread/C11 behavior",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-thrd-sleep evidence scope omits {phrase}",
+        )
+    static_exports = {
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    require(
+        "thrd_sleep" in static_exports,
+        "static-c-thrd-sleep static export contract omits thrd_sleep",
+    )
+    require(
+        "run_libc_thrd_sleep.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-thrd-sleep dispatcher binding is missing",
+    )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -6140,6 +6300,7 @@ def validate_ledger(
     require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
     require_static_c11_lifecycle_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_detach_artifact(by_id["libc.pthread-tls"])
+    require_static_thrd_sleep_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

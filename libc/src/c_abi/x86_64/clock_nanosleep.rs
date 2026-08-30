@@ -32,6 +32,12 @@ use core::ffi::{c_int, c_void};
 use super::raw_syscall;
 
 const LINUX_ERRNO_MAX: i64 = 4_095;
+/// Linux's realtime clock ID is the fixed clock selected by C11 `thrd_sleep`.
+///
+/// This remains module-private to the static x86 C ABI composition: its C11
+/// sibling consumes the named value rather than duplicating a syscall ABI
+/// literal.
+pub(super) const CLOCK_REALTIME: c_int = 0;
 const CLOCK_THREAD_CPUTIME_ID: c_int = 3;
 const EINVAL: c_int = 22;
 

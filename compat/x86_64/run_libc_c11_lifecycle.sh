@@ -116,7 +116,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" |
     fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in thrd_sleep thrd_yield call_once \
+for unselected in thrd_yield call_once \
     mtx_init mtx_lock mtx_unlock cnd_init cnd_wait cnd_signal cnd_broadcast \
     tss_create tss_delete tss_set tss_get pthread_cancel \
     pthread_key_create pthread_mutex_init pthread_mutex_lock pthread_mutex_unlock \

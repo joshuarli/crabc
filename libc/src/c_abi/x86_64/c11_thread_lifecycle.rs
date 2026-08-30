@@ -22,6 +22,11 @@
 //!   the selected worker exits.
 //! - `src/thread/thrd_detach.c` supplies the `thrd_success`/`thrd_error`
 //!   translation around pthread-style lifetime detachment.
+//! - `src/thread/thrd_sleep.c` supplies C11's distinct sleep-status
+//!   translation: an interrupted relative realtime sleep is `-1`, while every
+//!   other `clock_nanosleep` failure is `-2`. This bounded x86 route delegates
+//!   only to the sibling's direct, errno-neutral `clock_nanosleep` seam; it
+//!   deliberately does not select musl's cancellation-point machinery.
 //!
 //! The admitted contract is one valid C11 callback, a TP-as-`thrd_t` handle,
 //! one join **or** detach, and either a normal callback return or `thrd_exit`.
@@ -34,8 +39,8 @@
 //! `%fs:0` identity, and never changes the creator's `errno`: C11's selected
 //! errors use only `thrd_*` statuses.
 //!
-//! This leaf intentionally excludes `thrd_sleep`, `thrd_yield`, `call_once`,
-//! mutexes, conditions, TSS keys/destructors, cancellation, attributes and
+//! This leaf intentionally excludes `thrd_yield`, `call_once`, mutexes,
+//! conditions, TSS keys/destructors, cancellation, attributes and
 //! detached-at-create lifecycle, dynamic/loader TLS, a full TCB, CRT/sysroot
 //! integration, a crabc-rs surface, C11-family completion, and public x86 support.
 
@@ -49,9 +54,12 @@ use super::pthread_create_join::{
 };
 
 const EAGAIN: c_int = 11;
+const EINTR: c_int = 4;
 const THRD_SUCCESS: c_int = 0;
 const THRD_ERROR: c_int = 2;
 const THRD_NOMEM: c_int = 3;
+const THRD_SLEEP_INTR: c_int = -1;
+const THRD_SLEEP_ERROR: c_int = -2;
 
 /// Create one bounded joinable C11 worker over the selected static TLS seam.
 ///
@@ -148,6 +156,41 @@ pub unsafe extern "C" fn thrd_detach(thread: *mut c_void) -> c_int {
     match unsafe { pthread_create_join::detach_selected_worker(thread) } {
         0 => THRD_SUCCESS,
         _ => THRD_ERROR,
+    }
+}
+
+/// Sleep for one C11 relative realtime interval through the selected syscall seam.
+///
+/// The return is `0` after completion, `-1` only when Linux reports `EINTR`,
+/// and `-2` for every other failure. Like C11 and musl, this function reports
+/// through its return value rather than modifying C `errno`.
+///
+/// # Safety
+///
+/// `duration` must point to a readable, aligned x86-64 `struct timespec` for
+/// the syscall. `remaining` must be null or point to writable storage for the
+/// same record. The caller owns signal delivery and must keep both records
+/// alive until the syscall returns; this bounded route is not a cancellation
+/// point and provides no pthread/C11 cancellation cleanup semantics.
+#[no_mangle]
+pub unsafe extern "C" fn thrd_sleep(
+    duration: *const c_void,
+    remaining: *mut c_void,
+) -> c_int {
+    // SAFETY: the C ABI obligations above exactly supply the sibling's raw
+    // x86 timespec-pointer contract. Its direct result is zero or positive
+    // errno and it intentionally does not publish errno through TLS.
+    match unsafe {
+        super::clock_nanosleep::clock_nanosleep(
+            super::clock_nanosleep::CLOCK_REALTIME,
+            0,
+            duration,
+            remaining,
+        )
+    } {
+        0 => THRD_SUCCESS,
+        EINTR => THRD_SLEEP_INTR,
+        _ => THRD_SLEEP_ERROR,
     }
 }
 

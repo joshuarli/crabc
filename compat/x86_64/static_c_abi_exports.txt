@@ -270,6 +270,7 @@ thrd_detach
 thrd_equal
 thrd_exit
 thrd_join
+thrd_sleep
 toascii
 tolower
 toupper

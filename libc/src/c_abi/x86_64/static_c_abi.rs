@@ -7,7 +7,7 @@
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask
 //! and bounded process-signal execution, one default-attribute
 //! create/explicit-exit/join/detach worker and its typed C11
-//! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach` sibling, both backed by the private
+//! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, both backed by the private
 //! Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
@@ -31,7 +31,8 @@
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path, plus prompt detach with later
 //! clear-child-tid reaping and opaque current/equality identity. The C11
-//! lifecycle sibling likewise remains a static-only typed worker slice;
+//! lifecycle/sleep sibling likewise remains a static-only typed worker and
+//! direct non-cancellation realtime-sleep slice;
 //! neither is a claim for broader pthread/C11 header support.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
