@@ -77,7 +77,15 @@ dup
 dup2
 dup3
 eaccess
+epoll_create
+epoll_create1
+epoll_ctl
+epoll_pwait
+epoll_wait
 euidaccess
+eventfd
+eventfd_read
+eventfd_write
 exit
 faccessat
 fcntl
@@ -131,6 +139,10 @@ getuid
 imaxabs
 imaxdiv
 index
+inotify_add_watch
+inotify_init
+inotify_init1
+inotify_rm_watch
 ioctl
 isalnum
 isalpha

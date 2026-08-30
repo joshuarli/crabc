@@ -6,9 +6,10 @@
 # archive. It proves only poll/ppoll/select/pselect readiness plus pause and
 # sigsuspend signal-wait endpoints. Pre-existing selected pipe and simple
 # signal-control calls provide fixture plumbing; raw tgkill creates atomic
-# pending-signal observations. It does not select epoll/eventfd, C pathname or
-# fcntl APIs, process lifecycle, pthread cancellation, timers, CRT, loader,
-# sysroot, or public x86 support.
+# pending-signal observations. This fixture does not exercise epoll/eventfd;
+# their separate static artifact owns those archive exports. It does not select
+# C pathname or fcntl APIs, process lifecycle, pthread cancellation, timers,
+# CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -130,8 +131,7 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in epoll_create epoll_create1 epoll_ctl epoll_wait epoll_pwait \
-    eventfd eventfd_read eventfd_write readv writev \
+for unselected in readv writev \
     preadv pwritev splice vmsplice tee sendfile copy_file_range fork _Fork \
     vfork clone execve tgkill alarm sleep usleep \
     sigaltstack pthread_sigmask signalfd syscall malloc free calloc realloc; do

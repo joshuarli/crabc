@@ -55,6 +55,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "candidate-header-closure",
             "uapi-wrapper-matrix",
             "epoll-header-abi",
+            "event-descriptors-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",
             "access-header-abi",
@@ -68,6 +69,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "random-entropy-header-abi",
             "sysv-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
+            "libc-event-descriptors",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
@@ -114,6 +116,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-timestamp-updates", source)
         self.assertIn("libc-sysv-semaphore", source)
         self.assertIn("libc-sysv-message-shared-memory", source)
+        self.assertIn("libc-event-descriptors", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -133,6 +136,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_uapi_wrapper_matrix.sh', source)
         self.assertIn('run_epoll_header_abi()', source)
         self.assertIn('compat/x86_64/run_epoll_header_abi.sh', source)
+        self.assertIn('run_event_descriptors_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_event_descriptors_header_abi.sh', source
+        )
         self.assertIn('run_timeval_transitive_header_abi()', source)
         self.assertIn('compat/x86_64/run_timeval_transitive_header_abi.sh', source)
         self.assertIn('run_sys_time_direct_header_abi()', source)
@@ -5822,12 +5829,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "assert_named_syscall sigsuspend 82",
             "pselect lacks the x86 ${register} argument path",
             "sigsuspend lacks Linux's eight-byte kernel signal-set size",
-            "epoll_create",
+            "does not exercise epoll/eventfd",
+            "separate static artifact owns those archive exports",
             "pthread_sigmask",
             "sys/select.h",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn("epoll_create", artifact_runner)
         for symbol in ("poll", "ppoll", "select", "pselect", "pause", "sigsuspend"):
             self.assertIn(symbol, static_export_names)
         self.assertIn('id = "static-c-readiness-signal-waits"', parity_ledger)
@@ -8921,6 +8930,237 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sysv-message-shared-memory)\n        [ "$#" -eq 0 ] || fail "libc-sysv-message-shared-memory takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_event_descriptors_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "event_descriptors.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "event_descriptors_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "event_descriptors_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_event_descriptors_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_event_descriptors_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_event_descriptors_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_event_descriptors.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "event_descriptors.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 event-descriptor C boundary",
+            "musl 1.2.6 release commit",
+            "src/linux/epoll.c",
+            "src/linux/eventfd.c",
+            "src/linux/inotify.c",
+            "EpollEvent",
+            "size_of::<EpollEvent>() == 12",
+            "align_of::<EpollEvent>() == 1",
+            "offset_of!(EpollEvent, data) == 4",
+            "KERNEL_SIGSET_SIZE",
+            "raw_syscall::SYS_EPOLL_CREATE1",
+            "raw_syscall::SYS_EPOLL_CTL",
+            "raw_syscall::SYS_EPOLL_PWAIT",
+            "raw_syscall::SYS_EVENTFD2",
+            "raw_syscall::SYS_INOTIFY_INIT1",
+            "raw_syscall::SYS_INOTIFY_ADD_WATCH",
+            "raw_syscall::SYS_INOTIFY_RM_WATCH",
+            "r10/r8/r9 respectively",
+            "eight-byte signal",
+            "Linux 5.10",
+            "ENOSYS",
+            "cancellation-point",
+        ):
+            self.assertIn(required, implementation)
+        for symbol in (
+            "epoll_create",
+            "epoll_create1",
+            "epoll_ctl",
+            "epoll_wait",
+            "epoll_pwait",
+            "eventfd",
+            "eventfd_read",
+            "eventfd_write",
+            "inotify_init",
+            "inotify_init1",
+            "inotify_add_watch",
+            "inotify_rm_watch",
+        ):
+            self.assertIn(f"fn {symbol}(", implementation)
+        for forbidden in (
+            "fn epoll_pwait2(",
+            "fn timerfd_create(",
+            "fn signalfd(",
+            "fn fanotify_init(",
+            "fn aio_read(",
+            "fn pthread_",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "sys/eventfd.h",
+                "sys/inotify.h",
+                "eventfd_t",
+                "inotify_event",
+                "eventfd",
+                "eventfd_read",
+                "eventfd_write",
+                "inotify_init",
+                "inotify_init1",
+                "inotify_add_watch",
+                "inotify_rm_watch",
+                "IN_IGNORED",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn('extern "C" int eventfd', header_cxx_probe)
+        self.assertIn('extern "C" int inotify_init', header_cxx_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "c-default c11-gnu cxx17-gnu",
+            "c11-posix-2008",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "sys/eventfd.h",
+            "sys/inotify.h",
+            "compile-only",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <sys/epoll.h>",
+            "#include <sys/eventfd.h>",
+            "#include <sys/inotify.h>",
+            "check_eventfd",
+            "check_epoll",
+            "check_inotify",
+            "EFD_SEMAPHORE",
+            "UINT64_MAX",
+            "EPOLL_CTL_ADD",
+            "modified_token",
+            "install_epoll_pwait_signal_argument_filter",
+            "CRABC_SECCOMP_ARGUMENT_FOUR_LOW",
+            "CRABC_SECCOMP_ARGUMENT_FIVE_LOW",
+            "filter[3].immediate",
+            "filter[5].immediate",
+            "SYS_seccomp",
+            "read_created_event",
+            "read_ignored_event",
+            "CRABC_EVENT_DESCRIPTORS_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_event_descriptors_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_epoll_header_abi.sh",
+            "run_event_descriptors_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall epoll_create 123",
+            "assert_named_syscall epoll_ctl e9",
+            "assert_named_syscall epoll_pwait 119",
+            "assert_named_syscall eventfd 122",
+            "assert_named_zero_syscall eventfd_read",
+            "assert_named_syscall eventfd_write 1",
+            "assert_named_syscall inotify_init1 126",
+            "assert_named_syscall inotify_add_watch fe",
+            "assert_named_syscall inotify_rm_watch ff",
+            "assert_x86_event_descriptor_register_paths",
+            "for unselected in epoll_pwait2",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        expected_symbols = {
+            "epoll_create",
+            "epoll_create1",
+            "epoll_ctl",
+            "epoll_wait",
+            "epoll_pwait",
+            "eventfd",
+            "eventfd_read",
+            "eventfd_write",
+            "inotify_init",
+            "inotify_init1",
+            "inotify_add_watch",
+            "inotify_rm_watch",
+        }
+        self.assertTrue(expected_symbols <= static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "epoll_pwait2",
+                "timerfd_create",
+                "timerfd_gettime",
+                "timerfd_settime",
+                "signalfd",
+                "signalfd4",
+                "fanotify_init",
+                "fanotify_mark",
+                "aio_read",
+                "aio_write",
+                "io_setup",
+                "io_submit",
+            }
+        )
+        self.assertIn('id = "static-c-event-descriptors"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-event-descriptors"',
+            parity_ledger,
+        )
+        self.assertIn("run_event_descriptors_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_event_descriptors_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_event_descriptors()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_event_descriptors.sh",
+            runner,
+        )
+        self.assertIn(
+            '    event-descriptors-header-abi)\n        [ "$#" -eq 0 ] || fail "event-descriptors-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-event-descriptors)\n        [ "$#" -eq 0 ] || fail "libc-event-descriptors takes no arguments"',
             runner,
         )
 

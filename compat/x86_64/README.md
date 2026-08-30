@@ -88,7 +88,9 @@ watches, and caller-buffered byte-preserving event records. It leaves C
 `sys/inotify.h` APIs/ABI and `errno` TLS, legacy `inotify_init`, fanotify,
 recursive/background watcher policy, global registries,
 namespaces/capability mutation, wider system facilities, and public x86
-runtime support unselected.
+runtime support unselected from the Rust facade. The separate private
+`static-c-event-descriptors` artifact owns bounded static C inotify ABI/header
+and legacy-init evidence; it does not broaden the Rust slice or public support.
 The separate `calendar-time-reference` gate verifies the private
 `time.civil-calendar` slice: direct `gettimeofday` wall-clock observation,
 strict UTC Gregorian conversion, immutable caller-supplied POSIX TZ and TZif
@@ -359,6 +361,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
+./scripts/dev-x86_64.sh event-descriptors-header-abi
+./scripts/dev-x86_64.sh libc-event-descriptors
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
 ./scripts/dev-x86_64.sh libc-timestamp-updates
@@ -465,6 +469,12 @@ header: its x86 packed event record, selected declarations/values, and only
 the direct `sys/ioctl.h` `_IOC`/`_IOR`/`_IOW` encoding subset used by
 `EPIOC*`. It excludes standalone ioctl declaration parity/linkage, epoll
 linkage, runtime/device behavior, and header-family completion.
+The separate `event-descriptors-header-abi` command resolves eight compile-only
+C11/C++17 profiles for the selected `sys/eventfd.h` and `sys/inotify.h`
+surface: `eventfd_t`, `inotify_event`, selected flags, and unmangled C++
+references. Together with the retained `epoll-header-abi` matrix, this is
+artifact-local input to `static-c-event-descriptors`; it is not general
+descriptor-header completion.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete
@@ -2283,8 +2293,10 @@ unchanged; and pending-signal temporary-mask restoration for `ppoll`,
 machinery; this direct static leaf intentionally omits that pthread
 cancellation behavior. A race-free in-process trigger for `pause` is outside
 the closed artifact, so `pause` is retained and proved only by its emitted
-direct Linux syscall path. It excludes epoll/eventfd, C open/path, generic
-fcntl-command, or vector I/O, AIO, generic signal delivery/waits, pthread mask policy, timers,
+direct Linux syscall path. It does not exercise epoll/eventfd; the separate
+`libc-event-descriptors` artifact owns those selected archive exports. It
+excludes C open/path, generic fcntl-command, or vector I/O, AIO, generic
+signal delivery/waits, pthread mask policy, timers,
 process lifecycle, general runtime, and public x86 support.
 
 `libc-system-observation` is the fixture for a separately recorded
@@ -2359,6 +2371,22 @@ musl's cancellation machinery because that runtime lifecycle remains
 unselected. It excludes POSIX IPC and semaphores, broader SysV operations and
 namespace/permission policy, cancellation, dynamic runtime, header/runtime
 family completion, promotion, full x86-64 parity, and public x86 support.
+
+`libc-event-descriptors` is a separately recorded private
+`static-c-event-descriptors` `verified_artifact` gate over that archive, not
+an event-descriptor or header-family completion claim. Its project-header C
+body first executes through pinned musl and then through a `-nostdlib -static`
+candidate. It selects only `epoll_create`, `epoll_create1`, `epoll_ctl`,
+`epoll_wait`, `epoll_pwait`, `eventfd`, `eventfd_read`, `eventfd_write`,
+`inotify_init`, `inotify_init1`, `inotify_add_watch`, and
+`inotify_rm_watch`. It proves the packed x86 12-byte epoll event record,
+`epoll_ctl`'s `r10` argument, and `epoll_pwait`'s `r10`/`r8`/`r9` arguments
+with BPF-verified temporary-mask pointer and eight-byte kernel sigset size,
+plus bounded eventfd and inotify lifecycles. The direct leaf deliberately
+omits pthread cancellation and pre-Linux-5.10 `ENOSYS` fallbacks. It excludes
+`epoll_pwait2`, timerfd, signalfd, fanotify, AIO, watcher policy, dynamic
+runtime, header/runtime family completion, promotion, full x86-64 parity, and
+public x86 support.
 
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
@@ -2822,6 +2850,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,
+`libc-event-descriptors`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-timestamp-updates`,

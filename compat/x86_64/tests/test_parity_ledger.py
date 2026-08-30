@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 54)
+        self.assertEqual(report["verified_artifact_count"], 55)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1154,7 +1154,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 36
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 37
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -1367,7 +1367,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             {evidence["command"] for evidence in readiness_waits["native_evidence"]},
             {"./scripts/dev-x86_64.sh libc-readiness-waits"},
         )
-        self.assertIn("does not select epoll/eventfd", readiness_waits["description"])
+        self.assertIn(
+            "does not exercise epoll/eventfd; a separate artifact owns those archive exports",
+            readiness_waits["description"],
+        )
         self.assertIn(
             "temporary-mask delivery/restoration",
             readiness_waits["native_evidence"][0]["scope"],
@@ -3764,10 +3767,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                "no x86 C inotify API/header/ABI" in prerequisite
-                and "legacy inotify_init" in prerequisite
+                "separate static-c-event-descriptors artifact" in prerequisite
+                and "legacy inotify_init remains outside the Rust facade" in prerequisite
                 for prerequisite in system_inotify["x86_header_prerequisites"]
             )
+        )
+        self.assertIn(
+            "separate static-c-event-descriptors artifact",
+            system_inotify["native_evidence"][0]["scope"],
         )
         self.assertIn("system.inotify", remaining["capabilities"])
         self.assertNotIn("system.inotify", direct["capabilities"])
@@ -6931,6 +6938,233 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static IPC runtime regression"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_event_descriptors_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-event-descriptors"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/event_descriptors.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/sys/epoll.h",
+            "include/sys/eventfd.h",
+            "include/sys/inotify.h",
+            "compat/x86_64/epoll_header_abi_probe.c",
+            "compat/x86_64/epoll_header_abi_probe.cpp",
+            "compat/x86_64/run_epoll_header_abi.sh",
+            "compat/x86_64/event_descriptors_header_abi_probe.c",
+            "compat/x86_64/event_descriptors_header_abi_probe.cpp",
+            "compat/x86_64/run_event_descriptors_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_event_descriptors_probe.c",
+            "compat/x86_64/libc_event_descriptors_start.S",
+            "compat/x86_64/run_libc_event_descriptors.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-event-descriptors"},
+        )
+        for phrase in (
+            "event-descriptor block",
+            "`epoll_create`",
+            "`epoll_create1`",
+            "`epoll_ctl`",
+            "`epoll_wait`",
+            "`epoll_pwait`",
+            "`eventfd`",
+            "`eventfd_read`",
+            "`eventfd_write`",
+            "`inotify_init`",
+            "`inotify_init1`",
+            "`inotify_add_watch`",
+            "`inotify_rm_watch`",
+            "epoll_pwait2",
+            "timerfd",
+            "signalfd",
+            "fanotify",
+            "AIO",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        for symbol in (
+            "epoll_create",
+            "epoll_create1",
+            "epoll_ctl",
+            "epoll_pwait",
+            "epoll_wait",
+            "eventfd",
+            "eventfd_read",
+            "eventfd_write",
+            "inotify_add_watch",
+            "inotify_init",
+            "inotify_init1",
+            "inotify_rm_watch",
+        ):
+            self.assertIn(symbol, static_exports)
+        for symbol in (
+            "epoll_pwait2",
+            "timerfd_create",
+            "timerfd_gettime",
+            "timerfd_settime",
+            "signalfd",
+            "signalfd4",
+            "fanotify_init",
+            "fanotify_mark",
+            "aio_read",
+            "aio_write",
+        ):
+            self.assertNotIn(symbol, static_exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "epoll_create1=291" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in (
+            "epoll_ctl=233",
+            "epoll_pwait=281",
+            "eventfd2=290",
+            "inotify_init1=294",
+            "inotify_add_watch=254",
+            "inotify_rm_watch=255",
+            "rdi/rsi/rdx/r10/r8/r9",
+        ):
+            self.assertIn(phrase, syscall_abi)
+        packed_epoll = next(item for item in prerequisites if "12-byte align-1" in item)
+        assert isinstance(packed_epoll, str)
+        for phrase in (
+            "events at offset 0",
+            "data union at offset 4",
+            "eight-byte kernel sigset",
+            "r8 signal-mask pointer",
+            "r9",
+        ):
+            self.assertIn(phrase, packed_epoll)
+        eventfd = next(item for item in prerequisites if "eventfd_t" in item)
+        assert isinstance(eventfd, str)
+        for phrase in (
+            "read=0/write=1",
+            "exactly eight bytes",
+            "positive short",
+            "-1 without manufacturing errno",
+        ):
+            self.assertIn(phrase, eventfd)
+        source_mapping = next(
+            item for item in prerequisites if "src/linux/epoll.c, eventfd.c, and inotify.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        self.assertIn("Linux 5.10", source_mapping)
+        self.assertIn("ENOSYS", source_mapping)
+        cancellation = next(item for item in prerequisites if "direct static leaf" in item)
+        assert isinstance(cancellation, str)
+        self.assertIn("cancellation", cancellation)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "seven-profile",
+            "sys/epoll.h",
+            "eight-profile",
+            "sys/eventfd.h",
+            "sys/inotify.h",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        scope = evidence[0]["scope"]
+        assert isinstance(scope, str)
+        for phrase in (
+            "epoll_create1=291",
+            "epoll_ctl=233",
+            "epoll_pwait=281",
+            "eventfd2=290",
+            "inotify_init1=294",
+            "inotify_add_watch=254",
+            "inotify_rm_watch=255",
+            "epoll_ctl r10",
+            "epoll_pwait r10/r8/r9",
+            "BPF-verified signal-mask pointer",
+            "eight-byte kernel sigset",
+            "packed token preservation",
+            "eventfd ordinary/semaphore/error behavior",
+            "inotify create/remove/ignored/error behavior",
+            "cancellation",
+            "ENOSYS fallback",
+            "epoll_pwait2",
+            "timerfd",
+            "signalfd",
+            "fanotify",
+            "AIO",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, scope)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-event-descriptors"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "epoll_pwait=281" in item)
+        prerequisites[index] = prerequisites[index].replace("epoll_pwait=281", "epoll_pwait=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-event-descriptors"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "BPF-verified signal-mask pointer", "missing signal-register regression"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact static event-descriptor runtime regression"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-event-descriptors"
+        )
+        mapping = next(entry for entry in artifact["oracle"] if entry["kind"] == "c-posix")
+        mapping["role"] = mapping["role"].replace(
+            "src/linux/inotify.c", "src/linux/inotify-missing.c"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "pinned-musl event source mapping"
         ):
             ledger.validate_ledger(data)
 

@@ -38,6 +38,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   candidate-header-closure  require isolated C11/C++17 public-header include closure
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
+  event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
   ioctl-header-abi  verify selected direct sys/ioctl.h C/C++ ABI profile matrix
   timeval-transitive-header-abi  verify selected timeval-dependent header layouts across C/C++ profiles
   sys-time-direct-header-abi  verify selected direct sys/time.h C/C++ ABI profiles and C linkage
@@ -76,6 +77,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
+  libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -1286,6 +1288,10 @@ run_epoll_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_epoll_header_abi.sh
 }
 
+run_event_descriptors_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_event_descriptors_header_abi.sh
+}
+
 run_ioctl_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ioctl_header_abi.sh
 }
@@ -1428,6 +1434,10 @@ run_libc_sysv_semaphore() {
 
 run_libc_sysv_message_shared_memory() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sysv_message_shared_memory.sh
+}
+
+run_libc_event_descriptors() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_event_descriptors.sh
 }
 
 run_ffs_header_abi() {
@@ -2350,6 +2360,7 @@ case "$command" in
     candidate-header-closure) ;;
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
+    event-descriptors-header-abi) ;;
     timeval-transitive-header-abi) ;;
     sys-time-direct-header-abi) ;;
     access-header-abi) ;;
@@ -2363,6 +2374,7 @@ case "$command" in
     random-entropy-header-abi) ;;
     sysv-semaphore-header-abi) ;;
     sysv-message-shared-memory-header-abi) ;;
+    libc-event-descriptors) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
     libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
@@ -2415,6 +2427,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "epoll-header-abi takes no arguments"
         ensure_image
         run_epoll_header_abi
+        ;;
+    event-descriptors-header-abi)
+        [ "$#" -eq 0 ] || fail "event-descriptors-header-abi takes no arguments"
+        ensure_image
+        run_event_descriptors_header_abi
         ;;
     ioctl-header-abi)
         [ "$#" -eq 0 ] || fail "ioctl-header-abi takes no arguments"
@@ -3314,6 +3331,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sysv-message-shared-memory takes no arguments"
         ensure_image
         run_libc_sysv_message_shared_memory
+        ;;
+    libc-event-descriptors)
+        [ "$#" -eq 0 ] || fail "libc-event-descriptors takes no arguments"
+        ensure_image
+        run_libc_event_descriptors
         ;;
     libc-ffs)
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"

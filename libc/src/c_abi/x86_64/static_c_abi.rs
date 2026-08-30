@@ -24,7 +24,8 @@
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
 //! `nanosleep` and `clock_nanosleep` artifacts, plus one bounded System V
-//! message-queue/shared-memory artifact.
+//! message-queue/shared-memory artifact and one bounded event-descriptor
+//! artifact.
 //! It deliberately shares only the raw
 //! Linux syscall register boundary, one initial-TLS C `errno` slot, and the
 //! private Static Initial TLS v1 owner. The
@@ -160,6 +161,8 @@ mod system_configuration;
 mod memory_mapping;
 #[path = "readiness_waits.rs"]
 mod readiness_waits;
+#[path = "event_descriptors.rs"]
+mod event_descriptors;
 #[path = "system_observation.rs"]
 mod system_observation;
 #[path = "uts_identity.rs"]

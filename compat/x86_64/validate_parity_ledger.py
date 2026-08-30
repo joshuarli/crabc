@@ -938,6 +938,40 @@ SYSV_MESSAGE_SHARED_MEMORY_UNSELECTED_SYMBOLS = (
     "sem_wait",
 )
 
+EVENT_DESCRIPTOR_SYMBOLS = (
+    "epoll_create",
+    "epoll_create1",
+    "epoll_ctl",
+    "epoll_pwait",
+    "epoll_wait",
+    "eventfd",
+    "eventfd_read",
+    "eventfd_write",
+    "inotify_add_watch",
+    "inotify_init",
+    "inotify_init1",
+    "inotify_rm_watch",
+)
+
+EVENT_DESCRIPTOR_UNSELECTED_SYMBOLS = (
+    "aio_cancel",
+    "aio_error",
+    "aio_fsync",
+    "aio_read",
+    "aio_return",
+    "aio_suspend",
+    "aio_write",
+    "epoll_pwait2",
+    "fanotify_init",
+    "fanotify_mark",
+    "lio_listio",
+    "signalfd",
+    "signalfd4",
+    "timerfd_create",
+    "timerfd_gettime",
+    "timerfd_settime",
+)
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -7398,6 +7432,266 @@ def require_sysv_message_shared_memory_artifact(family: Mapping[str, Any]) -> No
     )
 
 
+def require_event_descriptors_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected static C event-descriptor boundary private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-event-descriptors"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-event-descriptors artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-event-descriptors must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in EVENT_DESCRIPTOR_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-event-descriptors description omits {symbol}",
+        )
+    for phrase in (
+        "event-descriptor block",
+        "epoll_pwait2",
+        "timerfd",
+        "signalfd",
+        "fanotify",
+        "AIO",
+        "cancellation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-event-descriptors description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-event-descriptors.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/event_descriptors.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/signal.h",
+        "include/stdint.h",
+        "include/sys/epoll.h",
+        "include/sys/eventfd.h",
+        "include/sys/inotify.h",
+        "include/sys/prctl.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/epoll_header_abi_probe.c",
+        "compat/x86_64/epoll_header_abi_probe.cpp",
+        "compat/x86_64/run_epoll_header_abi.sh",
+        "compat/x86_64/event_descriptors_header_abi_probe.c",
+        "compat/x86_64/event_descriptors_header_abi_probe.cpp",
+        "compat/x86_64/run_event_descriptors_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_event_descriptors_probe.c",
+        "compat/x86_64/libc_event_descriptors_start.S",
+        "compat/x86_64/run_libc_event_descriptors.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-event-descriptors source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-event-descriptors.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "epoll_create1=291" in item
+            and "epoll_ctl=233" in item
+            and "epoll_pwait=281" in item
+            and "eventfd2=290" in item
+            and "inotify_init1=294" in item
+            and "inotify_add_watch=254" in item
+            and "inotify_rm_watch=255" in item
+            and "rdi/rsi/rdx/r10/r8/r9" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "12-byte align-1" in item
+            and "events at offset 0" in item
+            and "data union at offset 4" in item
+            and "eight-byte kernel sigset" in item
+            and "r8 signal-mask pointer" in item
+            and "r9" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record packed epoll and signal-mask ABI",
+    )
+    require(
+        any(
+            "eventfd_t" in item
+            and "read=0/write=1" in item
+            and "exactly eight bytes" in item
+            and "positive short" in item
+            and "-1 without manufacturing errno" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record exact eventfd transfer behavior",
+    )
+    require(
+        any(
+            "16-byte align-4" in item
+            and "wd/mask/cookie/len at 0/4/8/12" in item
+            and "name at 16" in item
+            and "caller-owned" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record the x86 inotify record ABI",
+    )
+    require(
+        any(
+            "src/linux/epoll.c, eventfd.c, and inotify.c" in item
+            and "Linux 5.10" in item
+            and "ENOSYS" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record its pinned-musl source mapping and no-ENOSYS boundary",
+    )
+    require(
+        any(
+            "cancellation" in item and "direct static leaf" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record its cancellation boundary",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-event-descriptors must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-event-descriptors.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "seven-profile" in item
+            and "sys/epoll.h" in item
+            and "eight-profile" in item
+            and "sys/eventfd.h" in item
+            and "sys/inotify.h" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-event-descriptors must record its direct event-descriptor header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(EVENT_DESCRIPTOR_SYMBOLS) <= static_exports,
+        "static-c-event-descriptors must retain its twelve selected exports",
+    )
+    require(
+        not (static_exports & set(EVENT_DESCRIPTOR_UNSELECTED_SYMBOLS)),
+        "static-c-event-descriptors must not add unselected event-descriptor exports",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/linux/epoll.c",
+                    "src/linux/eventfd.c",
+                    "src/linux/inotify.c",
+                )
+            )
+            and "no-ENOSYS" in entry["role"]
+            and "cancellation" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-event-descriptors must retain its pinned-musl event source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-event-descriptors"},
+        "static-c-event-descriptors must use the closed libc-event-descriptors command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "epoll_create1=291",
+                "epoll_ctl=233",
+                "epoll_pwait=281",
+                "eventfd2=290",
+                "inotify_init1=294",
+                "inotify_add_watch=254",
+                "inotify_rm_watch=255",
+                "epoll_ctl r10",
+                "epoll_pwait r10/r8/r9",
+                "BPF-verified signal-mask pointer",
+                "eight-byte kernel sigset",
+                "packed token preservation",
+                "eventfd ordinary/semaphore/error behavior",
+                "inotify create/remove/ignored/error behavior",
+                "cancellation",
+                "ENOSYS fallback",
+                "epoll_pwait2",
+                "timerfd",
+                "signalfd",
+                "fanotify",
+                "AIO",
+                "public x86 support",
+            )
+        ),
+        "static-c-event-descriptors evidence must retain its exact static event-descriptor runtime regression",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -8210,6 +8504,7 @@ def validate_ledger(
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
+    require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])

@@ -275,6 +275,25 @@ namespace/permission policy, `SEM_UNDO` lifecycle, cancellation, libc.so,
 CRT, loader, sysroot, family or platform parity, promotion, full x86-64
 parity, and public x86 support remain unselected.
 
+`./scripts/dev-x86_64.sh event-descriptors-header-abi` adds an artifact-local
+eight-profile C11/C++17 project-header/pinned-musl matrix for selected
+`sys/eventfd.h` and `sys/inotify.h` declarations, layouts, flags, and unmangled
+C++ references; the existing `epoll-header-abi` matrix remains its own packed
+`sys/epoll.h` proof. The paired `./scripts/dev-x86_64.sh libc-event-descriptors`
+command records a separate private `static-c-event-descriptors` artifact in
+planned `libc.posix-runtime`. Its pinned-musl and freestanding-static C fixture
+selects exactly `epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`,
+`epoll_pwait`, `eventfd`, `eventfd_read`, `eventfd_write`, `inotify_init`,
+`inotify_init1`, `inotify_add_watch`, and `inotify_rm_watch`. It proves the
+packed 12-byte x86 epoll record, the `epoll_ctl` fourth argument in `r10`, and
+the `epoll_pwait` `r10`/`r8`/`r9` path with BPF-verified temporary-mask pointer
+and eight-byte kernel sigset size, plus bounded eventfd/inotify lifecycles.
+This direct static leaf intentionally omits pthread cancellation and musl's
+pre-Linux-5.10 `ENOSYS` fallbacks. It is a private non-promoting artifact, not
+event-descriptor-family closure: `epoll_pwait2`, timerfd, signalfd, fanotify,
+AIO, watcher policy, libc.so, startup, allocator, loader, sysroot, family or
+platform parity, and public x86 support remain unselected.
+
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned
 `libc.headers-layouts`. It composes the existing selected archive through a
