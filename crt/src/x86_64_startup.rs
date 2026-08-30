@@ -1,8 +1,10 @@
-//! Post-relocation Linux/x86-64 static-PIE application entry.
+//! Shared Linux/x86-64 static application startup.
 //!
 //! This is deliberately separate from the active AArch64 startup module. It
-//! is only the static-PIE foundation: no dynamic-loader handoff, ordinary
-//! `crt1.o`, or `Scrt1.o` contract is implied by this source.
+//! is only a private static-startup foundation. `rcrt1.o` reaches it after
+//! checked self-relocation and GNU RELRO; ordinary `crt1.o` reaches it after
+//! final static linking. Neither path implies a dynamic-loader handoff,
+//! `Scrt1.o`, installed sysroot, or public x86 support.
 
 use core::ffi::c_int;
 
@@ -38,9 +40,9 @@ unsafe extern "C" {
     fn __crabc_x86_static_tls_bootstrap(initial_stack: *const usize) -> c_int;
 }
 
-// The libc definition is deliberately hidden: this static-PIE CRT uses one
-// static-link handoff through an R_X86_64_RELATIVE slot, not a preemptible PLT
-// or dynamic-loader edge.
+// The libc definition is deliberately hidden. rcrt1 uses its static-link
+// handoff through an R_X86_64_RELATIVE slot after relocation; crt1 resolves a
+// direct static call. Neither path is a preemptible PLT or dynamic-loader edge.
 core::arch::global_asm!(".hidden __crabc_x86_static_tls_bootstrap");
 
 impl InitialProcess {
@@ -81,8 +83,11 @@ impl InitialProcess {
     }
 }
 
-/// Enter libc-owned process startup only after `x86_64_rcrt1.rs` has applied
-/// its checked relative relocations and sealed GNU RELRO.
+/// Enter libc-owned process startup after the entry object established its
+/// distinct contract: `x86_64_rcrt1.rs` applies checked relative relocations
+/// and seals GNU RELRO, while `x86_64_crt1.rs` enters directly after final
+/// static linking. Both must preserve the untouched entry stack until the
+/// libc-owned TLS bootstrap succeeds.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_static_pie_start(initial_stack: *const usize) -> ! {
     let process = match unsafe { InitialProcess::parse(initial_stack) } {

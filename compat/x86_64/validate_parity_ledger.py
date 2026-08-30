@@ -3986,6 +3986,115 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         )
 
 
+def require_static_crt1_initial_tls_handoff_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the conventional ET_EXEC CRT composition without promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-crt1-initial-tls-handoff"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-crt1-initial-tls-handoff artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-crt1-initial-tls-handoff must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Static Initial TLS v1",
+        "ordinary static `ET_EXEC`",
+        "still-planned `libc.pthread-tls`",
+        "crt1.o",
+        "crti.o",
+        "crtn.o",
+        "__crabc_x86_static_tls_bootstrap",
+        "__libc_start_main",
+        "preinit, init, main",
+        "32-registration",
+        "atexit",
+        "PT_TLS.p_filesz",
+        "general CRT/startup",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-crt1-initial-tls-handoff description omits {phrase}",
+        )
+    for owner in (
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_crt1.rs",
+        "crt/src/x86_64_startup.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/static_startup.rs",
+        "libc/src/c_abi/x86_64/immediate_termination.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "include/stdlib.h",
+        "compat/x86_64/libc_crt_static_tls_probe.c",
+        "compat/x86_64/libc_crt_static_tls_peer.c",
+        "compat/x86_64/run_libc_crt1_static_tls.sh",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in artifact["source_owners"],
+            f"static-c-crt1-initial-tls-handoff source owners omit {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "R_X86_64_PLT32",
+        "ET_EXEC",
+        "no-PT_PHDR",
+        "PT_TLS",
+        "Variant-II",
+        "ARCH_SET_FS",
+        "__libc_start_main",
+        "32-registration",
+        "__cxa_finalize",
+        "fresh Static Initial TLS v1 image",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-crt1-initial-tls-handoff ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-crt1-static-tls"},
+        "static-c-crt1-initial-tls-handoff must use the closed libc-crt1-static-tls command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "pinned-musl",
+        "explicit reference adaptation",
+        "no archive link fails",
+        "ET_EXEC",
+        "archive-owned startup",
+        "32-registration",
+        "PIMBCAF",
+        "PT_TLS p_filesz mutation",
+        "exit 127",
+        "general CRT",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-crt1-initial-tls-handoff evidence scope omits {phrase}",
+        )
+
+
 def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet static pthread/C11 identity without promoting pthread parity."""
     artifacts = require_verified_artifacts(
@@ -5300,8 +5409,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 13,
-        "libc.pthread-tls must retain exactly thirteen private verified artifacts",
+        len(artifacts) == 14,
+        "libc.pthread-tls must retain exactly fourteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -5311,7 +5420,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirteen separately verified static artifacts",
+        "Fourteen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -5627,8 +5736,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 13,
-        "libc.pthread-tls must retain exactly thirteen private verified artifacts",
+        len(artifacts) == 14,
+        "libc.pthread-tls must retain exactly fourteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -5638,7 +5747,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Thirteen separately verified static artifacts",
+        "Fourteen separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -9011,6 +9120,7 @@ def validate_ledger(
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
+    require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
     require_static_c11_lifecycle_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_detach_artifact(by_id["libc.pthread-tls"])

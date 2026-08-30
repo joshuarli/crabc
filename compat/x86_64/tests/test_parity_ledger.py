@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 58)
+        self.assertEqual(report["verified_artifact_count"], 59)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4473,7 +4473,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_tsd.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Thirteen separately verified static artifacts", pthread_tls["description"]
+            "Fourteen separately verified static artifacts", pthread_tls["description"]
         )
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
@@ -4491,13 +4491,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 13)
+        self.assertEqual(len(artifacts), 14)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
             {
                 "static-c-initial-tls-v1",
                 "static-c-crt-initial-tls-handoff",
+                "static-c-crt1-initial-tls-handoff",
                 "static-c-pthread-create-join-tls",
                 "static-c-pthread-explicit-exit-tls",
                 "static-c-pthread-identity",
@@ -4513,6 +4514,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         static_tls = by_id["static-c-initial-tls-v1"]
         crt_handoff = by_id["static-c-crt-initial-tls-handoff"]
+        crt1_handoff = by_id["static-c-crt1-initial-tls-handoff"]
         normal_return = by_id["static-c-pthread-create-join-tls"]
         explicit_exit = by_id["static-c-pthread-explicit-exit-tls"]
         identity = by_id["static-c-pthread-identity"]
@@ -4526,6 +4528,71 @@ class X86ParityLedgerTests(unittest.TestCase):
         tsd = by_id["static-c-pthread-c11-tsd"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            crt1_handoff["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-crt1-static-tls",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "ordinary static `ET_EXEC`",
+            "crt1.o",
+            "crti.o",
+            "crtn.o",
+            "__crabc_x86_static_tls_bootstrap",
+            "__libc_start_main",
+            "PT_TLS.p_filesz",
+            "general CRT/startup",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt1_handoff["description"])
+        for owner in (
+            "crt/build_x86_64.py",
+            "crt/src/x86_64_crt1.rs",
+            "crt/src/x86_64_startup.rs",
+            "compat/x86_64/run_libc_crt1_static_tls.sh",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, crt1_handoff["source_owners"])
+        crt1_abi = " ".join(crt1_handoff["x86_abi_prerequisites"])
+        for phrase in (
+            "ET_EXEC",
+            "R_X86_64_PLT32",
+            "PT_TLS",
+            "Variant-II",
+            "ARCH_SET_FS",
+            "32-registration",
+            "fresh Static Initial TLS v1 image",
+        ):
+            self.assertIn(phrase, crt1_abi)
+        crt1_scope = crt1_handoff["native_evidence"][0]["scope"]
+        for phrase in (
+            "pinned-musl",
+            "explicit reference adaptation",
+            "no archive link fails",
+            "ET_EXEC",
+            "PIMBCAF",
+            "PT_TLS p_filesz mutation",
+            "exit 127",
+            "general CRT",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt1_scope)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_crt1 = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-crt1-initial-tls-handoff"
+        )
+        changed_crt1["description"] = "private ordinary static artifact"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-crt1-initial-tls-handoff description omits Static Initial TLS v1",
+        ):
+            ledger.validate_ledger(changed)
         for artifact in (normal_return, explicit_exit):
             self.assertEqual(
                 artifact["native_evidence"][0]["command"],

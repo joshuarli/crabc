@@ -51,6 +51,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
+            "libc-crt1-static-tls",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -5079,11 +5080,78 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             'command = "./scripts/dev-x86_64.sh libc-crt-static-tls"',
             parity_ledger,
         )
+        self.assertIn('id = "static-c-crt1-initial-tls-handoff"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-crt1-static-tls"',
+            parity_ledger,
+        )
         pthread_tls_family = parity_ledger.split(
             '[[family]]\nid = "libc.pthread-tls"', 1
         )[1].split("\n[[family]]", 1)[0]
         self.assertIn('status = "planned"', pthread_tls_family)
         self.assertIn("public x86 support", pthread_tls_family)
+
+    def test_libc_crt1_static_tls_artifact_is_an_owned_et_exec_composition(self) -> None:
+        """Ratchet the conventional static start object before sysroot work."""
+
+        crt1 = (ROOT / "crt" / "src" / "x86_64_crt1.rs").read_text(
+            encoding="utf-8"
+        )
+        startup = (ROOT / "crt" / "src" / "x86_64_startup.rs").read_text(
+            encoding="utf-8"
+        )
+        builder = (ROOT / "crt" / "build_x86_64.py").read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_crt1_static_tls.sh"
+        ).read_text(encoding="utf-8")
+        dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for required in (
+            ".section .text._start",
+            "mov r15, rsp",
+            "and rsp, -16",
+            "__crabc_x86_64_static_pie_start",
+            ".note.GNU-stack",
+        ):
+            self.assertIn(required, crt1)
+        self.assertNotIn("arch_prctl", crt1.lower())
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", crt1)
+
+        self.assertIn("__crabc_x86_static_tls_bootstrap", startup)
+        self.assertLess(
+            startup.index("if unsafe { __crabc_x86_static_tls_bootstrap(initial_stack) }"),
+            startup.index("unsafe {\n        __libc_start_main("),
+        )
+        for required in (
+            '"crt1.o"',
+            '"x86_64_crt1.rs"',
+            "relocation-model=static",
+            "R_X86_64_PLT32",
+            "ordinary-static-entry",
+        ):
+            self.assertIn(required, builder)
+
+        for required in (
+            "-static",
+            "--no-dynamic-linker",
+            "--no-undefined",
+            '"$crt_dir/crt1.o"',
+            '"$crt_dir/crti.o"',
+            '"$crt_dir/crtn.o"',
+            "ET_EXEC",
+            "PT_TLS",
+            "__crabc_x86_static_tls_bootstrap",
+            "__libc_start_main",
+            "PIMBCAF",
+            "expect_bootstrap_rejection",
+            "PT_TLS p_filesz",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn('"$link_editor" -pie', runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn("libc-crt1-static-tls", dispatcher)
 
     def test_libc_static_c_abi_termios_control_artifact_stays_narrow(self) -> None:
         static_root = (

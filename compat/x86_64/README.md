@@ -335,6 +335,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-signal-execution
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
+./scripts/dev-x86_64.sh libc-crt1-static-tls
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh libc-pthread-identity
 ./scripts/dev-x86_64.sh libc-c11-lifecycle
@@ -1838,6 +1839,21 @@ startup does not dispatch the fixture's preinit array, the reference fixture
 explicitly adapts that lifecycle. This does not select a general CRT/startup
 or libc entry ABI, stdio/C++/DSO or concurrent-exit lifecycle, pthread/TLS
 parity, loader TLS, sysroot, or public x86 support.
+
+`libc-crt1-static-tls` is the parallel private static `verified_artifact`
+under the same still-planned `libc.pthread-tls` family. It links real Rust
+`crt1.o`/`crti.o`/`crtn.o` through an ordinary final static `ET_EXEC` link,
+instead of rcrt1's self-relocating static-PIE route. The direct entry calls
+the shared TLS-first startup, so hidden
+`__crabc_x86_static_tls_bootstrap(original_entry_stack)` succeeds before the
+archive-owned bounded `__libc_start_main` lifecycle. The runner proves an
+archive-free link fails at both boundaries; one real initialized/TBSS/4096-byte
+aligned `PT_TLS` image through preinit, init, main, fixed 32-registration
+no-allocation LIFO `atexit`/`__cxa_atexit` exit, and fini; no-op
+`__cxa_finalize`; one fresh selected worker; and malformed
+`PT_TLS.p_filesz` status-127 rejection. It is not general CRT/startup or libc
+entry ABI, pthread/TLS parity, dynamic or loader TLS, a dynamic loader,
+sysroot, or public x86 support.
 
 `libc-pthread-create-join-tls` is a separately recorded static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its

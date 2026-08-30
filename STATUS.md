@@ -180,6 +180,17 @@ general pthread/TLS parity, dynamic or loader TLS, a general CRT/libc startup
 ABI, broader C11 lifecycle or synchronization, stdio/C++/DSO or concurrent-exit
 lifecycle, sysroot support, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-crt1-static-tls` is the companion private
+ordinary-static composition artifact. It links real Rust
+`crt1.o`/`crti.o`/`crtn.o` into an `ET_EXEC` final executable, proves the
+archive-free link fails at both hidden TLS and archive-startup boundaries, and
+then proves the same TLS-first shared handoff before archive-owned bounded
+preinit/init/main/ordinary-exit/fini. Its two-C-unit initialized/TBSS/4096-byte
+aligned `PT_TLS` image, fixed 32-registration no-allocation LIFO callback
+block, fresh selected worker, and malformed `PT_TLS.p_filesz` status-127
+rejection are private evidence only. It does not complete general CRT or libc
+startup ABI, pthread/TLS parity, loader TLS, a sysroot, or public x86 support.
+
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root
 `pattern::{GlobPath, glob, glob_at}` slices. Their x86 no-std archive proofs

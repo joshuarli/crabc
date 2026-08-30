@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build and audit the bounded Linux/x86-64 static-PIE CRT foundation.
+"""Build and audit bounded Linux/x86-64 static CRT startup objects.
 
 This is deliberately not a target switch for ``build.py``. It produces only
-the target-specific static-PIE objects: ``rcrt1.o``, ``crti.o``, and
-``crtn.o``. Dynamic CRT objects and sysroot installation remain outside this
-native-evidence slice.
+the target-specific ordinary-static and static-PIE objects: ``crt1.o``,
+``rcrt1.o``, ``crti.o``, and ``crtn.o``. Dynamic CRT objects and sysroot
+installation remain outside this native-evidence slice.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ CRT_ROOT = Path(__file__).resolve().parent
 SOURCE_ROOT = CRT_ROOT / "src"
 TARGET = "x86_64-unknown-linux-musl"
 PINNED_TOOLCHAIN = "nightly-2026-07-24"
-DEFAULT_OUTPUT = ROOT / "target" / "crt-x86_64-static-pie"
+DEFAULT_OUTPUT = ROOT / "target" / "crt-x86_64-static"
 
 ELF_MAGIC = b"\x7fELF"
 ELFCLASS64 = 2
@@ -71,6 +71,8 @@ class BuildError(RuntimeError):
 class ObjectSpec:
     name: str
     source_name: str
+    relocation_model: str
+    entry_contract: str
     code_sections: tuple[str, ...]
     defined_symbols: tuple[str, ...]
     undefined_symbols: tuple[str, ...]
@@ -93,16 +95,48 @@ STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
     "__crabc_x86_static_tls_bootstrap",
 )
 
+RELOCATION_ARGUMENTS = {
+    "static": "relocation-model=static",
+    "pic": "relocation-model=pic",
+}
+
 OBJECTS = (
     ObjectSpec(
-        "rcrt1.o",
-        "x86_64_rcrt1.rs",
+        "crt1.o",
+        "x86_64_crt1.rs",
+        "static",
+        "ordinary-static-entry",
         (".text._start",),
         ("_start",),
         STATIC_PIE_LIBC_BOUNDARIES,
     ),
-    ObjectSpec("crti.o", "x86_64_crti.rs", (".init", ".fini"), ("_init", "_fini"), ()),
-    ObjectSpec("crtn.o", "x86_64_crtn.rs", (".init", ".fini"), (), ()),
+    ObjectSpec(
+        "rcrt1.o",
+        "x86_64_rcrt1.rs",
+        "pic",
+        "static-pie-entry",
+        (".text._start",),
+        ("_start",),
+        STATIC_PIE_LIBC_BOUNDARIES,
+    ),
+    ObjectSpec(
+        "crti.o",
+        "x86_64_crti.rs",
+        "static",
+        "frame-fragment",
+        (".init", ".fini"),
+        ("_init", "_fini"),
+        (),
+    ),
+    ObjectSpec(
+        "crtn.o",
+        "x86_64_crtn.rs",
+        "static",
+        "frame-fragment",
+        (".init", ".fini"),
+        (),
+        (),
+    ),
 )
 
 
@@ -159,6 +193,13 @@ def source_path(name: str) -> Path:
     if not path.is_file():
         raise BuildError(f"x86-64 CRT source is missing: {path}")
     return path
+
+
+def relocation_argument(model: str) -> str:
+    try:
+        return RELOCATION_ARGUMENTS[model]
+    except KeyError as error:
+        raise BuildError(f"unsupported x86-64 CRT relocation model: {model}") from error
 
 
 def output_directory(path: Path) -> Path:
@@ -374,6 +415,7 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
     return {
         "path": path.name,
         "sha256": sha256_file(path),
+        "entry_contract": spec.entry_contract,
         "sections": [section.name for section in elf.sections],
         "defined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index != SHN_UNDEF),
         "undefined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index == SHN_UNDEF),
@@ -381,7 +423,9 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
     }
 
 
-def audit_entry_machine_code(path: Path, objdump: str, environment: dict[str, str]) -> tuple[dict[str, object], dict[str, object]]:
+def audit_entry_machine_code(
+    spec: ObjectSpec, path: Path, objdump: str, environment: dict[str, str]
+) -> tuple[dict[str, object], dict[str, object]]:
     command = [objdump, "-d", "--disassemble-symbols=_start", str(path)]
     result = run_command(command, environment)
     normalized = result["stdout"].replace(str(path), f"$CRABC_CRT_X86_64_OUT/{path.name}")
@@ -410,9 +454,13 @@ def audit_entry_machine_code(path: Path, objdump: str, environment: dict[str, st
     )
     required_machine_sequences = {
         "mov r15, rsp": b"\x49\x89\xe7",
+        "xor ebp, ebp": b"\x31\xed",
         "and rsp, -16": b"\x48\x83\xe4\xf0",
-        "syscall": b"\x0f\x05",
     }
+    if spec.entry_contract == "static-pie-entry":
+        required_machine_sequences["syscall"] = b"\x0f\x05"
+    elif spec.entry_contract != "ordinary-static-entry":
+        raise BuildError(f"{path}: machine audit is invalid for {spec.entry_contract}")
     missing = [
         instruction
         for instruction, sequence in required_machine_sequences.items()
@@ -430,10 +478,11 @@ def audit_entry_machine_code(path: Path, objdump: str, environment: dict[str, st
     if forbidden:
         raise BuildError(f"{path}: early entry has forbidden GOT/TLS relocations: {forbidden}")
     if R_X86_64_PLT32 not in relocation_types:
-        raise BuildError(f"{path}: static-PIE entry lacks its direct post-relocation handoff")
+        raise BuildError(f"{path}: startup entry lacks its direct Rust handoff")
     return (
         {
             "status": "verified",
+            "entry_contract": spec.entry_contract,
             "disassembly_sha256": hashlib.sha256(normalized.encode()).hexdigest(),
             "required_instructions": list(required_machine_sequences),
             "entry_symbol_size": start.size,
@@ -486,7 +535,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 "-C",
                 "debug-assertions=off",
                 "-C",
-                "relocation-model=pic",
+                relocation_argument(spec.relocation_model),
                 "-C",
                 "code-model=small",
                 "-C",
@@ -514,8 +563,10 @@ def build(args: argparse.Namespace) -> dict[str, object]:
             if not destination.is_file():
                 raise BuildError(f"rustc reported success but did not create {destination}")
             inspection = inspect_object(spec, destination)
-            if spec.name == "rcrt1.o":
-                machine_contract, machine_record = audit_entry_machine_code(destination, objdump, environment)
+            if spec.entry_contract in {"ordinary-static-entry", "static-pie-entry"}:
+                machine_contract, machine_record = audit_entry_machine_code(
+                    spec, destination, objdump, environment
+                )
                 records.append(machine_record)
                 write_json(commands_path, records)
                 inspection["entry_machine_contract"] = machine_contract
@@ -527,6 +578,8 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 }
             )
             object_records[spec.name] = inspection
+        if object_records["crt1.o"]["sha256"] == object_records["rcrt1.o"]["sha256"]:
+            raise BuildError("crt1.o and rcrt1.o are byte-identical; ordinary and self-relocating entry differ")
     except Exception:
         write_json(commands_path, records)
         raise
@@ -534,7 +587,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     report = {
         "schema": 1,
         "target": TARGET,
-        "scope": "bounded-static-pie-bootstrap",
+        "scope": "bounded-static-startup",
         "toolchain": PINNED_TOOLCHAIN,
         "objects": object_records,
         "commands": {"name": commands_path.name, "sha256": sha256_file(commands_path)},
@@ -547,7 +600,7 @@ def main() -> int:
     try:
         report = build(parse_args())
     except BuildError as error:
-        print(f"crabc x86-64 static-PIE CRT build failed: {error}", file=sys.stderr)
+        print(f"crabc x86-64 static CRT build failed: {error}", file=sys.stderr)
         return 1
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0
