@@ -216,6 +216,7 @@ posix_fallocate
 posix_madvise
 ppoll
 pread
+preadv
 prlimit
 pselect
 pthread_cond_broadcast
@@ -240,12 +241,14 @@ pthread_once
 pthread_self
 pthread_setspecific
 pwrite
+pwritev
 qsort
 qsort_r
 raise
 read
 readahead
 readlink
+readv
 recv
 recvfrom
 remove
@@ -364,3 +367,4 @@ wait
 waitid
 waitpid
 write
+writev

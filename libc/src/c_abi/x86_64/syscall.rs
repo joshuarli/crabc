@@ -8,7 +8,8 @@
 //! scalar identity, group/session, and mask syscalls; the selected
 //! descriptor-entry leaf uses `open`, `openat`, and its private post-open
 //! `fcntl` request; the selected descriptor-I/O leaf uses its named transfer,
-//! lifecycle, and pipe syscalls;
+//! lifecycle, and pipe syscalls; the selected vector-I/O leaf uses readv,
+//! writev, and positioned split-offset vector transfer syscalls;
 //! the selected filesystem-access leaf uses direct `access`, legacy
 //! `faccessat`, and flags-bearing `faccessat2` requests;
 //! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
@@ -419,4 +420,8 @@ pub(crate) const SYS_CLONE: i64 = 56;
 pub(crate) const SYS_PREAD64: i64 = 17;
 pub(crate) const SYS_PWRITE64: i64 = 18;
 pub(crate) const SYS_PWRITEV2: i64 = 328;
+pub(crate) const SYS_READV: i64 = 19;
+pub(crate) const SYS_WRITEV: i64 = 20;
+pub(crate) const SYS_PREADV: i64 = 295;
+pub(crate) const SYS_PWRITEV: i64 = 296;
 pub(crate) const SYS_FACCESSAT2: i64 = 439;

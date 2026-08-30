@@ -236,6 +236,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
+./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
@@ -369,6 +370,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sendfile
 ./scripts/dev-x86_64.sh libc-posix-fallocate
 ./scripts/dev-x86_64.sh libc-filesystem-capacity
+./scripts/dev-x86_64.sh libc-vector-io
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
@@ -704,6 +706,14 @@ LP64 `fsid_t`/`statfs`/`statvfs` layouts and mount flags, C++ C-linkage
 spelling, and LF64-only function/type macro aliases. It is compile-only
 declaration/layout/linkage evidence, not archive linkage, runtime behavior,
 filesystem support, or public x86 support.
+
+`vector-io-header-abi` compiles fourteen project/pinned-musl C/C++ profiles
+for `<sys/uio.h>`. It proves only the x86 LP64 `iovec` layout and
+`UIO_MAXIOV`, unconditional `readv`/`writev`, GNU/BSD `preadv`/`pwritev`,
+GNU-only v2/RWF/process-vm declarations and hiding, GNU/BSD LF64 aliases, and
+unmangled C++ spelling. It is compile-only declaration/layout/linkage
+evidence, not archive linkage, vector-I/O runtime behavior, or public x86
+support.
 
 `flock-header-abi` compiles project and pinned-musl C/C++ `<sys/file.h>`
 declarations, including the direct `flock` signature, x86 operation bits, and
@@ -2365,6 +2375,17 @@ errno success, and direct ENOENT/EBADF results. It does not select capacity or
 quota meaning, filesystem accounting/policy, pathname behavior, durability,
 cancellation, general runtime, or public x86 support.
 
+`libc-vector-io` is a separately recorded `static-c-vector-io`
+`verified_artifact` gate over the same archive, not a vector-I/O capability.
+Its fourteen-profile `<sys/uio.h>` C/C++ matrix runs before pinned-musl and
+`-nostdlib -static` fixture execution for exactly `readv`, `writev`, `preadv`,
+and `pwritev`. It proves x86 vector ABI/register paths, segment order,
+unchanged positioned offsets, kernel invalid-count/signed-offset errors, and a
+sparse offset above 4 GiB independently observed with raw `lseek`. It retains
+musl's selected `pwritev` `-1 -> -2` and append-protection boundary, while
+deliberately deferring cancellation. It does not select v2/process-vm runtime,
+scalar descriptor I/O, stdio, general runtime, or public x86 support.
+
 `libc-ioctl` is a separately recorded `static-c-generic-ioctl`
 `verified_artifact` gate over the same archive, not generic device support.
 After the direct `sys/ioctl.h` C/C++ matrix and a pinned-musl execution, its
@@ -3038,6 +3059,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sendfile`,
 `libc-posix-fallocate`,
 `libc-filesystem-capacity`,
+`libc-vector-io`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,

@@ -291,6 +291,18 @@ mapping), stale errno on success, and direct ENOENT/EBADF errors. It does not
 select capacity/quota/accounting policy, pathname behavior, general filesystem
 support, family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-vector-io` is a separate private
+`static-c-vector-io` artifact inside the same planned family. Its fourteen
+project-header/pinned-musl C/C++ `<sys/uio.h>` profiles prove only x86 LP64
+`iovec`, `UIO_MAXIOV`, base and GNU/BSD-positioned declarations, GNU-only
+v2/RWF/process-vm declarations and hiding, LF64 aliases, and unmangled C++
+linkage. Its pinned-musl/freestanding-static fixture proves only direct
+`readv`/`writev`/`preadv`/`pwritev`: segment order, unchanged positioned
+offsets, invalid count/signed-offset errno results, an independently observed
+offset above 4 GiB, and musl's selected pwritev append boundary. It does not
+select cancellation, v2/process-vm runtime, scalar descriptor I/O, stdio,
+family/platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

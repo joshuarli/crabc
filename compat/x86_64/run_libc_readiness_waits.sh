@@ -131,8 +131,7 @@ for symbol in __errno_location close read write pipe sigaction sigemptyset \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in readv writev \
-    preadv pwritev splice vmsplice tee copy_file_range fork _Fork \
+for unselected in splice vmsplice tee copy_file_range fork _Fork \
     vfork clone execve tgkill alarm sleep usleep \
     sigaltstack pthread_sigmask signalfd syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

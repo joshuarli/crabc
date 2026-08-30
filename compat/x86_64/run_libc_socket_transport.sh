@@ -131,8 +131,8 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
         || fail "archive does not define ${symbol}"
 done
 for unselected in getsockopt setsockopt sockatmark if_nametoindex \
-    if_indextoname sendmsg recvmsg sendmmsg recvmmsg readv writev preadv \
-    pwritev getaddrinfo freeaddrinfo getnameinfo \
+    if_indextoname sendmsg recvmsg sendmmsg recvmmsg getaddrinfo freeaddrinfo \
+    getnameinfo \
     gethostbyname gethostbyaddr fork _Fork vfork clone execve \
     pthread_cancel malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

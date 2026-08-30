@@ -294,6 +294,161 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_vector_io_header_and_static_c_abi_stay_explicit(self) -> None:
+        """Vector I/O remains one private header/archive vertical slice."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "vector_io.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "vector_io_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "vector_io_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_vector_io_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_vector_io_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_vector_io_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_vector_io.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "vector_io.rs"]', static_root)
+        for required in (
+            "SYS_READV: i64 = 19",
+            "SYS_WRITEV: i64 = 20",
+            "SYS_PREADV: i64 = 295",
+            "SYS_PWRITEV: i64 = 296",
+        ):
+            self.assertIn(required, syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/unistd/readv.c",
+            "src/unistd/pwritev.c",
+            'extern "C" fn readv',
+            'extern "C" fn writev',
+            'extern "C" fn preadv',
+            'extern "C" fn pwritev',
+            "raw_syscall::SYS_READV",
+            "raw_syscall::SYS_PWRITEV2",
+            "offset == -1",
+            "RWF_NOAPPEND",
+            "EOPNOTSUPP",
+            "F_GETFL",
+            "O_APPEND",
+        ):
+            self.assertIn(required, implementation)
+        self.assertNotIn("crabc_core", implementation)
+
+        for probe in (header_c, header_cpp):
+            for required in (
+                "sys/uio.h",
+                "struct iovec",
+                "UIO_MAXIOV == 1024",
+                "preadv64",
+                "pwritev64",
+                "off64_t",
+                "preadv2",
+                "pwritev2",
+                "RWF_NOAPPEND",
+            ):
+                self.assertIn(required, probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=14",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-bsd",
+            "cxx17-bsd",
+            "c11-gnu",
+            "cxx17-gnu",
+            "c11-largefile64",
+            "cxx17-largefile64",
+            "c11-bsd-largefile64",
+            "cxx17-bsd-largefile64",
+            "c11-gnu-largefile64",
+            "cxx17-gnu-largefile64",
+            "positioned-hidden",
+            "gnu-v2-hidden",
+            "gnu-process-vm-hidden",
+            "gnu-rwf-hidden",
+            "retained a mangled vector-I/O reference",
+            "features.h",
+            "bits/alltypes.h",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_readv == 19",
+            "SYS_writev == 20",
+            "SYS_preadv == 295",
+            "SYS_pwritev == 296",
+            "writev(descriptor, write_parts, 2)",
+            "pwritev(descriptor, positioned_parts, 2, 1)",
+            "preadv(descriptor, read_parts, 2, 0)",
+            "readv(descriptor, read_second_parts, 2)",
+            "((off_t)1 << 32) + 17",
+            "SEEK_END) != high_offset + 1",
+            "CRABC_VECTOR_IO_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_vector_io_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_vector_io_header_abi.sh",
+            "-nostdlib -static",
+            "assert_named_syscall readv 13",
+            "assert_named_syscall writev 14",
+            "assert_named_syscall preadv 127",
+            "for syscall_word in 148 48 128; do",
+            "pwritev lacks Linux syscall ${syscall_word}",
+        ):
+            self.assertIn(required, artifact_runner)
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        for symbol in ("readv", "writev", "preadv", "pwritev"):
+            self.assertIn(symbol, static_export_names)
+        self.assertNotIn("preadv64", static_export_names)
+        self.assertNotIn("pwritev64", static_export_names)
+        for command in (
+            "./scripts/dev-x86_64.sh vector-io-header-abi",
+            "./scripts/dev-x86_64.sh libc-vector-io",
+        ):
+            self.assertIn(command, parity_ledger)
+        for required in (
+            "run_vector_io_header_abi()",
+            "run_libc_vector_io_probe()",
+            "/workspace/compat/x86_64/run_vector_io_header_abi.sh",
+            "/workspace/compat/x86_64/run_libc_vector_io.sh",
+            '    vector-io-header-abi)\n        [ "$#" -eq 0 ] || fail "vector-io-header-abi takes no arguments"',
+            '    libc-vector-io)\n        [ "$#" -eq 0 ] || fail "libc-vector-io takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -327,6 +482,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
+            "vector-io-header-abi",
             "libc-crt1-static-tls",
             "linux-5-10-uapi",
             "candidate-header-closure",
@@ -352,6 +508,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-vector-io",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
         )

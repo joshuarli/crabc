@@ -19,7 +19,7 @@
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
 //! regular-file sendfile transfer, mode-zero POSIX range allocation,
-//! descriptor advice, timestamp updates, descriptor-I/O, and
+//! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
@@ -168,6 +168,8 @@ mod descriptor_advice;
 mod ioctl;
 #[path = "descriptor_io.rs"]
 mod descriptor_io;
+#[path = "vector_io.rs"]
+mod vector_io;
 #[path = "process_resources.rs"]
 mod process_resources;
 #[path = "system_configuration.rs"]

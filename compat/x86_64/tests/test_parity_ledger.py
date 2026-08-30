@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 66)
+        self.assertEqual(report["verified_artifact_count"], 67)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1313,7 +1313,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 45
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 46
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -1334,6 +1334,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn("src/stat/statvfs.c", str(filesystem_capacity["oracle"]))
         self.assertIn("public x86 support", filesystem_capacity["description"])
+        vector_io = artifacts_by_id["static-c-vector-io"]
+        assert isinstance(vector_io, dict)
+        self.assertNotIn("capabilities", vector_io)
+        for owner in (
+            "libc/src/c_abi/x86_64/vector_io.rs",
+            "compat/x86_64/run_vector_io_header_abi.sh",
+            "compat/x86_64/run_libc_vector_io.sh",
+        ):
+            self.assertIn(owner, vector_io["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in vector_io["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-vector-io"},
+        )
+        self.assertIn("src/unistd/pwritev.c", str(vector_io["oracle"]))
+        self.assertIn("above 4 GiB", vector_io["description"])
+        self.assertIn("public x86 support", vector_io["description"])
         signal_control = artifacts_by_id["static-c-signal-control"]
         assert isinstance(signal_control, dict)
         self.assertNotIn("capabilities", signal_control)
