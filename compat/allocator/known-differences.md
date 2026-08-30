@@ -1276,8 +1276,11 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   separate `native_post_exit_terminal_proof_fork_gate` regression proves the
   same terminal proof remains fork-nonquiescent while its matched B lifecycle
   is still live; the child disables rather than repairing the copied route.
-  exact frees are serialized; this is not a concurrent route or general
-  pointer-routing claim. The
+  The audited `native_post_exit_with_local_session` route additionally proves
+  that B's parked local session holds both admissions through A's terminal
+  release, then leaves only B's successor-route admission until C completes
+  its own typed terminal finish. Exact frees are serialized; this is not a
+  concurrent route or general pointer-routing claim. The
   pinned AArch64 `allocator --churn` fixture executes its four existing routes
   once per deterministic seed-shuffled cycle for 128 cycles from seed
   `0xd1b54a32d192ed03` under its 30-second watchdog without changing the

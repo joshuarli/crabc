@@ -1329,9 +1329,11 @@ page, allocator, or release capability.
 own parked local session before B releases A's exact aggregate clients. Its
 exact usable-size queries, one bounded detached replacement, and last A free
 all run beside that parked session; the latter transfers the terminal
-completion beside it. B then detaches its still-live local client into B's
-successor route. A fresh C releases that successor before ticket zero can
-reactivate. The selected owner-exit C fixture repeats the
+completion beside it. Its feature-gated scalar audit observes two admissions
+until B completes its own owner exit, then one admission for B's successor
+route until C terminally releases and finishes it. B then detaches its
+still-live local client into B's successor route. A fresh C releases that
+successor before ticket zero can reactivate. The selected owner-exit C fixture repeats the
 pre-existing-local-session query/free boundary through the shadow ABI and
 drains B locally before teardown.
 `crabc-mimalloc/tests/native_live_remote_free.rs` and

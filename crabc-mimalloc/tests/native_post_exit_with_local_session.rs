@@ -8,6 +8,9 @@ use crabc_mimalloc::__crabc_runtime::{
     ticket_zero_free,
 };
 
+#[cfg(feature = "native-runtime-test-audit")]
+use crabc_mimalloc::__crabc_runtime::native_runtime_fork_admission_test_audit;
+
 const OWNER_EXIT_CLIENT_COUNT: usize = 6;
 const OWNER_EXIT_REQUESTS: [usize; OWNER_EXIT_CLIENT_COUNT] = [
     37,
@@ -97,9 +100,22 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
         .join()
         .expect("A completes its source owner-exit boundary");
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        1,
+        "A's detached aggregate keeps its admission while B has not attached"
+    );
+
     let (local_sender, local_receiver) = mpsc::sync_channel(0);
     let releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            2,
+            "B's parked local session attaches beside A's detached-route admission"
+        );
         let local = match native_allocate_aligned(53, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("B establishes its own parked local native session"),
@@ -151,6 +167,12 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
                 "B can consume A's exact post-exit client while retaining its own session"
             );
         }
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            2,
+            "A's terminal proof stays admitted beside B's parked local session before B exits"
+        );
         local_sender
             .send(local.as_ptr().addr())
             .expect("B publishes only its C-shaped local client before B exits");
@@ -158,6 +180,12 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
             "B tears down its own live session into a separate typed route before it settles A's proof"
+        );
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            1,
+            "B's successor route retains B's admission after B's finish consumes only A's proof"
         );
     });
     let local = local_receiver
@@ -167,8 +195,21 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
         .join()
         .expect("B completes both its local and detached-route lifecycles");
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        1,
+        "B's successor route remains the only later-worker admission after B joins"
+    );
+
     let final_releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            2,
+            "C attaches beside B's successor-route admission"
+        );
         // SAFETY: B detached this exact local address into its own typed
         // native route after B had terminally released A's route.
         let local = unsafe { core::ptr::NonNull::new_unchecked(local as *mut u8) };
@@ -181,6 +222,12 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
             "C settles B's typed completion after its own no-page finish"
+        );
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            0,
+            "C's normal finish releases B's successor proof only after its terminal route free"
         );
     });
     final_releaser

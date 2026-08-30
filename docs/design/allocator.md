@@ -1458,9 +1458,10 @@ route before B completes its ordinary attachment finish. A fresh C then
 releases that successor; neither route's parked count or admission can release
 early. A prepared B exit and a B that already holds a completion remain
 rejected. The direct `native_post_exit_with_local_session` regression proves
-the query/free/replacement coexistence boundary; the selected owner-exit C
-fixture proves the query/free boundary without exposing a route address, ledger,
-page, or allocator capability.
+the query/free/replacement coexistence boundary and, under its scalar audit,
+the `A + B -> B-successor -> none` admission sequence; the selected owner-exit
+C fixture proves the query/free boundary without exposing a route address,
+ledger, page, or allocator capability.
 
 The direct `native_post_exit_registry_high_water` regression enables a
 test-only scalar audit, establishes three simultaneously detached routes, and
