@@ -24,6 +24,49 @@ fn assert_candidate_free_uses_native_shadow() {
     );
 }
 
+fn assert_candidate_depends_only_on_selected_libc(binary: &std::path::Path) {
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
+    let selected_libc = root.join("target/debug/libc.so");
+    assert!(
+        selected_libc.is_file(),
+        "selected native-shadow libc is missing: {}",
+        selected_libc.display(),
+    );
+
+    let output = Command::new("readelf")
+        .args(["--dynamic", "--wide"])
+        .arg(binary)
+        .output()
+        .expect("failed to inspect the selected candidate fixture dependencies");
+    assert!(
+        output.status.success(),
+        "could not inspect selected candidate fixture dependencies {}: {}",
+        binary.display(),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let dynamic = String::from_utf8_lossy(&output.stdout);
+    let needed: Vec<_> = dynamic
+        .lines()
+        .filter_map(|line| {
+            let (_, field) = line.split_once("(NEEDED)")?;
+            let (_, name) = field.split_once('[')?;
+            Some(name.split_once(']')?.0)
+        })
+        .collect();
+    assert_eq!(
+        needed,
+        vec!["libc.so"],
+        "candidate fixture dependencies are not restricted to the selected crabc libc: {needed:?}"
+    );
+    assert!(
+        !dynamic
+            .lines()
+            .any(|line| line.contains("(RPATH)") || line.contains("(RUNPATH)")),
+        "candidate fixture has RPATH/RUNPATH that could override target/debug/libc.so"
+    );
+}
+
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = root.join("tests/fixtures/native_mimalloc_initial_post_exit_free_test.c");
@@ -73,6 +116,7 @@ fn native_mimalloc_initial_post_exit_free_matches_pinned_musl() {
     compile_fixture(&candidate, true);
 
     assert_candidate_free_uses_native_shadow();
+    assert_candidate_depends_only_on_selected_libc(&candidate);
 
     let reference_output = run(&reference, false);
     let candidate_output = run(&candidate, true);
