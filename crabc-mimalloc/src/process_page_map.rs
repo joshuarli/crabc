@@ -4,8 +4,13 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/page-map.c:228-365`
-// (`mi_page_map_init_once` and `_mi_page_map_init`) and
+// Source map: pinned mimalloc v3.5.0 `include/mimalloc/internal.h:753-769,
+// 1000-1005,1112-1128` (checked two-level lookup, interior-pointer flag, and
+// usable-block geometry), `src/page-map.c:468-511` (range registration and
+// checked pointer lookup), `src/free.c:93-184` (canonical aligned-block
+// recovery and free pointer dispatch), `src/alloc.c:364-439` (usable-size and
+// realloc pointer consumers), `src/page-map.c:228-365`
+// (`mi_page_map_init_once` and `_mi_page_map_init`), and
 // `src/subproc.c:253-255` (the main-subprocess process-lifetime ownership of
 // the global page map).
 
@@ -37,11 +42,140 @@ use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::MemoryConfig;
 use crate::page_map::{PageMap, PageMapHeader, PageMapRoot};
 use crate::subproc::MainSubprocess;
-use crate::types::Page;
+use crate::types::{PAGE_HAS_INTERIOR_POINTERS, Page};
 
 const COLD: u8 = 0;
 const READY: u8 = 1;
 const POISONED: u8 = 2;
+
+/// The `mi_page_t` prefix read by the pointer-only source boundary.
+///
+/// `Page` is `repr(C)` and its source-compatible definition owns these first
+/// fields in this order. This private prefix deliberately uses raw fields
+/// instead of forming `&Page`: a foreign free, usable-size query, or realloc
+/// lookup may run while the owning thread changes disjoint ordinary page
+/// fields. `block_size` and `page_offset` are immutable from page publication
+/// through final unregistration, while `xthread_id` is the source atomic flag
+/// word. If the source `Page` prefix changes, this projection must change in
+/// the same commit.
+#[repr(C)]
+struct PagePointerGeometry {
+    _self: AtomicPtr<Page>,
+    xthread_id: AtomicUsize,
+    _free: *mut (),
+    _used: usize,
+    _local_free: *mut (),
+    block_size: usize,
+    page_offset: usize,
+}
+
+/// Pointer-derived facts for one current native allocation.
+///
+/// This is an observation, not page ownership. In particular, carrying this
+/// value does not permit ordinary page mutation, PageMap registration, or
+/// final release. Its raw addresses remain usable only while the original
+/// allocation lifetime that created it remains live.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LiveAllocationPointer {
+    page: NonNull<Page>,
+    client: NonNull<u8>,
+    canonical_block: NonNull<u8>,
+    block_size: usize,
+    usable_size: usize,
+    has_interior_pointers: bool,
+}
+
+impl LiveAllocationPointer {
+    /// Returns the source page selected by the two-level PageMap.
+    #[inline]
+    pub(crate) const fn page(self) -> NonNull<Page> { self.page }
+
+    /// Returns the exact client pointer supplied to the lookup.
+    #[inline]
+    pub(crate) const fn client(self) -> NonNull<u8> { self.client }
+
+    /// Returns the source free-list block for `client`.
+    ///
+    /// This equals [`Self::client`] for normal pages and is the aligned block
+    /// base for pages whose source flag permits interior allocation pointers.
+    #[inline]
+    pub(crate) const fn canonical_block(self) -> NonNull<u8> { self.canonical_block }
+
+    /// Returns the fixed source block size captured during classification.
+    #[inline]
+    pub(crate) const fn block_size(self) -> usize { self.block_size }
+
+    /// Returns the source usable extent beginning at the exact client pointer.
+    #[inline]
+    pub(crate) const fn usable_size(self) -> usize { self.usable_size }
+
+    /// Reports the source page-wide interior-pointer flag.
+    #[inline]
+    pub(crate) const fn has_interior_pointers(self) -> bool { self.has_interior_pointers }
+}
+
+/// Classifies one current allocation after its source PageMap lookup.
+///
+/// # Safety
+///
+/// `page` must be initialized, registered for `client`, and remain address
+/// stable through the returned observation's last use. `client` must be a
+/// current native allocation from that page. Its allocation lifetime must
+/// prevent source retirement, PageMap unregistration, metadata reuse, and
+/// mapping release until any subsequent free publication, usable-size read, or
+/// realloc decision consumes the returned facts. The caller may not treat
+/// `None` as validation of an arbitrary C pointer.
+#[inline]
+unsafe fn classify_live_allocation_in_page(
+    page: NonNull<Page>,
+    client: NonNull<u8>,
+) -> Option<LiveAllocationPointer> {
+    let geometry = page.as_ptr().cast::<PagePointerGeometry>();
+    // SAFETY: the caller proves this initialized page remains stable. This is
+    // a reference to the one atomic source field only; it never creates a
+    // shared `Page` reference beside the owner's ordinary field mutation.
+    let xthread_id = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
+    let has_interior_pointers =
+        xthread_id.load(Ordering::Relaxed) & PAGE_HAS_INTERIOR_POINTERS != 0;
+    // SAFETY: source page publication fixes these geometry fields before the
+    // allocation becomes visible. The caller's live-client proof keeps the
+    // page from reuse or final release, so raw reads do not overlap a write.
+    let block_size = unsafe { (*geometry).block_size };
+    let page_offset = unsafe { (*geometry).page_offset };
+    if block_size == 0 {
+        return None;
+    }
+    let page_start = page.as_ptr().addr().checked_add(page_offset)?;
+    let client_address = client.as_ptr().addr();
+    let canonical_block = if has_interior_pointers {
+        let block_address = crate::aligned::recover_block_start(
+            client_address,
+            page_start,
+            block_size,
+        )?;
+        let adjustment = client_address.checked_sub(block_address)?;
+        // SAFETY: the source recovery rounds an exact live client down within
+        // its same source block. Retaining `client` provenance while subtracting
+        // the checked adjustment avoids manufacturing a pointer from an integer.
+        NonNull::new(client.as_ptr().wrapping_sub(adjustment))?
+    } else {
+        client
+    };
+    let usable_size = crate::aligned::usable_size(
+        block_size,
+        client_address,
+        canonical_block.as_ptr().addr(),
+    )?;
+
+    Some(LiveAllocationPointer {
+        page,
+        client,
+        canonical_block,
+        block_size,
+        usable_size,
+        has_interior_pointers,
+    })
+}
 
 /// Process-static storage for the one main-subprocess global page map.
 ///
@@ -353,6 +487,51 @@ impl ProcessPageMapLease {
         // of this source-plain lookup.
         let page = unsafe { self.storage.page_map_ref().checked_lookup(client.as_ptr()) };
         Ok(NonNull::new(page))
+    }
+
+    /// Derives the common source page, canonical block, and usable extent for
+    /// one current native allocation without taking a PageMap mutation lease.
+    ///
+    /// This is the shared pointer-centered boundary for the future general
+    /// `free`, usable-size, and realloc paths. It performs the pinned checked
+    /// two-level PageMap lookup, then applies `mi_free_generic_*`'s
+    /// `mi_page_has_interior_pointers`/`_mi_page_ptr_unalign` geometry before
+    /// returning the source usable extent. It is constant-time in the page-map
+    /// geometry and never scans owners, clients, or routes.
+    ///
+    /// A normal lookup deliberately does not acquire `page_lifecycle_lock`.
+    /// The valid-live-client lifetime is the exclusion proof for this exact
+    /// plain entry: the page stays registered and initialized until its client
+    /// is consumed locally or a remote producer has completed publication.
+    /// Structural registration and unregistration retain the separate long
+    /// mutation lease.
+    ///
+    /// # Safety
+    ///
+    /// `client` must be an exact current allocation of the native runtime.
+    /// The caller must retain that allocation through every use of the
+    /// returned [`LiveAllocationPointer`], including any free publication or
+    /// reallocation copy decision. This boundary does not validate arbitrary C
+    /// pointers and grants no ordinary page, PageMap mutation, or final-release
+    /// authority.
+    pub(crate) unsafe fn classify_live_allocation_pointer(
+        self,
+        client: NonNull<u8>,
+    ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
+        self.ensure_ready()?;
+        if self.storage.root.load().is_none() {
+            return Err(ProcessPageMapError::Poisoned);
+        }
+        // SAFETY: the exact-live-client caller proof excludes an overlapping
+        // source-plain register/unregister write for this arena slice.
+        let page = unsafe { self.storage.page_map_ref().checked_lookup(client.as_ptr()) };
+        let Some(page) = NonNull::new(page) else {
+            return Ok(None);
+        };
+        // SAFETY: the same live-client lifetime keeps the selected page
+        // metadata initialized, registered, and unreused while its immutable
+        // geometry is projected without a whole-Page reference.
+        Ok(unsafe { classify_live_allocation_in_page(page, client) })
     }
 
     /// Starts the one explicit mutable PageMap lifecycle for this process
@@ -891,7 +1070,13 @@ static PROCESS_PAGE_MAP: ProcessPageMapStorage = ProcessPageMapStorage::new();
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ARENA_SLICE_SIZE;
     use crate::os::{PageSize, fault};
+    use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData};
+    use core::alloc::Layout;
+    use core::mem::{align_of, size_of};
+    use core::ptr::NonNull;
+    use std::alloc::{alloc_zeroed, dealloc};
     use std::sync::{Arc, Barrier};
     use std::thread;
 
@@ -902,6 +1087,115 @@ mod tests {
             false,
             false,
         )
+    }
+
+    #[test]
+    fn live_pointer_classification_uses_the_registered_page_without_a_mutation_lease() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let lease = storage.initialize(memory_config(), subprocess).unwrap();
+
+        let thread_id = LiveThreadId::new(16).expect("the fixture owner is source-valid");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_bootstrap_exclusive(thread_id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+
+        const BLOCK_SIZE: usize = 48;
+        const RESERVED: u16 = 4;
+        let page_offset = (size_of::<Page>() + align_of::<usize>() - 1) & !(align_of::<usize>() - 1);
+        let layout = Layout::from_size_align(ARENA_SLICE_SIZE, ARENA_SLICE_SIZE)
+            .expect("one arena-slice fixture layout is valid");
+        // SAFETY: `layout` has nonzero size and valid alignment. The matching
+        // deallocation follows page-map unregistration below.
+        let base = NonNull::new(unsafe { alloc_zeroed(layout) })
+            .expect("the focused pointer fixture allocates one arena slice");
+        let page = base.cast::<Page>();
+        // SAFETY: the aligned fixture owns this entire arena slice, including
+        // Page metadata at its base and the complete block area after
+        // `page_offset`. No PageMap entry observes it before publication.
+        let mut page = unsafe {
+            Page::publish_fresh_exclusive_at(
+                page,
+                &mut theap,
+                &mut heap,
+                thread_id,
+                BLOCK_SIZE,
+                page_offset,
+                RESERVED,
+                0,
+                false,
+                MemoryId::external(base.as_ptr(), ARENA_SLICE_SIZE, true, false, true),
+            )
+        }
+        .expect("the fixture page geometry is source-valid");
+        // SAFETY: the page's complete block area is inside the live fixture
+        // allocation and starts at the source page offset.
+        let block = NonNull::new(unsafe { base.as_ptr().add(page_offset + BLOCK_SIZE) })
+            .expect("the fixture block address is non-null");
+        // SAFETY: the interior client remains inside the second exact source
+        // block and its lifetime pins the registered page for this test.
+        let client = NonNull::new(unsafe { block.as_ptr().add(5) })
+            .expect("the fixture interior client address is non-null");
+
+        let lifecycle = lease
+            .begin_page_lifecycle()
+            .expect("the setup owns the sole structural map mutation lease");
+        let page_map = lifecycle.page_map().unwrap();
+        // SAFETY: the held lifecycle serializes this entry write, and the page
+        // fixture stays valid until the matching unregister below.
+        unsafe {
+            page_map
+                .register_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE, page)
+                .expect("the live block area is registered before client publication");
+        }
+
+        // SAFETY: `block` is an exact current normal allocation from the
+        // registered source page. The held mutation lease proves this read
+        // path cannot have obtained that structural lease for itself.
+        let normal = unsafe { lease.classify_live_allocation_pointer(block) }
+            .expect("the process root stays ready")
+            .expect("the exact normal client resolves through the source page map");
+        assert_eq!(normal.page(), page);
+        assert_eq!(normal.client(), block);
+        assert_eq!(normal.canonical_block(), block);
+        assert!(!normal.has_interior_pointers());
+        assert_eq!(normal.block_size(), BLOCK_SIZE);
+        assert_eq!(normal.usable_size(), BLOCK_SIZE);
+
+        // SAFETY: the fixture owns the page exclusively until map
+        // unregistration, so this source flag can be published before the
+        // read-only interior-client operation below.
+        unsafe { page.as_mut() }.set_has_interior_pointers(true);
+        // SAFETY: `client` is an exact current interior allocation from this
+        // registered page. Holding `lifecycle` proves this operation did not
+        // acquire the global structural mutation lease to perform its lookup.
+        let pointer = unsafe { lease.classify_live_allocation_pointer(client) }
+            .expect("the process root stays ready")
+            .expect("the exact live client resolves through the source page map");
+        assert_eq!(pointer.page(), page);
+        assert_eq!(pointer.client(), client);
+        assert_eq!(pointer.canonical_block(), block);
+        assert!(pointer.has_interior_pointers());
+        assert_eq!(pointer.block_size(), BLOCK_SIZE);
+        assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
+
+        // SAFETY: the pointer boundary is finished, no producer can use this
+        // test-only page, and the held lifecycle serializes the clear.
+        unsafe {
+            page_map
+                .unregister_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE)
+                .expect("the fixture registration clears before metadata release");
+        }
+        lifecycle.finish().expect("the empty map lifecycle releases");
+        // SAFETY: the Page was initialized in the fixture allocation and no
+        // PageMap lookup remains after unregistration; the layout exactly
+        // matches the allocation above.
+        unsafe {
+            core::ptr::drop_in_place(page.as_ptr());
+            dealloc(base.as_ptr(), layout);
+        }
     }
 
     #[test]
