@@ -110,9 +110,10 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # C ABI verticals for `sys/stat.h` metadata, credential setters/observation, bootstrap
 # primitives, narrow simple signal control, bounded process-signal execution,
 # one bounded pthread create/exit/
-# join initial-TLS worker, its selected process-private normal mutex and
-# condition siblings, their distinct C11 plain-sync adapter, and its typed
-# static C11 create/exit/join sibling,
+# join initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS
+# sibling, selected process-private normal mutex and condition siblings, their
+# distinct C11 plain-sync adapter, and its typed static C11 create/exit/join
+# sibling,
 # named termios control, selected
 # process context, child reaping, C11 immediate termination, bounded static
 # startup/ordinary exit, callback algorithms,
@@ -163,6 +164,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),
     Path("libc/src/c_abi/x86_64/pthread_once.rs"),
     Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_tsd.rs"),
     Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_mutex.rs"),
     Path("libc/src/c_abi/x86_64/pthread_cond.rs"),
@@ -3544,6 +3546,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_execution.rs"]',
         '#[path = "pthread_identity.rs"]',
         '#[path = "pthread_create_join.rs"]',
+        '#[path = "pthread_tsd.rs"]',
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',
         '#[path = "c11_thread_lifecycle.rs"]',
@@ -3709,7 +3712,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "release_thread",
         "STATIC_INITIAL_TLS_STATE",
         "STATIC_INITIAL_TLS_PLAN",
+        "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER",
+        "STATIC_INITIAL_TLS_MAIN_THREAD_ID",
         "TLS_STATE_READY",
+        "is_initial_thread_pointer",
+        "raw_syscall::SYS_GETTID",
         "__crabc_x86_static_tls_bootstrap",
         ".hidden __crabc_x86_static_tls_bootstrap",
     ):
@@ -3718,6 +3725,60 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/static_tls.rs: Static Initial TLS v1 "
                 f"owner is missing {required!r}"
             )
+    identity_bootstrap_marker = "pub(super) unsafe fn bootstrap_initial_thread"
+    identity_bootstrap_end = "/// Private freestanding entry hook"
+    if (
+        identity_bootstrap_marker not in static_tls_text
+        or identity_bootstrap_end not in static_tls_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/static_tls.rs: selected-main identity "
+            "bootstrap boundary is missing"
+        )
+    else:
+        identity_bootstrap_text = static_tls_text.split(
+            identity_bootstrap_marker, 1
+        )[1].split(identity_bootstrap_end, 1)[0]
+        ready_store = "STATIC_INITIAL_TLS_STATE.store(TLS_STATE_READY"
+        for identity_store in (
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.store",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID.store",
+        ):
+            if (
+                identity_store not in identity_bootstrap_text
+                or ready_store not in identity_bootstrap_text
+                or identity_bootstrap_text.index(identity_store)
+                >= identity_bootstrap_text.index(ready_store)
+            ):
+                errors.append(
+                    "libc/src/c_abi/x86_64/static_tls.rs: selected-main "
+                    "TP/TID identity must publish before TLS readiness"
+                )
+                break
+    identity_check_marker = "pub(super) fn is_initial_thread_pointer"
+    identity_check_end = "/// Materialize one independent child"
+    if (
+        identity_check_marker not in static_tls_text
+        or identity_check_end not in static_tls_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/static_tls.rs: selected-main identity "
+            "check is missing"
+        )
+    else:
+        identity_check_text = static_tls_text.split(identity_check_marker, 1)[1].split(
+            identity_check_end, 1
+        )[0]
+        for required in (
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load",
+            "raw_syscall::SYS_GETTID",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID.load",
+        ):
+            if required not in identity_check_text:
+                errors.append(
+                    "libc/src/c_abi/x86_64/static_tls.rs: selected-main "
+                    f"TP/TID identity check is missing {required!r}"
+                )
     load_bias_marker = "let load_bias = match program_header_virtual_address"
     load_bias_end = "let (image, filesz, memsz, tls_alignment)"
     if load_bias_marker not in static_tls_text or load_bias_end not in static_tls_text:
@@ -4031,7 +4092,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "SELECTED_WORKER_REGISTRY_LOCK",
         "reserve_selected_worker",
         "claim_selected_worker_by_thread_pointer",
-        "publish_current_selected_worker_result",
+        "current_selected_worker_control",
+        "publish_selected_worker_result",
         "release_selected_worker",
         "release_selected_worker_locked",
         "reclaim_withdrawn_selected_worker",
@@ -4050,6 +4112,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_detach",
         "tls_block.thread_pointer().cast()",
         "ENOTSUP",
+        "tsd: pthread_tsd::SelectedTsdValues",
+        "pthread_tsd::SelectedTsdValues::empty()",
+        "current_selected_worker_tsd_values",
+        "clear_selected_worker_tsd_key",
+        "pthread_tsd::run_selected_worker_tsd_destructors",
     ):
         if required not in pthread_create_join_text:
             errors.append(
@@ -4221,29 +4288,40 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/pthread_create_join.rs: detached reaping must "
                 "claim only a clear-child-tid detached worker before withdrawal"
             )
-    explicit_exit_publish_marker = "fn publish_current_selected_worker_result"
-    explicit_exit_publish_end = "/// Map one control/stack backing range"
+    explicit_exit_publish_marker = "fn current_selected_worker_control"
+    explicit_exit_publish_end = "/// Return the current selected worker's bounded TSD table"
     if (
         explicit_exit_publish_marker not in pthread_create_join_text
         or explicit_exit_publish_end not in pthread_create_join_text
     ):
         errors.append(
             "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread exit "
-            "is missing its bounded registry publication helper"
+            "is missing its bounded current-worker resolution helper"
         )
     else:
         explicit_exit_publish_text = pthread_create_join_text.split(
             explicit_exit_publish_marker, 1
         )[1].split(explicit_exit_publish_end, 1)[0]
-        if (
-            "worker_tid.load" not in explicit_exit_publish_text
-            or "child_tid.load" not in explicit_exit_publish_text
-            or explicit_exit_publish_text.index("lock_selected_worker_registry")
-            > explicit_exit_publish_text.index("publish_worker_result")
+        required_resolution_order = (
+            "lock_selected_worker_registry",
+            "worker_tid.load",
+            "child_tid.load",
+            "current = Some(control)",
+            "unlock_selected_worker_registry",
+        )
+        if any(
+            marker not in explicit_exit_publish_text
+            for marker in required_resolution_order
+        ) or any(
+            explicit_exit_publish_text.index(left)
+            > explicit_exit_publish_text.index(right)
+            for left, right in zip(
+                required_resolution_order, required_resolution_order[1:]
+            )
         ):
             errors.append(
-                "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread exit "
-                "must hold its registry lock through matching worker/gettid/child-TID publication"
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: current selected-worker "
+                "resolution must validate worker/gettid/child-TID under its registry lock"
             )
 
     worker_entry_marker = 'unsafe extern "C" fn worker_entry'
@@ -4269,6 +4347,47 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
                 "must acquire its initialized control record before reading worker state"
+            )
+        normal_exit_order = (
+            "(*control).start.invoke",
+            "pthread_tsd::run_selected_worker_tsd_destructors",
+            "publish_selected_worker_result",
+        )
+        if any(marker not in worker_entry_text for marker in normal_exit_order) or any(
+            worker_entry_text.index(left) > worker_entry_text.index(right)
+            for left, right in zip(normal_exit_order, normal_exit_order[1:])
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: normal selected-worker "
+                "exit must run private TSD destructors before result publication"
+            )
+
+    explicit_exit_marker = "unsafe fn exit_selected_worker"
+    explicit_exit_end = "/// End one selected pthread-mode worker"
+    if (
+        explicit_exit_marker not in pthread_create_join_text
+        or explicit_exit_end not in pthread_create_join_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread exit "
+            "is missing its private TSD destructor boundary"
+        )
+    else:
+        explicit_exit_text = pthread_create_join_text.split(explicit_exit_marker, 1)[1].split(
+            explicit_exit_end, 1
+        )[0]
+        explicit_exit_order = (
+            "current_selected_worker_control()",
+            "pthread_tsd::run_selected_worker_tsd_destructors",
+            "publish_selected_worker_result",
+        )
+        if any(marker not in explicit_exit_text for marker in explicit_exit_order) or any(
+            explicit_exit_text.index(left) > explicit_exit_text.index(right)
+            for left, right in zip(explicit_exit_order, explicit_exit_order[1:])
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: explicit selected-worker "
+                "exit must run private TSD destructors before result publication"
             )
 
     pthread_create_marker = "pub(super) unsafe fn create_selected_worker"
@@ -4779,6 +4898,151 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/pthread_once.rs: call_once must not cross "
             "the interposable pthread_once C ABI"
         )
+
+    # TSS remains a separate private leaf: the prior C11 lifecycle, plain-sync,
+    # and once-leaf exclusions must not be relaxed into a broader C11 runtime.
+    pthread_tsd_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_tsd.rs"
+    )
+    pthread_tsd_text = pthread_tsd_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/thread/pthread_key_create.c::{__pthread_key_create,",
+        "__pthread_key_delete,__pthread_tsd_run_dtors}",
+        "src/thread/pthread_getspecific.c::__pthread_getspecific",
+        "src/thread/pthread_setspecific.c::pthread_setspecific",
+        "src/thread/tss_create.c",
+        "src/thread/tss_delete.c",
+        "src/thread/tss_set.c",
+        "src/thread/pthread_create.c::{start,start_c11,__pthread_exit}",
+        "PTHREAD_KEYS_MAX: usize = 128",
+        "PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4",
+        "KEY_FREE: u8 = 0",
+        "KEY_ALLOCATED: u8 = 1",
+        "struct SelectedTsdValues",
+        "static SELECTED_TSD_KEYS",
+        "static MAIN_SELECTED_TSD_VALUES",
+        "static_tls::is_initial_thread_pointer",
+        "current_selected_values().is_none()",
+        "pthread_create_join::current_selected_worker_tsd_values",
+        "pthread_create_join::clear_selected_worker_tsd_key",
+        "run_selected_worker_tsd_destructors",
+        "for _ in 0..PTHREAD_DESTRUCTOR_ITERATIONS",
+        "values.values[index].swap(0, Ordering::AcqRel)",
+        "foreign threads",
+        "main-thread process-exit destructors",
+        "dynamic or loader TLS/DTV",
+        "weak/same-address TSD ELF aliases",
+        "This is deliberately not musl's general thread-list/TSD implementation.",
+    ):
+        if required not in pthread_tsd_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private pthread-key/C11 "
+                f"TSS leaf is missing {required!r}"
+            )
+    pthread_tsd_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_tsd_text,
+        )
+    )
+    expected_pthread_tsd_exports = {
+        "pthread_key_create",
+        "pthread_key_delete",
+        "pthread_getspecific",
+        "pthread_setspecific",
+        "tss_create",
+        "tss_delete",
+        "tss_get",
+        "tss_set",
+    }
+    if pthread_tsd_exports != expected_pthread_tsd_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private pthread-key/C11 "
+            "TSS leaf must export only pthread key and C11 TSS entry points"
+        )
+    selected_tsd_entry_boundaries = (
+        (
+            "pthread_key_create",
+            'pub unsafe extern "C" fn pthread_key_create',
+            "/// Delete one selected key",
+        ),
+        (
+            "pthread_key_delete",
+            'pub unsafe extern "C" fn pthread_key_delete',
+            "/// Read one selected current-thread value",
+        ),
+        (
+            "pthread_getspecific",
+            'pub unsafe extern "C" fn pthread_getspecific',
+            "/// Store one selected current-thread value",
+        ),
+        (
+            "pthread_setspecific",
+            'pub unsafe extern "C" fn pthread_setspecific',
+            "/// Run the selected worker's private TSD destructor phase",
+        ),
+    )
+    for entry_name, entry_marker, entry_end in selected_tsd_entry_boundaries:
+        if entry_marker not in pthread_tsd_text or entry_end not in pthread_tsd_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private "
+                f"pthread-key/C11 TSS {entry_name} boundary is missing"
+            )
+            continue
+        entry_text = pthread_tsd_text.split(entry_marker, 1)[1].split(entry_end, 1)[0]
+        admission = "current_selected_values()"
+        metadata_lock = "lock_selected_tsd()"
+        if (
+            admission not in entry_text
+            or metadata_lock not in entry_text
+            or entry_text.index(admission) >= entry_text.index(metadata_lock)
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private "
+                f"pthread-key/C11 TSS {entry_name} must admit only a selected "
+                "caller before the metadata lock"
+            )
+    for wrapper_name, pthread_entry in (
+        ("tss_create", "pthread_key_create(key, destructor)"),
+        ("tss_delete", "pthread_key_delete(key)"),
+        ("tss_get", "pthread_getspecific(key)"),
+        ("tss_set", "pthread_setspecific(key, value)"),
+    ):
+        wrapper_marker = f'pub unsafe extern "C" fn {wrapper_name}'
+        if wrapper_marker not in pthread_tsd_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private "
+                f"pthread-key/C11 TSS {wrapper_name} wrapper is missing"
+            )
+        elif pthread_entry not in pthread_tsd_text.split(wrapper_marker, 1)[1]:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private "
+                f"pthread-key/C11 TSS {wrapper_name} must delegate through the "
+                "selected pthread admission boundary"
+            )
+    for forbidden in (
+        'pub unsafe extern "C" fn pthread_create',
+        'pub unsafe extern "C" fn pthread_join',
+        'pub unsafe extern "C" fn pthread_detach',
+        'pub unsafe extern "C" fn pthread_exit',
+        'pub unsafe extern "C" fn pthread_cancel',
+        'pub unsafe extern "C" fn pthread_once',
+        'pub unsafe extern "C" fn pthread_mutex_',
+        'pub unsafe extern "C" fn pthread_cond_',
+        'pub unsafe extern "C" fn thrd_',
+        'pub unsafe extern "C" fn mtx_',
+        'pub unsafe extern "C" fn cnd_',
+        'pub unsafe extern "C" fn call_once',
+        "__tls_get_addr",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in pthread_tsd_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_tsd.rs: selected private pthread-key/C11 "
+                f"TSS leaf must not select {forbidden!r}"
+            )
 
     termios_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
@@ -6255,6 +6519,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         c11_thread_lifecycle_text,
         c11_sync_text,
         pthread_once_text,
+        pthread_tsd_text,
         termios_control_text,
         process_context_text,
         child_reaping_text,
@@ -6400,6 +6665,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_detach",
         "pthread_exit",
         "pthread_join",
+        "pthread_key_create",
+        "pthread_key_delete",
+        "pthread_getspecific",
+        "pthread_setspecific",
         "pthread_mutex_destroy",
         "pthread_mutex_init",
         "pthread_mutex_lock",
@@ -6416,6 +6685,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "thrd_exit",
         "thrd_join",
         "thrd_sleep",
+        "tss_create",
+        "tss_delete",
+        "tss_get",
+        "tss_set",
         "mtx_init",
         "mtx_destroy",
         "mtx_lock",
@@ -6604,7 +6877,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -6633,6 +6906,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("c11_thread_lifecycle.rs", c11_thread_lifecycle_text),
         ("c11_sync.rs", c11_sync_text),
         ("pthread_once.rs", pthread_once_text),
+        ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

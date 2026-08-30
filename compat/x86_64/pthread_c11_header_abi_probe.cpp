@@ -118,6 +118,11 @@ using crabc_pthread_detach_signature = int (*)(pthread_t);
 using crabc_pthread_self_signature = pthread_t (*)();
 using crabc_pthread_equal_signature = int (*)(pthread_t, pthread_t);
 using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
+using crabc_pthread_key_create_signature = int (*)(
+	pthread_key_t *, void (*)(void *));
+using crabc_pthread_key_delete_signature = int (*)(pthread_key_t);
+using crabc_pthread_getspecific_signature = void *(*)(pthread_key_t);
+using crabc_pthread_setspecific_signature = int (*)(pthread_key_t, const void *);
 using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
 using crabc_pthread_mutex_init_signature = int (*)(
 	pthread_mutex_t *, const pthread_mutexattr_t *);
@@ -155,6 +160,9 @@ using crabc_cnd_signal_signature = int (*)(cnd_t *);
 using crabc_cnd_broadcast_signature = int (*)(cnd_t *);
 using crabc_cnd_timedwait_signature = int (*)(cnd_t *, mtx_t *, const timespec *);
 using crabc_tss_create_signature = int (*)(tss_t *, tss_dtor_t);
+using crabc_tss_delete_signature = void (*)(tss_t);
+using crabc_tss_get_signature = void *(*)(tss_t);
+using crabc_tss_set_signature = int (*)(tss_t, void *);
 
 static_assert(__is_same(decltype(&pthread_create), crabc_pthread_create_signature),
 	"pthread_create signature");
@@ -166,6 +174,14 @@ static_assert(__is_same(decltype(&pthread_equal), crabc_pthread_equal_signature)
 	"pthread_equal signature");
 static_assert(__is_same(decltype(&pthread_getcpuclockid),
 	crabc_pthread_getcpuclockid_signature), "pthread_getcpuclockid signature");
+static_assert(__is_same(decltype(&pthread_key_create),
+	crabc_pthread_key_create_signature), "pthread_key_create signature");
+static_assert(__is_same(decltype(&pthread_key_delete),
+	crabc_pthread_key_delete_signature), "pthread_key_delete signature");
+static_assert(__is_same(decltype(&pthread_getspecific),
+	crabc_pthread_getspecific_signature), "pthread_getspecific signature");
+static_assert(__is_same(decltype(&pthread_setspecific),
+	crabc_pthread_setspecific_signature), "pthread_setspecific signature");
 static_assert(__is_same(decltype(&pthread_mutex_init),
 	crabc_pthread_mutex_init_signature), "pthread_mutex_init signature");
 static_assert(__is_same(decltype(&pthread_mutex_destroy),
@@ -234,6 +250,12 @@ static_assert(__is_same(decltype(&cnd_timedwait), crabc_cnd_timedwait_signature)
 	"cnd_timedwait signature");
 static_assert(__is_same(decltype(&tss_create), crabc_tss_create_signature),
 	"tss_create signature");
+static_assert(__is_same(decltype(&tss_delete), crabc_tss_delete_signature),
+	"tss_delete signature");
+static_assert(__is_same(decltype(&tss_get), crabc_tss_get_signature),
+	"tss_get signature");
+static_assert(__is_same(decltype(&tss_set), crabc_tss_set_signature),
+	"tss_set signature");
 
 static pthread_mutex_t crabc_pthread_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t crabc_pthread_condition = PTHREAD_COND_INITIALIZER;
@@ -250,6 +272,14 @@ static crabc_pthread_self_signature const crabc_force_pthread_self
 	__attribute__((used)) = &pthread_self;
 static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
+static crabc_pthread_key_create_signature const crabc_force_pthread_key_create
+	__attribute__((used)) = &pthread_key_create;
+static crabc_pthread_key_delete_signature const crabc_force_pthread_key_delete
+	__attribute__((used)) = &pthread_key_delete;
+static crabc_pthread_getspecific_signature const crabc_force_pthread_getspecific
+	__attribute__((used)) = &pthread_getspecific;
+static crabc_pthread_setspecific_signature const crabc_force_pthread_setspecific
+	__attribute__((used)) = &pthread_setspecific;
 static crabc_pthread_mutex_init_signature const crabc_force_pthread_mutex_init
 	__attribute__((used)) = &pthread_mutex_init;
 static crabc_pthread_mutex_destroy_signature const crabc_force_pthread_mutex_destroy
@@ -288,6 +318,14 @@ static crabc_thrd_equal_signature const crabc_force_thrd_equal
 	__attribute__((used)) = &thrd_equal;
 static crabc_call_once_signature const crabc_force_call_once
 	__attribute__((used)) = &call_once;
+static crabc_tss_create_signature const crabc_force_tss_create
+	__attribute__((used)) = &tss_create;
+static crabc_tss_delete_signature const crabc_force_tss_delete
+	__attribute__((used)) = &tss_delete;
+static crabc_tss_get_signature const crabc_force_tss_get
+	__attribute__((used)) = &tss_get;
+static crabc_tss_set_signature const crabc_force_tss_set
+	__attribute__((used)) = &tss_set;
 static crabc_mtx_init_signature const crabc_force_mtx_init
 	__attribute__((used)) = &mtx_init;
 static crabc_mtx_destroy_signature const crabc_force_mtx_destroy

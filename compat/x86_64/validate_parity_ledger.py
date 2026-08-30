@@ -4925,8 +4925,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 12,
-        "libc.pthread-tls must retain exactly twelve private verified artifacts",
+        len(artifacts) == 13,
+        "libc.pthread-tls must retain exactly thirteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -4936,7 +4936,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Twelve separately verified static artifacts",
+        "Thirteen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -5225,6 +5225,382 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_pthread_c11_once.sh"
         in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "static-c-pthread-c11-once dispatcher binding is missing",
+    )
+
+
+def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected pthread-key/C11-TSS lifecycle private and bounded.
+
+    This artifact proves destructor ordering for the existing selected worker
+    seam, not musl's global thread list, cancellation protocol, or general TSD
+    behavior. Its count, source provenance, header ABI, and explicit
+    exclusions must remain durable while the parent family remains planned.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-c11-tsd"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
+    )
+    require(
+        len(artifacts) == 13,
+        "libc.pthread-tls must retain exactly thirteen private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-c11-tsd must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Thirteen separately verified static artifacts",
+        "bounded private pthread-key/C11-TSS lifecycle table",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after the TSD artifact",
+        )
+    family_sources = string_list(
+        family["source_owners"], "libc.pthread-tls source owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/pthread_tsd.rs",
+        "compat/x86_64/libc_pthread_c11_tsd_probe.c",
+        "compat/x86_64/libc_pthread_c11_tsd_start.S",
+        "compat/x86_64/run_libc_pthread_c11_tsd.sh",
+    ):
+        require(
+            owner in family_sources,
+            f"libc.pthread-tls source owners omit {owner} after the TSD artifact",
+        )
+    family_abi_text = " ".join(
+        string_list(
+            family["x86_abi_prerequisites"],
+            "libc.pthread-tls ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "pthread_key_create.c::{__pthread_key_create,__pthread_key_delete,__pthread_tsd_run_dtors}",
+        "pthread_getspecific.c::__pthread_getspecific",
+        "pthread_setspecific.c::pthread_setspecific",
+        "tss_create.c",
+        "tss_delete.c",
+        "tss_set.c",
+        "pthread_create.c::{start,start_c11,__pthread_exit}",
+        "PTHREAD_KEYS_MAX=128",
+        "PTHREAD_DESTRUCTOR_ITERATIONS=TSS_DTOR_ITERATIONS=4",
+        "main-thread process-exit destructors",
+        "weak/same-address TSD aliases",
+    ):
+        require(
+            phrase in family_abi_text,
+            f"libc.pthread-tls ABI prerequisites omit {phrase} after the TSD artifact",
+        )
+    family_header_text = " ".join(
+        string_list(
+            family["x86_header_prerequisites"],
+            "libc.pthread-tls header prerequisites",
+        )
+    )
+    for phrase in (
+        "limits.h",
+        "pthread-key",
+        "C11-TSS",
+        "pthread_key_t",
+        "tss_t",
+        "PTHREAD_KEYS_MAX=128/TSS_DTOR_ITERATIONS=4",
+    ):
+        require(
+            phrase in family_header_text,
+            f"libc.pthread-tls header prerequisites omit {phrase} after the TSD artifact",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "libc.pthread-tls",
+        "pthread_key_create",
+        "pthread_key_delete",
+        "pthread_getspecific",
+        "pthread_setspecific",
+        "tss_create",
+        "tss_delete",
+        "tss_get",
+        "tss_set",
+        "private 128-key table",
+        "permanent process-main value table",
+        "null destructor still reserves a key",
+        "deletion clears only those selected tables without a callback",
+        "four ascending-key passes",
+        "before join-result publication or",
+        "SYS_exit",
+        "128-key exhaustion/reuse",
+        "fourth-pass rearming",
+        "Invalid/deleted keys and non-selected callers deliberately fail closed",
+        "bootstrapped `%fs:0` plus Linux TID pair",
+        "weak/same-address TSD aliases",
+        "exact ELF parity",
+        "main-thread process-exit destructors",
+        "foreign threads",
+        "cancellation and cleanup handlers",
+        "concurrent key-deletion/destructor interaction",
+        "fork/atfork",
+        "dynamic or loader TLS/DTV",
+        "general TCB or all-thread list",
+        "full pthread/TLS or x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-c11-tsd description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pthread_tsd.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/pthread_identity.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/pthread.h",
+        "include/threads.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/run_types_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_c11_tsd_probe.c",
+        "compat/x86_64/libc_pthread_c11_tsd_start.S",
+        "compat/x86_64/run_libc_pthread_c11_tsd.sh",
+        "compat/x86_64/run_libc_static_tls_v1.sh",
+        "compat/x86_64/run_libc_pthread_create_join_tls.sh",
+        "compat/x86_64/run_libc_c11_lifecycle.sh",
+        "compat/x86_64/run_libc_thrd_sleep.sh",
+        "compat/x86_64/run_libc_pthread_cond_private.sh",
+        "compat/x86_64/run_libc_c11_plain_sync.sh",
+        "compat/x86_64/run_libc_pthread_c11_once.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "static-c-pthread-c11-tsd source owners",
+            )
+        )
+        == expected_sources,
+        "static-c-pthread-c11-tsd source owners drifted",
+    )
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "pthread_key_create.c::{__pthread_key_create,__pthread_key_delete,__pthread_tsd_run_dtors}",
+        "pthread_getspecific.c::__pthread_getspecific",
+        "pthread_setspecific.c::pthread_setspecific",
+        "tss_create.c",
+        "tss_delete.c",
+        "tss_set.c",
+        "pthread_create.c::{start,start_c11,__pthread_exit}",
+        "pthread_key_t and tss_t type-identical 32-bit keys",
+        "PTHREAD_KEYS_MAX=128",
+        "PTHREAD_DESTRUCTOR_ITERATIONS=4",
+        "TSS_DTOR_ITERATIONS=4",
+        "null-destructor key",
+        "EAGAIN",
+        "thrd_error",
+        "process-main table",
+        "bootstrapped `%fs:0` plus Linux gettid identity",
+        "without calling the old destructor",
+        "before result publication and SYS_exit",
+        "clears a non-null value before",
+        "drops the metadata lock across the callback",
+        "fourth-pass rearm remains stored",
+        "invalid/deleted keys and non-selected callers",
+        "main-thread process-exit destructors",
+        "foreign thread registration",
+        "cancellation/cleanup",
+        "concurrent key-deletion/destructor interaction",
+        "fork/atfork",
+        "dynamic/loader TLS/DTV",
+        "general TCB layout",
+        "weak/same-address TSD aliases",
+        "exact ELF parity",
+        "clone=56",
+        "SYS_exit=60",
+        "no direct allocator",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-c11-tsd ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "pthread.h",
+        "threads.h",
+        "limits.h",
+        "errno.h",
+        "bits/alltypes.h",
+        "bits/syscall.h",
+        "pthread_key_t/tss_t identity",
+        "PTHREAD_KEYS_MAX=128",
+        "PTHREAD_DESTRUCTOR_ITERATIONS=TSS_DTOR_ITERATIONS=4",
+        "all eight exact function-pointer declarations",
+        "28-context C/C++",
+        "pthread_key_create/pthread_key_delete/pthread_getspecific/pthread_setspecific",
+        "tss_create/tss_delete/tss_get/tss_set",
+        "unmangled C linkage",
+        "does not claim a broad installed header, general TSD, full C11, or pthread runtime completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-pthread-c11-tsd header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-c11-tsd"},
+        "static-c-pthread-c11-tsd must use the closed libc-pthread-c11-tsd command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "-nostdlib -static",
+        "selected main/worker value isolation",
+        "all 128 keys occupied with a null destructor and EAGAIN exhaustion",
+        "deletion clears a waiting worker's old slot",
+        "runs no old destructor",
+        "replacement key in that numeric slot",
+        "normal pthread return, pthread_exit, C11 return, and thrd_exit",
+        "four clear-before-callback rearming destructor passes",
+        "before their join result",
+        "preserves caller errno",
+        "without the private metadata lock",
+        "exactly the eight selected TSD exports",
+        "32-bit pthread_key_t/tss_t identity",
+        "128/4 header constants",
+        "direct private sibling routing and exit ordering",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "dynamic TLS resolver",
+        "allocator",
+        "ambient runtime",
+        "main-thread process-exit destructors",
+        "foreign threads",
+        "cancellation/cleanup",
+        "concurrent deletion/destructor interaction",
+        "fork/atfork",
+        "dynamic/loader TLS/DTV",
+        "general TCB/list or pthread/C11 behavior",
+        "weak/same-address TSD alias or exact ELF parity",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-c11-tsd evidence scope omits {phrase}",
+        )
+
+    oracle_entries = artifact["oracle"]
+    assert isinstance(oracle_entries, list)
+    source_oracles = [
+        entry
+        for entry in oracle_entries
+        if isinstance(entry, dict) and entry.get("kind") == "c-posix"
+    ]
+    require(
+        len(source_oracles) == 1,
+        "static-c-pthread-c11-tsd must retain one pinned-musl C/POSIX/C11 oracle",
+    )
+    source_oracle = source_oracles[0]
+    source = source_oracle.get("source")
+    role = source_oracle.get("role")
+    require(
+        source
+        == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "static-c-pthread-c11-tsd musl oracle pin drifted",
+    )
+    require(
+        isinstance(role, str)
+        and "src/thread/pthread_key_create.c" in role
+        and "pthread_getspecific.c" in role
+        and "pthread_setspecific.c" in role
+        and "tss_create.c" in role
+        and "tss_delete.c" in role
+        and "tss_set.c" in role
+        and "pthread_create.c::{start,start_c11,__pthread_exit}" in role,
+        "static-c-pthread-c11-tsd musl source mapping omits lifecycle provenance",
+    )
+
+    static_exports = {
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    selected_tsd_exports = {
+        "pthread_key_create",
+        "pthread_key_delete",
+        "pthread_getspecific",
+        "pthread_setspecific",
+        "tss_create",
+        "tss_delete",
+        "tss_get",
+        "tss_set",
+    }
+    require(
+        selected_tsd_exports <= static_exports,
+        "static-c-pthread-c11-tsd must expose its eight selected TSD symbols",
+    )
+    for unselected in (
+        "__pthread_key_create",
+        "__pthread_key_delete",
+        "__pthread_tsd_run_dtors",
+    ):
+        require(
+            unselected not in static_exports,
+            f"static-c-pthread-c11-tsd must not expose private {unselected}",
+        )
+    require(
+        "run_libc_pthread_c11_tsd.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-pthread-c11-tsd dispatcher binding is missing",
     )
 
 
@@ -7284,6 +7660,7 @@ def validate_ledger(
     require_static_pthread_private_cond_artifact(by_id["libc.pthread-tls"])
     require_static_c11_plain_sync_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_once_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_c11_tsd_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

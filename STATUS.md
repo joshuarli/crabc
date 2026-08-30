@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has twelve private static artifacts inside still-planned
+The x86 lane now has thirteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -134,7 +134,32 @@ initializer `pthread_exit`/`thrd_exit`, recursive same-control entry,
 fork/atfork, TSS, dynamic/loader TLS, musl's weak `pthread_once` ELF binding,
 general pthread/C11 synchronization,
 full pthread/TLS or x86-64 parity, promotion, and public x86 support remain
-excluded. The CRT-composition artifact,
+excluded. The separate `./scripts/dev-x86_64.sh libc-pthread-c11-tsd` artifact
+is a thirteenth private static `verified_artifact` in the same still-planned
+`libc.pthread-tls` family. It selects only
+`pthread_key_create`/`pthread_key_delete`/`pthread_getspecific`/
+`pthread_setspecific` and `tss_create`/`tss_delete`/`tss_get`/`tss_set` over
+a private 128-key table, a process-main value table, and one value table in
+each already selected worker control. A null destructor still reserves its
+key; deletion clears only those selected value tables and calls no old
+destructor. For normal pthread/C11 return, `pthread_exit`, and `thrd_exit`,
+the worker clears a non-null value before calling its destructor, releases the
+private metadata lock for that callback, allows rearming for at most four
+ascending-key passes, and completes the phase before publishing the join result
+or reaching `SYS_exit`. The pinned-musl/reference and true static-candidate
+fixture proves main/worker isolation, 128-key exhaustion and numeric-slot
+reuse after deletion, four clear-before-callback rearming passes, and all four
+selected exit routes. Invalid/deleted keys and non-selected callers fail
+closed deliberately rather than inheriting musl's unchecked internal fast
+paths; selected-main admission requires the bootstrapped `%fs:0` plus Linux
+TID pair, so an inherited FS base alone is insufficient. Main-thread
+process-exit destructors, foreign threads beyond that admission boundary,
+cancellation and cleanup handlers, concurrent key-deletion/destructor
+interaction, fork/atfork, detached-thread lifecycle beyond the existing
+selected-worker exit seam, dynamic/loader TLS/DTV, allocator ordering, a
+general TCB or all-thread list, weak/same-address TSD aliases, exact ELF
+parity, general pthread/C11 behavior, full pthread/TLS or x86-64 parity,
+promotion, and public x86 support remain excluded. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls

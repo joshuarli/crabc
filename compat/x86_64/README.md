@@ -339,6 +339,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
 ./scripts/dev-x86_64.sh libc-c11-plain-sync
 ./scripts/dev-x86_64.sh libc-pthread-c11-once
+./scripts/dev-x86_64.sh libc-pthread-c11-tsd
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1948,6 +1949,32 @@ same-control entry, fork/atfork, TSS, dynamic/loader TLS, musl's weak
 pthread/TLS or x86-64 parity, promotion, or public x86
 support.
 
+`libc-pthread-c11-tsd` is a thirteenth separately recorded private static
+`verified_artifact` under that same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only
+`pthread_key_create`/`pthread_key_delete`/`pthread_getspecific`/
+`pthread_setspecific` and `tss_create`/`tss_delete`/`tss_get`/`tss_set` over
+a private 128-key table, a permanent process-main value table, and one table
+in each selected worker control. A null destructor reserves a key; deletion
+clears only those selected values and calls no old destructor. A normal
+pthread/C11 return, `pthread_exit`, or `thrd_exit` clears every non-null value
+before callback, drops the metadata lock for that callback, permits a rearm
+through at most four ascending-key passes, and finishes before join-result
+publication or `SYS_exit`. The fixture proves main/worker isolation,
+128-key exhaustion and deleted-slot reuse, clear-before-callback fourth-pass
+rearming, all four selected exit routes, and caller-`errno` preservation.
+Invalid/deleted keys and non-selected callers deliberately fail closed rather
+than using musl's unchecked internal fast paths; selected-main admission
+requires the bootstrapped `%fs:0` plus Linux TID pair, so an inherited FS base
+alone is insufficient. It excludes main-thread process-exit destructors,
+foreign threads beyond that admission boundary, cancellation/cleanup,
+concurrent key-deletion/destructor interaction, fork/atfork, detached-thread
+lifecycle beyond the existing selected-worker exit seam, dynamic/loader
+TLS/DTV, allocator ordering, a general TCB/all-thread list,
+weak/same-address TSD aliases, exact ELF parity, general pthread/C11 behavior,
+full pthread/TLS or x86-64 parity, promotion, and public x86 support.
+
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
 project-header C body first executes through pinned musl and then through a
@@ -2416,7 +2443,7 @@ That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-pthread-mutex-normal`,
 `libc-pthread-cond-private`, `libc-c11-plain-sync`, or
-`libc-pthread-c11-once`: their start shims
+`libc-pthread-c11-once`, or `libc-pthread-c11-tsd`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. `libc-thrd-sleep` deliberately
 retains the fixture-local errno/TLS setup because it proves that its adapter
@@ -2729,6 +2756,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,
 `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
+`libc-pthread-c11-tsd`,
 `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,

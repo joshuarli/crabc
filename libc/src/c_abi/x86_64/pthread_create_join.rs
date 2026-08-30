@@ -10,8 +10,10 @@
 //!   Linux thread clone flags and the `EAGAIN` translation for allocation or
 //!   clone failure.
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
-//!   result-before-thread-exit ordering. Its cleanup, TSD, signal, robust-list,
-//!   thread-list, and last-thread paths remain explicitly unselected.
+//!   result-before-thread-exit ordering. The separate selected TSD leaf now
+//!   inserts its bounded worker destructor phase at that seam; cleanup,
+//!   cancellation, signal, robust-list, thread-list, and last-thread paths
+//!   remain explicitly unselected.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -46,8 +48,8 @@
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. The leaf intentionally does **not** provide attrs,
 //! detached-at-create attributes,
-//! `pthread_exit` cleanup/TSD/main-thread behavior, cancellation, keys/TSD,
-//! synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
+//! `pthread_exit` cleanup/main-thread behavior, cancellation, general
+//! keys/TSD, synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
 //! coordination, thread lists, fork/atfork, custom stacks, guards, or general
 //! pthread semantics. It leaves caller `errno` untouched because pthread APIs
 //! report errors as positive return values. At most 64 selected workers may be
@@ -61,7 +63,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{pthread_identity, raw_syscall, static_tls};
+use super::{pthread_identity, pthread_tsd, raw_syscall, static_tls};
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -334,6 +336,10 @@ struct ThreadControl {
     mapping: *mut u8,
     mapping_size: usize,
     tls_block: static_tls::StaticInitialTlsBlock,
+    // The selected TSD leaf owns its values in this private worker mapping,
+    // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
+    // live through the destructor phase and clear-child-tid handoff.
+    tsd: pthread_tsd::SelectedTsdValues,
     registry_slot: usize,
     start: SelectedWorkerStart,
     argument: *mut c_void,
@@ -735,23 +741,25 @@ fn reap_finished_detached_selected_workers() {
     }
 }
 
-/// Publish one result only for the current admitted selected worker.
+/// Resolve the current admitted selected worker's private control record.
 ///
-/// This reads only the universally established `%fs:0` self word before it
-/// finds an exact `%fs:0`, gettid, and still-live child-TID match in the
-/// bounded registry. It holds the registry lock through the control-record
-/// publish, never returning a raw control pointer that a joiner could unmap
-/// concurrently.
-fn publish_current_selected_worker_result(result: SelectedWorkerResult) {
+/// The exact `%fs:0`, Linux-TID, and live-child-TID match prevents a foreign
+/// thread from turning a copied TLS base into a control record. Once this
+/// current task has matched, its positive child-TID keeps join/reaping from
+/// withdrawing the mapping before the task finishes its own callback or exit
+/// path, so the caller may use the returned pointer after the registry lock is
+/// released. It must never be retained past that current-thread operation.
+fn current_selected_worker_control() -> Option<*mut ThreadControl> {
     let thread_pointer = pthread_identity::current_thread_pointer() as usize;
     let Some(thread_id) = current_linux_thread_id() else {
-        return;
+        return None;
     };
     if thread_pointer == 0 {
-        return;
+        return None;
     }
 
     lock_selected_worker_registry();
+    let mut current = None;
     for slot in &SELECTED_WORKER_REGISTRY {
         let control = slot.control.load(Ordering::Acquire);
         if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
@@ -765,23 +773,69 @@ fn publish_current_selected_worker_result(result: SelectedWorkerResult) {
             if unsafe { (*control).worker_tid.load(Ordering::Acquire) } == thread_id
                 && unsafe { (*control).child_tid.load(Ordering::Acquire) } == thread_id
             {
-                // A C11 worker may exit only through thrd_exit, and a pthread
-                // worker only through pthread_exit. Do not let an accidental
-                // cross-mode API call make thrd_join decode a raw pointer (or
-                // pthread_join publish a sign-extended C11 result) as if it
-                // had the selected public representation.
-                let expected_kind = unsafe { (*control).start.result_kind() };
-                let published = if result.kind() == expected_kind {
-                    result
-                } else {
-                    SelectedWorkerResult::Invalid
-                };
-                unsafe { publish_worker_result(control, published) };
+                current = Some(control);
                 break;
             }
         }
     }
     unlock_selected_worker_registry();
+    current
+}
+
+/// Return the current selected worker's bounded TSD table.
+///
+/// The selected TSD leaf may use this pointer only during the active current
+/// worker call. Its caller never owns or exposes the opaque `ThreadControl`.
+pub(super) fn current_selected_worker_tsd_values(
+) -> Option<*const pthread_tsd::SelectedTsdValues> {
+    let control = current_selected_worker_control()?;
+    // SAFETY: current-worker resolution proves the control mapping is live
+    // until this current task exits; the TSD leaf retains no pointer after its
+    // current get/set/destructor operation completes.
+    Some(unsafe { core::ptr::addr_of!((*control).tsd) })
+}
+
+/// Clear one key in every still-registry-published selected worker.
+///
+/// The TSD leaf calls this while holding its private metadata lock. This
+/// helper then takes the selected-worker registry lock, preserving the one
+/// TSD -> registry lock order. It invokes no user code and never retains a
+/// control pointer beyond the scan.
+pub(super) fn clear_selected_worker_tsd_key(key: usize) {
+    lock_selected_worker_registry();
+    for slot in &SELECTED_WORKER_REGISTRY {
+        let control = slot.control.load(Ordering::Acquire);
+        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
+            continue;
+        }
+        let control = control as *mut ThreadControl;
+        // SAFETY: this published registry entry remains mapped while its lock
+        // is held. The TSD leaf's own metadata lock excludes a concurrent
+        // selected set/get for this key.
+        unsafe { (*control).tsd.clear_key(key) };
+    }
+    unlock_selected_worker_registry();
+}
+
+/// Publish one result only for one already-validated selected worker.
+///
+/// A C11 worker may exit only through thrd_exit, and a pthread worker only
+/// through pthread_exit. Do not let an accidental cross-mode API call make
+/// thrd_join decode a raw pointer (or pthread_join publish a sign-extended C11
+/// result) as if it had the selected public representation.
+unsafe fn publish_selected_worker_result(
+    control: *mut ThreadControl,
+    result: SelectedWorkerResult,
+) {
+    // SAFETY: current-worker resolution or worker_entry proves this control
+    // mapping remains live until the current task invokes SYS_exit.
+    let expected_kind = unsafe { (*control).start.result_kind() };
+    let published = if result.kind() == expected_kind {
+        result
+    } else {
+        SelectedWorkerResult::Invalid
+    };
+    unsafe { publish_worker_result(control, published) };
 }
 
 /// Map one control/stack backing range without translating `errno`.
@@ -860,7 +914,13 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
     let result = unsafe { (*control).start.invoke((*control).argument) };
-    unsafe { publish_worker_result(control, result) };
+    // SAFETY: this current worker owns its control/TSD mapping until the
+    // assembly tail calls SYS_exit. Destructors must finish before its result
+    // becomes join-observable.
+    unsafe {
+        pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+        publish_selected_worker_result(control, result);
+    }
     0
 }
 
@@ -981,6 +1041,7 @@ pub(super) unsafe fn create_selected_worker(
                 mapping,
                 mapping_size: WORKER_MAPPING_SIZE,
                 tls_block,
+                tsd: pthread_tsd::SelectedTsdValues::empty(),
                 registry_slot,
                 start,
                 argument,
@@ -1032,9 +1093,10 @@ pub(super) unsafe fn create_selected_worker(
 /// Exit a selected worker and publish its typed result for its admitted joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
-/// null-attribute pthread_create path. It intentionally omits the full musl
-/// cleanup/TSD/detach/thread-list state machine. Outside that worker contract,
-/// it still performs Linux thread exit but claims no broader pthread behavior.
+/// null-attribute pthread_create path. It invokes the separate selected
+/// worker-TSD destructor phase, but intentionally omits the rest of musl's
+/// cleanup/detach/thread-list state machine. Outside that worker contract, it
+/// still performs Linux thread exit but claims no broader pthread behavior.
 ///
 /// # Safety
 ///
@@ -1042,7 +1104,15 @@ pub(super) unsafe fn create_selected_worker(
 /// result must remain valid until its joining caller consumes it.
 #[inline(always)]
 unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
-    publish_current_selected_worker_result(result);
+    if let Some(control) = current_selected_worker_control() {
+        // SAFETY: the matched current selected worker remains live until this
+        // path invokes SYS_exit. Preserve musl's TSD-before-result ordering
+        // without holding the worker-registry lock across user destructors.
+        unsafe {
+            pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+            publish_selected_worker_result(control, result);
+        }
+    }
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
     // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
     // clears/wakes the joiner's shared child-TID word after this exit.
@@ -1074,9 +1144,10 @@ pub(super) unsafe fn exit_selected_c11_worker(result: c_int) -> ! {
 /// Exit a selected pthread worker and publish its pointer result for its joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
-/// null-attribute pthread_create path. It intentionally omits the full musl
-/// cleanup/TSD/detach/thread-list state machine. Outside that worker contract,
-/// it still performs Linux thread exit but claims no broader pthread behavior.
+/// null-attribute pthread_create path. It invokes the separate selected
+/// worker-TSD destructor phase, but intentionally omits the rest of musl's
+/// cleanup/detach/thread-list state machine. Outside that worker contract, it
+/// still performs Linux thread exit but claims no broader pthread behavior.
 ///
 /// # Safety
 ///

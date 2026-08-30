@@ -195,7 +195,10 @@ pthread_create
 pthread_detach
 pthread_equal
 pthread_exit
+pthread_getspecific
 pthread_join
+pthread_key_create
+pthread_key_delete
 pthread_mutex_destroy
 pthread_mutex_init
 pthread_mutex_lock
@@ -203,6 +206,7 @@ pthread_mutex_trylock
 pthread_mutex_unlock
 pthread_once
 pthread_self
+pthread_setspecific
 pwrite
 qsort
 qsort_r
@@ -296,6 +300,10 @@ thrd_sleep
 toascii
 tolower
 toupper
+tss_create
+tss_delete
+tss_get
+tss_set
 umask
 uname
 utime

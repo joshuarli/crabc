@@ -50,7 +50,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -102,6 +102,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-mutex-normal", source)
         self.assertIn("libc-pthread-cond-private", source)
         self.assertIn("libc-pthread-c11-once", source)
+        self.assertIn("libc-pthread-c11-tsd", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -2799,7 +2800,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "SELECTED_WORKER_REGISTRY_LOCK",
             "reserve_selected_worker",
             "claim_selected_worker_by_thread_pointer",
-            "publish_current_selected_worker_result",
+            "publish_selected_worker_result",
             "release_selected_worker",
             "release_selected_worker_locked",
             "reclaim_withdrawn_selected_worker",
@@ -2922,15 +2923,19 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             tls_reclamation.index("static_tls::release_thread(tls_block)"),
             tls_reclamation.index("tls_released.store(1, Ordering::Release)"),
         )
-        explicit_exit_publish = pthread_create_join.split(
-            "fn publish_current_selected_worker_result", 1
-        )[1].split("/// Map one control/stack backing range", 1)[0]
-        self.assertIn("worker_tid.load", explicit_exit_publish)
-        self.assertIn("child_tid.load", explicit_exit_publish)
+        current_worker_resolution = pthread_create_join.split(
+            "fn current_selected_worker_control", 1
+        )[1].split("/// Return the current selected worker's bounded TSD table", 1)[0]
+        self.assertIn("worker_tid.load", current_worker_resolution)
+        self.assertIn("child_tid.load", current_worker_resolution)
         self.assertLess(
-            explicit_exit_publish.index("lock_selected_worker_registry"),
-            explicit_exit_publish.index("publish_worker_result"),
+            current_worker_resolution.index("lock_selected_worker_registry"),
+            current_worker_resolution.index("unlock_selected_worker_registry"),
         )
+        selected_publish = pthread_create_join.split(
+            "unsafe fn publish_selected_worker_result", 1
+        )[1].split("/// Map one control/stack backing range", 1)[0]
+        self.assertIn("publish_worker_result", selected_publish)
         worker_entry = pthread_create_join.split(
             'unsafe extern "C" fn worker_entry', 1
         )[1].split("/// Create one default-attribute", 1)[0]
@@ -3298,7 +3303,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {"thrd_create", "thrd_detach", "thrd_join", "thrd_exit", "thrd_sleep"}
             <= static_exports
         )
-        self.assertTrue({"thrd_yield", "tss_create"}.isdisjoint(static_exports))
+        self.assertTrue({"thrd_yield"}.isdisjoint(static_exports))
         self.assertIn("run_libc_c11_lifecycle_probe()", runner)
         self.assertIn(
             "/workspace/compat/x86_64/run_libc_c11_lifecycle.sh", runner
@@ -4103,9 +4108,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             <= static_exports
         )
         self.assertTrue(
-            {"mtx_timedlock", "cnd_timedwait", "tss_create"}.isdisjoint(
-                static_exports
-            )
+            {"mtx_timedlock", "cnd_timedwait"}.isdisjoint(static_exports)
         )
         for header_probe in (c_header_probe, cxx_header_probe):
             for required in (
@@ -4298,9 +4301,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertTrue({"pthread_once", "call_once"} <= static_exports)
         self.assertTrue(
-            {"pthread_cancel", "tss_create", "pthread_cond_timedwait"}.isdisjoint(
-                static_exports
-            )
+            {"pthread_cancel", "pthread_cond_timedwait"}.isdisjoint(static_exports)
         )
         for header_probe in (c_header_probe, cxx_header_probe):
             for required in (
@@ -4318,7 +4319,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_current thrd_equal",
             "call_once",
             "pthread_cond_broadcast|pthread_once",
-            "thrd_equal|call_once|mtx_init",
+            "thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init",
         ):
             self.assertIn(required, header_runner)
         self.assertIn('id = "static-c-pthread-c11-once"', parity_ledger)
@@ -4332,6 +4333,284 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pthread-c11-once)\n        [ "$#" -eq 0 ] || fail "libc-pthread-c11-once takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_c11_tsd_artifact_stays_private_and_bounded(
+        self,
+    ) -> None:
+        """Keep the selected key/TSS lifecycle below pthread/TLS promotion."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        tsd_path = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_tsd.rs"
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = ROOT / "compat" / "x86_64" / "libc_pthread_c11_tsd_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_pthread_c11_tsd_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_c11_tsd.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (tsd_path, probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing pthread/C11 TSD input: {path}")
+        tsd = tsd_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_tsd.rs"]', static_root)
+        for required in (
+            "pinned musl 1.2.6",
+            "src/thread/pthread_key_create.c::{__pthread_key_create,",
+            "__pthread_key_delete,__pthread_tsd_run_dtors}",
+            "src/thread/pthread_getspecific.c::__pthread_getspecific",
+            "src/thread/pthread_setspecific.c::pthread_setspecific",
+            "src/thread/tss_create.c",
+            "src/thread/tss_delete.c",
+            "src/thread/tss_set.c",
+            "PTHREAD_KEYS_MAX: usize = 128",
+            "PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4",
+            "SelectedTsdValues",
+            "MAIN_SELECTED_TSD_VALUES",
+            "current_selected_values().is_none()",
+            "run_selected_worker_tsd_destructors",
+            "clear-before-destructor",
+            "main-thread process-exit destructors",
+            "concurrent deletion/destructor interaction",
+            "dynamic or loader TLS/DTV",
+        ):
+            self.assertIn(required, tsd)
+        tsd_exports = set(
+            re.findall(
+                r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                tsd,
+            )
+        )
+        self.assertSetEqual(
+            tsd_exports,
+            {
+                "pthread_key_create",
+                "pthread_key_delete",
+                "pthread_getspecific",
+                "pthread_setspecific",
+                "tss_create",
+                "tss_delete",
+                "tss_get",
+                "tss_set",
+            },
+        )
+        for forbidden in (
+            'pub unsafe extern "C" fn pthread_cancel',
+            'pub unsafe extern "C" fn pthread_exit',
+            'pub unsafe extern "C" fn thrd_exit',
+            "__tls_get_addr",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, tsd)
+
+        selected_tsd_entries = (
+            (
+                "pthread_key_create",
+                tsd.split('pub unsafe extern "C" fn pthread_key_create', 1)[1].split(
+                    "/// Delete one selected key", 1
+                )[0],
+            ),
+            (
+                "pthread_key_delete",
+                tsd.split('pub unsafe extern "C" fn pthread_key_delete', 1)[1].split(
+                    "/// Read one selected current-thread value", 1
+                )[0],
+            ),
+            (
+                "pthread_getspecific",
+                tsd.split('pub unsafe extern "C" fn pthread_getspecific', 1)[1].split(
+                    "/// Store one selected current-thread value", 1
+                )[0],
+            ),
+            (
+                "pthread_setspecific",
+                tsd.split('pub unsafe extern "C" fn pthread_setspecific', 1)[1].split(
+                    "/// Run the selected worker's private TSD destructor phase", 1
+                )[0],
+            ),
+        )
+        for entry_name, entry in selected_tsd_entries:
+            self.assertIn("current_selected_values()", entry, entry_name)
+            self.assertLess(
+                entry.index("current_selected_values()"),
+                entry.index("lock_selected_tsd()"),
+                entry_name,
+            )
+
+        for wrapper_name, pthread_entry in (
+            ("tss_create", "pthread_key_create(key, destructor)"),
+            ("tss_delete", "pthread_key_delete(key)"),
+            ("tss_get", "pthread_getspecific(key)"),
+            ("tss_set", "pthread_setspecific(key, value)"),
+        ):
+            wrapper = tsd.split(
+                f'pub unsafe extern "C" fn {wrapper_name}', 1
+            )[1]
+            self.assertIn(pthread_entry, wrapper, wrapper_name)
+
+        for required in (
+            "tsd: pthread_tsd::SelectedTsdValues",
+            "current_selected_worker_tsd_values",
+            "clear_selected_worker_tsd_key",
+            "pthread_tsd::run_selected_worker_tsd_destructors",
+            "publish_selected_worker_result",
+        ):
+            self.assertIn(required, pthread_create_join)
+        normal_exit = pthread_create_join.split('unsafe extern "C" fn worker_entry', 1)[
+            1
+        ].split("/// Create one default-attribute", 1)[0]
+        self.assertLess(
+            normal_exit.index("run_selected_worker_tsd_destructors"),
+            normal_exit.index("publish_selected_worker_result"),
+        )
+        explicit_exit = pthread_create_join.split("unsafe fn exit_selected_worker", 1)[
+            1
+        ].split("/// End one selected pthread-mode worker", 1)[0]
+        self.assertLess(
+            explicit_exit.index("run_selected_worker_tsd_destructors"),
+            explicit_exit.index("publish_selected_worker_result"),
+        )
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <pthread.h>",
+            "#include <threads.h>",
+            "PTHREAD_KEYS_MAX == 128 && PTHREAD_DESTRUCTOR_ITERATIONS == 4",
+            "TSS_DTOR_ITERATIONS == PTHREAD_DESTRUCTOR_ITERATIONS",
+            "pthread_key_create declaration",
+            "pthread_key_delete declaration",
+            "pthread_getspecific declaration",
+            "pthread_setspecific declaration",
+            "tss_create declaration",
+            "tss_delete declaration",
+            "tss_get declaration",
+            "tss_set declaration",
+            "run_pthread_return_round",
+            "run_pthread_exit_round",
+            "run_c11_return_round",
+            "run_c11_exit_round",
+            "run_deletion_round",
+            "run_capacity_round",
+            "PTHREAD_DESTRUCTOR_ITERATIONS",
+            "pthread_getspecific(pthread_dtor_key) != 0",
+            "tss_get(c11_dtor_key) != 0",
+            "errno != E2BIG",
+            "CRABC_PTHREAD_C11_TSD_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            ".global _start",
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_c11_tsd_probe",
+            "mov $231, %eax",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_types_header_abi.sh",
+            "run_pthread_c11_header_abi.sh",
+            "assert_selected_tsd_sources",
+            "-nostdlib -static",
+            "-DCRABC_PTHREAD_C11_TSD_FREESTANDING",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific",
+            "tss_create tss_delete tss_get tss_set",
+            "private atomic key-table lock",
+            "pthread_cancel",
+            "__tls_get_addr",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(tsd_exports <= static_exports)
+        self.assertTrue(
+            {"pthread_cancel", "pthread_cond_timedwait"}.isdisjoint(static_exports)
+        )
+
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_key_create_signature",
+                "crabc_pthread_key_delete_signature",
+                "crabc_pthread_getspecific_signature",
+                "crabc_pthread_setspecific_signature",
+                "crabc_tss_create_signature",
+                "crabc_tss_delete_signature",
+                "crabc_tss_get_signature",
+                "crabc_tss_set_signature",
+                "pthread_key_create signature",
+                "pthread_key_delete signature",
+                "pthread_getspecific signature",
+                "pthread_setspecific signature",
+                "tss_create signature",
+                "tss_delete signature",
+                "tss_get signature",
+                "tss_set signature",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "crabc_force_pthread_key_create",
+            "crabc_force_pthread_key_delete",
+            "crabc_force_pthread_getspecific",
+            "crabc_force_pthread_setspecific",
+            "crabc_force_tss_create",
+            "crabc_force_tss_delete",
+            "crabc_force_tss_get",
+            "crabc_force_tss_set",
+        ):
+            self.assertIn(required, cxx_header_probe)
+        for required in (
+            "pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific",
+            "call_once tss_create tss_delete tss_get tss_set",
+            "pthread_equal|pthread_key_create|pthread_key_delete|pthread_getspecific|pthread_setspecific",
+            "call_once|tss_create|tss_delete|tss_get|tss_set",
+        ):
+            self.assertIn(required, header_runner)
+
+        self.assertIn('id = "static-c-pthread-c11-tsd"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-c11-tsd"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_c11_tsd_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_c11_tsd.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-c11-tsd)\n        [ "$#" -eq 0 ] || fail "libc-pthread-c11-tsd takes no arguments"',
             runner,
         )
 
@@ -4469,9 +4748,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             <= static_exports
         )
         self.assertTrue(
-            {"pthread_cancel", "thrd_yield", "tss_create"}.isdisjoint(
-                static_exports
-            )
+            {"pthread_cancel", "thrd_yield"}.isdisjoint(static_exports)
         )
         self.assertIn("run_libc_pthread_detach_probe()", runner)
         self.assertIn(
@@ -4543,8 +4820,35 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "CLONE_SETTLS",
             "STATIC_INITIAL_TLS_STATE",
             "STATIC_INITIAL_TLS_PLAN",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID",
+            "is_initial_thread_pointer",
+            "raw_syscall::SYS_GETTID",
         ):
             self.assertIn(required, static_tls)
+        main_identity_bootstrap = static_tls.split(
+            "pub(super) unsafe fn bootstrap_initial_thread", 1
+        )[1].split("/// Private freestanding entry hook", 1)[0]
+        for identity_store in (
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.store",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID.store",
+        ):
+            self.assertLess(
+                main_identity_bootstrap.index(identity_store),
+                main_identity_bootstrap.index(
+                    "STATIC_INITIAL_TLS_STATE.store(TLS_STATE_READY"
+                ),
+                identity_store,
+            )
+        main_identity_check = static_tls.split(
+            "pub(super) fn is_initial_thread_pointer", 1
+        )[1].split("/// Materialize one independent child", 1)[0]
+        for required in (
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load",
+            "raw_syscall::SYS_GETTID",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID.load",
+        ):
+            self.assertIn(required, main_identity_check)
         load_bias_selection = static_tls.split(
             "let load_bias = match program_header_virtual_address", 1
         )[1].split("let (image, filesz, memsz, tls_alignment)", 1)[0]

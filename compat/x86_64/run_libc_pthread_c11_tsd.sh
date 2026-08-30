@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 bounded static crabc-libc C11 plain-synchronization
-# evidence.
+# Native Linux/x86-64 bounded static crabc-libc pthread-key/C11-TSS evidence.
 #
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves only mtx_plain init/destroy/lock/trylock/unlock and
-# private cnd init/destroy/wait/signal/broadcast over the selected static
-# worker, normal-mutex, and condition engines: held busy trylock, one signal,
-# two-waiter broadcast, repeated predicate ping-pong, errno preservation, and
-# quiescent destruction. It is not recursive/timed C11 behavior, cancellation,
-# TSS, once, dynamic TLS, CRT, loader, sysroot, C11-family completion, or
-# public x86 support.
+# archive. It proves a deliberately private 128-key lifecycle: selected main
+# and worker values, deletion clearing, and four clear-before-callback passes
+# on normal, pthread_exit, C11 return, and thrd_exit worker paths. It is not
+# cancellation, foreign threads, main-process-exit destruction, fork/atfork,
+# dynamic or loader TLS, a general pthread/C11 runtime, family completion,
+# CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,7 +17,7 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
 
 fail() {
-    printf 'ERROR: x86 static libc C11 plain synchronization: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc pthread/C11 TSD: %s\n' "$*" >&2
     exit 1
 }
 
@@ -59,39 +57,37 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-assert_private_futex_path() {
-    local symbol="$1"
-    local operation="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
+assert_selected_tsd_sources() {
+    local tsd_source="$ROOT_DIR/libc/src/c_abi/x86_64/pthread_tsd.rs"
+    local worker_source="$ROOT_DIR/libc/src/c_abi/x86_64/pthread_create_join.rs"
 
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks a raw x86 futex syscall"
-    grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-        "$disassembly" || fail "${symbol} lacks futex syscall number 202"
-    case "$operation" in
-        wait)
-            grep -Eq '\$0x80,%esi|\$0x80,%rsi' "$disassembly" ||
-                fail "${symbol} lacks FUTEX_WAIT_PRIVATE"
-            ;;
-        wake)
-            grep -Eq '\$0x81,%esi|\$0x81,%rsi' "$disassembly" ||
-                fail "${symbol} lacks FUTEX_WAKE_PRIVATE"
-            ;;
-        requeue)
-            grep -Eq '\$0x83,%esi|\$0x83,%rsi' "$disassembly" ||
-                fail "${symbol} lacks FUTEX_REQUEUE_PRIVATE"
-            grep -Eq '\$0x1,%r10(d)?' "$disassembly" ||
-                fail "${symbol} lacks requeue val2=1 in x86 r10"
-            grep -Eq '%r8' "$disassembly" ||
-                fail "${symbol} lacks requeue uaddr2 handoff through x86 r8"
-            ;;
-        *) fail "unknown private futex operation ${operation}" ;;
-    esac
+    [ -f "$tsd_source" ] || fail "missing private pthread/C11 TSD source"
+    [ -f "$worker_source" ] || fail "missing selected worker lifecycle source"
+    for required in \
+        'pinned musl 1.2.6' \
+        'src/thread/pthread_key_create.c::{__pthread_key_create,' \
+        '__pthread_key_delete,__pthread_tsd_run_dtors}' \
+        'src/thread/pthread_getspecific.c::__pthread_getspecific' \
+        'src/thread/pthread_setspecific.c::pthread_setspecific' \
+        'src/thread/tss_create.c' \
+        'src/thread/tss_delete.c' \
+        'src/thread/tss_set.c' \
+        'PTHREAD_KEYS_MAX: usize = 128' \
+        'PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4' \
+        'TSD_TEAR_DOWN_RUNNING' \
+        'run_selected_worker_tsd_destructors' \
+        'four ascending-key passes' \
+        'main-thread process-exit destructors' \
+        'dynamic or loader TLS'; do
+        grep -Fq "$required" "$tsd_source" ||
+            fail "private pthread/C11 TSD source is missing ${required}"
+    done
+    grep -Fq 'pthread_tsd::run_selected_worker_tsd_destructors' "$worker_source" ||
+        fail "selected worker lifecycle does not run TSD destructors"
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sed sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -100,11 +96,11 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-c11-plain-sync.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-c11-tsd.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-c11-plain-sync-reference"
-candidate="$work_dir/crabc-static-c11-plain-sync-candidate"
+reference="$work_dir/musl-pthread-c11-tsd-reference"
+candidate="$work_dir/crabc-static-pthread-c11-tsd-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -119,19 +115,18 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
-mutex_lock_disassembly="$work_dir/mtx-lock-disassembly"
-mutex_unlock_disassembly="$work_dir/mtx-unlock-disassembly"
+key_create_disassembly="$work_dir/pthread-key-create-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_c11_plain_sync_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h pthread.h threads.h bits/alltypes.h; do
+    compat/x86_64/libc_pthread_c11_tsd_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h limits.h pthread.h threads.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_c11_plain_sync_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_c11_tsd_probe.c \
     -o "$reference"
 if timeout "$EXECUTION_TIMEOUT" "$reference"; then
     :
@@ -150,12 +145,9 @@ readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join pthread_mutex_init \
-    pthread_mutex_destroy pthread_mutex_lock pthread_mutex_trylock \
-    pthread_mutex_unlock pthread_cond_init pthread_cond_destroy \
-    pthread_cond_wait pthread_cond_signal pthread_cond_broadcast \
-    thrd_create thrd_join cnd_init cnd_destroy cnd_wait cnd_signal \
-    cnd_broadcast mtx_init mtx_destroy mtx_lock mtx_trylock mtx_unlock; do
+    pthread_create pthread_exit pthread_join \
+    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
+    thrd_create thrd_exit thrd_join tss_create tss_delete tss_get tss_set; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -163,14 +155,13 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" |
     fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in thrd_yield \
-    mtx_timedlock cnd_timedwait pthread_cancel pthread_setcancelstate \
-    pthread_setcanceltype pthread_testcancel pthread_mutexattr_init \
-    pthread_mutexattr_destroy pthread_mutexattr_settype pthread_mutexattr_gettype \
-    pthread_mutex_timedlock pthread_mutex_consistent pthread_condattr_init \
-    pthread_condattr_destroy pthread_condattr_setclock pthread_condattr_getclock \
-    pthread_condattr_setpshared pthread_condattr_getpshared \
-    pthread_cond_timedwait malloc free calloc realloc __tls_get_addr; do
+for unselected in pthread_cancel pthread_setcancelstate pthread_setcanceltype \
+    pthread_testcancel pthread_mutexattr_init pthread_mutexattr_destroy \
+    pthread_mutexattr_settype pthread_mutexattr_gettype pthread_mutex_timedlock \
+    pthread_mutex_consistent pthread_condattr_init pthread_condattr_destroy \
+    pthread_condattr_setclock pthread_condattr_getclock \
+    pthread_condattr_setpshared pthread_condattr_getpshared pthread_cond_timedwait \
+    malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -183,36 +174,13 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
+assert_selected_tsd_sources
 
-# The C11 wrapper must use private sibling seams, never exported pthread C
-# symbols. Retain this source-level boundary alongside the native fixture.
-for required in \
-    'pthread_mutex::init_selected_normal_mutex' \
-    'pthread_mutex::destroy_selected_normal_mutex' \
-    'pthread_mutex::lock_selected_normal_mutex' \
-    'pthread_mutex::try_lock_selected_normal_mutex' \
-    'pthread_mutex::unlock_selected_normal_mutex' \
-    'pthread_cond::init_selected_private_cond' \
-    'pthread_cond::destroy_selected_private_cond' \
-    'pthread_cond::wait_selected_private_cond' \
-    'pthread_cond::signal_selected_private_cond' \
-    'pthread_cond::broadcast_selected_private_cond' \
-    'MTX_PLAIN' \
-    'THRD_BUSY' \
-    'mtx_unlock'; do
-    grep -Fq "$required" libc/src/c_abi/x86_64/c11_sync.rs ||
-        fail "C11 plain-sync source is missing ${required}"
-done
-if grep -Eq 'pthread_(mutex|cond)_(init|destroy|lock|trylock|unlock|wait|signal|broadcast)\(' \
-    libc/src/c_abi/x86_64/c11_sync.rs; then
-    fail "C11 plain-sync wrapper crosses an interposable pthread C ABI"
-fi
-
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_C11_PLAIN_SYNC_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_C11_TSD_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_c11_plain_sync_probe.c \
-    compat/x86_64/libc_c11_plain_sync_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_pthread_c11_tsd_probe.c \
+    compat/x86_64/libc_pthread_c11_tsd_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
@@ -220,8 +188,9 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    thrd_create thrd_join cnd_init cnd_destroy cnd_wait cnd_signal \
-    cnd_broadcast mtx_init mtx_destroy mtx_lock mtx_trylock mtx_unlock \
+    pthread_create pthread_exit pthread_join \
+    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
+    thrd_create thrd_exit thrd_join tss_create tss_delete tss_get tss_set \
     __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
@@ -249,23 +218,15 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_c11_plain_sync_start.S ||
+    compat/x86_64/libc_pthread_c11_tsd_start.S ||
     fail "fixture start does not delegate first-thread TLS to libc"
 if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
-    compat/x86_64/libc_c11_plain_sync_start.S; then
+    compat/x86_64/libc_pthread_c11_tsd_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=mtx_lock "$candidate" >"$mutex_lock_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$mutex_lock_disassembly" ||
-    fail "mtx_lock lacks its x86 atomic compare-exchange"
-objdump -d --disassemble=mtx_unlock "$candidate" \
-    >"$mutex_unlock_disassembly"
-grep -Eq 'xchg[[:space:]].*\(%r' "$mutex_unlock_disassembly" ||
-    fail "mtx_unlock lacks its atomic exchange release"
-assert_private_futex_path cnd_wait wait
-assert_private_futex_path cnd_wait requeue
-assert_private_futex_path cnd_signal wake
-assert_private_futex_path cnd_broadcast wake
+objdump -d --disassemble=pthread_key_create "$candidate" >"$key_create_disassembly"
+grep -Eq 'lock[[:space:]]+cmpxchg' "$key_create_disassembly" ||
+    fail "pthread_key_create lacks its private atomic key-table lock"
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :
@@ -274,4 +235,4 @@ else
     fail "candidate execution exited ${candidate_status}"
 fi
 
-printf 'x86 static crabc-libc C11 plain synchronization: PASS\n'
+printf 'x86 static crabc-libc pthread/C11 TSD: PASS\n'

@@ -23,7 +23,7 @@
 compile_error!("x86 Static Initial TLS v1 requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
 use super::raw_syscall;
 
@@ -120,6 +120,14 @@ impl StaticInitialTlsBlock {
 // only after the release/acquire state transition below.  Raw pointer access
 // deliberately avoids creating references to mutable static storage.
 static STATIC_INITIAL_TLS_STATE: AtomicU8 = AtomicU8::new(TLS_STATE_EMPTY);
+// The selected TSD leaf uses this immutable identity only to distinguish the
+// bootstrapped process-main thread from the bounded workers in its separate
+// private registry. It is not a public TCB address or general TLS owner.
+static STATIC_INITIAL_TLS_MAIN_THREAD_POINTER: AtomicUsize = AtomicUsize::new(0);
+// A copied or inherited `%fs` base alone must not turn a raw foreign thread
+// into the selected main thread for the private TSD leaf. Keep the bootstrap
+// task ID beside that private pointer identity and require both at access.
+static STATIC_INITIAL_TLS_MAIN_THREAD_ID: AtomicI32 = AtomicI32::new(0);
 static mut STATIC_INITIAL_TLS_PLAN: StaticInitialTlsPlan = StaticInitialTlsPlan::EMPTY;
 
 core::arch::global_asm!(
@@ -157,6 +165,12 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
         return false;
     };
+    let main_thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+    if main_thread_id <= 0 || main_thread_id > i64::from(c_int::MAX) {
+        let _ = unsafe { release_thread(block) };
+        STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
+        return false;
+    }
     if !unsafe { arch_set_fs(block.thread_pointer as usize) } {
         let _ = unsafe { release_thread(block) };
         STATIC_INITIAL_TLS_STATE.store(TLS_STATE_FAILED, Ordering::Release);
@@ -168,6 +182,8 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
     unsafe {
         core::ptr::write_volatile(core::ptr::addr_of_mut!(STATIC_INITIAL_TLS_PLAN), plan);
     }
+    STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.store(block.thread_pointer as usize, Ordering::Release);
+    STATIC_INITIAL_TLS_MAIN_THREAD_ID.store(main_thread_id as c_int, Ordering::Release);
     STATIC_INITIAL_TLS_STATE.store(TLS_STATE_READY, Ordering::Release);
     true
 }
@@ -195,6 +211,28 @@ pub unsafe extern "C" fn __crabc_x86_static_tls_bootstrap(initial_stack: *const 
 #[inline]
 pub(super) fn is_ready() -> bool {
     STATIC_INITIAL_TLS_STATE.load(Ordering::Acquire) == TLS_STATE_READY
+}
+
+/// Whether one `%fs:0`/Linux-TID identity is the bootstrapped process-main thread.
+///
+/// This is a private selected-TSD discriminator only. The Static Initial TLS
+/// v1 owner still exposes no dereferenceable TCB or general thread registry.
+/// Requiring the task ID prevents a raw foreign task that inherits or copies
+/// the main FS base from accessing the selected main TSD table.
+#[inline]
+pub(super) fn is_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
+    if thread_pointer.is_null()
+        || !is_ready()
+        || thread_pointer as usize
+            != STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load(Ordering::Acquire)
+    {
+        return false;
+    }
+    let current_thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+    current_thread_id > 0
+        && current_thread_id <= i64::from(c_int::MAX)
+        && current_thread_id as c_int
+            == STATIC_INITIAL_TLS_MAIN_THREAD_ID.load(Ordering::Acquire)
 }
 
 /// Materialize one independent child copy of the retained final-image TLS.

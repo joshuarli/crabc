@@ -171,8 +171,7 @@ for unselected in pthread_condattr_init pthread_condattr_destroy \
     pthread_mutexattr_settype pthread_mutexattr_gettype pthread_mutex_timedlock \
     pthread_mutex_consistent \
     pthread_cancel pthread_setcancelstate pthread_setcanceltype \
-    pthread_testcancel pthread_key_create pthread_setspecific \
-    pthread_getspecific malloc free calloc realloc __tls_get_addr; do
+    pthread_testcancel malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

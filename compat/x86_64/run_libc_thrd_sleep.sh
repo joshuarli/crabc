@@ -150,12 +150,12 @@ for symbol in __errno_location thrd_sleep; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
- # The shared archive's separately evidenced normal private pthread-mutex and
- # private condition blocks are not C11 synchronization and are deliberately
- # outside this adapter.
+ # The shared archive's separately evidenced normal private pthread-mutex,
+ # private condition, and TSD lifecycle blocks are deliberately outside this
+ # direct sleep adapter.
 for unselected in thrd_yield \
-    tss_create tss_delete tss_set tss_get pthread_cancel \
-    pthread_key_create pthread_mutexattr_init pthread_mutexattr_destroy \
+    pthread_cancel \
+    pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
     pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \

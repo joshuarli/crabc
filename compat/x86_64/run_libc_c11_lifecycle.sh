@@ -116,12 +116,12 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" |
     fail "archive pthread clone boundary is not hidden"
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-# The shared archive's separately evidenced C11 plain synchronization sibling
-# now owns mtx/cnd operations, so this lifecycle runner deliberately does not
-# reject those independently selected exports.
+# The shared archive's separately evidenced C11 plain synchronization and TSD
+# siblings own mtx/cnd and pthread-key/C11-TSS operations, so this lifecycle
+# runner deliberately does not reject those independently selected exports.
 for unselected in thrd_yield \
-    tss_create tss_delete tss_set tss_get pthread_cancel \
-    pthread_key_create pthread_mutexattr_init pthread_mutexattr_destroy \
+    pthread_cancel \
+    pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \
     pthread_condattr_getclock pthread_condattr_setpshared pthread_condattr_getpshared \

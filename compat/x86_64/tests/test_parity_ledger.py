@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 51)
+        self.assertEqual(report["verified_artifact_count"], 52)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4303,7 +4303,12 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn(
             "libc/src/c_abi/x86_64/pthread_once.rs", pthread_tls["source_owners"]
         )
-        self.assertIn("Twelve separately verified static artifacts", pthread_tls["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/pthread_tsd.rs", pthread_tls["source_owners"]
+        )
+        self.assertIn(
+            "Thirteen separately verified static artifacts", pthread_tls["description"]
+        )
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-atomic",
@@ -4320,7 +4325,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 12)
+        self.assertEqual(len(artifacts), 13)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4337,6 +4342,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-cond-private",
                 "static-c-c11-plain-sync",
                 "static-c-pthread-c11-once",
+                "static-c-pthread-c11-tsd",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4351,6 +4357,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         private_condition = by_id["static-c-pthread-cond-private"]
         c11_plain_sync = by_id["static-c-c11-plain-sync"]
         once = by_id["static-c-pthread-c11-once"]
+        tsd = by_id["static-c-pthread-c11-tsd"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -5058,6 +5065,161 @@ class X86ParityLedgerTests(unittest.TestCase):
             "src/internal/pthread_impl.h::__wake",
         ):
             self.assertIn(phrase, once_oracle["role"])
+        self.assertEqual(
+            tsd["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-c11-tsd",
+        )
+        for phrase in (
+            "libc.pthread-tls",
+            "pthread_key_create",
+            "pthread_key_delete",
+            "pthread_getspecific",
+            "pthread_setspecific",
+            "tss_create",
+            "tss_delete",
+            "tss_get",
+            "tss_set",
+            "private 128-key table",
+            "permanent process-main value table",
+            "null destructor still reserves a key",
+            "four ascending-key passes",
+            "before join-result publication",
+            "128-key exhaustion/reuse",
+            "fourth-pass rearming",
+            "Invalid/deleted keys and non-selected callers deliberately fail closed",
+            "bootstrapped `%fs:0` plus Linux TID pair",
+            "main-thread process-exit destructors",
+            "foreign threads",
+            "cancellation and cleanup handlers",
+            "concurrent key-deletion/destructor interaction",
+            "fork/atfork",
+            "dynamic or loader TLS/DTV",
+            "general TCB or all-thread list",
+            "weak/same-address TSD aliases",
+            "full pthread/TLS or x86-64 parity",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, tsd["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/pthread_tsd.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/pthread_identity.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+            "include/limits.h",
+            "include/pthread.h",
+            "include/threads.h",
+            "compat/x86_64/libc_pthread_c11_tsd_probe.c",
+            "compat/x86_64/libc_pthread_c11_tsd_start.S",
+            "compat/x86_64/run_libc_pthread_c11_tsd.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, tsd["source_owners"])
+        tsd_abi = " ".join(tsd["x86_abi_prerequisites"])
+        for phrase in (
+            "pthread_key_create.c::{__pthread_key_create,__pthread_key_delete,__pthread_tsd_run_dtors}",
+            "pthread_getspecific.c::__pthread_getspecific",
+            "pthread_setspecific.c::pthread_setspecific",
+            "tss_create.c",
+            "tss_delete.c",
+            "tss_set.c",
+            "pthread_create.c::{start,start_c11,__pthread_exit}",
+            "PTHREAD_KEYS_MAX=128",
+            "PTHREAD_DESTRUCTOR_ITERATIONS=4",
+            "TSS_DTOR_ITERATIONS=4",
+            "null-destructor key",
+            "EAGAIN",
+            "thrd_error",
+            "process-main table",
+            "bootstrapped `%fs:0` plus Linux gettid identity",
+            "without calling the old destructor",
+            "before result publication and SYS_exit",
+            "clears a non-null value before",
+            "drops the metadata lock across the callback",
+            "fourth-pass rearm remains stored",
+            "invalid/deleted keys and non-selected callers",
+            "main-thread process-exit destructors",
+            "foreign thread registration",
+            "cancellation/cleanup",
+            "concurrent key-deletion/destructor interaction",
+            "fork/atfork",
+            "dynamic/loader TLS/DTV",
+            "general TCB layout",
+            "weak/same-address TSD aliases",
+            "exact ELF parity",
+            "clone=56",
+            "SYS_exit=60",
+        ):
+            self.assertIn(phrase, tsd_abi)
+        tsd_headers = " ".join(tsd["x86_header_prerequisites"])
+        for phrase in (
+            "pthread.h",
+            "threads.h",
+            "limits.h",
+            "errno.h",
+            "bits/alltypes.h",
+            "bits/syscall.h",
+            "pthread_key_t/tss_t identity",
+            "PTHREAD_KEYS_MAX=128",
+            "PTHREAD_DESTRUCTOR_ITERATIONS=TSS_DTOR_ITERATIONS=4",
+            "all eight exact function-pointer declarations",
+            "28-context C/C++",
+            "pthread_key_create/pthread_key_delete/pthread_getspecific/pthread_setspecific",
+            "tss_create/tss_delete/tss_get/tss_set",
+            "unmangled C linkage",
+            "does not claim a broad installed header, general TSD, full C11, or pthread runtime completion",
+        ):
+            self.assertIn(phrase, tsd_headers)
+        tsd_scope = tsd["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "-nostdlib -static",
+            "selected main/worker value isolation",
+            "all 128 keys occupied with a null destructor and EAGAIN exhaustion",
+            "deletion clears a waiting worker's old slot",
+            "runs no old destructor",
+            "replacement key in that numeric slot",
+            "normal pthread return, pthread_exit, C11 return, and thrd_exit",
+            "four clear-before-callback rearming destructor passes",
+            "before their join result",
+            "preserves caller errno",
+            "without the private metadata lock",
+            "exactly the eight selected TSD exports",
+            "32-bit pthread_key_t/tss_t identity",
+            "128/4 header constants",
+            "direct private sibling routing and exit ordering",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "dynamic TLS resolver",
+            "allocator",
+            "ambient runtime",
+            "main-thread process-exit destructors",
+            "foreign threads",
+            "cancellation/cleanup",
+            "concurrent deletion/destructor interaction",
+            "fork/atfork",
+            "dynamic/loader TLS/DTV",
+            "general TCB/list or pthread/C11 behavior",
+            "weak/same-address TSD alias or exact ELF parity",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, tsd_scope)
+        tsd_oracle = next(entry for entry in tsd["oracle"] if entry["kind"] == "c-posix")
+        self.assertEqual(
+            tsd_oracle["source"],
+            "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        )
+        for phrase in (
+            "src/thread/pthread_key_create.c",
+            "pthread_getspecific.c",
+            "pthread_setspecific.c",
+            "tss_create.c",
+            "tss_delete.c",
+            "tss_set.c",
+            "pthread_create.c::{start,start_c11,__pthread_exit}",
+        ):
+            self.assertIn(phrase, tsd_oracle["role"])
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -5289,6 +5451,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-c11-once must use the closed libc-pthread-c11-once command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_tsd = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-c11-tsd"
+        )
+        changed_tsd["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-c11-tsd must use the closed libc-pthread-c11-tsd command",
         ):
             ledger.validate_ledger(changed)
 

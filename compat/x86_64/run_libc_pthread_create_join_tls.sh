@@ -117,13 +117,12 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" \
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" \
     || fail "archive Static Initial TLS v1 bootstrap is not hidden"
  # The shared static archive also contains separately evidenced private
- # normal-mutex and private-condition blocks. This create/join fixture does
- # not exercise either one; retain the narrower rejection for every still
- # unselected pthread synchronization surface instead of treating siblings as
- # accidental exports.
+ # normal-mutex, private-condition, and TSD lifecycle blocks. This create/join
+ # fixture does not exercise those siblings; retain the narrower rejection for
+ # every still-unselected pthread synchronization surface instead of treating
+ # selected sibling exports as accidental.
 for unselected in clone __clone \
     pthread_cancel pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
-    pthread_key_create pthread_setspecific pthread_getspecific \
     pthread_mutexattr_init pthread_mutexattr_destroy pthread_mutexattr_settype \
     pthread_mutex_timedlock pthread_mutex_consistent \
     pthread_condattr_init pthread_condattr_destroy pthread_condattr_setclock \

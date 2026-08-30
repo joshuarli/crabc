@@ -10,8 +10,9 @@
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, plus a distinct C11 plain
-//! mutex/condition adapter and normal-return `pthread_once`/C11 `call_once`
-//! state machine over those private engines, all backed by the
+//! mutex/condition adapter, a private 128-key pthread/C11 TSD lifecycle for
+//! the selected main and worker paths, and normal-return `pthread_once`/C11
+//! `call_once` state machine over those private engines, all backed by the
 //! private Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
@@ -40,9 +41,13 @@
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
 //! process-private conditions paired with those normal mutexes. The C11 plain
 //! synchronization sibling maps only distinct `mtx_t`/`cnd_t` storage through
-//! those same private engines; its once sibling maps only four-byte
-//! zero-initialized controls through a private 0/1/2/3 futex state machine;
-//! the C11 lifecycle/sleep siblings likewise
+//! those same private engines. Its TSD sibling stores only selected-main and
+//! selected-worker values in a bounded private table and runs worker
+//! destructors for at most four clear-before-callback passes; it excludes
+//! cancellation, main process exit, foreign callers, fork, dynamic/loader
+//! TLS, and general TCB/thread-list semantics. Its once sibling maps only
+//! four-byte zero-initialized controls through a private 0/1/2/3 futex state
+//! machine; the C11 lifecycle/sleep siblings likewise
 //! remain static-only typed-worker and direct non-cancellation realtime-sleep
 //! slices. None is a claim for broader pthread/C11 header support.
 //!
@@ -107,6 +112,8 @@ mod signal_execution;
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
+#[path = "pthread_tsd.rs"]
+mod pthread_tsd;
 #[path = "pthread_mutex.rs"]
 mod pthread_mutex;
 #[path = "pthread_cond.rs"]
