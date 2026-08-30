@@ -76,6 +76,74 @@ class MeasurementContractTests(unittest.TestCase):
         with self.assertRaisesRegex(perf.HarnessError, "unexpected"):
             perf.parse_batch_output("batch_ns=17\naddress=0x1\nok\n", expected_batches=1)
 
+    def test_selected_artifact_attestation_accepts_only_rust_shadow_identity_and_route(self) -> None:
+        self.assertEqual(
+            perf.parse_attestation_output(
+                "backend_identity=rust-native-shadow-crabc-test-free-v1\nfree_route=crabc_test_free\nok\n",
+                expected_identity=perf.RUST_SHADOW_BACKEND_IDENTITY,
+                expected_free_route=perf.RUST_SHADOW_FREE_ROUTE,
+            ),
+            {"backend_identity": perf.RUST_SHADOW_BACKEND_IDENTITY, "free_route": perf.RUST_SHADOW_FREE_ROUTE},
+        )
+        with self.assertRaisesRegex(perf.HarnessError, "attestation output"):
+            perf.parse_attestation_output(
+                "backend_identity=pinned-c-mimalloc-v3.5.0\nfree_route=mi_free\nok\n",
+                expected_identity=perf.RUST_SHADOW_BACKEND_IDENTITY,
+                expected_free_route=perf.RUST_SHADOW_FREE_ROUTE,
+            )
+
+    def test_selected_artifact_rejects_c_or_default_free_symbols(self) -> None:
+        self.assertEqual(
+            perf.verify_rust_shadow_free_symbols({"crabc_test_free", "other"}),
+            {
+                "required_rust_shadow_symbol": "crabc_test_free",
+                "required_rust_shadow_symbol_defined": True,
+                "rejected_c_symbol": "mi_free",
+                "rejected_c_symbol_defined": False,
+            },
+        )
+        with self.assertRaisesRegex(perf.HarnessError, "does not define crabc_test_free"):
+            perf.verify_rust_shadow_free_symbols({"free"})
+        with self.assertRaisesRegex(perf.HarnessError, "rejected pinned-C mi_free"):
+            perf.verify_rust_shadow_free_symbols({"crabc_test_free", "mi_free"})
+
+    def test_selected_artifact_build_identity_binds_source_archive_and_executable_hashes(self) -> None:
+        first = perf.selected_artifact_build_identity(
+            backend_source={"sha256": "a" * 64},
+            static_archive={"sha256": "b" * 64},
+            executable={"sha256": "c" * 64},
+        )
+        second = perf.selected_artifact_build_identity(
+            backend_source={"sha256": "a" * 64},
+            static_archive={"sha256": "b" * 64},
+            executable={"sha256": "d" * 64},
+        )
+        self.assertEqual(first["algorithm"], "sha256-canonical-json")
+        self.assertNotEqual(first["sha256"], second["sha256"])
+
+    def test_c_backend_must_reject_rust_shadow_attestation(self) -> None:
+        with patch.object(
+            perf,
+            "run_fixture_attestation",
+            return_value={"backend_identity": "pinned-c-mimalloc-v3.5.0", "free_route": "mi_free"},
+        ):
+            self.assertEqual(
+                perf.assert_c_backend_rejects_rust_shadow_attestation(Path("/fixture/c")),
+                {
+                    "accepted_as_rust_shadow": False,
+                    "observed_backend_identity": "pinned-c-mimalloc-v3.5.0",
+                    "observed_free_route": "mi_free",
+                    "required_rust_shadow_identity": "rust-native-shadow-crabc-test-free-v1",
+                    "required_rust_shadow_free_route": "crabc_test_free",
+                },
+            )
+        with patch.object(
+            perf,
+            "run_fixture_attestation",
+            return_value={"backend_identity": perf.RUST_SHADOW_BACKEND_IDENTITY, "free_route": perf.RUST_SHADOW_FREE_ROUTE},
+        ), self.assertRaisesRegex(perf.HarnessError, "selected-artifact attestation changed"):
+            perf.assert_c_backend_rejects_rust_shadow_attestation(Path("/fixture/c"))
+
     def test_ratio_is_rust_throughput_over_pinned_c_throughput(self) -> None:
         # C takes 20ns and Rust takes 40ns for the same one-pair workload.
         ratio = perf.throughput_ratio([50_000_000.0] * 5, [25_000_000.0] * 5, seed=3)

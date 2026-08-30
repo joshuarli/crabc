@@ -28,3 +28,13 @@ void crabc_local_allocator_perf_free(void *block)
 {
   mi_free(block);
 }
+
+const char *crabc_local_allocator_perf_backend_identity(void)
+{
+  return "pinned-c-mimalloc-v3.5.0";
+}
+
+const char *crabc_local_allocator_perf_free_route(void)
+{
+  return "mi_free";
+}

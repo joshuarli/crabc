@@ -44,6 +44,10 @@ KIND = "crabc-mimalloc-aarch64-local-allocation-performance-smoke"
 ARCHITECTURE = "aarch64"
 RUST_TARGET = "aarch64-unknown-linux-musl"
 MUSL_COMPILER = "musl-gcc"
+RUST_SHADOW_BACKEND_IDENTITY = "rust-native-shadow-crabc-test-free-v1"
+RUST_SHADOW_FREE_ROUTE = "crabc_test_free"
+PINNED_C_BACKEND_IDENTITY = "pinned-c-mimalloc-v3.5.0"
+REJECTED_C_FREE_ROUTE = "mi_free"
 FIXTURE_RELEASE_FLAGS = ("-O3", "-DNDEBUG")
 PINNED_C_SOURCE_CONFIGURATION_FLAGS = (
     "-DMI_SHARED_LIB",
@@ -215,6 +219,13 @@ def load_manifest(path: Path = MANIFEST) -> tuple[dict[str, Any], tuple[Workload
         raise HarnessError("local AArch64 performance manifest upstream changed")
     if not isinstance(fixture, Mapping) or fixture.get("single_thread_only") is not True:
         raise HarnessError("local AArch64 performance manifest no longer describes a single-thread fixture")
+    attestation = fixture.get("selected_artifact_attestation")
+    if attestation != {
+        "backend_identity": RUST_SHADOW_BACKEND_IDENTITY,
+        "free_route": RUST_SHADOW_FREE_ROUTE,
+        "rejected_c_free_route": REJECTED_C_FREE_ROUTE,
+    }:
+        raise HarnessError("local AArch64 performance manifest selected-artifact attestation changed")
     scope = raw.get("scope")
     if not isinstance(scope, Mapping) or any(
         scope.get(field) is not False
@@ -418,12 +429,151 @@ def audit_executable(readelf: str, artifact: Path) -> dict[str, Any]:
     return {"artifact": artifact_record(artifact), "elf": parse_elf_identity(str(header["stdout"]))}
 
 
+def executable_defined_symbols(nm: str, artifact: Path) -> set[str]:
+    record = command_record((nm, "-g", "--defined-only", str(artifact)), cwd=ROOT)
+    require_success(record, "fixture executable symbol inspection")
+    return {
+        fields[-1]
+        for line in str(record["stdout"]).splitlines()
+        if (fields := line.split()) and not line.endswith(":")
+    }
+
+
+def verify_rust_shadow_free_symbols(symbols: set[str]) -> dict[str, Any]:
+    """Prove the selected executable retains Rust-shadow free, not C free."""
+
+    if RUST_SHADOW_FREE_ROUTE not in symbols:
+        raise HarnessError("Rust shadow executable does not define crabc_test_free")
+    if REJECTED_C_FREE_ROUTE in symbols:
+        raise HarnessError("Rust shadow executable defines the rejected pinned-C mi_free route")
+    return {
+        "required_rust_shadow_symbol": RUST_SHADOW_FREE_ROUTE,
+        "required_rust_shadow_symbol_defined": True,
+        "rejected_c_symbol": REJECTED_C_FREE_ROUTE,
+        "rejected_c_symbol_defined": False,
+    }
+
+
+def parse_attestation_output(
+    output: str, *, expected_identity: str, expected_free_route: str
+) -> dict[str, str]:
+    """Accept the fixture-private attestation grammar and no incidental text."""
+
+    expected = [
+        f"backend_identity={expected_identity}",
+        f"free_route={expected_free_route}",
+        "ok",
+    ]
+    observed = output.splitlines()
+    if observed != expected:
+        raise HarnessError("fixture selected-artifact attestation output is absent or changed")
+    return {"backend_identity": expected_identity, "free_route": expected_free_route}
+
+
+def run_fixture_attestation(
+    binary: Path, *, expected_identity: str, expected_free_route: str, timeout: float = 30.0
+) -> dict[str, str]:
+    """Run the fixture's build-selected backend attestation at a fixed route."""
+
+    try:
+        completed = subprocess.run(
+            [str(binary), "attest", expected_identity, expected_free_route],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=clean_environment(),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise HarnessError("fixture selected-artifact attestation timed out") from error
+    if completed.returncode != 0 or completed.stderr:
+        raise HarnessError(
+            "fixture selected-artifact attestation failed: "
+            f"status={completed.returncode} stderr={completed.stderr[:512]!r} stdout={completed.stdout[:512]!r}"
+        )
+    return parse_attestation_output(
+        completed.stdout,
+        expected_identity=expected_identity,
+        expected_free_route=expected_free_route,
+    )
+
+
+def run_selected_artifact_attestation(binary: Path, *, timeout: float = 30.0) -> dict[str, str]:
+    """Reject an executable whose private boundary is not the Rust shadow."""
+
+    return run_fixture_attestation(
+        binary,
+        expected_identity=RUST_SHADOW_BACKEND_IDENTITY,
+        expected_free_route=RUST_SHADOW_FREE_ROUTE,
+        timeout=timeout,
+    )
+
+
+def selected_artifact_build_identity(
+    *, backend_source: Mapping[str, Any], static_archive: Mapping[str, Any], executable: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Bind the attested route to the exact source/archive/executable hashes."""
+
+    components = {
+        "backend_identity": RUST_SHADOW_BACKEND_IDENTITY,
+        "backend_source_sha256": backend_source.get("sha256"),
+        "executable_sha256": executable.get("sha256"),
+        "free_route": RUST_SHADOW_FREE_ROUTE,
+        "static_archive_sha256": static_archive.get("sha256"),
+    }
+    if not all(isinstance(value, str) and value for value in components.values()):
+        raise HarnessError("Rust shadow selected-artifact identity lacks a component hash")
+    canonical = json.dumps(components, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return {"algorithm": "sha256-canonical-json", "components": components, "sha256": hashlib.sha256(canonical).hexdigest()}
+
+
+def attest_rust_shadow_artifact(
+    nm: str, binary: Path, *, backend_source: Mapping[str, Any], static_archive: Mapping[str, Any], executable: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Perform all pre-timing checks for the selected Rust-shadow fixture."""
+
+    return {
+        "build_identity": selected_artifact_build_identity(
+            backend_source=backend_source,
+            static_archive=static_archive,
+            executable=executable,
+        ),
+        "runtime": run_selected_artifact_attestation(binary),
+        "symbol_attestation": verify_rust_shadow_free_symbols(executable_defined_symbols(nm, binary)),
+    }
+
+
+def assert_c_backend_rejects_rust_shadow_attestation(binary: Path) -> dict[str, Any]:
+    """Prove the same check does not accept the pinned-C fixture by mistake."""
+
+    observed = run_fixture_attestation(
+        binary,
+        expected_identity=PINNED_C_BACKEND_IDENTITY,
+        expected_free_route=REJECTED_C_FREE_ROUTE,
+    )
+    if observed != {"backend_identity": PINNED_C_BACKEND_IDENTITY, "free_route": REJECTED_C_FREE_ROUTE}:
+        raise HarnessError("pinned C fixture selected-artifact attestation changed")
+    return {
+        "accepted_as_rust_shadow": False,
+        "observed_backend_identity": PINNED_C_BACKEND_IDENTITY,
+        "observed_free_route": REJECTED_C_FREE_ROUTE,
+        "required_rust_shadow_identity": RUST_SHADOW_BACKEND_IDENTITY,
+        "required_rust_shadow_free_route": RUST_SHADOW_FREE_ROUTE,
+    }
+
+
 def build_pinned_c_fixture(compiler: str, readelf: str, source: Path, build_root: Path) -> tuple[Path, dict[str, Any]]:
     binary = build_root / "pinned-c-fixture"
     command = pinned_c_fixture_command(compiler, source, binary)
     result = command_record(command, cwd=source)
     require_success(result, "pinned C fixture build")
-    return binary, {"build_command": command, "executable": audit_executable(readelf, binary)}
+    return binary, {
+        "build_command": command,
+        "executable": audit_executable(readelf, binary),
+        "rust_shadow_attestation_rejection": assert_c_backend_rejects_rust_shadow_attestation(binary),
+    }
 
 
 def build_rust_fixture(compiler: str, readelf: str, nm: str, build_root: Path) -> tuple[Path, dict[str, Any]]:
@@ -443,14 +593,24 @@ def build_rust_fixture(compiler: str, readelf: str, nm: str, build_root: Path) -
     fixture_command = rust_fixture_command(compiler, static_library, search_path, fixture_libraries, binary)
     fixture = command_record(fixture_command, cwd=ROOT)
     require_success(fixture, "Rust native shadow fixture build")
+    backend_source = file_record(FIXTURE_ROOT / "rust-native-shadow-backend.c")
+    archive = artifact_record(static_library)
+    executable = audit_executable(readelf, binary)
     return binary, {
         "cargo_command": cargo_command,
-        "executable": audit_executable(readelf, binary),
+        "executable": executable,
         "fixture_build_command": fixture_command,
         "native_library_search_path": search_path,
         "fixture_link_libraries": fixture_libraries,
         "native_static_libraries_reported_by_rustc": native_libraries,
-        "static_archive": artifact_record(static_library),
+        "selected_artifact_attestation": attest_rust_shadow_artifact(
+            nm,
+            binary,
+            backend_source=backend_source,
+            static_archive=archive,
+            executable=executable["artifact"],
+        ),
+        "static_archive": archive,
         "static_archive_prefixed_symbols": observed_symbols,
     }
 
@@ -650,12 +810,27 @@ def validate_report_contract(report: Mapping[str, Any]) -> None:
     command = report.get("reproducible_command")
     measurement = report.get("measurement_contract")
     workloads = report.get("workloads")
+    lanes = report.get("lanes")
     if not isinstance(command, list) or not command or not all(isinstance(item, str) and item for item in command):
         raise HarnessError("measured local AArch64 performance report lacks its reproducible command")
     if not isinstance(measurement, Mapping) or not measurement.get("timing") or not measurement.get("warmup"):
         raise HarnessError("measured local AArch64 performance report lacks its timing and warmup contract")
     if not isinstance(workloads, Mapping) or not workloads:
         raise HarnessError("measured local AArch64 performance report lacks workloads")
+    if not isinstance(lanes, Mapping) or not isinstance(lanes.get("rust_native_shadow"), Mapping):
+        raise HarnessError("measured local AArch64 performance report lacks the Rust shadow lane")
+    attestation = lanes["rust_native_shadow"].get("selected_artifact_attestation")
+    if not isinstance(attestation, Mapping):
+        raise HarnessError("measured local AArch64 performance report lacks selected-artifact attestation")
+    runtime = attestation.get("runtime")
+    symbols = attestation.get("symbol_attestation")
+    build_identity = attestation.get("build_identity")
+    if runtime != {"backend_identity": RUST_SHADOW_BACKEND_IDENTITY, "free_route": RUST_SHADOW_FREE_ROUTE}:
+        raise HarnessError("measured local AArch64 performance report selected an unexpected Rust shadow route")
+    if not isinstance(symbols, Mapping) or symbols.get("required_rust_shadow_symbol_defined") is not True or symbols.get("rejected_c_symbol_defined") is not False:
+        raise HarnessError("measured local AArch64 performance report did not prove the Rust shadow free symbol")
+    if not isinstance(build_identity, Mapping) or build_identity.get("algorithm") != "sha256-canonical-json" or not re.fullmatch(r"[0-9a-f]{64}", str(build_identity.get("sha256", ""))):
+        raise HarnessError("measured local AArch64 performance report lacks selected-artifact build identity")
     for workload in workloads.values():
         if not isinstance(workload, Mapping):
             raise HarnessError("measured local AArch64 workload is invalid")

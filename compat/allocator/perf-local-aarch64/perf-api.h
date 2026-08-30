@@ -12,5 +12,7 @@ int crabc_local_allocator_perf_init(void);
 int crabc_local_allocator_perf_shutdown(void);
 void *crabc_local_allocator_perf_malloc(size_t size);
 void crabc_local_allocator_perf_free(void *block);
+const char *crabc_local_allocator_perf_backend_identity(void);
+const char *crabc_local_allocator_perf_free_route(void);
 
 #endif

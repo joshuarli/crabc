@@ -5,6 +5,11 @@
     "purpose": "architecture blocker only; this is not a final promotion band"
   },
   "fixture": {
+    "selected_artifact_attestation": {
+      "backend_identity": "rust-native-shadow-crabc-test-free-v1",
+      "free_route": "crabc_test_free",
+      "rejected_c_free_route": "mi_free"
+    },
     "boundary": "opaque fixture-private init/malloc/free/shutdown functions",
     "single_thread_only": true,
     "timer": "one CLOCK_MONOTONIC pair around each batch"

@@ -7,6 +7,13 @@ adapter. It records the exact workload sizes, batches, iterations, warmups,
 host observation, build commands, source/artifact hashes, and the Rust/C
 throughput ratio in a JSON report.
 
+Before timing, the Rust lane executes a fixture-private selected-artifact
+attestation. It requires the build identity
+`rust-native-shadow-crabc-test-free-v1`, the `crabc_test_free` route, the
+linked executable's `crabc_test_free` symbol, and absence of `mi_free`. The
+report records the backend-source, static-archive, executable, and canonical
+build-identity hashes. A C/default fixture cannot enter the Rust timing lane.
+
 Run it inside the pinned AArch64 development image:
 
 ```sh

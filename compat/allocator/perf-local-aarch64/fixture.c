@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 static volatile uint64_t crabc_local_allocator_perf_sink;
@@ -54,6 +55,21 @@ static void touch_block(void *block, size_t size, unsigned char value)
   crabc_local_allocator_perf_sink += (uint64_t)bytes[0] + (uint64_t)bytes[size - 1];
 }
 
+static int run_attestation(const char *expected_identity, const char *expected_free_route)
+{
+  const char *identity = crabc_local_allocator_perf_backend_identity();
+  const char *free_route = crabc_local_allocator_perf_free_route();
+
+  if (strcmp(identity, expected_identity) != 0 || strcmp(free_route, expected_free_route) != 0) {
+    fail("opaque allocator fixture selected an unexpected backend or free route");
+    return 2;
+  }
+  printf("backend_identity=%s\n", identity);
+  printf("free_route=%s\n", free_route);
+  puts("ok");
+  return fflush(stdout) == 0 ? 0 : 3;
+}
+
 int main(int argc, char **argv)
 {
   size_t request;
@@ -61,10 +77,13 @@ int main(int argc, char **argv)
   size_t iterations;
   size_t batch;
 
+  if (argc == 4 && strcmp(argv[1], "attest") == 0) {
+    return run_attestation(argv[2], argv[3]);
+  }
   if (argc != 4 || parse_positive_size(argv[1], &request) != 0
       || parse_positive_size(argv[2], &batches) != 0
       || parse_positive_size(argv[3], &iterations) != 0) {
-    fail("usage: fixture <request-bytes> <batches> <iterations>");
+    fail("usage: fixture attest <backend-identity> <free-route>|<request-bytes> <batches> <iterations>");
     return 64;
   }
   if (crabc_local_allocator_perf_init() != 0) {

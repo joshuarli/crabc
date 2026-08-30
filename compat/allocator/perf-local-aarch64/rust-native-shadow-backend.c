@@ -27,3 +27,13 @@ void crabc_local_allocator_perf_free(void *block)
 {
   crabc_test_free(block);
 }
+
+const char *crabc_local_allocator_perf_backend_identity(void)
+{
+  return "rust-native-shadow-crabc-test-free-v1";
+}
+
+const char *crabc_local_allocator_perf_free_route(void)
+{
+  return "crabc_test_free";
+}
