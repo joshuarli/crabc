@@ -3470,6 +3470,60 @@ def check_x86_header_layouts_baseline(errors: list[str]) -> None:
         )
 
 
+def check_x86_installed_header_tree_closure(errors: list[str]) -> None:
+    """Keep materialized header closure separate from an owned sysroot claim."""
+
+    runner_path = (
+        ROOT / "compat" / "x86_64" / "run_installed_header_tree_closure.sh"
+    )
+    test_path = (
+        ROOT / "compat" / "x86_64" / "tests" / "test_installed_header_tree_closure.py"
+    )
+    for path in (runner_path, test_path):
+        if not path.is_file():
+            errors.append(
+                "x86 installed-header-tree closure is missing "
+                f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    runner = runner_path.read_text(errors="replace")
+    for required in (
+        "readonly EXPECTED_PINNED_PUBLIC_HEADER_COUNT=183",
+        "readonly EXPECTED_CANDIDATE_PUBLIC_HEADER_COUNT=191",
+        "readonly EXPECTED_PROFILE_COUNT=7",
+        "readonly EXPECTED_RECORD_COUNT=1337",
+        "readonly -a ORACLE_NOT_APPLICABLE_ROWS=(aio.h:c11-strict aio.h:cxx17-strict)",
+        "materialize_header_tree",
+        "validate_regular_header_tree",
+        "write_manifest",
+        "installed_include=\"$materialized_project/usr/include\"",
+        "readonly PROJECT_INCLUDE=\"$ROOT_DIR/usr/include\"",
+        "# pinned_public_header_count=$EXPECTED_PINNED_PUBLIC_HEADER_COUNT",
+        "# candidate_public_header_count=$EXPECTED_CANDIDATE_PUBLIC_HEADER_COUNT",
+        "# status.reference-not-applicable=2",
+        "candidate include trace reached source include tree",
+        "candidate include trace escaped installed-tree/builtin/Linux-5.10 roots",
+        "# schema=crabc.x86_64-installed-header-tree-closure/v1",
+        "# scope=header-tree closure only; not ABI/layout/linkage/sysroot/promotion/public-support parity",
+    ):
+        if required not in runner:
+            errors.append(
+                "compat/x86_64/run_installed_header_tree_closure.sh: "
+                f"materialized closure contract is missing {required!r}"
+            )
+    for forbidden in (
+        "scripts/crabc_sysroot.py",
+        "--report-only",
+        "installed-header completion",
+    ):
+        if forbidden in runner:
+            errors.append(
+                "compat/x86_64/run_installed_header_tree_closure.sh: private "
+                f"header closure must not contain {forbidden!r}"
+            )
+
+
 def check_x86_crt_libc_static_tls_handoff(errors: list[str]) -> None:
     """Keep first-thread TLS ownership in libc and the rcrt1 static-link edge."""
 
@@ -7307,6 +7361,7 @@ def main() -> int:
     check_x86_memory_vm_boundary(errors)
     check_x86_terminal_boundary(errors)
     check_x86_header_layouts_baseline(errors)
+    check_x86_installed_header_tree_closure(errors)
     check_x86_crt_libc_static_tls_handoff(errors)
     check_x86_libc_static_c_abi_boundary(errors)
     check_x86_rr_interval_boundary(errors)

@@ -571,6 +571,19 @@ arm to compile them. This verifies isolated empty-TU consumer closure only;
 feature visibility, declaration/layout parity, callable linkage, runtime
 completion, family promotion, and public x86 support remain planned.
 
+The separate private `installed-header-tree-closure` artifact materializes the
+same 191 candidate headers into a temporary `usr/include` tree and resolves
+the same 1,337 empty-TU rows across `c11-gnu`, `cxx17-gnu`, `c11-strict`,
+`c11-posix-2008`, `c11-xopen-700`, `c11-bsd`, and `cxx17-strict`. Its candidate
+include traces reject repository `include/` source-tree leakage and every host
+include path: only the temporary installed tree, raw-GCC builtin headers, and
+the fixed Linux 5.10 UAPI root are admitted. The two pinned-musl strict
+`aio.h` `reference-not-applicable` rows remain explicit, never a candidate
+waiver. This is a header-tree closure artifact distinct from source-tree
+closure, not full declaration, layout, feature-visibility, or linkage parity;
+an archive/runtime artifact; CRT, loader, driver, or owned-sysroot evidence;
+promotion; or public x86 support.
+
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
 [`docs/design/allocator.md`](docs/design/allocator.md), and

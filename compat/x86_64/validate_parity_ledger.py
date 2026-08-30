@@ -28,6 +28,9 @@ LINUX_5_10_UAPI_VERIFIER_PATH = ROOT / "compat" / "x86_64" / "run_linux_5_10_uap
 CANDIDATE_HEADER_CLOSURE_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_candidate_header_closure.sh"
 )
+INSTALLED_HEADER_TREE_CLOSURE_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_installed_header_tree_closure.sh"
+)
 UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_uapi_wrapper_matrix.sh"
 )
@@ -172,6 +175,9 @@ EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT = 1337
 EXPECTED_CANDIDATE_HEADER_CLOSURE_ORACLE_NOT_APPLICABLE_ROWS = (
     "aio.h:c11-strict",
     "aio.h:cxx17-strict",
+)
+EXPECTED_INSTALLED_HEADER_TREE_CLOSURE_COMMAND = (
+    "./scripts/dev-x86_64.sh installed-header-tree-closure"
 )
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -3620,6 +3626,156 @@ def require_public_header_profile_consumability_artifact(
         "candidate-header-closure)" in dispatch_source,
         "public-header-profile-consumability command is absent from the native dispatcher",
     )
+
+
+def require_installed_header_tree_closure_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Ratchet the disposable installed tree without promoting header parity.
+
+    Unlike the project-tree-first consumer diagnostic, this private artifact
+    proves that a newly materialized ``usr/include`` tree has the same header
+    closure. It remains an empty-TU include consumer: declaration/layout,
+    linkage, archive/runtime, toolchain, and promotion claims stay outside it.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "installed-header-tree-closure"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one installed-header-tree-closure artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "Private native x86 installed-header-tree closure artifact",
+        "still-planned `libc.headers-layouts`",
+        "disposable `usr/include` tree",
+        "source-tree manifest equality",
+        "seven-profile 1,337-row",
+        "191 candidate headers and 183 pinned-musl headers",
+        "`aio.h:c11-strict`",
+        "`aio.h:cxx17-strict`",
+        "pinned-musl oracle-not-applicable",
+        "source-tree, ambient, and include-path leaks",
+        "Linux 5.10 UAPI input",
+        "not declaration/layout parity, callable linkage, archive/runtime behavior, CRT, loader, driver, sysroot, family promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"installed-header-tree-closure description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "installed-header-tree-closure.source_owners",
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/x86_64/public_headers.txt",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/run_candidate_header_closure.sh",
+        "compat/x86_64/header_cxx_closure.cpp",
+        "compat/x86_64/run_musl_oracle.sh",
+        "compat/x86_64/musl_oracle_probe.c",
+        "compat/x86_64/run_linux_5_10_uapi.sh",
+        "compat/x86_64/run_installed_header_tree_closure.sh",
+        "compat/x86_64/tests/test_installed_header_tree_closure.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"installed-header-tree-closure omits {owner}")
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("191" in item and "seven" in item and "1,337" in item for item in prerequisites),
+        "installed-header-tree-closure must state its closed row arithmetic",
+    )
+    require(
+        any(
+            "aio.h:c11-strict" in item and "aio.h:cxx17-strict" in item
+            for item in prerequisites
+        ),
+        "installed-header-tree-closure must state both strict aio oracle rows",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any(
+            "usr/include" in item
+            and "manifest" in item
+            and "symlink" in item
+            and "ambient" in item
+            for item in header_prerequisites
+        ),
+        "installed-header-tree-closure must retain materialized-tree and leak rejection",
+    )
+    require(
+        any("-nostdinc" in item and "Linux 5.10 UAPI" in item for item in header_prerequisites),
+        "installed-header-tree-closure must retain its isolated header roots",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == [EXPECTED_INSTALLED_HEADER_TREE_CLOSURE_COMMAND],
+        "installed-header-tree-closure must use the closed installed-header-tree-closure command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "source-tree manifest equality" in scope
+        and "source/ambient/path-leak rejection" in scope
+        and "Linux 5.10 UAPI input" in scope
+        and "header-tree closure only" in scope
+        and "not declaration/layout parity, callable linkage, archive/runtime, CRT, loader, driver, sysroot, family promotion, or public x86 support" in scope,
+        "installed-header-tree-closure evidence scope drifted",
+    )
+
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "installed-header-tree-closure)" in dispatch_source,
+        "installed-header-tree-closure command is absent from the native dispatcher",
+    )
+    require(
+        INSTALLED_HEADER_TREE_CLOSURE_RUNNER_PATH.is_file(),
+        "installed-header-tree-closure runner is missing",
+    )
+    runner = INSTALLED_HEADER_TREE_CLOSURE_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "readonly EXPECTED_PINNED_PUBLIC_HEADER_COUNT=183",
+        "readonly EXPECTED_CANDIDATE_PUBLIC_HEADER_COUNT=191",
+        "readonly EXPECTED_PROFILE_COUNT=7",
+        "readonly EXPECTED_RECORD_COUNT=1337",
+        "readonly -a ORACLE_NOT_APPLICABLE_ROWS=(aio.h:c11-strict aio.h:cxx17-strict)",
+        "materialize_header_tree",
+        "source header tree contains a symlink",
+        "source header tree contains a non-regular path",
+        "installed header manifest differs from source tree",
+        "candidate include trace escaped installed-tree/builtin/Linux-5.10 roots",
+        "candidate include trace reached source include tree",
+        "candidate include trace reached pinned musl despite -nostdinc",
+        "run_linux_5_10_uapi.sh",
+        "-nostdinc",
+        "-nostdinc++",
+        "header-tree closure only; not ABI/layout/linkage/sysroot/promotion/public-support parity",
+    ):
+        require(
+            phrase in runner,
+            f"installed-header-tree-closure runner omits {phrase}",
+        )
 
 
 def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
@@ -11163,6 +11319,7 @@ def validate_ledger(
     require_public_header_profile_consumability_artifact(
         by_id["libc.headers-layouts"]
     )
+    require_installed_header_tree_closure_artifact(by_id["libc.headers-layouts"])
     if header_layout_foundation_manifest is None:
         header_layout_foundation_manifest = load_toml(HEADER_LAYOUT_FOUNDATION_MANIFEST_PATH)
     header_layout_foundation_report = validate_header_layout_foundation_manifest(

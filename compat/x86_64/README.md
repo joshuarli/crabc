@@ -209,6 +209,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh musl-oracle
 ./scripts/dev-x86_64.sh header-abi-reference
 ./scripts/dev-x86_64.sh public-header-surface
+./scripts/dev-x86_64.sh installed-header-tree-closure
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh math-complex-header-abi
 ./scripts/dev-x86_64.sh sys-reg-header-abi
@@ -546,6 +547,20 @@ question rather than being silently treated as equivalent. The static-export
 list is only an input to that linkage audit: unlisted public callables remain owned by planned
 `libc.c-abi-compat`, while noncallable header ABI remains owned by
 `libc.headers-layouts`.
+
+The private `installed-header-tree-closure` artifact separately materializes
+the 191 candidate headers into a temporary `usr/include` tree, then resolves
+the same 1,337 empty-TU rows across `c11-gnu`, `cxx17-gnu`, `c11-strict`,
+`c11-posix-2008`, `c11-xopen-700`, `c11-bsd`, and `cxx17-strict`. Candidate
+compilation is rooted at that temporary installed tree; include traces reject
+both repository `include/` source-tree leakage and every host include path,
+allowing only the materialized tree, raw-GCC builtin headers, and the fixed
+Linux 5.10 UAPI root. The two strict `aio.h` pinned-musl
+`reference-not-applicable` rows remain explicit and do not waive candidate
+success. This is an installed-header-tree closure artifact distinct from the
+source-tree closure, not full declaration, layout, feature-visibility, or
+linkage parity; an archive or runtime artifact; CRT, loader, driver, or
+owned-sysroot evidence; promotion; or public x86 support.
 
 `header-abi-project` places the project headers first and compile-checks only
 the staged x86 `fenv`, `float`, and fundamental-type declarations, in both SSE

@@ -626,6 +626,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    string-copy-header-abi) ;;", source)
         self.assertIn("    linux-5-10-uapi) ;;", source)
         self.assertIn("    candidate-header-closure) ;;", source)
+        self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    math-complex-header-abi)", source)
         self.assertIn("    libc-math-complex)", source)
         preflight = source.split('case "$command" in\n', 1)[1].split(
@@ -647,6 +648,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "crt-dynamic-startup",
             "linux-5-10-uapi",
             "candidate-header-closure",
+            "installed-header-tree-closure",
             "uapi-wrapper-matrix",
             "epoll-header-abi",
             "event-descriptors-header-abi",
@@ -735,6 +737,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_public_header_surface.sh', source)
         self.assertIn('run_candidate_header_closure()', source)
         self.assertIn('compat/x86_64/run_candidate_header_closure.sh', source)
+        self.assertIn('run_installed_header_tree_closure()', source)
+        self.assertIn('compat/x86_64/run_installed_header_tree_closure.sh', source)
         self.assertIn('run_uapi_wrapper_matrix()', source)
         self.assertIn('compat/x86_64/run_uapi_wrapper_matrix.sh', source)
         self.assertIn('run_epoll_header_abi()', source)

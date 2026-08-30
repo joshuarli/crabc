@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 75)
+        self.assertEqual(report["verified_artifact_count"], 76)
         self.assertEqual(report["header_layout_probe_count"], 39)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1258,7 +1258,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 4
+        assert isinstance(artifacts, list) and len(artifacts) == 5
         artifact = next(
             entry
             for entry in artifacts
@@ -1306,12 +1306,77 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed candidate-header-closure command"):
             ledger.validate_ledger(data)
 
+    def test_installed_header_tree_closure_is_a_private_materialized_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertEqual(headers_layouts["status"], "planned")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 5
+        matching = [
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "installed-header-tree-closure"
+        ]
+        self.assertEqual(len(matching), 1)
+        artifact = matching[0]
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh installed-header-tree-closure"},
+        )
+        for owner in (
+            "compat/upstreams.toml",
+            "compat/x86_64/public_headers.txt",
+            "compat/x86_64/headers-layouts-foundation.toml",
+            "compat/x86_64/run_candidate_header_closure.sh",
+            "compat/x86_64/header_cxx_closure.cpp",
+            "compat/x86_64/run_musl_oracle.sh",
+            "compat/x86_64/musl_oracle_probe.c",
+            "compat/x86_64/run_linux_5_10_uapi.sh",
+            "compat/x86_64/run_installed_header_tree_closure.sh",
+            "compat/x86_64/tests/test_installed_header_tree_closure.py",
+            "compat/x86_64/tests/test_parity_ledger.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "disposable `usr/include` tree",
+            "source-tree manifest equality",
+            "seven-profile 1,337-row",
+            "191 candidate headers and 183 pinned-musl headers",
+            "`aio.h:c11-strict`",
+            "`aio.h:cxx17-strict`",
+            "source-tree, ambient, and include-path leaks",
+            "Linux 5.10 UAPI input",
+            "not declaration/layout parity, callable linkage, archive/runtime behavior, CRT, loader, driver, sysroot, family promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.headers-layouts")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "installed-header-tree-closure"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh candidate-header-closure"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed installed-header-tree-closure command",
+        ):
+            ledger.validate_ledger(changed)
+
     def test_header_layouts_baseline_is_a_closed_c_and_cxx_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 4
+        assert isinstance(artifacts, list) and len(artifacts) == 5
         artifact = next(
             entry
             for entry in artifacts
@@ -3129,7 +3194,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(socket_header_evidence["state"], "required")
         self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 4
+        assert isinstance(artifacts, list) and len(artifacts) == 5
         bootstrap = next(
             entry
             for entry in artifacts
@@ -6561,7 +6626,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 4
+        assert isinstance(artifacts, list) and len(artifacts) == 5
         artifact = next(
             entry
             for entry in artifacts
@@ -6575,7 +6640,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 4
+        assert isinstance(artifacts, list) and len(artifacts) == 5
         artifact = next(
             entry
             for entry in artifacts

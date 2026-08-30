@@ -1892,6 +1892,35 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh cand
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Complete pathname and isolated C/C++ header-consumer oracle, including the two recorded strict aio.h reference applicability results." }]
 
 [[family.verified_artifact]]
+id = "installed-header-tree-closure"
+description = "Private native x86 installed-header-tree closure artifact within still-planned `libc.headers-layouts`. It materializes a disposable `usr/include` tree from the project source tree, requires source-tree manifest equality, and resolves the seven-profile 1,337-row empty-TU consumer matrix for 191 candidate headers and 183 pinned-musl headers. Exactly `aio.h:c11-strict` and `aio.h:cxx17-strict` are pinned-musl oracle-not-applicable rows after the materialized candidate still compiles. The isolated candidate admits only its temporary installed tree, raw-GCC builtin headers, and the hash-pinned Linux 5.10 UAPI input; it rejects source-tree, ambient, and include-path leaks. It is not declaration/layout parity, callable linkage, archive/runtime behavior, CRT, loader, driver, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/x86_64/public_headers.txt",
+  "compat/x86_64/headers-layouts-foundation.toml",
+  "compat/x86_64/run_candidate_header_closure.sh",
+  "compat/x86_64/header_cxx_closure.cpp",
+  "compat/x86_64/run_musl_oracle.sh",
+  "compat/x86_64/musl_oracle_probe.c",
+  "compat/x86_64/run_linux_5_10_uapi.sh",
+  "compat/x86_64/run_installed_header_tree_closure.sh",
+  "compat/x86_64/tests/test_installed_header_tree_closure.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The closed consumer arithmetic remains 191 candidate headers * seven profiles = 1,337 rows, including 183 pinned-musl reference headers and eight project-only candidate headers; this materialization proof selects neither an ABI nor linkage contract.",
+  "Pinned musl 1.2.6 is oracle-not-applicable only for aio.h:c11-strict and aio.h:cxx17-strict; the materialized candidate tree must compile both rows and every other pinned row must compile through both candidate and reference arms.",
+]
+x86_header_prerequisites = [
+  "A fresh temporary usr/include closure is materialized from regular non-symlink project include/** files and must have an identical source-tree manifest before compilation; no source-tree path, ambient host include root, or path leak is an allowed candidate input.",
+  "Candidate compilation uses -nostdinc and only the materialized installed tree, raw-GCC builtin headers, and the hash-pinned Linux 5.10 UAPI input; it is distinct from declaration/layout parity, callable linkage, archive/runtime, CRT/loader/driver/sysroot, promotion, and public support gates.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh installed-header-tree-closure", scope = "Native materialized temporary usr/include seven-profile header-tree closure. It requires source-tree manifest equality, 191 candidate/183 pinned-musl headers, 1,337 rows, exactly the two aio strict oracle-not-applicable rows after candidate compilation, and source/ambient/path-leak rejection with the hash-pinned Linux 5.10 UAPI input. It is header-tree closure only; not declaration/layout parity, callable linkage, archive/runtime, CRT, loader, driver, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 installed public-header tree", role = "Pinned public-header pathname and isolated C/C++ consumer applicability oracle; its two strict aio.h rows are explicitly oracle-not-applicable." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 UAPI headers", role = "Hash-pinned UAPI include input for the isolated materialized installed-tree candidate." }]
+
+[[family.verified_artifact]]
 id = "static-c-header-layouts-baseline"
 description = "Private native x86 static C/C++ header-layout baseline artifact within still-planned `libc.headers-layouts`. One project-header C fixture and one separately compiled freestanding C++17 companion execute first through pinned musl and then in one `-nostdlib -static` candidate with fixture-only initial TLS. The companion has an unmangled C entry called from C, rejects C++ runtime/constructor/exception/RTTI and dynamic-TLS paths, and retains only the named existing selected archive references: `__errno_location`, `fstat`, `clock_gettime`, `mmap`/`munmap`/`mprotect`/`madvise`/`posix_madvise`/`mincore`, `getrlimit`, `poll`/`select`, `socketpair`/`close`, `sigemptyset`, `cfmakeraw`, `uname`/`sysinfo`, and `getpagesize`. It joins their already proved x86 records and C/C++ declarations with no new C export or `include/**` edit. This is not installed-header closure, a complete C ABI, a C++ runtime, libc.so, CRT, loader, sysroot, pthread lifecycle, or public x86 support."
 source_owners = [

@@ -41,6 +41,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
   public-header-surface  inventory all pinned x86 public headers for C consumability
   candidate-header-closure  require isolated C11/C++17 public-header include closure
+  installed-header-tree-closure  verify the materialized target-owned x86 public-header closure
   uapi-wrapper-matrix  verify the selected Linux 5.10 UAPI wrapper C/C++ ABI profile matrix
   epoll-header-abi  verify the selected x86 packed sys/epoll.h C/C++ ABI profile matrix
   event-descriptors-header-abi  verify selected x86 eventfd/inotify C/C++ ABI profiles
@@ -1503,6 +1504,10 @@ run_candidate_header_closure() {
     run_in_container bash /workspace/compat/x86_64/run_candidate_header_closure.sh
 }
 
+run_installed_header_tree_closure() {
+    run_in_container bash /workspace/compat/x86_64/run_installed_header_tree_closure.sh
+}
+
 run_uapi_wrapper_matrix() {
     run_in_container bash /workspace/compat/x86_64/run_uapi_wrapper_matrix.sh
 }
@@ -2702,6 +2707,7 @@ case "$command" in
     crt-dynamic-startup) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
+    installed-header-tree-closure) ;;
     uapi-wrapper-matrix) ;;
     epoll-header-abi) ;;
     event-descriptors-header-abi) ;;
@@ -2767,6 +2773,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "candidate-header-closure takes no arguments"
         ensure_image
         run_candidate_header_closure
+        ;;
+    installed-header-tree-closure)
+        [ "$#" -eq 0 ] || fail "installed-header-tree-closure takes no arguments"
+        ensure_image
+        run_installed_header_tree_closure
         ;;
     uapi-wrapper-matrix)
         [ "$#" -eq 0 ] || fail "uapi-wrapper-matrix takes no arguments"
