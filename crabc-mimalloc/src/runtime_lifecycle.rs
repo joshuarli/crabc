@@ -5173,6 +5173,15 @@ impl NativeLiveRemoteOwnerGuard {
             .expect("a live-owner guard retains its entry until it resolves")
     }
 
+    /// Identifies only the stable private entry held by this guard. This is
+    /// not an owner, client, page, or allocator capability. It lets the
+    /// current B route skip precisely its already-claimed foreign entry while
+    /// it claims its own distinct parked session.
+    #[inline]
+    fn storage(&self) -> &'static NativeLiveRemoteOwnerStorage {
+        self.storage
+    }
+
     /// Borrows A's parked native session while its registry entry is BUSY.
     ///
     /// # Safety
@@ -5506,9 +5515,32 @@ impl NativeLiveRemoteOwnerRegistry {
         &'static self,
         slot: core::ptr::NonNull<ThreadLifecycleSlot>,
     ) -> NativeLiveRemoteOwnerCurrentClaim {
+        self.claim_current_slot_excluding_held_route(slot, None)
+    }
+
+    /// Claims the running thread's exact entry while this B worker already
+    /// holds one different A route. The excluded entry remains `BUSY` under
+    /// that typed guard; visiting it again would self-deadlock before B could
+    /// claim and resume its own parked session. This skips only the exact
+    /// held storage, never an arbitrary busy owner, and never exposes its TLS
+    /// identity or client ledger.
+    fn claim_current_slot_while_holding_live_remote_owner(
+        &'static self,
+        slot: core::ptr::NonNull<ThreadLifecycleSlot>,
+        held_route: &NativeLiveRemoteOwnerGuard,
+    ) -> NativeLiveRemoteOwnerCurrentClaim {
+        self.claim_current_slot_excluding_held_route(slot, Some(held_route))
+    }
+
+    fn claim_current_slot_excluding_held_route(
+        &'static self,
+        slot: core::ptr::NonNull<ThreadLifecycleSlot>,
+        held_route: Option<&NativeLiveRemoteOwnerGuard>,
+    ) -> NativeLiveRemoteOwnerCurrentClaim {
         if self.is_closed_for_retained_entry() {
             return NativeLiveRemoteOwnerCurrentClaim::Retained;
         }
+        let held_storage = held_route.map(NativeLiveRemoteOwnerGuard::storage);
         let mut saw_foreign = false;
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
@@ -5516,6 +5548,14 @@ impl NativeLiveRemoteOwnerRegistry {
             // a claimed guard may retain its storage reference after the scan
             // advances to another node.
             let node: &'static NativeLiveRemoteOwnerRegistryNode = unsafe { &*current };
+            if held_storage.is_some_and(|storage| core::ptr::eq(storage, &node.storage)) {
+                // This caller already owns the only BUSY handoff for the
+                // foreign A. Its matching exact client is still private to
+                // that guard, so this lookup must neither wait on nor inspect
+                // it before it claims B's own separate registry entry.
+                current = node.next.load(Ordering::Acquire);
+                continue;
+            }
             match node.storage.claim() {
                 NativeLiveRemoteOwnerClaim::Empty => {}
                 NativeLiveRemoteOwnerClaim::Retained => {
@@ -8389,11 +8429,33 @@ enum CurrentThreadPageOwnerExitConsumer {
 fn take_current_thread_page_owner_session(
     generation: usize,
 ) -> Result<CurrentThreadPageOwnerSession, CurrentThreadPageOwnerSessionError> {
+    take_current_thread_page_owner_session_with_held_live_remote_owner(generation, None)
+}
+
+/// Takes B's own session while B holds an exact foreign A route. The held
+/// route stays opaque and busy throughout the take; it merely prevents the
+/// registry scan from recursively claiming the same foreign entry.
+fn take_current_thread_page_owner_session_while_holding_live_remote_owner(
+    generation: usize,
+    held_route: &NativeLiveRemoteOwnerGuard,
+) -> Result<CurrentThreadPageOwnerSession, CurrentThreadPageOwnerSessionError> {
+    take_current_thread_page_owner_session_with_held_live_remote_owner(generation, Some(held_route))
+}
+
+fn take_current_thread_page_owner_session_with_held_live_remote_owner(
+    generation: usize,
+    held_route: Option<&NativeLiveRemoteOwnerGuard>,
+) -> Result<CurrentThreadPageOwnerSession, CurrentThreadPageOwnerSessionError> {
     let slot_pointer = current_thread_slot_pointer();
     // Claim this slot's registry handoff *before* inspecting compiler TLS. A B-side
     // free owns a mutable reference to A's ledger while this state is BUSY;
     // even a generation read must therefore wait for it to resolve.
-    let native_route = match NATIVE_LIVE_REMOTE_OWNER.claim_current_slot(slot_pointer) {
+    let native_route_claim = match held_route {
+        Some(route) => NATIVE_LIVE_REMOTE_OWNER
+            .claim_current_slot_while_holding_live_remote_owner(slot_pointer, route),
+        None => NATIVE_LIVE_REMOTE_OWNER.claim_current_slot(slot_pointer),
+    };
+    let native_route = match native_route_claim {
         // Keep the exact raw-TLS handoff BUSY while the session is out of its
         // slot.  It becomes an active publication again only after the full
         // session image is restored, closing the A-resume/B-install race.
@@ -8545,7 +8607,28 @@ impl CurrentThreadPageOwnerSessionHandle {
             &mut PreparedOwnerExitClients,
         ) -> R,
     ) -> Result<R, CurrentThreadPageOwnerSessionError> {
-        let mut session = take_current_thread_page_owner_session(self.generation)?;
+        self.with_active_operation_while_holding_live_remote_owner(None, operation)
+    }
+
+    /// Runs one bounded operation after claiming B's session while B already
+    /// holds a distinct A live-owner route. The held route remains the sole
+    /// authority over A's ledger; it only excludes its own `BUSY` storage from
+    /// B's private current-slot lookup, preventing recursive self-claim.
+    fn with_active_operation_while_holding_live_remote_owner<R>(
+        &self,
+        held_route: Option<&NativeLiveRemoteOwnerGuard>,
+        operation: impl FnOnce(
+            &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+            &mut PreparedOwnerExitClients,
+        ) -> R,
+    ) -> Result<R, CurrentThreadPageOwnerSessionError> {
+        let mut session = match held_route {
+            Some(route) => take_current_thread_page_owner_session_while_holding_live_remote_owner(
+                self.generation,
+                route,
+            )?,
+            None => take_current_thread_page_owner_session(self.generation)?,
+        };
         let parked = session
             .parked
             .take()
@@ -8658,6 +8741,29 @@ impl CurrentThreadPageOwnerSessionHandle {
     ) -> Result<R, CurrentThreadPageOwnerSessionError> {
         loop {
             match self.with_active_operation(|allocator, clients| operation(allocator, clients)) {
+                Err(CurrentThreadPageOwnerSessionError::Busy) => core::hint::spin_loop(),
+                result => return result,
+            }
+        }
+    }
+
+    /// Runs one C-facing B operation while the caller holds an exact foreign
+    /// A route. A retry continues to exclude only that already-held route;
+    /// every other registry entry and scheduler transition keeps its normal
+    /// ownership checks.
+    fn with_native_active_operation_while_holding_live_remote_owner<R>(
+        &self,
+        held_route: &NativeLiveRemoteOwnerGuard,
+        mut operation: impl FnMut(
+            &mut MainHeapThreadProcessPageAllocator<'_, '_>,
+            &mut PreparedOwnerExitClients,
+        ) -> R,
+    ) -> Result<R, CurrentThreadPageOwnerSessionError> {
+        loop {
+            match self.with_active_operation_while_holding_live_remote_owner(
+                Some(held_route),
+                |allocator, clients| operation(allocator, clients),
+            ) {
                 Err(CurrentThreadPageOwnerSessionError::Busy) => core::hint::spin_loop(),
                 result => return result,
             }
@@ -8894,17 +9000,23 @@ impl CurrentThreadPageOwnerSessionHandle {
     ///
     /// `block` must be the exact current client already proved against a
     /// separately parked A session whose registry entry remains `BUSY` for
-    /// the full call. The caller must mark that A ledger published only after
-    /// this source push succeeds.
+    /// the full call. `held_route` must be that exact foreign A guard; it
+    /// keeps the guarded entry private while B claims and resumes its own
+    /// older parked session. The caller must mark A's ledger published only
+    /// after this source push succeeds.
     unsafe fn native_publish_remote_free_to_parked_live_owner(
         &mut self,
+        held_route: &NativeLiveRemoteOwnerGuard,
         block: core::ptr::NonNull<u8>,
     ) -> Result<(), CurrentThreadPageOwnerSessionLiveRemotePublicationFailure> {
-        match self.with_native_active_operation(|allocator, _clients| {
-            // SAFETY: forwarded unchanged from this helper's exact A-client,
-            // matched-route, and parked-owner contract above.
-            unsafe { allocator.publish_remote_free_to_parked_live_owner(block) }
-        }) {
+        match self.with_native_active_operation_while_holding_live_remote_owner(
+            held_route,
+            |allocator, _clients| {
+                // SAFETY: forwarded unchanged from this helper's exact
+                // A-client, matched-route, and parked-owner contract above.
+                unsafe { allocator.publish_remote_free_to_parked_live_owner(block) }
+            },
+        ) {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => {
                 Err(CurrentThreadPageOwnerSessionLiveRemotePublicationFailure::Publication(error))
@@ -9612,7 +9724,9 @@ unsafe fn native_later_thread_live_remote_free(
         // A ledger and source engine unavailable until the complete B session
         // operation re-parks. The lower source method receives only A's
         // already-validated client address.
-        match unsafe { session.native_publish_remote_free_to_parked_live_owner(client.block) } {
+        match unsafe {
+            session.native_publish_remote_free_to_parked_live_owner(&route, client.block)
+        } {
             Ok(()) => {}
             Err(CurrentThreadPageOwnerSessionLiveRemotePublicationFailure::Publication(error)) => {
                 let _ = error;
