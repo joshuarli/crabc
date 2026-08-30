@@ -426,7 +426,9 @@ pub(crate) enum PostOwnerExitTerminalRelease {
     Released,
     /// Release could not complete after ownership became terminal. The caller
     /// retains the page, its low owner bit, and all PageMap/span state as one
-    /// auditable terminal owner.
+    /// auditable terminal owner. A later producer can only publish to that
+    /// retained atomic owner; it cannot re-enter this page's normal
+    /// reabandon or terminal-release tail.
     Retained,
 }
 
@@ -3118,6 +3120,119 @@ mod tests {
         assert_eq!(terminal_calls, 1, "the unique final owner receives one release attempt");
         assert!(!view.abandoned_pages(bin).unwrap().is_published(17));
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
+        assert_eq!(page.remote_free_test_used(), 0);
+    }
+
+    #[test]
+    fn abandoned_post_exit_deferred_collection_terminal_failure_keeps_one_owner() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(2, 1);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        let mut first = TestBlock([0; 16]);
+        let first = first.pointer();
+        let collection_changed_page = Cell::new(false);
+        let mut terminal_calls = 0usize;
+
+        assert_eq!(
+            unsafe {
+                free_post_owner_exit_regular_page(
+                    page_raw,
+                    first,
+                    |memory, selected_block_size| {
+                        assert_eq!(memory.kind(), MemoryKind::Arena);
+                        assert_eq!(selected_block_size, block_size);
+                        view.abandoned_pages(bin)
+                            .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                    },
+                    |collected_page| {
+                        // The normal remote collector has already decremented
+                        // `used` and installed its block in `local_free`.
+                        // Model the source false-force local transfer before
+                        // terminal release reports a failure.
+                        let collected_page = unsafe { &mut *collected_page.as_ptr() };
+                        assert_eq!(collected_page.remote_free_test_used(), 0);
+                        assert_eq!(
+                            collected_page.remote_free_test_local_free(),
+                            first.cast::<Block>().as_ptr()
+                        );
+                        collected_page
+                            .set_exclusive_free_list_head(collected_page.remote_free_test_local_free());
+                        collected_page.remote_free_test_set_local_free(core::ptr::null_mut());
+                        collection_changed_page.set(true);
+                        Ok(())
+                    },
+                    |terminal_page| {
+                        assert!(collection_changed_page.get());
+                        let terminal_page = unsafe { terminal_page.as_ref() };
+                        assert_eq!(
+                            terminal_page.remote_free_test_free(),
+                            first.cast::<Block>().as_ptr(),
+                            "the terminal owner observes the completed local transfer"
+                        );
+                        assert!(terminal_page.remote_free_test_local_free().is_null());
+                        assert!(
+                            !view.abandoned_pages(bin).unwrap().is_published(17),
+                            "mapped identity clears before terminal ownership is retained"
+                        );
+                        terminal_calls += 1;
+                        PostOwnerExitTerminalRelease::Retained
+                    },
+                )
+            },
+            Ok(PostOwnerExitRegularFreeResult::TerminalReleaseRetained)
+        );
+        assert!(collection_changed_page.get());
+        assert_eq!(terminal_calls, 1);
+        assert_eq!(page.remote_free_test_free(), first.cast::<Block>().as_ptr());
+        assert!(page.remote_free_test_local_free().is_null());
+        assert_eq!(page.remote_free_test_used(), 0);
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
+
+        // A later pointer route reaches the still-owned atomic head, so it
+        // cannot re-select the map, collect ordinary state, or retry terminal
+        // release. TestBlock is this unit fixture's canonical synthetic page
+        // allocation, as in the other abandoned remote-free route tests.
+        let mut later = TestBlock([0; 16]);
+        let later = later.pointer();
+        let retry_selected_map = Cell::new(false);
+        let retry_collected = Cell::new(false);
+        let retry_terminal = Cell::new(false);
+        assert_eq!(
+            unsafe {
+                free_post_owner_exit_regular_page(
+                    page_raw,
+                    later,
+                    |_memory, _selected_block_size| {
+                        retry_selected_map.set(true);
+                        Ok(map)
+                    },
+                    |_page| {
+                        retry_collected.set(true);
+                        Ok(())
+                    },
+                    |_page| {
+                        retry_terminal.set(true);
+                        PostOwnerExitTerminalRelease::Released
+                    },
+                )
+            },
+            Ok(PostOwnerExitRegularFreeResult::PublishedToExistingOwner)
+        );
+        assert!(!retry_selected_map.get());
+        assert!(!retry_collected.get());
+        assert!(!retry_terminal.get());
+        assert_eq!(terminal_calls, 1, "only the retained terminal owner may release");
         assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
         assert_eq!(page.remote_free_test_used(), 0);
     }
