@@ -1136,7 +1136,9 @@ The selected C route-replacement fixture verifies the same valid-request
 refusal maps to `ENOMEM` while preserving B's source-copied replacement until
 its exact free and normal finish. Its B TSD destructor repeats that refusal,
 frees the existing client, and must complete before B's native all-free finish
-can settle A's proof.
+can settle A's proof. B exits through `pthread_exit`: its cleanup handler first
+receives `ENOMEM` for a new local allocation, then the TSD destructor receives
+`ENOMEM` for the existing client's valid `realloc` before freeing that client.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

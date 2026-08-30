@@ -2818,7 +2818,10 @@ The selected `native_mimalloc_owner_exit_realloc` C fixture drives the same
 boundary through `realloc`: a valid B-local request returns `ENOMEM` and
 leaves the source-copied B replacement intact until its exact free. B's TSD
 destructor repeats that refusal, frees the existing client, and precedes the
-native all-free finish that settles A's proof.
+native all-free finish that settles A's proof. On B's `pthread_exit`, its
+cleanup handler first receives `ENOMEM` for a new local allocation; the TSD
+destructor then receives `ENOMEM` for the existing client's valid `realloc`
+before it frees that client.
 For the one detached `realloc` transition, the entry stays private and BUSY
 while B records a normal-alignment replacement in that parked session, copies
 `min(A's recorded usable extent, requested size)`, and only then calls the

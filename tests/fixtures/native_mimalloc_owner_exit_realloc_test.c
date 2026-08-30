@@ -18,8 +18,29 @@ static unsigned char *shared_medium;
 static size_t replacement_size;
 static pthread_key_t terminal_proof_destructor_key;
 static unsigned char *terminal_proof_replacement;
+static unsigned int terminal_proof_cleanup_calls;
+static int terminal_proof_cleanup_failed;
 static unsigned int terminal_proof_destructor_calls;
 static int terminal_proof_destructor_failed;
+
+/* `pthread_exit` invokes this cleanup before its TSD destructors. It covers
+ * the other user-owned phase between B's terminal A free and the native
+ * lifecycle finish: neither phase may create a new B-local client. */
+static void terminal_proof_cleanup(void *opaque)
+{
+    void *unexpected;
+
+    (void)opaque;
+    errno = 0;
+    unexpected = malloc(73);
+    if (unexpected != NULL) {
+        terminal_proof_cleanup_failed = 1;
+        free(unexpected);
+    } else if (errno != ENOMEM) {
+        terminal_proof_cleanup_failed = 1;
+    }
+    terminal_proof_cleanup_calls += 1;
+}
 
 /* This destructor runs after B has terminally freed A's route client, but
  * before libc calls the native owner finish. It therefore exercises the
@@ -139,6 +160,9 @@ static void *release_worker(void *opaque)
         free(replacement);
         return (void *)(uintptr_t)17;
     }
+    pthread_cleanup_push(terminal_proof_cleanup, NULL);
+    pthread_exit(NULL);
+    pthread_cleanup_pop(0);
     return NULL;
 }
 
@@ -161,6 +185,8 @@ int main(void)
     for (unsigned int round = 0; round < 3; ++round) {
         replacement_size = replacement_sizes[round];
         terminal_proof_replacement = NULL;
+        terminal_proof_cleanup_calls = 0;
+        terminal_proof_cleanup_failed = 0;
         terminal_proof_destructor_calls = 0;
         terminal_proof_destructor_failed = 0;
         if (pthread_create(&owner, NULL, owner_worker, NULL) != 0)
@@ -174,6 +200,8 @@ int main(void)
             return 4;
         if (terminal_proof_destructor_calls != 1
                 || terminal_proof_destructor_failed
+                || terminal_proof_cleanup_calls != 1
+                || terminal_proof_cleanup_failed
                 || terminal_proof_replacement != NULL)
             return 5;
     }

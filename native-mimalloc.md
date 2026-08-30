@@ -1328,8 +1328,11 @@ proof in B TLS, the same selected C fixture proves a valid B-local replacement
 returns `ENOMEM` and preserves B's current client until its exact free and
 normal finish. It keeps that client in a B TSD value, so the TSD destructor
 repeats the valid-request refusal, frees the existing client, and only the
-following native all-free finish may settle A's proof. Usable size outside
-these exact routes, general
+following native all-free finish may settle A's proof. B exits through
+`pthread_exit`: its cleanup handler first sees a new local allocation fail
+with `ENOMEM`, then the TSD destructor sees the same `ENOMEM` refusal for the
+existing client's valid `realloc` before it frees that client. Usable size
+outside these exact routes, general
 single-page/adoption/reclaim routes,
 or arbitrary worker allocation beyond the bounded live-entry witnesses remain
 unavailable, so this gate remains open.

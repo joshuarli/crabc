@@ -168,7 +168,10 @@ transition terminally releases A and stores its proof in B TLS, B's subsequent
 local `realloc` is unavailable and leaves B's existing client intact until its
 exact free and normal finish. The selected C witness keeps that client in B's
 TSD value, whose destructor repeats the refusal and releases the client before
-the following native all-free finish settles A's proof. Usable-size
+the following native all-free finish settles A's proof. On B's `pthread_exit`,
+the preceding cleanup handler also receives `ENOMEM` for a new local
+allocation; the TSD destructor then receives `ENOMEM` for the existing
+client's valid `realloc` before it frees that client. Usable-size
 outside the exact detached route or parked live owner, cross-thread
 reallocation outside that exact post-exit transition, and
 cross-thread exit/abandoned-page routing remain unavailable; the ticket-zero
