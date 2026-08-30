@@ -26,7 +26,7 @@ and interpreter-owned `__tls_get_addr`, and reject-only TPOFF/static-TLS
 inputs. It remains neither a general loader/TLS/pthread implementation nor a
 dynamic CRT/sysroot, full x86-64 parity, or public x86 support claim.
 
-The x86 lane now has thirteen private static artifacts inside still-planned
+The x86 lane now has fourteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -77,7 +77,7 @@ candidate-only diagnostics, not pthread/C11 parity. The separate
 SIGALRM interruption with a positive remaining interval. It does not select
 `thrd_yield`, cancellation cleanup, C11 lifecycle/synchronization/TSS,
 dynamic/loader TLS, CRT, sysroot, or public x86 support. The separate
-`./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a ninth private static
+`./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or
 `pthread_mutex_init(..., NULL)` process-private `PTHREAD_MUTEX_NORMAL` record
 through `pthread_mutex_init`/`destroy`/`lock`/`trylock`/`unlock`. Its exact
@@ -92,7 +92,7 @@ process-shared/timed mutexes, C11 mutex or condition behavior beyond the
 separately selected plain adapter, general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, and public x86 support. The separate
-`./scripts/dev-x86_64.sh libc-pthread-cond-private` artifact is a tenth
+`./scripts/dev-x86_64.sh libc-pthread-cond-private` artifact is an eleventh
 private static `verified_artifact` in that same still-planned
 `libc.pthread-tls` family. It admits only a 48-byte, eight-byte-aligned
 all-zero or `pthread_cond_init(..., NULL)` process-private condition record,
@@ -111,7 +111,7 @@ behavior, non-selected mutex kinds, destruction with live
 waiters, dynamic/loader TLS, CRT/sysroot integration, general pthread
 synchronization, full pthread/TLS or x86-64 parity, promotion, and public x86
 support remain excluded. The separate `./scripts/dev-x86_64.sh
-libc-c11-plain-sync` artifact is an eleventh private static
+libc-c11-plain-sync` artifact is a twelfth private static
 `verified_artifact` in that same still-planned `libc.pthread-tls` family. It
 admits only the installed header's distinct 40-byte, eight-byte-aligned
 `mtx_t` and 48-byte, eight-byte-aligned `cnd_t` records: `mtx_plain`
@@ -124,7 +124,7 @@ rejections before their records are interpreted, not musl-differential
 behavior. Timed calls, static C11 initialization, cancellation, TSS, once,
 process-shared synchronization, C11-family completion, pthread/TLS or x86-64
 parity, promotion, and public x86 support remain excluded. The separate
-`./scripts/dev-x86_64.sh libc-pthread-c11-once` artifact is a twelfth private
+`./scripts/dev-x86_64.sh libc-pthread-c11-once` artifact is a thirteenth private
 static `verified_artifact` in that same still-planned `libc.pthread-tls`
 family. Its pinned-musl/reference and true static-candidate routes select only
 the normal-return `pthread_once` and C11 `call_once` path for the installed
@@ -143,7 +143,7 @@ fork/atfork, TSS, dynamic/loader TLS, musl's weak `pthread_once` ELF binding,
 general pthread/C11 synchronization,
 full pthread/TLS or x86-64 parity, promotion, and public x86 support remain
 excluded. The separate `./scripts/dev-x86_64.sh libc-pthread-c11-tsd` artifact
-is a thirteenth private static `verified_artifact` in the same still-planned
+is a fourteenth private static `verified_artifact` in the same still-planned
 `libc.pthread-tls` family. It selects only
 `pthread_key_create`/`pthread_key_delete`/`pthread_getspecific`/
 `pthread_setspecific` and `tss_create`/`tss_delete`/`tss_get`/`tss_set` over

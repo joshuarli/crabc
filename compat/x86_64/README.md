@@ -1924,7 +1924,7 @@ or portable post-detach-handle behavior. This does not select detached-at-create
 attributes, general pthread/C11 or detached-thread behavior, cancellation,
 TSS, synchronization, dynamic/loader TLS, CRT, sysroot, or public x86 support.
 
-`libc-thrd-sleep` is an eighth separately recorded private static
+`libc-thrd-sleep` is a ninth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
 project-header C body first runs through pinned musl and then through a
 `-nostdlib -static` candidate. It selects only the direct non-cancellation C11
@@ -1936,7 +1936,7 @@ interval. It does not select `thrd_yield`, cancellation cleanup, C11
 lifecycle/synchronization/TSS, dynamic/loader TLS, CRT, sysroot, or public x86
 support.
 
-`libc-pthread-mutex-normal` is a ninth separately recorded private static
+`libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
 `-nostdlib -static` candidate. It selects only an all-zero or
@@ -1953,7 +1953,7 @@ separately selected plain adapter, general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, or public x86 support.
 
-`libc-pthread-cond-private` is a tenth separately recorded private static
+`libc-pthread-cond-private` is an eleventh separately recorded private static
 `verified_artifact` under that same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
 `-nostdlib -static` candidate. It selects only a 48-byte, eight-byte-aligned
@@ -1973,7 +1973,7 @@ destruction with live waiters,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, promotion, or public x86 support.
 
-`libc-c11-plain-sync` is an eleventh separately recorded private static
+`libc-c11-plain-sync` is a twelfth separately recorded private static
 `verified_artifact` under that same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
 `-nostdlib -static` candidate. It selects only the installed header's distinct
@@ -1989,7 +1989,7 @@ cancellation, TSS, once, process-shared synchronization, C11-family
 completion, full pthread/TLS or x86-64 parity, promotion, or public x86
 support.
 
-`libc-pthread-c11-once` is a twelfth separately recorded private static
+`libc-pthread-c11-once` is a thirteenth separately recorded private static
 `verified_artifact` under that same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
 `-nostdlib -static` candidate. It selects only normal-return `pthread_once`
@@ -2008,7 +2008,7 @@ same-control entry, fork/atfork, TSS, dynamic/loader TLS, musl's weak
 pthread/TLS or x86-64 parity, promotion, or public x86
 support.
 
-`libc-pthread-c11-tsd` is a thirteenth separately recorded private static
+`libc-pthread-c11-tsd` is a fourteenth separately recorded private static
 `verified_artifact` under that same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
 `-nostdlib -static` candidate. It selects only
