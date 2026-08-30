@@ -901,7 +901,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline",
-            "libc-vector-io",
+            "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
         )
@@ -10081,6 +10081,82 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-header-layouts-baseline)\n        [ "$#" -eq 0 ] || fail "libc-header-layouts-baseline takes no arguments"',
+            runner,
+        )
+
+    def test_libc_uio_cxx_linkage_stays_a_freestanding_cxx_archive_gate(self) -> None:
+        """The selected C++ linkage seam must not admit a C++ runtime."""
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "libc_uio_cxx_linkage_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "libc_uio_cxx_linkage_probe.cpp"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_uio_cxx_linkage_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_uio_cxx_linkage.sh"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "#include <sys/socket.h>",
+            "#include <sys/uio.h>",
+            "crabc_x86_64_uio_cxx_linkage_probe",
+            "socketpair",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "#include <errno.h>",
+            "#include <sys/uio.h>",
+            'extern "C" int crabc_x86_64_uio_cxx_linkage_probe',
+            "readv",
+            "writev",
+            "preadv",
+            "pwritev",
+            "ESPIPE",
+        ):
+            self.assertIn(required, cxx_probe)
+        for forbidden in (
+            "#include <vector>",
+            "#include <string>",
+            "throw ",
+            "typeid",
+            "new ",
+            "delete ",
+            "thread_local",
+            "static std::",
+        ):
+            self.assertNotIn(forbidden, cxx_probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_uio_cxx_linkage_entry",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_vector_io_header_abi.sh",
+            "assert_selected_c_abi_surface",
+            "assert_cxx_c_linkage",
+            "-std=c++17",
+            "-ffreestanding",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-nostdinc++",
+            "-nostdlib -static",
+            "__gxx_personality_v0",
+            "__tls_get_addr",
+            "R_X86_64_TPOFF",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("run_libc_uio_cxx_linkage_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_uio_cxx_linkage.sh", runner
+        )
+        self.assertIn(
+            '    libc-uio-cxx-linkage)\n        [ "$#" -eq 0 ] || fail "libc-uio-cxx-linkage takes no arguments"',
             runner,
         )
 

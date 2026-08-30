@@ -85,6 +85,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   descriptor-advice-header-abi verify x86 C/C++ descriptor-advice header profiles
   filesystem-capacity-header-abi verify x86 C/C++ filesystem-capacity header profiles
   vector-io-header-abi verify x86 C/C++ vector-I/O header profiles
+  libc-uio-cxx-linkage  link a freestanding C++ sys/uio consumer to static x86 crabc-libc
   flock-header-abi compile the staged x86 C/C++ sys/file.h header layouts
   sendfile-header-abi compile the staged x86 C/C++ sys/sendfile.h header layouts
   unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
@@ -2734,6 +2735,10 @@ run_libc_vector_io_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_vector_io.sh
 }
 
+run_libc_uio_cxx_linkage_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_uio_cxx_linkage.sh
+}
+
 run_libc_uts_identity_probe() {
     run_in_uts_cap_container bash /workspace/compat/x86_64/run_libc_uts_identity.sh
 }
@@ -2860,7 +2865,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy|libc-descriptor-pipeline) ;;
-    libc-vector-io) ;;
+    libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
     *)
@@ -3894,6 +3899,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-vector-io takes no arguments"
         ensure_image
         run_libc_vector_io_probe
+        ;;
+    libc-uio-cxx-linkage)
+        [ "$#" -eq 0 ] || fail "libc-uio-cxx-linkage takes no arguments"
+        ensure_image
+        run_libc_uio_cxx_linkage_probe
         ;;
     libc-uts-identity)
         [ "$#" -eq 0 ] || fail "libc-uts-identity takes no arguments"

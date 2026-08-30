@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 93)
+        self.assertEqual(report["verified_artifact_count"], 94)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1768,7 +1768,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 7
+        assert isinstance(artifacts, list) and len(artifacts) == 8
         artifact = next(
             entry
             for entry in artifacts
@@ -1952,6 +1952,68 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ledger.LedgerError, "complete C ABI"):
             ledger.validate_ledger(data)
+
+    def test_uio_cxx_archive_linkage_stays_a_closed_cxx_consumer_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 8
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-cxx-uio-archive-linkage"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/x86_64/libc_uio_cxx_linkage_probe.c",
+            "compat/x86_64/libc_uio_cxx_linkage_probe.cpp",
+            "compat/x86_64/libc_uio_cxx_linkage_start.S",
+            "compat/x86_64/run_libc_uio_cxx_linkage.sh",
+            "compat/x86_64/run_vector_io_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/vector_io.rs",
+            "include/sys/uio.h",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-uio-cxx-linkage"},
+        )
+        for phrase in (
+            "still-planned `libc.headers-layouts`",
+            "freestanding C++17 companion",
+            "`readv`, `writev`, `preadv`, and `pwritev`",
+            "no C++ runtime",
+            "no C export",
+            "`include/**` edit",
+            "general C++ support",
+            "installed-header closure",
+            "complete C ABI",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.headers-layouts")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-cxx-uio-archive-linkage"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-vector-io"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-uio-cxx-linkage command"
+        ):
+            ledger.validate_ledger(changed)
 
     def test_float_parse_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()

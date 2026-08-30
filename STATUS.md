@@ -551,6 +551,17 @@ C API references. It adds no export or installed-header edit, and is not
 all-header closure, general C/C++ runtime support, libc.so, CRT, loader,
 sysroot, family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-uio-cxx-linkage` adds one narrower private
+`static-cxx-uio-archive-linkage` artifact within still-planned
+`libc.headers-layouts`: a freestanding C++17 `<sys/uio.h>` companion first
+links and runs against pinned musl, then against the selected static archive
+through an unmangled C entry. It proves the selected `readv`/`writev`/
+`preadv`/`pwritev` declarations resolve into that archive while retaining
+initial-TLS errno and rejecting C++ runtime, constructor, exception, RTTI,
+and dynamic-TLS paths. This is one C++ consumer linkage seam, not general C++
+support, complete `<sys/uio.h>` linkage or runtime coverage, header-family
+completion, promotion, or public x86 support.
+
 `compat/x86_64/headers-layouts-foundation.toml` is now the separate planned
 v8 accounting contract for eventually closing that header family. It resolves
 the 183 pinned-musl paths and eight project-only headers into exact classes,

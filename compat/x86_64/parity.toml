@@ -1550,6 +1550,10 @@ source_owners = [
   "compat/x86_64/libc_header_layouts_baseline_probe.cpp",
   "compat/x86_64/libc_header_layouts_baseline_start.S",
   "compat/x86_64/run_libc_header_layouts_baseline.sh",
+  "compat/x86_64/libc_uio_cxx_linkage_probe.c",
+  "compat/x86_64/libc_uio_cxx_linkage_probe.cpp",
+  "compat/x86_64/libc_uio_cxx_linkage_start.S",
+  "compat/x86_64/run_libc_uio_cxx_linkage.sh",
   "include/bits/alltypes.h",
   "include/bits/fcntl.h",
   "include/bits/hwcap.h",
@@ -2036,6 +2040,40 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-header-layouts-baseline", scope = "Pinned-musl C/C++ reference plus one true dependency-free x86 crabc-libc static archive and freestanding C/C++ candidate. It runs the selected C/C++ header gates; proves project-header provenance; ratchets the exact crate-owned static C export set separately from compiler-builtins; rejects dynamic runtime/TLS, unresolved symbols, C++ constructors/exceptions/RTTI/runtime helpers, and non-C C++ references; verifies direct initial-TLS errno; then executes both C and C++ record/API paths. It adds no C export, header, capability, family completion, support, libc.so, CRT, loader, sysroot, or public x86 claim." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX declaration, record-layout, C-linkage, and selected runtime oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C/C++ call and initial-exec TLS fixture ABI oracle." }]
+
+[[family.verified_artifact]]
+id = "static-cxx-uio-archive-linkage"
+description = "Private native x86 C++ `<sys/uio.h>` archive-linkage artifact within still-planned `libc.headers-layouts`. A project-header C entry calls one separately compiled freestanding C++17 companion; both first link and execute through pinned musl 1.2.6 and then in one `-nostdlib -static` candidate linked only with the selected crabc archive. The C++ entry retains exactly the header-declared unmangled C references `readv`, `writev`, `preadv`, and `pwritev`; it performs one AF_UNIX vector transfer plus the selected positioned-I/O ESPIPE boundary before returning to C. The artifact ratchets the archive-wide selected C export surface, initial-TLS errno, no interpreter/DT_NEEDED/unresolved symbols, and no C++ runtime/constructor/exception/RTTI/dynamic-TLS path. It adds no C export or `include/**` edit, and is not general C++ support, full sys/uio.h declaration or runtime coverage, installed-header closure, complete C ABI, libc.so, CRT, loader, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/x86_64/libc_uio_cxx_linkage_probe.c",
+  "compat/x86_64/libc_uio_cxx_linkage_probe.cpp",
+  "compat/x86_64/libc_uio_cxx_linkage_start.S",
+  "compat/x86_64/run_libc_uio_cxx_linkage.sh",
+  "compat/x86_64/run_vector_io_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/vector_io.rs",
+  "include/errno.h",
+  "include/sys/socket.h",
+  "include/sys/uio.h",
+  "include/unistd.h",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "The freestanding candidate uses System V AMD64 C and C++ call ABI with an x86 Variant-II %fs initial-TLS errno scratch block owned only by its test shim; that shim supplies no CRT, C++ constructor/destructor, exception, pthread, dynamic-TLS, loader, or application-startup contract.",
+  "Pinned musl 1.2.6 sys/uio.h and the existing fourteen-profile C/C++ vector-I/O header matrix establish the selected 16-byte align-8 iovec and external C spellings. The C++ companion is compiled with no C++ standard headers, exceptions, RTTI, thread-safe local statics, C++ atexit registration, unwind tables, builtins, stack protector, PIE, or standard C++ include path; its unresolved names are exactly __errno_location/readv/writev/preadv/pwritev and no _Z*, __gxx_personality_v0, __cxa*, _Unwind_*, operator new/delete, __stack_chk_fail, or __tls_get_addr.",
+  "The execution boundary is deliberately small: vector write/read over a C-created AF_UNIX stream pair and pwritev/preadv on that stream's descriptor returning ESPIPE. It proves selected C++ header-to-archive resolution and direct error publication, not general positioned/vector I/O semantics or cancellation.",
+]
+x86_header_prerequisites = [
+  "The C fixture uses project sys/socket.h, sys/uio.h, and unistd.h; the C++ fixture uses project errno.h and sys/uio.h. The existing `vector-io-header-abi` matrix remains the pinned-musl declaration/layout/feature-visibility input, while this artifact proves only its four selected GNU C++ declarations link to the current static archive.",
+  "This artifact does not alter headers-layouts.toml's direct probe inventory, does not make callable-linkage ownership complete, and does not turn one C++ consumer into installed-header, general C++ runtime, header-family, or public-x86 support evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-uio-cxx-linkage", scope = "Pinned-musl C/C++ reference plus one true dependency-free x86 crabc-libc static archive and freestanding C/C++ candidate. It requires the existing vector-I/O header matrix; checks exact C++ unmangled readv/writev/preadv/pwritev undefined references and one C-linkage entry; ratchets the archive-owned C export list; rejects interpreter/DT_NEEDED, unresolved symbols, dynamic TLS, C++ runtime helpers, constructor/exception sections, and ambient dependencies; then executes the bounded stream transfer/ESPIPE calls. This is selected sys/uio C++ archive linkage only, not C++ runtime, runtime-family completion, promotion, or public support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 x86 sys/uio.h and vector-I/O behavior", role = "C++ declaration/C-linkage and bounded readv/writev/preadv/pwritev observable behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C/C++ external-call and initial-exec TLS fixture ABI oracle." }]
 
 [[family.verified_artifact]]
 id = "static-c-bootstrap-primitives"

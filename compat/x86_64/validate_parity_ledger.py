@@ -5004,6 +5004,91 @@ def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_uio_cxx_archive_linkage_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one real C++ consumer-to-archive seam below broad C++ claims."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-cxx-uio-archive-linkage"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one static-cxx-uio-archive-linkage artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "freestanding C++17 companion",
+        "`readv`, `writev`, `preadv`, and `pwritev`",
+        "no C++ runtime",
+        "no C export",
+        "`include/**` edit",
+        "general C++ support",
+        "installed-header closure",
+        "complete C ABI",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-cxx-uio-archive-linkage description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/x86_64/libc_uio_cxx_linkage_probe.c",
+        "compat/x86_64/libc_uio_cxx_linkage_probe.cpp",
+        "compat/x86_64/libc_uio_cxx_linkage_start.S",
+        "compat/x86_64/run_libc_uio_cxx_linkage.sh",
+        "compat/x86_64/run_vector_io_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/vector_io.rs",
+        "include/errno.h",
+        "include/sys/socket.h",
+        "include/sys/uio.h",
+        "include/unistd.h",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-cxx-uio-archive-linkage must own {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-uio-cxx-linkage"},
+        "static-cxx-uio-archive-linkage must use the closed libc-uio-cxx-linkage command",
+    )
+    runner_path = ROOT / "compat" / "x86_64" / "run_libc_uio_cxx_linkage.sh"
+    require(runner_path.is_file(), "static-cxx-uio-archive-linkage runner is missing")
+    runner = runner_path.read_text(encoding="utf-8")
+    for phrase in (
+        "run_vector_io_header_abi.sh",
+        "assert_selected_c_abi_surface",
+        "assert_cxx_c_linkage",
+        "-nostdlib -static",
+        "-fno-exceptions",
+        "-fno-rtti",
+        "-nostdinc++",
+        "__gxx_personality_v0",
+        "__tls_get_addr",
+        "R_X86_64_TPOFF",
+    ):
+        require(phrase in runner, f"static-cxx-uio-archive-linkage runner omits {phrase}")
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-uio-cxx-linkage)" in dispatch_source,
+        "libc-uio-cxx-linkage is absent from the native dispatcher",
+    )
+
+
 def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
     """Keep the selected numeric-address declarations below header promotion."""
     evidence = family.get("native_evidence")
@@ -15558,6 +15643,7 @@ def validate_ledger(
     require_dirent_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_stdlib_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
+    require_uio_cxx_archive_linkage_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
