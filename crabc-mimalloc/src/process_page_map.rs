@@ -4,12 +4,14 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `include/mimalloc/internal.h:753-769,
-// 1000-1005,1112-1128` (checked two-level lookup, interior-pointer flag, and
-// usable-block geometry), `src/page-map.c:468-511` (range registration and
-// checked pointer lookup), `src/free.c:93-184` (canonical aligned-block
-// recovery and free pointer dispatch), `src/alloc.c:364-439` (usable-size and
-// realloc pointer consumers), `src/page-map.c:228-365`
+// Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h:371-386`
+// (the `xthread_id` flag and special ownership encodings),
+// `include/mimalloc/internal.h:753-769,960-1025,1112-1128` (checked two-level
+// lookup, source page-state predicates, interior-pointer flag, and usable-block
+// geometry), `src/page-map.c:468-511` (range registration and checked pointer
+// lookup), `src/free.c:93-248` (atomic `xthread_id` snapshot, canonical
+// aligned-block recovery, and free pointer dispatch), `src/alloc.c:364-439`
+// (usable-size and realloc pointer consumers), `src/page-map.c:228-365`
 // (`mi_page_map_init_once` and `_mi_page_map_init`), and
 // `src/subproc.c:253-255` (the main-subprocess process-lifetime ownership of
 // the global page map).
@@ -42,7 +44,10 @@ use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::MemoryConfig;
 use crate::page_map::{PageMap, PageMapHeader, PageMapRoot};
 use crate::subproc::MainSubprocess;
-use crate::types::{PAGE_HAS_INTERIOR_POINTERS, Page};
+use crate::types::{
+    PAGE_FLAG_MASK, PAGE_HAS_INTERIOR_POINTERS, Page, PageFlags, ThreadId,
+    THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED, THREAD_ID_DETACHED,
+};
 
 const COLD: u8 = 0;
 const READY: u8 = 1;
@@ -69,6 +74,39 @@ struct PagePointerGeometry {
     page_offset: usize,
 }
 
+/// Source ownership state captured from a `mi_page_t::xthread_id` snapshot.
+///
+/// This is exactly the source identity after masking its two low flag bits:
+/// `types.h` reserves zero for an ordinary abandoned page, four for an
+/// abandoned page that remains mapped in its arena's abandoned bitmap, and
+/// eight for the detached source identity. Every other source identity names
+/// a currently associated owner. The observation neither validates that owner
+/// nor selects a local-versus-remote free path; pinned `free.c` performs that
+/// separate comparison against the caller's thread identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveAllocationPageState {
+    /// A non-special source identity currently associates the page with an
+    /// owner. The raw identity remains available on [`LiveAllocationPointer`].
+    LiveOwnerAssociated,
+    /// The source ordinary-abandoned identity (`MI_THREADID_ABANDONED`).
+    Abandoned,
+    /// The source abandoned-and-arena-mapped identity
+    /// (`MI_THREADID_ABANDONED_MAPPED`).
+    AbandonedMapped,
+    /// The source detached identity (`MI_THREADID_DETACHED`).
+    Detached,
+}
+
+#[inline]
+const fn source_page_state(xthread_id: ThreadId) -> LiveAllocationPageState {
+    match xthread_id & !PAGE_FLAG_MASK {
+        THREAD_ID_ABANDONED => LiveAllocationPageState::Abandoned,
+        THREAD_ID_ABANDONED_MAPPED => LiveAllocationPageState::AbandonedMapped,
+        THREAD_ID_DETACHED => LiveAllocationPageState::Detached,
+        _ => LiveAllocationPageState::LiveOwnerAssociated,
+    }
+}
+
 /// Pointer-derived facts for one current native allocation.
 ///
 /// This is an observation, not page ownership. In particular, carrying this
@@ -82,6 +120,9 @@ pub(crate) struct LiveAllocationPointer {
     canonical_block: NonNull<u8>,
     block_size: usize,
     usable_size: usize,
+    xthread_id: ThreadId,
+    page_flags: PageFlags,
+    page_state: LiveAllocationPageState,
     has_interior_pointers: bool,
 }
 
@@ -109,6 +150,24 @@ impl LiveAllocationPointer {
     #[inline]
     pub(crate) const fn usable_size(self) -> usize { self.usable_size }
 
+    /// Returns the raw source `mi_page_t::xthread_id` atomic snapshot.
+    ///
+    /// The low two bits are the source page flags; use [`Self::page_flags`]
+    /// and [`Self::page_state`] for their decoded observational forms. This is
+    /// not a caller-relative local/remote decision and must not be retained as
+    /// page ownership.
+    #[inline]
+    pub(crate) const fn xthread_id(self) -> ThreadId { self.xthread_id }
+
+    /// Returns the two source page-flag bits captured with `xthread_id`.
+    #[inline]
+    pub(crate) const fn page_flags(self) -> PageFlags { self.page_flags }
+
+    /// Returns the source ownership state decoded from the same atomic
+    /// `xthread_id` snapshot.
+    #[inline]
+    pub(crate) const fn page_state(self) -> LiveAllocationPageState { self.page_state }
+
     /// Reports the source page-wide interior-pointer flag.
     #[inline]
     pub(crate) const fn has_interior_pointers(self) -> bool { self.has_interior_pointers }
@@ -135,8 +194,14 @@ unsafe fn classify_live_allocation_in_page(
     // a reference to the one atomic source field only; it never creates a
     // shared `Page` reference beside the owner's ordinary field mutation.
     let xthread_id = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
-    let has_interior_pointers =
-        xthread_id.load(Ordering::Relaxed) & PAGE_HAS_INTERIOR_POINTERS != 0;
+    // Pinned `mi_free_nonnull` takes this same relaxed atomic word once before
+    // it derives caller-relative dispatch. Keep the complete raw snapshot so
+    // later source dispatch can use it without dereferencing `theap` or
+    // acquiring a structural PageMap mutation lease.
+    let xthread_id = xthread_id.load(Ordering::Relaxed);
+    let page_flags = xthread_id & PAGE_FLAG_MASK;
+    let page_state = source_page_state(xthread_id);
+    let has_interior_pointers = page_flags & PAGE_HAS_INTERIOR_POINTERS != 0;
     // SAFETY: source page publication fixes these geometry fields before the
     // allocation becomes visible. The caller's live-client proof keeps the
     // page from reuse or final release, so raw reads do not overlap a write.
@@ -173,6 +238,9 @@ unsafe fn classify_live_allocation_in_page(
         canonical_block,
         block_size,
         usable_size,
+        xthread_id,
+        page_flags,
+        page_state,
         has_interior_pointers,
     })
 }
@@ -1072,7 +1140,11 @@ mod tests {
     use super::*;
     use crate::config::ARENA_SLICE_SIZE;
     use crate::os::{PageSize, fault};
-    use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData};
+    use crate::types::{
+        Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData, PAGE_FLAG_MASK,
+        PAGE_HAS_INTERIOR_POINTERS, PAGE_IN_FULL_QUEUE, THREAD_ID_ABANDONED,
+        THREAD_ID_ABANDONED_MAPPED, THREAD_ID_DETACHED,
+    };
     use core::alloc::Layout;
     use core::mem::{align_of, size_of};
     use core::ptr::NonNull;
@@ -1087,6 +1159,15 @@ mod tests {
             false,
             false,
         )
+    }
+
+    fn store_source_xthread_id_for_pointer_test(page: NonNull<Page>, xthread_id: usize) {
+        let geometry = page.as_ptr().cast::<PagePointerGeometry>();
+        // SAFETY: the fixture owns its initialized page metadata exclusively
+        // through PageMap unregistration. This names only the source atomic
+        // identity field and never accesses the potentially stale `theap`.
+        let field = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
+        field.store(xthread_id, Ordering::Relaxed);
     }
 
     #[test]
@@ -1160,6 +1241,9 @@ mod tests {
         assert_eq!(normal.page(), page);
         assert_eq!(normal.client(), block);
         assert_eq!(normal.canonical_block(), block);
+        assert_eq!(normal.xthread_id(), thread_id.get());
+        assert_eq!(normal.page_flags(), 0);
+        assert_eq!(normal.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert!(!normal.has_interior_pointers());
         assert_eq!(normal.block_size(), BLOCK_SIZE);
         assert_eq!(normal.usable_size(), BLOCK_SIZE);
@@ -1177,9 +1261,63 @@ mod tests {
         assert_eq!(pointer.page(), page);
         assert_eq!(pointer.client(), client);
         assert_eq!(pointer.canonical_block(), block);
+        assert_eq!(
+            pointer.xthread_id(),
+            thread_id.get() | PAGE_HAS_INTERIOR_POINTERS
+        );
+        assert_eq!(pointer.page_flags(), PAGE_HAS_INTERIOR_POINTERS);
+        assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.block_size(), BLOCK_SIZE);
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
+
+        store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE);
+        // SAFETY: `block` remains an exact live allocation. The source state
+        // snapshot is deliberately abandoned but still PageMap-published.
+        let abandoned = unsafe { lease.classify_live_allocation_pointer(block) }
+            .expect("the process root stays ready")
+            .expect("the abandoned source page stays registered");
+        assert_eq!(
+            abandoned.xthread_id(),
+            THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE
+        );
+        assert_eq!(abandoned.page_flags(), PAGE_IN_FULL_QUEUE);
+        assert_eq!(abandoned.page_state(), LiveAllocationPageState::Abandoned);
+
+        store_source_xthread_id_for_pointer_test(
+            page,
+            THREAD_ID_ABANDONED_MAPPED | PAGE_HAS_INTERIOR_POINTERS,
+        );
+        // SAFETY: `client` remains a live interior allocation whose source
+        // page map lifetime still pins the mapped-abandoned metadata.
+        let abandoned_mapped = unsafe { lease.classify_live_allocation_pointer(client) }
+            .expect("the process root stays ready")
+            .expect("the mapped-abandoned source page stays registered");
+        assert_eq!(
+            abandoned_mapped.xthread_id(),
+            THREAD_ID_ABANDONED_MAPPED | PAGE_HAS_INTERIOR_POINTERS
+        );
+        assert_eq!(abandoned_mapped.page_flags(), PAGE_HAS_INTERIOR_POINTERS);
+        assert_eq!(
+            abandoned_mapped.page_state(),
+            LiveAllocationPageState::AbandonedMapped
+        );
+        assert_eq!(abandoned_mapped.canonical_block(), block);
+
+        store_source_xthread_id_for_pointer_test(
+            page,
+            THREAD_ID_DETACHED | PAGE_FLAG_MASK,
+        );
+        // SAFETY: `client` and the registered fixture page remain live. The
+        // detached identity is only observed; this boundary makes no caller
+        // ownership decision and does not access the page's `theap` field.
+        let detached = unsafe { lease.classify_live_allocation_pointer(client) }
+            .expect("the process root stays ready")
+            .expect("the detached source page stays registered");
+        assert_eq!(detached.xthread_id(), THREAD_ID_DETACHED | PAGE_FLAG_MASK);
+        assert_eq!(detached.page_flags(), PAGE_FLAG_MASK);
+        assert_eq!(detached.page_state(), LiveAllocationPageState::Detached);
+        assert_eq!(detached.canonical_block(), block);
 
         // SAFETY: the pointer boundary is finished, no producer can use this
         // test-only page, and the held lifecycle serializes the clear.
