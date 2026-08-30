@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 82)
-        self.assertEqual(report["header_layout_probe_count"], 41)
+        self.assertEqual(report["verified_artifact_count"], 83)
+        self.assertEqual(report["header_layout_probe_count"], 42)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -288,7 +288,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 41)
+        self.assertEqual(report["header_layout_probe_count"], 42)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -1666,12 +1666,93 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "complete C ABI"):
             ledger.validate_ledger(data)
 
+    def test_float_parse_remains_a_closed_non_capability_artifact(self) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 3
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-float-parse"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/float_parse.rs",
+            "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
+            "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
+            "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
+            "compat/x86_64/float_parse_header_abi_probe.c",
+            "compat/x86_64/float_parse_header_abi_probe.cpp",
+            "compat/x86_64/run_float_parse_header_abi.sh",
+            "compat/x86_64/libc_float_parse_probe.c",
+            "compat/x86_64/libc_float_parse_start.S",
+            "compat/x86_64/run_libc_float_parse.sh",
+            "compat/x86_64/README.md",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-float-parse"},
+        )
+        for phrase in (
+            "`strtof`",
+            "`strtod`",
+            "`strtold`",
+            "`atof`",
+            "source-faithful assembly translation",
+            "raw 10-byte binary80 payloads",
+            "all-four-direction",
+            "pseudo-`FILE`",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-float-parse"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "public x86 support", "x86 support"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-float-parse description omits public x86 support"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-float-parse"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-float-parse command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_math_complex_foundation_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 2
+        assert isinstance(artifacts, list) and len(artifacts) == 3
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -1749,7 +1830,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 2
+        assert isinstance(artifacts, list) and len(artifacts) == 3
         artifact = next(
             entry
             for entry in artifacts

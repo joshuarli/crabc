@@ -1650,6 +1650,9 @@ source_owners = [
   "compat/x86_64/integer_parse_header_abi_probe.c",
   "compat/x86_64/integer_parse_header_abi_probe.cpp",
   "compat/x86_64/run_integer_parse_header_abi.sh",
+  "compat/x86_64/float_parse_header_abi_probe.c",
+  "compat/x86_64/float_parse_header_abi_probe.cpp",
+  "compat/x86_64/run_float_parse_header_abi.sh",
   "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
   "compat/x86_64/intmax_arithmetic_header_abi_probe.cpp",
   "compat/x86_64/run_intmax_arithmetic_header_abi.sh",
@@ -1824,6 +1827,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh ctype-header-abi", scope = "This compile-only C/C++ ctype declaration slice is partial evidence; the fourteen ordinary ctype declarations are checked as unconditional and isascii/toascii feature gates are checked against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh integer-arithmetic-header-abi", scope = "This compile-only C/C++ stdlib integer-arithmetic declaration and LP64 div-record-layout slice is partial evidence; abs/labs/llabs/div/ldiv/lldiv are checked as unconditional against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh integer-parse-header-abi", scope = "This compile-only C/C++ stdlib/inttypes integer-parsing declaration slice is partial evidence; atoi/atol/atoll and strtol/strtoul/strtoll/strtoull/strtoimax/strtoumax are checked as unconditional with LP64 intmax_t aliases and unmangled C++ linkage against pinned musl and the project header." },
+  { state = "required", command = "./scripts/dev-x86_64.sh float-parse-header-abi", scope = "This strict-base C/C++ stdlib floating declaration slice is partial evidence; strtof/strtod/strtold/atof declarations are checked as unconditional with exact binary32/binary64/x87 pointer/result types, x86 long-double storage, and unmangled C++ linkage against pinned musl and the project header. It selects no callable archive linkage or runtime behavior for any declaration, no fenv behavior, no general header completion, and no public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", scope = "This compile-only C/C++ inttypes intmax-arithmetic declaration and LP64 imaxdiv-record-layout slice is partial evidence; imaxabs/imaxdiv are checked as unconditional with unmangled C++ linkage against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh credential-observation-header-abi", scope = "This compile-only C/C++ unistd credential-observation declaration slice is partial evidence; getgroups is unconditional, getresuid/getresgid are GNU-only, strict/POSIX/BSD selections hide both getres declarations, and C++ references retain C linkage against pinned musl and the project header." },
   { state = "required", command = "./scripts/dev-x86_64.sh child-reaping-header-abi", scope = "This compile-only C/C++ sys/wait declaration and child-siginfo layout slice is partial evidence; strict C/C++ proves wait/waitpid, POSIX selection proves waitid/siginfo_t and unmangled linkage, and the project's existing broader waitid visibility is not a general header-completion claim." },
@@ -5243,6 +5247,52 @@ x86_header_prerequisites = [
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-complex", scope = "Pinned-musl C reference plus one true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact closed archive exports; selected function-pointer ABI calls for binary32/binary64/x87 zero/subnormal/normal/infinity/NaN and signed zero plus float/double/long-double real/imaginary access and conjugation; no interpreter/DT_NEEDED/unresolved symbol or TLS/dynamic-TLS resolver; no libm or unowned runtime dependency; and generated x87 fldt/fchs instructions. It rejects unselected cabs/carg/cproj, complex power/transcendental, and scalar-math exports. It does not select libc.so, a general libc/libm, CRT startup, pthreads, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for the selected src/math binary32/binary64/x87 classifiers/sign predicates and src/complex accessors/conjugation leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "x87 long-double and complex-long-double storage/calling/return convention plus float/double complex SSE register contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-float-parse"
+description = "Private native x86 selected-static-archive C-locale floating-conversion block. One dependency-free `crabc-libc` archive resolves exactly `strtof`, `strtod`, `strtold`, and `atof` into a freestanding project-header C fixture after an equivalent pinned-musl execution. The target-private, string-only scanner is a checked-in source-faithful assembly translation of fixed musl x86 code, not a linked foreign object: it retains its binary80 intermediate operation order while keeping the public System V binary32/binary64 `xmm0` and x87 binary80 `st0` return paths distinct. The fixture invokes all four entries through function pointers and covers C-locale grammar/end pointers, ordinary stale-errno behavior, normal/subnormal/overflow/underflow values, raw 10-byte binary80 payloads, and per-conversion reset all-four-direction x87/MXCSR rounding, errno, and exception-flag regressions for decimal and hexadecimal boundaries. It is valid only for readable NUL-terminated strings and its private pseudo-`FILE` refill fallback is not a public stream interface. This artifact excludes wide, `_l`, internal, locale-object, real-stdio, allocation, general text/locale, general scalar/complex math, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/float_parse.rs",
+  "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
+  "include/bits/alltypes.h",
+  "include/errno.h",
+  "include/fenv.h",
+  "include/float.h",
+  "include/stdint.h",
+  "include/stdlib.h",
+  "compat/x86_64/float_parse_header_abi_probe.c",
+  "compat/x86_64/float_parse_header_abi_probe.cpp",
+  "compat/x86_64/run_float_parse_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_float_parse_probe.c",
+  "compat/x86_64/libc_float_parse_start.S",
+  "compat/x86_64/run_libc_float_parse.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `strtof`/`strtod`/`strtold` input and optional end pointer in rdi/rsi; strtof returns binary32 and strtod/atof return binary64 in xmm0, while strtold returns x87 binary80 in st0. Linux/x86-64 long double storage is 16-byte align-16 with only its low 10-byte f80 payload defined.",
+  "Pinned musl 1.2.6 src/stdlib/strtod.c::strtox/strtof/strtod/strtold and src/stdlib/atof.c map to the public wrappers; src/internal/floatscan.c::{scanexp,decfloat,hexfloat,__floatscan}, src/internal/shgetc.c::{__shlim,__shgetc}, src/math/scalbn.c, scalbnl.c, copysignl.c, and src/math/x86_64/{fabsl,fmodl}.c map to private target-local assembly helpers under the fixed release pin.",
+  "The string-only pseudo-FILE marks its input exhausted at the terminating NUL, so private __shgetc refill is unreachable for the selected valid input contract and returns EOF rather than importing musl __uflow; no real FILE or stdio ABI is selected.",
+  "The selected fenv boundary must preserve the live x87/MXCSR rounding direction and record the observed source path's signed-zero, errno, FE_INEXACT, FE_UNDERFLOW, and FE_OVERFLOW outcomes. The final static fixture supplies only the already-selected initial-exec errno TLS datum and %fs:0 self word; this is not a CRT or general TLS lifecycle contract.",
+]
+x86_header_prerequisites = [
+  "The strict-base project-first/pinned-musl C11/C++17 declaration gate checks unconditional strtof, strtod, strtold, and atof pointer/result types, x86 16-byte align-16 long double storage, and unmangled C++ linkage. It selects no archive linkage or runtime behavior for any declaration, and does not complete stdlib.h or public headers.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-float-parse", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 crabc-libc static archive and -nostdlib -static candidate. The gate first requires the C11/C++17 declaration/linkage check, ratchets the complete selected static C export surface, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic-TLS and allocation/wide/_l/internal conversion dependencies, and verifies direct initial-exec errno TLS. Function-pointer calls prove exactly strtof/strtod/strtold/atof C-locale grammar/end-pointer, stale-errno/range behavior, binary32/binary64 normal/subnormal/overflow/underflow, raw x87 80-bit-in-16-byte strtold ABI payloads, and save/restore fenv per-conversion all-four-direction decimal/hex boundary results including errno and flags. Candidate structural checks require the private source-faithful x87 fldt/fstpt/fprem path. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not C text/math/locale/stdio family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/stdlib/strtod.c, atof.c, src/internal/floatscan.c, shgetc.c, src/math/scalbn.c, scalbnl.c, copysignl.c, and x86_64 fabsl/fmodl; the string-only pseudo-FILE EOF boundary intentionally excludes real streams and stdio." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "rdi/rsi input/end-pointer convention, xmm0 binary32/binary64 returns, x87 st0 binary80 strtold return, 16-byte align-16 long-double storage, and initial-exec errno fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-named-locale-multibyte"

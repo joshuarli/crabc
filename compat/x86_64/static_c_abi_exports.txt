@@ -49,6 +49,7 @@ accept4
 access
 alphasort
 atexit
+atof
 atoi
 atol
 atoll
@@ -389,8 +390,11 @@ strpbrk
 strrchr
 strspn
 strstr
+strtod
+strtof
 strtoimax
 strtol
+strtold
 strtoll
 strtoul
 strtoull

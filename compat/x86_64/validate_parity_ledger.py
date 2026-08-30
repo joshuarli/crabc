@@ -651,6 +651,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "ctype": "./scripts/dev-x86_64.sh ctype-header-abi",
     "integer-arithmetic": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
     "integer-parse": "./scripts/dev-x86_64.sh integer-parse-header-abi",
+    "float-parse": "./scripts/dev-x86_64.sh float-parse-header-abi",
     "intmax-arithmetic": "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi",
     "credential-observation": "./scripts/dev-x86_64.sh credential-observation-header-abi",
     "child-reaping": "./scripts/dev-x86_64.sh child-reaping-header-abi",
@@ -732,6 +733,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/integer_parse_header_abi_probe.c",
         "compat/x86_64/integer_parse_header_abi_probe.cpp",
         "compat/x86_64/run_integer_parse_header_abi.sh",
+    ),
+    "float-parse": (
+        "compat/x86_64/float_parse_header_abi_probe.c",
+        "compat/x86_64/float_parse_header_abi_probe.cpp",
+        "compat/x86_64/run_float_parse_header_abi.sh",
     ),
     "intmax-arithmetic": (
         "compat/x86_64/intmax_arithmetic_header_abi_probe.c",
@@ -1033,6 +1039,8 @@ INTEGER_PARSE_SYMBOLS = (
     "strtoimax",
     "strtoumax",
 )
+
+FLOAT_PARSE_SYMBOLS = ("strtof", "strtod", "strtold", "atof")
 
 CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
 
@@ -12667,6 +12675,340 @@ def require_ffs_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the source-faithful x87 parser below text/math family completion.
+
+    This records one private string-conversion artifact, not a substitute for
+    broad C text, locale, stdio, math, or x86 platform qualification.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-float-parse"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-float-parse artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in FLOAT_PARSE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-float-parse description omits {symbol}",
+        )
+    for phrase in (
+        "C-locale floating-conversion block",
+        "source-faithful assembly translation",
+        "binary80 intermediate operation order",
+        "xmm0",
+        "st0",
+        "raw 10-byte binary80 payloads",
+        "all-four-direction",
+        "pseudo-`FILE`",
+        "wide",
+        "real-stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-float-parse description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-float-parse.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/float_parse.rs",
+        "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
+        "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
+        "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
+        "include/errno.h",
+        "include/fenv.h",
+        "include/float.h",
+        "include/stdint.h",
+        "include/stdlib.h",
+        "compat/x86_64/float_parse_header_abi_probe.c",
+        "compat/x86_64/float_parse_header_abi_probe.cpp",
+        "compat/x86_64/run_float_parse_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_float_parse_probe.c",
+        "compat/x86_64/libc_float_parse_start.S",
+        "compat/x86_64/run_libc_float_parse.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-float-parse omits {owner}")
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-float-parse.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "rdi/rsi" in item
+            and "xmm0" in item
+            and "st0" in item
+            and "16-byte align-16" in item
+            and "10-byte" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-float-parse must record its SysV binary32/binary64/x87 ABI",
+    )
+    require(
+        any(
+            "strtod.c" in item
+            and "atof.c" in item
+            and "floatscan.c" in item
+            and "shgetc.c" in item
+            and "scalbn.c" in item
+            and "scalbnl.c" in item
+            and "copysignl.c" in item
+            and "fabsl" in item
+            and "fmodl" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-float-parse must record its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "pseudo-FILE" in item
+            and "NUL" in item
+            and "__uflow" in item
+            and "stdio" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-float-parse must record its string-only pseudo-FILE boundary",
+    )
+    require(
+        any(
+            "x87/MXCSR" in item
+            and "FE_INEXACT" in item
+            and "FE_UNDERFLOW" in item
+            and "FE_OVERFLOW" in item
+            and "initial-exec errno" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-float-parse must record its fenv and errno boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-float-parse.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and all(symbol in item for symbol in FLOAT_PARSE_SYMBOLS)
+            and "unmangled C++" in item
+            and "no archive linkage or runtime behavior" in item
+            for item in header_prerequisites
+        ),
+        "static-c-float-parse must retain its compile-only declaration boundary",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in FLOAT_PARSE_SYMBOLS:
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits {symbol}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "float_parse.rs"]\nmod float_parse;' in static_root,
+        "x86 static C ABI must compose the float_parse leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "float_parse_musl_x86_64.S",
+        "float_parse_musl_support_x86_64.S",
+        "float_parse_musl_entry_x86_64.S",
+        "source-faithful",
+        "rational packer",
+        "pseudo-`FILE`",
+    ):
+        require(
+            snippet in implementation,
+            f"float_parse leaf omits its required {snippet} contract",
+        )
+    entry_assembly = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "float_parse_musl_entry_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for symbol in FLOAT_PARSE_SYMBOLS:
+        require(
+            f".globl {symbol}" in entry_assembly,
+            f"float parse entry assembly omits public {symbol}",
+        )
+    scanner_assembly = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "float_parse_musl_x86_64.S"
+    ).read_text(encoding="utf-8")
+    support_assembly = (
+        ROOT
+        / "libc"
+        / "src"
+        / "c_abi"
+        / "x86_64"
+        / "float_parse_musl_support_x86_64.S"
+    ).read_text(encoding="utf-8")
+    for instruction in ("fldt", "fstpt"):
+        require(
+            instruction in scanner_assembly,
+            f"float parser scanner assembly omits {instruction}",
+        )
+    require("fprem" in support_assembly, "float parser support assembly omits fprem")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_float_parse_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for symbol in FLOAT_PARSE_SYMBOLS:
+        require(
+            symbol in header_runner,
+            f"float parse header runner omits {symbol}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_float_parse.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_float_parse_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+        "__strtold_internal",
+        "fldt",
+        "fstpt",
+        "fprem",
+    ):
+        require(
+            snippet in runner,
+            f"libc-float-parse runner omits {snippet}",
+        )
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_float_parse_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_FLOAT_PARSE_FREESTANDING",
+        "strtold_fn",
+        "long_double_mantissa",
+        "long_double_sign_exponent",
+        "long_double_underflow_cases",
+        "long_double_rounding_cases",
+        "FE_TONEAREST",
+        "FE_DOWNWARD",
+        "FE_UPWARD",
+        "FE_TOWARDZERO",
+    ):
+        require(
+            snippet in fixture,
+            f"float parse fixture omits {snippet}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-float-parse"},
+        "static-c-float-parse must use the closed libc-float-parse command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "-nostdlib -static candidate",
+                "strtof/strtod/strtold/atof",
+                "initial-exec errno TLS",
+                "raw x87 80-bit-in-16-byte strtold ABI payloads",
+                "all-four-direction decimal/hex boundary",
+                "fldt/fstpt/fprem",
+                "still-planned libc.text-math-locale-stdio",
+                "public x86 support",
+            )
+        ),
+        "static-c-float-parse evidence must retain its exact native regression boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "strtod.c",
+                    "atof.c",
+                    "floatscan.c",
+                    "shgetc.c",
+                    "scalbn.c",
+                    "scalbnl.c",
+                    "copysignl.c",
+                    "fabsl",
+                    "fmodl",
+                )
+            )
+            and "pseudo-FILE" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-float-parse must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "xmm0" in entry["role"]
+            and "st0" in entry["role"]
+            and "16-byte" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-float-parse must retain its SysV ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in ("float-parse-header-abi)", "libc-float-parse)"):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits {snippet}",
+        )
+
+
 def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     """Keep the x87-only math/complex foundation distinct from math parity.
 
@@ -13353,6 +13695,7 @@ def validate_ledger(
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
+    require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
 

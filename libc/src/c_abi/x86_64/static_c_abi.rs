@@ -28,7 +28,8 @@
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! padded socket messages/options,
-//! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
+//! credential-observation, integer-arithmetic, integer-parsing, selected
+//! C-locale binary32/binary64/x87-binary80 floating parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, callback-algorithms, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
@@ -109,6 +110,8 @@ mod locale_multibyte;
 mod integer_arithmetic;
 #[path = "integer_parse.rs"]
 mod integer_parse;
+#[path = "float_parse.rs"]
+mod float_parse;
 #[path = "intmax_arithmetic.rs"]
 mod intmax_arithmetic;
 #[path = "ffs.rs"]

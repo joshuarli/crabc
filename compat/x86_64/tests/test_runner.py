@@ -879,7 +879,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "access-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-multibyte-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
             "memory-search-header-abi",
@@ -895,7 +895,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-sync",
             "libc-memory-locking",
             "libc-memfd-create",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-vector-io",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -2408,6 +2408,23 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-integer-parse)\n        [ "$#" -eq 0 ] || fail "libc-integer-parse takes no arguments"',
+            source,
+        )
+        self.assertIn('float-parse-header-abi', source)
+        self.assertIn('run_float_parse_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_float_parse_header_abi.sh', source,
+        )
+        self.assertIn(
+            '    float-parse-header-abi)\n        [ "$#" -eq 0 ] || fail "float-parse-header-abi takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-float-parse', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_float_parse.sh', source,
+        )
+        self.assertIn(
+            '    libc-float-parse)\n        [ "$#" -eq 0 ] || fail "libc-float-parse takes no arguments"',
             source,
         )
         self.assertIn('libc-credential-observation', source)
@@ -8199,6 +8216,124 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("integer-parse-header-abi", runner)
         self.assertIn("libc-integer-parse", runner)
+
+    def test_libc_static_c_abi_float_parse_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "float_parse.rs"
+        ).read_text(encoding="utf-8")
+        entry_assembly = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "float_parse_musl_entry_x86_64.S"
+        ).read_text(encoding="utf-8")
+        scanner_assembly = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "float_parse_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        support_assembly = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "float_parse_musl_support_x86_64.S"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_float_parse_probe.c"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_float_parse.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_float_parse_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "float_parse_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "float_parse_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        symbols = ("strtof", "strtod", "strtold", "atof")
+        self.assertIn('#[path = "float_parse.rs"]', static_root)
+        for symbol in symbols:
+            self.assertIn(symbol, static_export_names)
+            self.assertIn(f".globl {symbol}", entry_assembly)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdlib/strtod.c",
+            "src/stdlib/atof.c",
+            "src/internal/floatscan.c",
+            "src/internal/shgetc.c",
+            "scalbnl",
+            "fmodl",
+            "x87 binary80",
+            "pseudo-`FILE`",
+            "initial-TLS",
+            "rational packer",
+        ):
+            self.assertIn(required, implementation)
+        for required in ("fldt", "fstpt"):
+            self.assertIn(required, scanner_assembly)
+        self.assertIn("fprem", support_assembly)
+        for required in (
+            "strtold_fn",
+            "long_double_mantissa",
+            "long_double_sign_exponent",
+            "long_double_underflow_cases",
+            "long_double_rounding_cases",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "CRABC_FLOAT_PARSE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "run_float_parse_header_abi.sh",
+            "__strtold_internal",
+            "fldt",
+            "fstpt",
+            "fprem",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for required in ("-std=c++17", "strtof", "strtod", "strtold", "atof"):
+            self.assertIn(required, header_runner)
+        self.assertIn("crabc_strtold_signature", header_c_probe)
+        self.assertIn("crabc_strtold_signature", header_cxx_probe)
+        self.assertIn('id = "static-c-float-parse"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-float-parse"',
+            parity_ledger,
+        )
+        self.assertIn("float-parse-header-abi", runner)
+        self.assertIn("libc-float-parse", runner)
 
     def test_libc_static_c_abi_intmax_arithmetic_artifact_stays_narrow(self) -> None:
         static_root = (

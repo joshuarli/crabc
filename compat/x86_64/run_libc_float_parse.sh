@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc integer-parsing evidence.
+# Native Linux/x86-64 selected static crabc-libc floating-conversion evidence.
 #
-# The project-header C fixture first executes against pinned musl, then as a
-# true -nostdlib static candidate linked only through the selected archive.
-# It selects exactly strtol/strtoul/strtoll/strtoull/strtoimax/strtoumax plus
-# atoi/atol/atoll. Floating, wide, locale-specific, internal, allocation,
-# stdio, and random conversions remain outside this artifact.
+# The project-header C fixture executes first against pinned musl, then as a
+# true -nostdlib static candidate linked only through the selected archive. It
+# selects exactly strtof/strtod/strtold/atof plus the already-selected x86
+# fenv and initial-TLS errno leaves needed to prove current-rounding behavior.
+# `strtold` retains the SysV x87 binary80 result ABI. Wide/_l/internal
+# conversion, allocation, stdio, locale databases, and a general text runtime
+# remain outside this artifact.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,7 +16,7 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly INITIAL_TLS_BYTES=4096
 readonly INITIAL_TLS_ALIGNMENT=64
 
-fail() { printf 'ERROR: x86 static libc integer parsing: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'ERROR: x86 static libc floating conversion: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 assert_selected_c_abi_surface() {
@@ -59,27 +61,27 @@ case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
 for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_integer_parse_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_float_parse_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-integer-parse.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-float-parse.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-integer-parse-reference"; candidate="$work_dir/crabc-static-integer-parse-candidate"
+reference="$work_dir/musl-float-parse-reference"; candidate="$work_dir/crabc-static-float-parse-candidate"
 trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir/expected-c-abi-symbols"
 symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"; disassembly="$work_dir/candidate-disassembly"
-errno_disassembly="$work_dir/errno-disassembly"
+errno_disassembly="$work_dir/errno-disassembly"; parser_disassembly="$work_dir/parser-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_integer_parse_probe.c >/dev/null 2>"$trace"
-for header in errno.h inttypes.h stdint.h limits.h stddef.h stdlib.h features.h bits/alltypes.h; do
+    compat/x86_64/libc_float_parse_probe.c >/dev/null 2>"$trace"
+for header in errno.h fenv.h float.h stdint.h stdlib.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" || fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_integer_parse_probe.c -o "$reference"
-"$reference" || fail "pinned-musl integer parsing fixture failed"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_float_parse_probe.c -o "$reference"
+"$reference" || fail "pinned-musl floating-conversion fixture failed"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -87,14 +89,13 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in atoi atol atoll strtol strtoul strtoll strtoull strtoimax strtoumax; do
+for symbol in __errno_location atof strtof strtod strtold fegetround fesetround fegetenv fesetenv feraiseexcept; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in wcstol wcstoul wcstoll wcstoull \
-    wcstoimax wcstoumax strtol_l strtoul_l strtoll_l strtoull_l \
-    __strtol_internal __strtoul_internal __strtoll_internal __strtoull_internal \
-    __strtoimax_internal __strtoumax_internal malloc calloc realloc free rand; do
+for unselected in strtof_l strtod_l strtold_l wcstof wcstod wcstold \
+    __floatscan __strtod_internal __strtof_internal __strtold_internal malloc calloc realloc free \
+    rand srand drand48; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi
@@ -107,17 +108,17 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_INTEGER_PARSE_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_FLOAT_PARSE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_integer_parse_probe.c \
-    compat/x86_64/libc_integer_parse_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_float_parse_probe.c \
+    compat/x86_64/libc_float_parse_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
-for symbol in __errno_location atoi atol atoll strtol strtoul strtoll strtoull strtoimax strtoumax; do
+for symbol in __errno_location atof strtof strtod strtold fegetround fesetround fegetenv fesetenv feraiseexcept; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
@@ -135,8 +136,24 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$symbols" "$disassembly"; then
-    fail "candidate selects an unowned runtime dependency"
+objdump -d --disassemble=strtof --disassemble=strtod --disassemble=strtold \
+    --disassemble=atof "$candidate" >"$parser_disassembly"
+if grep -Eq 'malloc|calloc|realloc|free|strtof_l|strtod_l|strtold_l|wcsto|__floatscan|__strtod_internal|__strtof_internal|__strtold_internal|crabc_core|mimalloc|sha_crypt' \
+    "$symbols" "$disassembly" "$parser_disassembly"; then
+    fail "candidate selects allocation, wide/locale/internal conversion, or an unowned runtime dependency"
 fi
-"$candidate" || fail "freestanding integer parsing fixture failed"
-printf 'x86 static libc integer parsing: PASS\n'
+for helper in crabc_x86_float_parse_floatscan crabc_x86_float_parse_fmodl; do
+    grep -Eq "[[:space:]][tT][[:space:]]${helper}$" "$archive_symbols" ||
+        fail "archive lacks the private source-faithful ${helper} helper"
+done
+for instruction in fldt fstpt fprem; do
+    grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$disassembly" ||
+        fail "candidate lacks the source-faithful x87 ${instruction} parser path"
+done
+if "$candidate"; then
+    :
+else
+    status=$?
+    fail "freestanding floating-conversion fixture failed with status ${status}"
+fi
+printf 'x86 static libc floating conversion: PASS\n'

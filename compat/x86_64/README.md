@@ -222,6 +222,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
+./scripts/dev-x86_64.sh float-parse-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
 ./scripts/dev-x86_64.sh credential-observation-header-abi
 ./scripts/dev-x86_64.sh child-reaping-header-abi
@@ -407,6 +408,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ctype
 ./scripts/dev-x86_64.sh libc-integer-arithmetic
 ./scripts/dev-x86_64.sh libc-integer-parse
+./scripts/dev-x86_64.sh libc-float-parse
 ./scripts/dev-x86_64.sh libc-intmax-arithmetic
 ./scripts/dev-x86_64.sh libc-credential-observation
 ./scripts/dev-x86_64.sh libc-ffs
@@ -677,6 +679,13 @@ pointer/result types, x86 LP64 `intmax_t`/`uintmax_t` aliases, and unmangled
 C++ linkage. This is compile-only declaration evidence; the separately staged
 static artifact owns the runtime byte-scan, `errno`, range, and end-pointer
 behavior. It does not select `crabc-libc` generally or a general C runtime ABI.
+
+`float-parse-header-abi` compiles project-first and pinned-musl strict-base
+C11/C++17 `<stdlib.h>` declarations for `strtof`, `strtod`, `strtold`, and
+`atof`. It ratchets the binary32/binary64/x87 result types, 16-byte align-16
+x86 `long double` storage, and unmangled C++ linkage. This is declaration-only
+evidence: it neither links the archive nor establishes runtime/fenv behavior
+or general `<stdlib.h>` completion.
 
 `intmax-arithmetic-header-abi` compiles project-first and pinned-musl C/C++
 `<inttypes.h>` declarations for `imaxabs` and `imaxdiv`. Both declarations are
@@ -2903,6 +2912,20 @@ decimal convenience entries cover defined inputs only and do not write
 forms; stdio; allocation; dynamic runtime; allocator; loader; sysroot; and
 public x86 support.
 
+`libc-float-parse` is a separately recorded `static-c-float-parse`
+`verified_artifact` gate over that archive, not text/math/locale/stdio family
+completion. Its project-header C fixture first runs through pinned musl and
+then through a `-nostdlib -static` candidate. It resolves exactly `strtof`,
+`strtod`, `strtold`, and `atof` through a checked-in, source-faithful fixed-musl
+x86 assembly translation. The fixture covers the named C-locale grammar,
+end-pointer and `errno` results, binary32/binary64/x87 range boundaries, raw
+defined 10-byte binary80 payloads, and per-conversion all-four-direction
+x87/MXCSR rounding/exception cases. It accepts only NUL-terminated strings;
+the private pseudo-`FILE` route does not select real streams. Wide, `_l`,
+internal, locale-object, real-stdio, allocation, general text/locale or
+scalar/complex math, libc.so, CRT, loader, sysroot, promotion, and public x86
+support remain outside this artifact.
+
 `libc-intmax-arithmetic` is a separately recorded
 `static-c-intmax-arithmetic` `verified_artifact` gate over that archive, not a
 general numeric or C runtime capability. Its project-header C body first
@@ -3348,7 +3371,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-socket-messages`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
-`libc-integer-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
+`libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, and `libc-math-complex` static archive harnesses, and the separately scoped
 `static-pie` CRT gate,
 the lane owns no

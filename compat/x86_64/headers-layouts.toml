@@ -146,6 +146,18 @@ sources = [
 headers = ["include/inttypes.h", "include/stdlib.h"]
 
 [[probe]]
+id = "float-parse"
+command = "./scripts/dev-x86_64.sh float-parse-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/float_parse_header_abi_probe.c",
+  "compat/x86_64/float_parse_header_abi_probe.cpp",
+  "compat/x86_64/run_float_parse_header_abi.sh",
+]
+headers = ["include/stdlib.h"]
+
+[[probe]]
 id = "intmax-arithmetic"
 command = "./scripts/dev-x86_64.sh intmax-arithmetic-header-abi"
 state = "required"
