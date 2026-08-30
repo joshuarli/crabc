@@ -21,10 +21,12 @@ allocate/copy/free replacement through that route. B may instead first
 establish one independent parked local native session; the route then runs
 only while that session is parked. A's admission releases only after the route
 terminally releases and B completes its own ordinary attachment finish. While B holds the source low owner bit for its
-first direct free of either the existing direct-small page or the first
-pre-exit-normalized mapped, non-full medium page, it may hand joined C and D
-one scoped opaque pair for two further clients from that same page. C and D
-atomically publish their private clients in separate joined turns; B's existing
+first direct free of either the existing direct-small page, the first
+pre-exit-normalized mapped, non-full medium page, or a distinct medium that A
+made mapped and non-full through one ordinary local free before exit, it may
+hand joined C and D one scoped opaque pair for two further clients from that
+same page. C and D atomically publish their private clients in separate joined
+turns; B's existing
 `mi_free_try_collect_mt`-shaped tail consumes both before unown or terminal
 release. The direct-small and mapped-medium runtime regressions pause after the
 route transfers and prove ticket zero remains unavailable until B returns the
@@ -1397,6 +1399,13 @@ disables the child bridge. The selected `pthread_atfork` smoke proves child
 and parent allocation only for that all-free initial-thread case, outside the
 public callbacks.
 
+The default-off native terminal-proof regression also crosses raw fork while a
+fresh B holds A's already-terminal post-exit proof in B TLS. Both A's deferred
+admission and B's live attachment remain counted, so the child disables this
+bridge rather than attempting route repair; the parent preserves its route and
+B later performs the only normal finish that can release A's claim. This is
+additional conservative-child evidence, not inherited-route recovery.
+
 Do not allow general nonquiescent fork repair to distract from Milestone 5.
 
 After general page-bearing thread ownership is working, audit exact pinned v3.5.0 behavior and define the crabc child guarantee.
@@ -2307,10 +2316,13 @@ Fresh B keeps the arena and OS client addresses private, must finish the
 arena's PageMap-only raw-terminal tail and the OS member's
 static-main-list/clipped-mapping terminal tail, and then completes its own
 no-page runtime attachment before A's admission releases. On the unchanged
-full-medium tail, normal sequential freeing remains source-unmapped. The two
+full-medium tail, normal sequential freeing remains source-unmapped. The three
 bounded post-exit interleavings select either three existing direct-small
-clients or three remaining clients on the first mapped, non-full medium after
-its joined pre-exit remote free. In either case B directly frees one after it
+clients, three remaining clients on the first mapped, non-full medium after
+its joined pre-exit remote free, or three remaining clients on a distinct
+medium that A made non-full with one ordinary local free before exit. The
+latter reaches the same general aggregate path already mapped and non-full; it
+does not add a page-specific route. In every case B directly frees one after it
 owns the source low bit, then C and D each publish one same-page client to the
 atomic remote head in separate joined turns. B's existing collector consumes
 all three clients before it may unown or release that page. This is the source
@@ -2336,9 +2348,10 @@ parked local session, can release all private remaining regular, arena-singleton
 non-direct-small, and two-client live-large members, a source-unmapped full
 regular page, the arena singleton's PageMap-only tail, and the OS singleton's
 private-list/clipped-mapping tail—only after A's old owner has detached. B's
-first direct-small free, or its first direct free of the pre-exit-normalized
-mapped medium, holds the low-owner claim while joined C and D each atomically
-publish one further same-page private client in separate joined turns; B's
+first direct-small free, or its first direct free of either the
+pre-exit-normalized mapped medium or the distinct A-locally unfull mapped
+medium, holds the low-owner claim while joined C and D each atomically publish
+one further same-page private client in separate joined turns; B's
 ordinary collector consumes the resulting two-node remote chain before its
 normal route tail. B then
 finishes its own ordinary runtime attachment; only that completed B lifecycle

@@ -1145,7 +1145,11 @@ transfer capability.
   attach/finish and churn against the retained process owner, two
   process-isolated quiescent fork children that each attach and finish a fresh
   worker, conservative child disablement with a live bridge owner, and the
-  admission-gated dormant-page predicate. The selected
+  admission-gated dormant-page predicate.
+  `crabc-mimalloc/tests/native_post_exit_terminal_proof_fork_gate.rs` then
+  crosses raw fork while B holds A's already-terminal post-exit proof: the
+  copied child disables without route repair, while the parent keeps both
+  admission claims until B's normal finish. The selected
   `tests/fixtures/pthread_atfork_test.c` then returns ticket zero to dormant
   before a normal fork and proves child and parent `malloc`/`realloc`/`free`
   after public callbacks; callbacks themselves allocate nothing. Its raw
@@ -1269,6 +1273,9 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   then proves one detached aggregate can outlive a nonterminal B no-page
   lifecycle and reach terminal source release through fresh C: A's parked
   scheduler token and admission remain private until C's normal finish. The
+  separate `native_post_exit_terminal_proof_fork_gate` regression proves the
+  same terminal proof remains fork-nonquiescent while its matched B lifecycle
+  is still live; the child disables rather than repairing the copied route.
   exact frees are serialized; this is not a concurrent route or general
   pointer-routing claim. The
   pinned AArch64 `allocator --churn` fixture executes its four existing routes
