@@ -217,6 +217,10 @@ recvfrom
 rindex
 rust_eh_personality
 select
+semctl
+semget
+semop
+semtimedop
 send
 sendto
 setdomainname

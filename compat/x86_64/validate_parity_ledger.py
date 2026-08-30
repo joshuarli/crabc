@@ -868,6 +868,50 @@ FILESYSTEM_ACCESS_SYMBOLS = ("access", "faccessat", "euidaccess", "eaccess")
 
 FFS_SYMBOLS = ("ffs", "ffsl", "ffsll")
 
+SYSV_SEMAPHORE_SYMBOLS = ("semget", "semop", "semtimedop", "semctl")
+
+SYSV_SEMAPHORE_UNION_COMMANDS = (
+    "SETVAL",
+    "GETALL",
+    "SETALL",
+    "IPC_SET",
+    "IPC_INFO",
+    "SEM_INFO",
+    "IPC_STAT",
+    "SEM_STAT",
+    "SEM_STAT_ANY",
+)
+
+SYSV_SEMAPHORE_NO_ARGUMENT_COMMANDS = (
+    "IPC_RMID=0",
+    "GETPID=11",
+    "GETVAL=12",
+    "GETNCNT=14",
+    "GETZCNT=15",
+)
+
+SYSV_SEMAPHORE_UNSELECTED_SYMBOLS = (
+    "ftok",
+    "msgctl",
+    "msgget",
+    "msgrcv",
+    "msgsnd",
+    "sem_close",
+    "sem_destroy",
+    "sem_getvalue",
+    "sem_init",
+    "sem_open",
+    "sem_post",
+    "sem_timedwait",
+    "sem_trywait",
+    "sem_unlink",
+    "sem_wait",
+    "shmat",
+    "shmctl",
+    "shmdt",
+    "shmget",
+)
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -6873,6 +6917,224 @@ def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sysv_semaphore_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected variadic SysV-semaphore ABI boundary private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sysv-semaphore"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sysv-semaphore artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sysv-semaphore must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in SYSV_SEMAPHORE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-sysv-semaphore description omits {symbol}",
+        )
+    for phrase in (
+        "SysV semaphore block",
+        "variadic `semctl`",
+        "`union semun`",
+        "no-vararg",
+        "SysV message queues",
+        "shared memory",
+        "POSIX semaphores",
+        "SEM_UNDO",
+        "cancellation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sysv-semaphore description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-sysv-semaphore.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sysv_semaphore.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/sys/ipc.h",
+        "include/sys/prctl.h",
+        "include/sys/sem.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/sysv_semaphore_header_abi_probe.c",
+        "compat/x86_64/sysv_semaphore_header_abi_probe.cpp",
+        "compat/x86_64/run_sysv_semaphore_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sysv_semaphore_probe.c",
+        "compat/x86_64/libc_sysv_semaphore_start.S",
+        "compat/x86_64/run_libc_sysv_semaphore.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-sysv-semaphore source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-sysv-semaphore.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "semget=64" in item
+            and "semop=65" in item
+            and "semctl=66" in item
+            and "semtimedop=220" in item
+            and "rdi/rsi/rdx" in item
+            and "r10" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-semaphore must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "union semun" in item
+            and "_SEM_SEMUN_UNDEFINED" in item
+            and "INTEGER-class eightbyte" in item
+            and "rcx" in item
+            and "r10" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-semaphore must record its semctl union register ABI",
+    )
+    require(
+        any(
+            "arch/x86_64/syscall_arch.h" in item
+            and "src/ipc/ipc.h" in item
+            and "`IPC_64=0`" in item
+            and "`IPC_TIME64=0`" in item
+            and "`IPC_CMD(cmd)=((cmd & ~IPC_TIME64) | IPC_64)=cmd`" in item
+            and "no `0x100` marker" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-semaphore must record exact musl x86_64 semctl IPC_CMD normalization",
+    )
+    require(
+        any(
+            "all nine union-consuming commands" in item
+            and all(
+                f"`{command}`" in item for command in SYSV_SEMAPHORE_UNION_COMMANDS
+            )
+            and "every other command" in item
+            and all(command in item for command in SYSV_SEMAPHORE_NO_ARGUMENT_COMMANDS)
+            and "unknown command values" in item
+            and "explicit zero" in item
+            and "rcx=0" in item
+            and "absent C vararg" in item
+            for item in prerequisites
+        ),
+        "static-c-sysv-semaphore must record exact semctl union/no-vararg command dispatch",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sysv-semaphore.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "sys/sem.h" in item
+            and "sys/ipc.h" in item
+            and "sys/prctl.h" in item
+            and "GNU-only" in item
+            and "semtimedop" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-sysv-semaphore must record its direct SysV semaphore header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    selected = set(SYSV_SEMAPHORE_SYMBOLS)
+    require(
+        selected <= static_exports,
+        "static-c-sysv-semaphore must retain exactly its four selected exports",
+    )
+    require(
+        not (static_exports & set(SYSV_SEMAPHORE_UNSELECTED_SYMBOLS)),
+        "static-c-sysv-semaphore must not add unselected SysV IPC or POSIX semaphore exports",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/ipc/semget.c",
+                    "src/ipc/semop.c",
+                    "semtimedop.c",
+                    "semctl.c",
+                    "src/ipc/ipc.h",
+                    "arch/x86_64/syscall_arch.h",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-sysv-semaphore must retain its pinned-musl SysV semaphore and IPC_CMD source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sysv-semaphore"},
+        "static-c-sysv-semaphore must use the closed libc-sysv-semaphore command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "semget",
+                "semop",
+                "semtimedop",
+                "semctl",
+                "union semun",
+                "no-vararg",
+                "IPC_CMD(cmd)=cmd",
+                "all nine",
+                "executable poisoned-rcx unknown-command regression",
+                "explicit zero fourth word",
+                "SEM_UNDO",
+                "public x86 support",
+            )
+        ),
+        "static-c-sysv-semaphore evidence must retain its exact variadic IPC_CMD runtime regression",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -7683,6 +7945,7 @@ def validate_ledger(
     require_filesystem_access_artifact(by_id["libc.posix-runtime"])
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
+    require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])

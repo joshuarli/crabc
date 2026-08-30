@@ -238,6 +238,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
+./scripts/dev-x86_64.sh sysv-semaphore-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -355,6 +356,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-descriptor-entry
 ./scripts/dev-x86_64.sh libc-access
 ./scripts/dev-x86_64.sh libc-fcntl-status-control
+./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
 ./scripts/dev-x86_64.sh libc-timestamp-updates
@@ -697,6 +699,14 @@ bind/listen/accept/`accept4`/connect, send/receive, name-query, and shutdown
 signatures, and the named IPv6 macro classifications. It is source-only header
 evidence: it does not select socket options, vector or ancillary-message APIs,
 address-conversion or socket behavior, `crabc-libc`, or public x86 support.
+
+`sysv-semaphore-header-abi` compile-checks project-first and pinned-musl C and
+C++ `sys/ipc.h`/`sys/sem.h` declarations, selected LP64 SysV IPC layouts and
+command values, variadic `semctl` C linkage, and GNU-only `semtimedop`
+visibility across eight feature profiles. It records the installed
+`_SEM_SEMUN_UNDEFINED` boundary: applications define `union semun`; this is
+header evidence only and does not select SysV IPC behavior, `crabc-libc`, or
+public x86 support.
 
 `mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mremap`/`mprotect`/
 `munmap` numbers and the closed mapping/remapping constants used by the native
@@ -2310,6 +2320,19 @@ command no additional capabilities. It excludes socket options, vector or
 ancillary-message APIs, resolver/netdb state, interface ioctls, general socket
 policy, dynamic runtime, and public x86 support.
 
+`libc-sysv-semaphore` is a separately recorded
+`static-c-sysv-semaphore` `verified_artifact` gate over that archive, not a
+complete SysV IPC capability. The project-header fixture first executes
+through pinned musl and then through a `-nostdlib -static` candidate. It
+selects only `semget`, `semop`, `semtimedop`, and variadic `semctl`, including
+the caller-supplied `union semun` machine-word ABI, selected scalar/pointer commands,
+and the five no-vararg commands with an explicit zero union word. It proves
+the `semget` oversized-count `EINVAL` precheck, operation/timeout forwarding,
+raw errors, stale errno on success, and `IPC_RMID` cleanup. It excludes SysV
+message queues and shared memory, POSIX semaphores, `SEM_UNDO` and
+cross-process lifecycle policy, cancellation, dynamic runtime, family
+completion, and public x86 support.
+
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
 promotion of the Rust-subsumed text capabilities. Its project-header C body
@@ -2770,6 +2793,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-access`,
 `libc-fcntl-status-control`,
 `libc-ioctl`,
+`libc-sysv-semaphore`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-timestamp-updates`,

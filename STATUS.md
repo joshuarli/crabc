@@ -243,6 +243,22 @@ only for those two forms. It does not establish generic device/request
 behavior, terminal/session policy, socket options, C-runtime parity, family
 completion, or public x86 support.
 
+`./scripts/dev-x86_64.sh sysv-semaphore-header-abi` is the paired
+eight-profile C11/C++17 project-header/pinned-musl `sys/ipc.h` and `sys/sem.h`
+gate: selected declarations, feature visibility, command values, x86 LP64
+records, and unmangled C++ references. The accompanying
+`./scripts/dev-x86_64.sh libc-sysv-semaphore` command records the private
+`static-c-sysv-semaphore` artifact inside planned `libc.posix-runtime`. Its
+pinned-musl and freestanding-static C fixture selects exactly `semget`,
+`semop`, GNU `semtimedop`, and variadic `semctl`, including the application
+`union semun` scalar/pointer forms, no-vararg cleanup, the musl oversized-count
+precheck, direct syscall/errno behavior, and the x86 fourth-argument route.
+It is a bounded semaphore ABI/archive vertical, not closure of
+`libc.headers-layouts` or `libc.posix-runtime`: SysV message queues and shared
+memory, POSIX semaphores, cross-process synchronization/permission policy,
+`SEM_UNDO` lifecycle, cancellation, libc.so, CRT, loader, sysroot, family or
+platform parity, promotion, and public x86 support remain unselected.
+
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned
 `libc.headers-layouts`. It composes the existing selected archive through a

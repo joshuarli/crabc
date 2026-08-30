@@ -10,6 +10,7 @@
 # nanosleep, and clock_nanosleep,
 # selected descriptor entry, selected filesystem access, selected fcntl status control, selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
+# SysV semaphore operations,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
 # ctype, integer arithmetic, integer parsing, intmax arithmetic, credential
 # observation, find-first-set, and the x87 long-double/complex foundation);
@@ -73,6 +74,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
+  sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -197,6 +199,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-timestamp-updates  run the static x86 rcrt1/libc timestamp-update block
   libc-fcntl-status-control  run the static x86 crabc-libc fcntl status-control slice
   libc-ioctl  run the static x86 crabc-libc generic ioctl slice
+  libc-sysv-semaphore  run the static x86 crabc-libc SysV semaphore slice
   libc-descriptor-io  run the static x86 crabc-libc selected descriptor-I/O slice
   libc-process-resources  run the static x86 crabc-libc selected resource slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
@@ -1417,6 +1420,10 @@ run_libc_ioctl() {
     run_in_container bash /workspace/compat/x86_64/run_libc_ioctl.sh
 }
 
+run_libc_sysv_semaphore() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sysv_semaphore.sh
+}
+
 run_ffs_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ffs_header_abi.sh
 }
@@ -1483,6 +1490,10 @@ run_resource_header_abi() {
 
 run_socket_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_socket_header_abi.sh
+}
+
+run_sysv_semaphore_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sysv_semaphore_header_abi.sh
 }
 
 run_mm_abi_reference() {
@@ -2340,9 +2351,11 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
+    sysv-semaphore-header-abi) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
     libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-sysv-semaphore) ;;
     *)
         usage >&2
         exit 2
@@ -2575,6 +2588,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "socket-header-abi takes no arguments"
         ensure_image
         run_socket_header_abi
+        ;;
+    sysv-semaphore-header-abi)
+        [ "$#" -eq 0 ] || fail "sysv-semaphore-header-abi takes no arguments"
+        ensure_image
+        run_sysv_semaphore_header_abi
         ;;
     mm-abi-reference)
         [ "$#" -eq 0 ] || fail "mm-abi-reference takes no arguments"
@@ -3269,6 +3287,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ioctl takes no arguments"
         ensure_image
         run_libc_ioctl
+        ;;
+    libc-sysv-semaphore)
+        [ "$#" -eq 0 ] || fail "libc-sysv-semaphore takes no arguments"
+        ensure_image
+        run_libc_sysv_semaphore
         ;;
     libc-ffs)
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"

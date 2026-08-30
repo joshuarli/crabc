@@ -66,9 +66,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memory-search-header-abi",
             "string-copy-header-abi",
             "random-entropy-header-abi",
+            "sysv-semaphore-header-abi",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-sysv-semaphore",
         )
         self.assertEqual(actual_groups, expected_groups)
 
@@ -108,6 +110,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-descriptor-io", source)
         self.assertIn("libc-descriptor-lifecycle", source)
         self.assertIn("libc-timestamp-updates", source)
+        self.assertIn("libc-sysv-semaphore", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -8505,6 +8508,206 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-fcntl-status-control)\n        [ "$#" -eq 0 ] || fail "libc-fcntl-status-control takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_sysv_semaphore_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        semaphore = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sysv_semaphore.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "sysv_semaphore_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "sysv_semaphore_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sysv_semaphore_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_sysv_semaphore_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_sysv_semaphore_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sysv_semaphore.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sysv_semaphore.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 SysV semaphore C boundary",
+            "musl 1.2.6 release commit",
+            "src/ipc/semget.c",
+            "src/ipc/semop.c",
+            "src/ipc/semtimedop.c",
+            "src/ipc/semctl.c",
+            "global_asm!",
+            "Semun",
+            "_SEM_SEMUN_UNDEFINED",
+            "IPC_64",
+            "IPC_TIME64",
+            "ipc_command",
+            "semctl_no_argument",
+            "semctl_word",
+            "IPC_RMID",
+            "GETPID",
+            "GETVAL",
+            "GETNCNT",
+            "GETZCNT",
+            "IPC_SET",
+            "IPC_STAT",
+            "IPC_INFO",
+            "GETALL",
+            "SETVAL",
+            "SETALL",
+            "SEM_STAT",
+            "SEM_INFO",
+            "SEM_STAT_ANY",
+            "other command, including the five standard",
+            "raw_syscall::SYS_SEMGET",
+            "raw_syscall::SYS_SEMOP",
+            "raw_syscall::SYS_SEMTIMEDOP",
+            "raw_syscall::SYS_SEMCTL",
+            "rcx",
+            "r10",
+        ):
+            self.assertIn(required, semaphore)
+        for forbidden in (
+            "pub unsafe extern \"C\" fn semctl",
+            "pub extern \"C\" fn msgget",
+            "pub extern \"C\" fn sem_open",
+            "__tls_get_addr",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, semaphore)
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "sys/sem.h",
+                "semctl",
+                "semget",
+                "semop",
+                "semtimedop",
+                "struct ipc_perm",
+                "struct semid_ds",
+                "struct sembuf",
+                "_SEM_SEMUN_UNDEFINED",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_GNU_PROFILE_COUNT=2",
+            "EXPECTED_GNU_HIDDEN_PROFILE_COUNT=6",
+            "sys/sem.h",
+            "sys/ipc.h",
+            "GNU semtimedop",
+            "C++ probe",
+            "mangled SysV semaphore reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "#include <sys/sem.h>",
+            "union semun",
+            "semget(IPC_PRIVATE, 65536, 0600)",
+            "semctl(semaphore_id, 0, SETVAL, argument)",
+            "semctl(semaphore_id, 0, GETVAL)",
+            "semtimedop(semaphore_id",
+            "IPC_RMID",
+            "#include <sys/prctl.h>",
+            "CRABC_UNKNOWN_SEMCTL_COMMAND",
+            "CRABC_SECCOMP_ARGUMENT_THREE_LOW",
+            "CRABC_SECCOMP_ARGUMENT_THREE_HIGH",
+            "CRABC_SECCOMP_BAD_ARGUMENT_ERRNO = EBADE",
+            "SYS_seccomp",
+            "crabc_x86_64_semctl_poisoned_default_call",
+            "CRABC_SYSV_SEMAPHORE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sysv_semaphore_probe",
+            "crabc_x86_64_semctl_poisoned_default_call",
+            "movabs $0x13579bdf2468ace1, %rcx",
+            "jmp semctl",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+        self.assertNotIn("mov %rsi, %fs:0", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sysv_semaphore_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall semget 40",
+            "assert_named_syscall semop 41",
+            "assert_named_syscall semtimedop dc",
+            "assert_semctl_dispatch_paths",
+            "semctl_no_argument",
+            "semctl_word",
+            "0x10 0xd 0x11 0x1 0x3 0x13 0x2 0x12 0x14",
+            "runtime seccomp regression",
+            "unselected in msgget",
+            "SEM_UNDO",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        expected_symbols = {"semget", "semop", "semtimedop", "semctl"}
+        self.assertTrue(expected_symbols <= static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "ftok",
+                "msgctl",
+                "msgget",
+                "msgrcv",
+                "msgsnd",
+                "sem_close",
+                "sem_destroy",
+                "sem_init",
+                "sem_open",
+                "sem_post",
+                "sem_wait",
+                "shmat",
+                "shmctl",
+                "shmdt",
+                "shmget",
+            }
+        )
+        self.assertIn('id = "static-c-sysv-semaphore"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sysv-semaphore"',
+            parity_ledger,
+        )
+        self.assertIn("run_sysv_semaphore_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_sysv_semaphore_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_sysv_semaphore()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_sysv_semaphore.sh", runner
+        )
+        self.assertIn(
+            '    sysv-semaphore-header-abi)\n        [ "$#" -eq 0 ] || fail "sysv-semaphore-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sysv-semaphore)\n        [ "$#" -eq 0 ] || fail "libc-sysv-semaphore takes no arguments"',
             runner,
         )
 

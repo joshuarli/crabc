@@ -166,6 +166,8 @@ mod system_observation;
 mod uts_identity;
 #[path = "socket_transport.rs"]
 mod socket_transport;
+#[path = "sysv_semaphore.rs"]
+mod sysv_semaphore;
 
 use core::ffi::{c_int, c_void};
 
