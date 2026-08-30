@@ -976,6 +976,14 @@ A's admission. The selected-C
 split without widening the seam: B source-publishes the small client, fresh C
 offers only the medium client after A exits, and C's ordinary finish settles
 the typed completion.
+The selected-C `native_mimalloc_post_exit_source_published_successor`
+companion composes that split with an already-held post-exit proof without
+forming a general route chain. B terminally releases A's one routed medium,
+then exits without another allocator operation while B's own source-published
+small client remains source-only and B's distinct live medium becomes B's
+successor route. B's destructor must collect the small client and finish B
+before settling A's proof; fresh C can receive only B's medium and must finish
+normally before ticket zero resumes.
 For the two source-valid post-exit B/C/D interleavings, the same session can
 move exactly three generation-checked opaque ledger keys into either its
 direct-small group or its separately typed mapped, non-full medium group.

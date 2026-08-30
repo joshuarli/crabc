@@ -1112,6 +1112,14 @@ selected-C companion
 boundary observable through the shadow ABI: B publishes the direct-small
 client, fresh C frees only the surviving medium client, and C's normal finish
 is required before the initial owner can resume.
+The selected-C
+`native_mimalloc_post_exit_source_published_successor_test.c` composes that
+boundary with B's held terminal proof for an earlier A route: B's own
+source-published small client stays with B's source drain while its distinct
+medium client enters B's successor route. B's teardown then settles A's proof;
+fresh C must terminally free and normally finish B's medium route before
+ticket zero resumes. It remains a serialized exact-address witness, not a
+general route chain.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

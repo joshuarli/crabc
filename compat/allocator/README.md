@@ -2117,6 +2117,14 @@ release. The selected-C
 boundary explicit with separate actors: B publishes the small client before A
 exits, while fresh C receives only the medium address and must finish normally
 after its terminal typed free.
+The selected-C `native_mimalloc_post_exit_source_published_successor` fixture
+then composes the same source boundary with B holding A's terminal route proof.
+B frees A's routed medium, exits without another local allocator operation,
+and must source-collect B's own small client while moving only B's distinct
+medium client into a successor route. B's finished teardown settles A's proof;
+fresh C terminally frees and normally finishes B's route before ticket zero can
+reactivate. The fixture gives no worker a route-selection or general pointer
+capability.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The

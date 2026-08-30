@@ -107,6 +107,10 @@ name = "native_mimalloc_source_published_live_owner_exit"
 path = "../tests/native_mimalloc_source_published_live_owner_exit.rs"
 
 [[test]]
+name = "native_mimalloc_post_exit_source_published_successor"
+path = "../tests/native_mimalloc_post_exit_source_published_successor.rs"
+
+[[test]]
 name = "native_mimalloc_two_live_remote_owners"
 path = "../tests/native_mimalloc_two_live_remote_owners.rs"
 

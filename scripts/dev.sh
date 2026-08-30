@@ -544,6 +544,7 @@ case "$command" in
             --test native_mimalloc_live_remote_free \
             --test native_mimalloc_source_published_exit \
             --test native_mimalloc_source_published_live_owner_exit \
+            --test native_mimalloc_post_exit_source_published_successor \
             --test native_mimalloc_two_live_remote_owners \
             --test native_mimalloc_initial_remote_free \
             --test native_mimalloc_parallel_local_workers \

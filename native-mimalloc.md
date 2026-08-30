@@ -1398,6 +1398,15 @@ B source-publishes A's direct-small client, A exits with one distinct medium
 client still live, and fresh C may free only that medium client through the
 typed route. A's source collector consumes the first client privately; C's
 normal finish settles the terminal proof before ticket zero can reactivate.
+The selected
+`tests/fixtures/native_mimalloc_post_exit_source_published_successor_test.c`
+fixture composes that split with a held earlier typed proof, still without a
+general route chain: B terminally frees A's routed medium, then makes no
+further allocator call before B exits with one source-published direct-small
+client and one distinct live medium client. B's source drain consumes the
+small client privately, B's finish settles A's proof only after B teardown,
+and fresh C can free and normally finish only B's successor medium before
+ticket zero reactivates.
 `crabc-mimalloc/tests/native_two_live_remote_owners.rs` and
 `tests/fixtures/native_mimalloc_two_live_remote_owners_test.c` then park A1
 before A2 enters its own setup transition, leaving two registry entries active
