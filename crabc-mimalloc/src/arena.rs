@@ -2802,11 +2802,12 @@ mod tests {
     }
 
     #[test]
-    fn abandoned_reclaim_main_map_claims_registered_page_before_consuming_count() {
-        // This is the valid source order: the main Heap records ordinary
-        // page ownership first, then abandonment publishes its one matching
-        // bit and count. A successful bitmap/ownership claim can only then
-        // clear that bit and consume the paired counter.
+    fn abandoned_reclaim_main_map_retains_rejected_boundary_candidate_count() {
+        // This is the valid source order across adjacent atomic bitmap words:
+        // the main Heap records ordinary page ownership first, then
+        // abandonment publishes matching bits and counts. A rejected low-word
+        // ownership claim restores its bit and leaves both counts intact;
+        // only the later source unabandon/claim transitions consume them.
         let subprocess = MainSubprocess::test_static_owner();
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
         let registry = ArenaRegistry::new(subprocess.as_ptr());
@@ -2827,9 +2828,10 @@ mod tests {
         .unwrap();
         let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
         let bin = 1;
-        let slice_index = view.arena().info_slices;
+        let rejected = crate::bitmap::BFIELD_BITS - 1;
+        let later_word = crate::bitmap::BFIELD_BITS;
         let pages = unsafe { view.pages() }.unwrap();
-        assert!(pages.set_range(slice_index, 1).is_some());
+        assert!(pages.set_range(rejected, 2).is_some());
 
         let mut heap = Heap::bootstrap_empty();
         heap.initialize_main_static(subprocess, MemoryId::static_empty());
@@ -2843,21 +2845,45 @@ mod tests {
             .main_heap_abandoned_page(NonNull::from(&heap), bin)
             .expect("the static main Heap owns this arena's in-place image");
 
-        assert!(map.is_clear(slice_index));
-        assert!(map.publish(slice_index));
-        assert_eq!(heap.abandoned_count(bin), Some(1));
+        assert!(map.is_clear(rejected));
+        assert!(map.is_clear(later_word));
+        assert!(map.publish(rejected));
+        assert!(map.publish(later_word));
+        assert_eq!(heap.abandoned_count(bin), Some(2));
 
         let mut ownership_attempts = 0;
         assert_eq!(
             map.try_claim(0, |candidate| {
                 ownership_attempts += 1;
-                assert_eq!(candidate, slice_index);
-                AbandonedBitmapClaim::Claimed
+                assert_eq!(candidate, rejected);
+                AbandonedBitmapClaim::KeepSet
             }),
-            MappedAbandonedClaim::Claimed(slice_index),
+            MappedAbandonedClaim::None,
         );
         assert_eq!(ownership_attempts, 1);
-        assert!(!view.abandoned_pages(bin).unwrap().is_published(slice_index));
+        let raw = view.abandoned_pages(bin).unwrap();
+        assert!(raw.is_published(rejected));
+        assert!(raw.is_published(later_word));
+        assert_eq!(heap.abandoned_count(bin), Some(2));
+
+        // `_mi_arenas_page_unabandon` waits for the rejected reader before it
+        // clears its exact bit, clears the mapped identity, and only then
+        // consumes the paired Heap count. A fresh source search can now reach
+        // the next-word candidate.
+        assert!(map.clear_once_set(rejected));
+        assert!(map.decrement_after_identity_clear());
+        assert_eq!(heap.abandoned_count(bin), Some(1));
+        assert_eq!(
+            map.try_claim(0, |candidate| {
+                ownership_attempts += 1;
+                assert_eq!(candidate, later_word);
+                AbandonedBitmapClaim::Claimed
+            }),
+            MappedAbandonedClaim::Claimed(later_word),
+        );
+        assert_eq!(ownership_attempts, 2);
+        assert!(map.is_clear(rejected));
+        assert!(!raw.is_published(later_word));
         assert_eq!(heap.abandoned_count(bin), Some(0));
     }
 

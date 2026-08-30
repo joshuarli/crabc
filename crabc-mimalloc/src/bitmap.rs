@@ -2542,9 +2542,17 @@ mod tests {
     }
 
     #[test]
-    fn abandoned_reclaim_bitmap_restores_rejected_candidate_before_claiming_later_one() {
-        use core::cell::Cell;
+    fn abandoned_reclaim_bitmap_rejected_reader_quiesces_before_later_word_retry() {
+        extern crate std;
 
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        // `mi_bchunk_try_find_and_clear` visits a bitmap *chunk* once per
+        // `mi_bitmap_find` snapshot. The two candidates deliberately share
+        // that chunk but occupy adjacent atomic `mi_bfield_t` words. The
+        // rejected low-word reader must restore its bit before `unabandon`
+        // clears it, while another reader may claim the high-word candidate.
         let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
         let mut storage = BitmapTestStorage::uninit();
         let bitmap = unsafe {
@@ -2556,34 +2564,60 @@ mod tests {
             )
             .unwrap()
         };
-        assert_eq!(bitmap.set_range(17, 1), Some(RunTransition::all_clear(0)));
-        assert_eq!(bitmap.set_range(19, 1), Some(RunTransition::all_clear(0)));
+        let rejected = BFIELD_BITS - 1;
+        let later_word = BFIELD_BITS;
+        assert_eq!(bitmap.set_range(rejected, 1), Some(RunTransition::all_clear(0)));
+        assert_eq!(bitmap.set_range(later_word, 1), Some(RunTransition::all_clear(0)));
 
-        let calls = Cell::new(0);
-        assert_eq!(
-            bitmap.try_find_and_claim_abandoned(0, |slice_index| {
-                let call = calls.get();
-                calls.set(call + 1);
-                match call {
-                    0 => {
-                        assert_eq!(slice_index, 17);
-                        // The bitmap visitor has already removed this bit,
-                        // but page ownership rejected it. Source order must
-                        // restore it before another candidate is considered.
+        let bitmap = &bitmap;
+        let reader_has_claimed = Arc::new(Barrier::new(2));
+        let clearer_observed_temporary_clear = Arc::new(Barrier::new(2));
+        let allow_restore = Arc::new(Barrier::new(2));
+
+        thread::scope(|scope| {
+            let reader_for_thread = Arc::clone(&reader_has_claimed);
+            let restore_for_thread = Arc::clone(&allow_restore);
+            scope.spawn(move || {
+                assert_eq!(
+                    bitmap.try_find_and_claim_abandoned(0, |slice_index| {
+                        assert_eq!(slice_index, rejected);
+                        reader_for_thread.wait();
+                        restore_for_thread.wait();
                         AbandonedBitmapClaim::KeepSet
-                    }
-                    1 => {
-                        assert_eq!(slice_index, 19);
-                        AbandonedBitmapClaim::Claimed
-                    }
-                    _ => panic!("one source snapshot visits each candidate once"),
-                }
-            }),
-            Some(19),
-        );
-        assert_eq!(calls.get(), 2);
-        assert_eq!(bitmap.is_set_range(17, 1), Some(true));
-        assert_eq!(bitmap.is_clear_range(19, 1), Some(true));
+                    }),
+                    None,
+                );
+            });
+            reader_has_claimed.wait();
+
+            // The source's one-chunk visitor does not retry `rejected` in
+            // this snapshot. Its temporary clear leaves the adjacent field
+            // independently available to a concurrent source reader.
+            assert_eq!(
+                bitmap.try_find_and_claim_abandoned(0, |slice_index| {
+                    assert_eq!(slice_index, later_word);
+                    AbandonedBitmapClaim::Claimed
+                }),
+                Some(later_word),
+            );
+
+            let clearer_for_thread = Arc::clone(&clearer_observed_temporary_clear);
+            scope.spawn(move || {
+                assert_eq!(
+                    bitmap.clear_once_set_observing_temporary_clear(rejected, || {
+                        clearer_for_thread.wait();
+                    }),
+                    Some(())
+                );
+            });
+            // `clear_once_set` has seen the temporary zero but cannot remove
+            // it permanently until the rejected owner claim restores it.
+            clearer_observed_temporary_clear.wait();
+            allow_restore.wait();
+        });
+
+        assert_eq!(bitmap.is_clear_range(rejected, 1), Some(true));
+        assert_eq!(bitmap.is_clear_range(later_word, 1), Some(true));
     }
 
     #[test]
