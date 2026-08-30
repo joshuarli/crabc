@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc uname/sysinfo evidence.
+# Native Linux/x86-64 selected static crabc-libc processor/page-count evidence.
 #
 # The same project-header C fixture first runs against pinned musl, then as a
-# true `-nostdlib -static` executable linked solely through the selected
-# crabc archive. It proves only `uname`, `sysinfo`, their deterministic null
-# pointer translation, and the public sysinfo record's kernel-prefix versus
-# caller-resident-tail boundary. The same archive separately records the
-# UTS-identity artifact; this fixture does not select it, system-file parsing,
-# process identity, CRT, pthread/TLS lifecycle, loader, sysroot, or public x86
-# support.
+# true `-nostdlib -static` executable linked solely through the selected crabc
+# archive. It proves only the legacy fixed-mask `sched_getaffinity` CPU
+# helpers and sysinfo-derived page observations, including musl's child-local
+# affinity-error CPU-zero fallback.
+# It is not load observation, affinity control, topology, sysconf, a general
+# system-information runtime, CRT, pthread/TLS lifecycle, loader, sysroot, or
+# public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,7 +16,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
-    printf 'ERROR: x86 static libc system observation: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc system information: %s\n' "$*" >&2
     exit 1
 }
 
@@ -78,12 +78,13 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_system_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-system-observation.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-system-information.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-system-observation-reference"
-candidate="$work_dir/crabc-static-system-observation-candidate"
+reference="$work_dir/musl-system-information-reference"
+candidate="$work_dir/crabc-static-system-information-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -99,20 +100,20 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_system_observation_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h sys/syscall.h bits/syscall.h sys/sysinfo.h sys/utsname.h; do
+    compat/x86_64/libc_system_information_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h stdint.h sys/prctl.h sys/syscall.h bits/syscall.h sys/sysinfo.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_system_observation_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_system_information_probe.c \
     -o "$reference"
 if "$reference"; then
     :
 else
     status=$?
-    fail "pinned-musl system-observation fixture exited ${status}"
+    fail "pinned-musl system-information fixture exited ${status}"
 fi
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
@@ -122,10 +123,11 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-# The separately recorded processor/page artifact owns the four get_*_pages
-# and get_nprocs* exports in this shared archive. They remain outside this
-# fixture's uname/sysinfo source and runtime surface.
-for unselected in getloadavg \
+for symbol in get_nprocs_conf get_nprocs get_phys_pages get_avphys_pages; do
+    grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
+        || fail "archive does not define ${symbol}"
+done
+for unselected in getloadavg gethostid sethostid \
     fork _Fork vfork clone execve syscall \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
@@ -140,18 +142,18 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -DCRABC_SYSTEM_OBSERVATION_FREESTANDING \
+"$ORACLE_CC" -std=c11 -DCRABC_SYSTEM_INFORMATION_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_system_observation_probe.c \
-    compat/x86_64/libc_system_observation_start.S "$archive" -o "$candidate"
+    -Wl,--no-undefined compat/x86_64/libc_system_information_probe.c \
+    compat/x86_64/libc_system_information_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location uname sysinfo; do
+for symbol in __errno_location get_nprocs_conf get_nprocs get_phys_pages get_avphys_pages; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
@@ -180,17 +182,19 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
     || fail "candidate errno does not use direct fs initial TLS"
 
-# These gates pin the selected Linux numbers independently of one successful
-# observation run. Their one-pointer calling convention has no stack or r10
-# argument path to infer.
-assert_named_syscall uname 3f
-assert_named_syscall sysinfo 63
+# These direct emitted-code gates keep the helpers from silently acquiring a
+# system-file, sysconf, or indirect runtime path. The canonical CPU helper
+# contains the fixed musl affinity-mask query; the duplicate public helper is
+# exercised behaviorally and may validly tail-call or fold to that code.
+assert_named_syscall get_nprocs cc
+assert_named_syscall get_phys_pages 63
+assert_named_syscall get_avphys_pages 63
 
 if "$candidate"; then
     :
 else
     status=$?
-    fail "freestanding system-observation fixture exited ${status}"
+    fail "freestanding system-information fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc uname/sysinfo system observation: PASS\n'
+printf 'x86 static crabc-libc processor/page system information: PASS\n'

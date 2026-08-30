@@ -3,8 +3,10 @@
 //! This leaf owns one coherent, bounded native C snapshot block: `uname` and
 //! `sysinfo`. It composes only the raw Linux syscall register boundary and the
 //! selected initial-TLS C `errno` slot. It is not hostname/domain mutation or
-//! lookup, `/proc` or system-file parsing, processor/page-count discovery,
-//! `sysconf`, a system-information framework, a general C/POSIX runtime,
+//! lookup, `/proc` or system-file parsing, or `sysconf`. The separate
+//! `system_information` sibling owns the selected processor/page-count calls
+//! through this record's private raw syscall seam; neither leaf is a
+//! system-information framework, a general C/POSIX runtime,
 //! libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot,
 //! allocator, or public x86 support.
 //!
@@ -55,17 +57,17 @@ pub(super) struct UtsName {
 pub(super) struct SysInfo {
     uptime: c_ulong,
     loads: [c_ulong; 3],
-    total_ram: c_ulong,
-    free_ram: c_ulong,
+    pub(super) total_ram: c_ulong,
+    pub(super) free_ram: c_ulong,
     shared_ram: c_ulong,
-    buffer_ram: c_ulong,
+    pub(super) buffer_ram: c_ulong,
     total_swap: c_ulong,
     free_swap: c_ulong,
     process_count: u16,
     padding: u16,
     total_high_ram: c_ulong,
     free_high_ram: c_ulong,
-    memory_unit: c_uint,
+    pub(super) memory_unit: c_uint,
     compatibility_tail: [u8; 256],
 }
 
@@ -110,6 +112,19 @@ pub(super) unsafe fn uname_raw(output: *mut UtsName) -> i64 {
     unsafe { raw_syscall::syscall1(raw_syscall::SYS_UNAME, output as usize as i64) }
 }
 
+/// Invoke Linux `sysinfo` for one sibling selected static C leaf.
+///
+/// # Safety
+///
+/// `output` must designate writable storage for one complete public x86
+/// `struct sysinfo` for the raw syscall's duration.
+#[inline]
+pub(super) unsafe fn sysinfo_raw(output: *mut SysInfo) -> i64 {
+    // SAFETY: the caller owns the complete writable public record contract;
+    // Linux reads only the pointer word in x86 rdi and fills its ABI prefix.
+    unsafe { raw_syscall::syscall1(raw_syscall::SYS_SYSINFO, output as usize as i64) }
+}
+
 /// Fill one public x86 `struct utsname` through Linux `uname(2)`.
 ///
 /// # Safety
@@ -139,8 +154,6 @@ pub unsafe extern "C" fn uname(output: *mut UtsName) -> c_int {
 pub unsafe extern "C" fn sysinfo(output: *mut SysInfo) -> c_int {
     // SAFETY: the caller owns the complete writable public record contract;
     // Linux reads only the pointer word in x86 rdi and fills its ABI prefix.
-    let result = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_SYSINFO, output as usize as i64)
-    };
+    let result = unsafe { sysinfo_raw(output) };
     c_status(result)
 }

@@ -130,8 +130,10 @@ for symbol in __errno_location uname gethostname sethostname getdomainname setdo
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in gethostid sethostid get_nprocs get_nprocs_conf get_phys_pages \
-    get_avphys_pages getloadavg fork _Fork vfork clone execve \
+# The separately recorded processor/page artifact owns the four get_*_pages
+# and get_nprocs* exports in this shared archive. They remain outside this
+# fixture's UTS-identity source and runtime surface.
+for unselected in gethostid sethostid getloadavg fork _Fork vfork clone execve \
     syscall malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

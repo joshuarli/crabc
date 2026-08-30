@@ -211,6 +211,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-process-resources  run the static x86 crabc-libc selected resource slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
   libc-system-observation  run the static x86 crabc-libc uname/sysinfo slice
+  libc-system-information  run the static x86 crabc-libc processor/page slice
   libc-uts-identity  run the static x86 crabc-libc hostname/domain identity slice
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
@@ -414,6 +415,12 @@ first four public `__reserved` bytes at offsets 108 through 111 are
 kernel-initialized, while offsets 112 through 367 remain caller-resident. It
 does not select the separately recorded hostname/domain identity boundary,
 system-file parsing, process identity, dynamic libc, or application startup.
+`libc-system-information` exercises a separate freestanding project-header C
+fixture after its equivalent pinned-musl run. It selects only musl's fixed
+128-byte `sched_getaffinity` CPU count and `sysinfo` physical/free-plus-buffer
+page calculations, including the child-local affinity-error CPU-zero fallback.
+It does not select load observation, affinity control, topology, general
+`sysconf`, dynamic libc, or application startup.
 `libc-uts-identity` exercises the same archive through a freestanding
 project-header C fixture after an equivalent pinned-musl run. Each fixture arm
 creates a fresh UTS namespace before it mutates hostname/domain-name state; the
@@ -1093,6 +1100,13 @@ public `__reserved` bytes at offsets 108 through 111; offsets 112 through 367
 remain caller-resident. It does not provide gethostname, system-file parsing,
 process identity, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public
 x86 support.
+`libc-system-information` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+the fixed 128-byte `sched_getaffinity` processor count and the `sysinfo`
+physical/free-plus-buffer page calculations, preserving stale `errno` and the
+CPU-zero fallback in a child-local affinity-error regression. It does not
+provide load observation, affinity control, CPU topology, general `sysconf`,
+dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-thread-pointer` compiles only the private musl-shaped `%fs:0` identity
 leaf and a pinned-musl C fixture. It establishes neither a C runtime artifact,
 public C ABI, pthread/TLS lifecycle, loader TLS, nor an FS-base setup path.
@@ -2310,6 +2324,10 @@ run_libc_system_observation_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_system_observation.sh
 }
 
+run_libc_system_information_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_system_information.sh
+}
+
 run_libc_uts_identity_probe() {
     run_in_uts_cap_container bash /workspace/compat/x86_64/run_libc_uts_identity.sh
 }
@@ -2405,7 +2423,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
-    libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
     *)
@@ -3269,6 +3287,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-system-observation takes no arguments"
         ensure_image
         run_libc_system_observation_probe
+        ;;
+    libc-system-information)
+        [ "$#" -eq 0 ] || fail "libc-system-information takes no arguments"
+        ensure_image
+        run_libc_system_information_probe
         ;;
     libc-uts-identity)
         [ "$#" -eq 0 ] || fail "libc-uts-identity takes no arguments"

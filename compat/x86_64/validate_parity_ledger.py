@@ -6686,6 +6686,108 @@ def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_system_information_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the processor/page-count C artifact bounded and source-derived."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-system-information"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-system-information artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "processor/page-count",
+        "`get_nprocs_conf`",
+        "`get_nprocs`",
+        "`get_phys_pages`",
+        "`get_avphys_pages`",
+        "128-byte",
+        "`sched_getaffinity`",
+        "CPU-zero",
+        "wrapping LP64",
+        "LONG_MAX",
+        "`getloadavg`",
+        "general `sysconf`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-system-information description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/system_observation.rs",
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "libc/src/c_abi/x86_64/system_information.rs",
+        "compat/x86_64/system_header_abi_probe.c",
+        "compat/x86_64/system_header_abi_probe.cpp",
+        "compat/x86_64/run_system_header_abi.sh",
+        "compat/x86_64/libc_system_information_probe.c",
+        "compat/x86_64/libc_system_information_start.S",
+        "compat/x86_64/run_libc_system_information.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-system-information must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "sched_getaffinity=204" in item
+            and "128-byte" in item
+            and "rdi/rsi/rdx" in item
+            for item in prerequisites
+        ),
+        "static-c-system-information must record the fixed affinity-mask ABI",
+    )
+    require(
+        any(
+            "wrapping_add" in item
+            and "wrapping_mul" in item
+            and "LONG_MAX" in item
+            for item in prerequisites
+        ),
+        "static-c-system-information must record musl's wrapping page arithmetic",
+    )
+    require(
+        any(
+            "uninitialized C sysinfo" in item and "returns -1" in item
+            for item in prerequisites
+        ),
+        "static-c-system-information must record the failed-page-query boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-system-information"},
+        "static-c-system-information must use the closed libc-system-information command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "sched_getaffinity=204",
+        "sysinfo=99",
+        "PR_SET_NO_NEW_PRIVS",
+        "CPU helpers return one",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-system-information evidence scope omits {phrase}",
+        )
+
+
 def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected C mapping lifecycle concrete and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -9144,6 +9246,7 @@ def validate_ledger(
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
+    require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])

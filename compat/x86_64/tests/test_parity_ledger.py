@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 59)
+        self.assertEqual(report["verified_artifact_count"], 60)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1313,7 +1313,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 38
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 39
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -2316,6 +2316,50 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/system_observation.rs",
+            posix_runtime["source_owners"],
+        )
+        system_information = artifacts_by_id["static-c-system-information"]
+        assert isinstance(system_information, dict)
+        self.assertNotIn("capabilities", system_information)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/system_observation.rs",
+            "libc/src/c_abi/x86_64/system_configuration.rs",
+            "libc/src/c_abi/x86_64/system_information.rs",
+            "include/sys/prctl.h",
+            "include/sys/sysinfo.h",
+            "compat/x86_64/system_header_abi_probe.c",
+            "compat/x86_64/system_header_abi_probe.cpp",
+            "compat/x86_64/libc_system_information_probe.c",
+            "compat/x86_64/libc_system_information_start.S",
+            "compat/x86_64/run_libc_system_information.sh",
+        ):
+            self.assertIn(owner, system_information["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in system_information["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-system-information"},
+        )
+        for phrase in (
+            "128-byte",
+            "sched_getaffinity",
+            "CPU-zero",
+            "wrapping",
+            "LONG_MAX",
+            "getloadavg",
+            "general `sysconf`",
+        ):
+            self.assertIn(phrase, system_information["description"])
+        self.assertIn(
+            "sched_getaffinity=204",
+            system_information["x86_abi_prerequisites"][0],
+        )
+        self.assertIn(
+            "failed C page-helper read",
+            system_information["oracle"][0]["role"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/system_information.rs",
             posix_runtime["source_owners"],
         )
         uts_identity = artifacts_by_id["static-c-uts-identity"]

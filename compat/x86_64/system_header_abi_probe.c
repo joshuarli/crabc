@@ -35,8 +35,15 @@ _Static_assert(offsetof(struct sysinfo, __reserved) == 108, "sysinfo compatibili
 
 static int (*uname_signature)(struct utsname *) = uname;
 static int (*sysinfo_signature)(struct sysinfo *) = sysinfo;
+static int (*get_nprocs_conf_signature)(void) = get_nprocs_conf;
+static int (*get_nprocs_signature)(void) = get_nprocs;
+static long (*get_phys_pages_signature)(void) = get_phys_pages;
+static long (*get_avphys_pages_signature)(void) = get_avphys_pages;
 
 int crabc_x86_64_system_header_abi_probe(void)
 {
-    return uname_signature != 0 && sysinfo_signature != 0 && SI_LOAD_SHIFT;
+    return uname_signature != 0 && sysinfo_signature != 0 &&
+        get_nprocs_conf_signature != 0 && get_nprocs_signature != 0 &&
+        get_phys_pages_signature != 0 && get_avphys_pages_signature != 0 &&
+        SI_LOAD_SHIFT;
 }

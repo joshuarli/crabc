@@ -372,6 +372,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-process-resources
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
+./scripts/dev-x86_64.sh libc-system-information
 ./scripts/dev-x86_64.sh libc-uts-identity
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-byte-strings
@@ -686,8 +687,9 @@ process, filesystem, descriptor, namespace, or UTS-identity behavior.
 `system-header-abi` compiles project and pinned-musl C/C++ `<sys/utsname.h>`
 and `<sys/sysinfo.h>` declarations, including the GNU 65-byte `nodename` and
 `domainname` fields in the 390-byte public `utsname` record and the public
-368-byte sysinfo compatibility record. It is source-only and distinct from the
-bounded Rust kernel-prefix system-information slice.
+368-byte sysinfo compatibility record plus all four unconditional
+`get_nprocs*`/`get_*phys_pages` function signatures. It is source-only and
+distinct from bounded Rust or static-C system-information slices.
 
 `syscall-header-abi` places project `<sys/syscall.h>` first and compares its
 complete 384-pair `__NR_*`/`SYS_*` macro surface with pinned musl 1.2.6. It is
@@ -2337,9 +2339,20 @@ It selects only `uname` and `sysinfo`. The fixture proves null-pointer
 public `sysinfo` record. Linux performs its 112-byte `sysinfo` kernel write,
 including the first four public `__reserved` bytes at offsets 108 through 111;
 the caller-resident tail at offsets 112 through 367 retains its sentinel. It
-excludes the separately recorded hostname/domain identity artifact,
-system-file parsing, process identity, generic system information, dynamic
-runtime, and public x86 support.
+excludes the separately recorded hostname/domain identity and processor/page
+artifacts, system-file parsing, process identity, generic system information,
+dynamic runtime, and public x86 support.
+
+`libc-system-information` is the fixture for a separately recorded
+`static-c-system-information` `verified_artifact` gate over that archive, not
+a general system-information capability. Its project-header C body first runs
+through pinned musl and then through a `-nostdlib -static` candidate. It
+selects only `get_nprocs_conf`, `get_nprocs`, `get_phys_pages`, and
+`get_avphys_pages`: the musl-shaped 128-byte raw affinity mask, CPU-zero
+fallback after a child-local forced affinity error, and successful
+`sysinfo`-derived physical/free-plus-buffer page calculations. It deliberately
+does not select `getloadavg`, affinity control, topology/scheduler policy,
+`/proc` parsing, general `sysconf`, dynamic runtime, or public x86 support.
 
 `libc-uts-identity` is a separately recorded
 `static-c-uts-identity` `verified_artifact` gate over that archive, not a
@@ -2918,7 +2931,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-descriptor-lifecycle`,
 `libc-timestamp-updates`,
 `libc-process-resources`, `libc-readiness-waits`, and
-`libc-system-observation`, `libc-uts-identity`, `libc-socket-transport`,
+`libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,

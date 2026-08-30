@@ -19,7 +19,8 @@
 //! descriptor-entry, selected filesystem-access, bounded fcntl status-control,
 //! timestamp updates, descriptor-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
-//! system-configuration, caller-owned mapping-core, system-observation, UTS-namespace identity, basic socket-transport,
+//! system-configuration, caller-owned mapping-core, system-observation,
+//! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
@@ -167,6 +168,8 @@ mod event_descriptors;
 mod pathname_lifecycle;
 #[path = "system_observation.rs"]
 mod system_observation;
+#[path = "system_information.rs"]
+mod system_information;
 #[path = "uts_identity.rs"]
 mod uts_identity;
 #[path = "socket_transport.rs"]

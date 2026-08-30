@@ -67,7 +67,10 @@ const PC_SYMLINK_MAX: c_int = 19;
 const PC_2_SYMLINKS: c_int = 20;
 
 const RLIMIT_NOFILE: c_int = 7;
-const X86_64_LINUX_PAGE_SIZE: c_int = 4096;
+/// Linux/x86-64's fixed 4 KiB base page is shared with the separate selected
+/// system-information leaf. It is an architectural x86 fact, not an auxv or
+/// C startup dependency.
+pub(super) const X86_64_LINUX_PAGE_SIZE: c_int = 4096;
 
 /// Exact x86 public `struct rlimit` storage needed by `getdtablesize`.
 ///

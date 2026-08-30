@@ -15,6 +15,10 @@
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
 //! and byte-transfer syscalls; and the selected nanosleep leaf uses its direct
 //! two-pointer relative sleep syscall. The separately selected bounded
+//! system-information leaf uses `sysinfo` and the fixed-size
+//! `sched_getaffinity` CPU mask here; its public processor helper deliberately
+//! ignores a raw affinity failure in the musl-defined CPU-0 fallback case.
+//! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
 //! identity validation, and the selected raw thread exit here. Static Initial
@@ -352,6 +356,7 @@ pub(crate) const SYS_SETHOSTNAME: i64 = 170;
 pub(crate) const SYS_SETDOMAINNAME: i64 = 171;
 pub(crate) const SYS_TKILL: i64 = 200;
 pub(crate) const SYS_FUTEX: i64 = 202;
+pub(crate) const SYS_SCHED_GETAFFINITY: i64 = 204;
 pub(crate) const SYS_CLOCK_GETTIME: i64 = 228;
 pub(crate) const SYS_CLOCK_GETRES: i64 = 229;
 pub(crate) const SYS_CLOCK_NANOSLEEP: i64 = 230;

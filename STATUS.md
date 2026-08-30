@@ -211,6 +211,18 @@ inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
 family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
 shared-memory, and process-wide VM synchronization remain unselected.
 
+`./scripts/dev-x86_64.sh libc-system-information` is a separate private
+`static-c-system-information` artifact inside planned `libc.posix-runtime`.
+Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove
+only `get_nprocs_conf`, `get_nprocs`, `get_phys_pages`, and
+`get_avphys_pages`: musl's fixed 128-byte affinity mask and child-forced
+affinity-error CPU-zero fallback, plus successful `sysinfo` physical and
+free-plus-buffer page arithmetic. The safe selected page-helper error return
+does not claim an output contract for musl's uninitialized-record failure
+path. This is not processor-affinity control, topology, general `sysconf`,
+load observation, a general system-information capability, C-runtime/family
+parity, AArch64 parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

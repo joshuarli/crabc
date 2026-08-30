@@ -75,7 +75,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-pthread-identity",
             "libc-pthread-detach",
-            "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
         )
@@ -125,6 +125,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
+        self.assertIn("libc-system-information", source)
         self.assertIn("libc-uts-identity", source)
         self.assertIn('run_musl_oracle()', source)
         self.assertIn('compat/x86_64/run_musl_oracle.sh', source)
@@ -6222,6 +6223,147 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-system-observation", runner)
+
+    def test_libc_static_c_abi_system_information_artifact_stays_narrow(
+        self,
+    ) -> None:
+        """The selected CPU/page helpers retain musl's bounded raw semantics."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        system_information = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_information.rs"
+        ).read_text(encoding="utf-8")
+        system_observation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_observation.rs"
+        ).read_text(encoding="utf-8")
+        system_configuration = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_system_information_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_system_information_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_system_information.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "system_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "system_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_information.rs"]', static_root)
+        for symbol in (
+            "fn get_nprocs_conf()",
+            "fn get_nprocs()",
+            "fn get_phys_pages()",
+            "fn get_avphys_pages()",
+        ):
+            self.assertIn(symbol, system_information)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/conf/legacy.c",
+            "src/conf/sysconf.c",
+            "CPUSET_BYTES: usize = 128",
+            "mask[0] = 1",
+            "raw_syscall::SYS_SCHED_GETAFFINITY",
+            "raw_syscall::syscall3(",
+            "count_ones()",
+            "system_observation::sysinfo_raw",
+            "system_configuration::X86_64_LINUX_PAGE_SIZE",
+            "wrapping_add",
+            "wrapping_mul",
+            "c_long::MAX",
+        ):
+            self.assertIn(required, system_information)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn getloadavg(",
+            "fn sysconf(",
+            "alloc::",
+        ):
+            self.assertNotIn(forbidden, system_information)
+        for required in (
+            "pub(super) unsafe fn sysinfo_raw",
+            "pub(super) total_ram",
+            "pub(super) free_ram",
+            "pub(super) buffer_ram",
+            "pub(super) memory_unit",
+        ):
+            self.assertIn(required, system_observation)
+        self.assertIn("pub(super) const X86_64_LINUX_PAGE_SIZE", system_configuration)
+
+        for header_probe in (header_c, header_cxx):
+            for signature in (
+                "get_nprocs_conf_signature",
+                "get_nprocs_signature",
+                "get_phys_pages_signature",
+                "get_avphys_pages_signature",
+            ):
+                self.assertIn(signature, header_probe)
+        for required in (
+            "#include <errno.h>",
+            "#include <sys/prctl.h>",
+            "SYS_sched_getaffinity == 204",
+            "SYS_sysinfo == 99",
+            "check_stale_errno_and_live_values",
+            "check_affinity_error_fallback_in_child",
+            "CRABC_SECCOMP_RET_ERRNO",
+            "PR_SET_NO_NEW_PRIVS",
+            "CRABC_SYSTEM_INFORMATION_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("ARCH_SET_FS", start)
+        self.assertIn("crabc_x86_64_system_information_probe", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall get_nprocs cc",
+            "assert_named_syscall get_phys_pages 63",
+            "sched_getaffinity",
+            "sys/sysinfo.h",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in (
+            "get_nprocs_conf",
+            "get_nprocs",
+            "get_phys_pages",
+            "get_avphys_pages",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-system-information"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-system-information"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_system_information_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_system_information.sh", runner
+        )
+        self.assertIn(
+            '    libc-system-information)\n        [ "$#" -eq 0 ] || fail "libc-system-information takes no arguments"',
+            runner,
+        )
 
     def test_libc_static_c_abi_uts_identity_artifact_stays_narrow(self) -> None:
         static_root = (
