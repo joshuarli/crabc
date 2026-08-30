@@ -63,6 +63,28 @@ static void *release_worker(void *opaque)
                 && replacement[64 * 1024 - 1] != 0x63)
             return (void *)(uintptr_t)10;
     }
+    /* The successful exact route replacement terminally freed A's client and
+     * left A's completion in B TLS. A valid B-local replacement must now
+     * fail: it cannot resume B's parked engine and manufacture another
+     * client before B's ordinary pthread finish settles that proof. The
+     * original B replacement remains live and unchanged on failure. */
+    errno = 0;
+    if (realloc(replacement, 4096) != NULL)
+        return (void *)(uintptr_t)11;
+    if (errno != ENOMEM)
+        return (void *)(uintptr_t)12;
+    if (replacement_size == 0) {
+        if (replacement[0] != 0)
+            return (void *)(uintptr_t)13;
+    } else {
+        if (replacement[0] != 0x61)
+            return (void *)(uintptr_t)14;
+        if (replacement_size >= 4096 && replacement[4095] != 0x62)
+            return (void *)(uintptr_t)15;
+        if (replacement_size >= 64 * 1024
+                && replacement[64 * 1024 - 1] != 0x63)
+            return (void *)(uintptr_t)16;
+    }
     free(replacement);
     shared_medium = NULL;
     return NULL;

@@ -163,7 +163,10 @@ returns the C allocation failure result, and an unknown or wrong-owner native
 pointer fail-stops instead of crossing to the C allocator. This remains a
 bounded source route, not an iterable or general pointer registry: detached
 `realloc` never attempts source in-place reuse after A's Theap has torn down;
-it supports only the typed B allocation/copy/free transition above. Usable-size
+it supports only the typed B allocation/copy/free transition above. Once that
+transition terminally releases A and stores its proof in B TLS, B's subsequent
+local `realloc` is unavailable and leaves B's existing client intact until its
+exact free and normal finish. Usable-size
 outside the exact detached route or parked live owner, cross-thread
 reallocation outside that exact post-exit transition, and
 cross-thread exit/abandoned-page routing remain unavailable; the ticket-zero

@@ -1132,6 +1132,9 @@ and local `realloc` replacement return unavailable, while an exact local
 `free` remains available to complete B's source-defined exit. The direct
 local-session regression preserves sentinel bytes across the refused
 replacement before it proves the later successor or all-free completion.
+The selected C route-replacement fixture verifies the same valid-request
+refusal maps to `ENOMEM` while preserving B's source-copied replacement until
+its exact free and normal finish.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

@@ -2218,7 +2218,10 @@ The selected boundary has no C fallback: wrong-owner native pointers fail-stop.
 post-exit `realloc` transition: B allocates a normal replacement, preserves
 the bounded prefix on shrink and growth, receives a distinct zero-size
 replacement when requested, then frees it through B's local ledger. An invalid
-replacement size returns `ENOMEM` while preserving A's exact client. It does
+replacement size returns `ENOMEM` while preserving A's exact client. After
+the successful terminal route replacement stores A's proof in B TLS, a valid
+B-local replacement also returns `ENOMEM` and preserves B's client until its
+exact free and normal finish. It does
 not yet cover general cross-thread routing beyond that exact-live ticket-zero
 free, general single-page adoption/reclaim exits, foreign worker `realloc`
 beyond the exact detached-owner transition, usable-size outside the exact

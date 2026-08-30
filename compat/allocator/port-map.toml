@@ -2814,6 +2814,9 @@ Once that terminal completion is resident in B TLS, native allocation and
 local `realloc` are unavailable: they cannot resume B's parked engine and
 manufacture another local client before B finishes. An exact local `free`
 remains available to discharge B's already-recorded client in source order.
+The selected `native_mimalloc_owner_exit_realloc` C fixture drives the same
+boundary through `realloc`: a valid B-local request returns `ENOMEM` and
+leaves the source-copied B replacement intact until its exact free.
 For the one detached `realloc` transition, the entry stays private and BUSY
 while B records a normal-alignment replacement in that parked session, copies
 `min(A's recorded usable extent, requested size)`, and only then calls the

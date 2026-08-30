@@ -1323,7 +1323,10 @@ the
 selected-only `tests/native_mimalloc_owner_exit_realloc.rs` fixture proves one
 synchronized exact A/B route uses B allocation, bounded prefix copy, and the
 existing terminal A free, while invalid replacement size preserves A's
-original client. Usable size outside these exact routes, general
+original client. Once that exact route has terminally released and placed its
+proof in B TLS, the same selected C fixture proves a valid B-local replacement
+returns `ENOMEM` and preserves B's current client until its exact free and
+normal finish. Usable size outside these exact routes, general
 single-page/adoption/reclaim routes,
 or arbitrary worker allocation beyond the bounded live-entry witnesses remain
 unavailable, so this gate remains open.
