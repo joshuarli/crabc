@@ -28,7 +28,8 @@
 use core::ptr::{self, NonNull};
 
 use crate::atomic::{
-    AtomicWord, word_cas_weak_acq_rel, word_load_relaxed, word_or_acq_rel,
+    AtomicWord, word_cas_weak_acq_rel, word_load_acquire, word_load_relaxed, word_or_acq_rel,
+    word_sub_acq_rel,
 };
 use crate::types::{
     Block, Page, PageRemoteFreeOwnerState, PageRemoteFreeProducerState, ThreadFree,
@@ -38,6 +39,209 @@ use crate::types::{
 
 const THREAD_FREE_OWNED: ThreadFree = 1;
 const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
+
+// The low 32 bits form a page-local Rust lifetime supplement.  The source
+// remote head stays unchanged: it remains the exact `mi_thread_free_t` low-bit
+// list from `types.h`.  The page owner supplies one additional word only until
+// PageMap lookup/release can retain this proof in `Page` itself.
+//
+// `ACTIVE` admits a producer that already resolved this exact PageMap entry;
+// each admitted publisher adds `PUBLICATION_ONE` before it touches the source
+// `xthread_id` or `xthread_free` atomics.  An owner may close the lifetime only
+// from `ACTIVE` with a zero publication count.  The high 32 bits distinguish a
+// later reuse of the same metadata address from the PageMap generation read by
+// a producer.  This is intentionally a constant-size per-page state, not a
+// client ledger or owner registry.
+const LIVE_REMOTE_PAGE_ACTIVE: usize = 1;
+const LIVE_REMOTE_PAGE_PUBLICATION_ONE: usize = 1 << 1;
+const LIVE_REMOTE_PAGE_PUBLICATION_MASK: usize = 0xffff_fffe;
+const LIVE_REMOTE_PAGE_GENERATION_SHIFT: usize = 32;
+
+/// One compact page-owned lifetime state for a live remote-free producer.
+///
+/// This supplements, but never changes, mimalloc's source `xthread_free`
+/// protocol.  Pinned `free.c:80-87` relies on a valid client to keep its page
+/// live through the atomic push.  Rust needs the same proof at the raw
+/// PageMap-to-page boundary without borrowing the owner's Theap or retaining a
+/// registry entry per allocation.  The eventual `Page` field must initialize
+/// this state when it publishes its PageMap entry and must call
+/// [`Self::begin_retirement`] only after the normal source collection proof
+/// establishes that there is no live client and no detached remote list.
+///
+/// It is `repr(transparent)` so the intended page field stays one atomic word.
+#[repr(transparent)]
+pub(crate) struct LiveRemoteFreePageState {
+    word: AtomicWord,
+}
+
+/// A page-lifetime generation captured with a PageMap lookup.
+///
+/// A remote producer passes this value back to [`LiveRemoteFreePageState`]
+/// before it creates any raw page-field projection.  A closed and
+/// reinitialized page receives a different generation, preventing a stale
+/// lookup from pinning a later page at the same metadata address.
+pub(crate) type LiveRemoteFreePageGeneration = u32;
+
+/// A publisher could not safely enter the requested source page lifetime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePagePublicationError {
+    /// The PageMap observation refers to an earlier metadata lifetime.
+    StaleGeneration,
+    /// The page is retiring or already retired and accepts no new producer.
+    Retired,
+    /// The page-local publication count cannot represent another producer.
+    PublicationCountOverflow,
+}
+
+/// An owner could not begin PageMap/metadata retirement for this page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePageRetirementError {
+    /// The owner supplied an earlier page lifetime.
+    StaleGeneration,
+    /// One or more publishers have entered but not completed `mi_free_block_mt`.
+    PublishersInFlight,
+    /// A prior owner already closed this exact lifetime.
+    AlreadyRetired,
+}
+
+/// Reinitialization did not start from the requested closed page lifetime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePageReinitializeError {
+    /// The caller's metadata generation was superseded.
+    StaleGeneration,
+    /// The page is still accepting live remote-free publishers.
+    StillLive,
+    /// A malformed state records publishers after the lifetime was closed.
+    PublishersInFlight,
+    /// Reusing this metadata address would repeat a PageMap generation.
+    /// The caller must retain the closed page rather than permit ABA reuse.
+    GenerationExhausted,
+}
+
+/// A source live-owner remote publication could not finish.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePushError {
+    /// The PageMap lifetime no longer admitted this producer.
+    Lifetime(LiveRemoteFreePagePublicationError),
+    /// The pinned `mi_free_block_mt` atomic source transition rejected input.
+    Source(RemoteFreeError),
+}
+
+/// One admitted live remote publisher.
+///
+/// Dropping this guard completes the page-local lifetime half of the source
+/// publication.  It does not collect the remote head: the actual owner still
+/// performs `mi_page_thread_free_collect` through [`collect`].
+#[must_use = "a live remote publication must keep the page lifetime pinned until its source atomic push completes"]
+pub(crate) struct LiveRemoteFreePagePublication<'page> {
+    state: &'page LiveRemoteFreePageState,
+    generation: LiveRemoteFreePageGeneration,
+}
+
+impl LiveRemoteFreePageState {
+    /// Creates the initial active lifetime for one initialized page.
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            word: AtomicWord::new(live_remote_page_word(1, true, 0)),
+        }
+    }
+
+    /// Reads the current PageMap generation with acquire synchronization.
+    #[inline]
+    pub(crate) fn current_generation(&self) -> LiveRemoteFreePageGeneration {
+        live_remote_page_generation(word_load_acquire(&self.word))
+    }
+
+    /// Pins one resolved live page until its source remote-head push completes.
+    ///
+    /// This is a raw PageMap boundary, not a lookup API: the caller must have
+    /// obtained `generation` together with the page pointer through an
+    /// acquire-stable PageMap entry.  While the returned guard exists, the
+    /// owner cannot begin this page lifetime's retirement.  The guard grants
+    /// no access to owner-local page fields, queues, Theap, or PageMap state.
+    #[inline]
+    pub(crate) fn begin_publication(
+        &self,
+        generation: LiveRemoteFreePageGeneration,
+    ) -> Result<LiveRemoteFreePagePublication<'_>, LiveRemoteFreePagePublicationError> {
+        begin_live_remote_page_publication_with(&self.word, generation)?;
+        Ok(LiveRemoteFreePagePublication {
+            state: self,
+            generation,
+        })
+    }
+
+    /// Closes this page lifetime before PageMap unregistration or metadata
+    /// release.
+    ///
+    /// The caller must already hold the source page owner and must have
+    /// collected `xthread_free` so source `used` proves no client or remote
+    /// list remains.  `PublishersInFlight` is not an allocator failure: the
+    /// owner must continue source collection and retry after those producers
+    /// have completed their atomic publications.
+    #[inline]
+    pub(crate) fn begin_retirement(
+        &self,
+        generation: LiveRemoteFreePageGeneration,
+    ) -> Result<(), LiveRemoteFreePageRetirementError> {
+        begin_live_remote_page_retirement_with(&self.word, generation)
+    }
+
+    /// Starts the next page lifetime after the old one was closed.
+    ///
+    /// This must run before publishing a new PageMap entry for reused metadata.
+    /// It never reopens a live page, and it does not register a page itself.
+    #[inline]
+    pub(crate) fn reinitialize(
+        &self,
+        generation: LiveRemoteFreePageGeneration,
+    ) -> Result<LiveRemoteFreePageGeneration, LiveRemoteFreePageReinitializeError> {
+        reinitialize_live_remote_page_with(&self.word, generation)
+    }
+}
+
+impl Drop for LiveRemoteFreePagePublication<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        finish_live_remote_page_publication_with(&self.state.word, self.generation);
+    }
+}
+
+/// Publishes one source-shaped live remote free under a page-local lifetime
+/// pin.
+///
+/// This is the integration seam for general pointer-centered `free`: PageMap
+/// lookup supplies `page` plus `generation`, canonical block recovery supplies
+/// `block`, then this function performs the existing `mi_free_block_mt` CAS.
+/// It consults no owner registry and records no allocation identity.  The
+/// lifetime pin covers exactly the raw producer projection and source atomic
+/// publication; it drops before an owner can retire the page.
+///
+/// # Safety
+///
+/// `page`, `generation`, and `lifetime` must be one PageMap-published page
+/// lifetime. `block` must be the aligned canonical block for one current
+/// allocation from that page. The caller must not publish PageMap removal,
+/// page reuse, abandonment, or owner-local mutation outside the source
+/// protocol while this operation is in progress. On success the block is
+/// consumed exactly as by [`push`]; on error the caller retains its block.
+pub(crate) unsafe fn push_live(
+    lifetime: &LiveRemoteFreePageState,
+    generation: LiveRemoteFreePageGeneration,
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+) -> Result<(), LiveRemoteFreePushError> {
+    let publication = lifetime
+        .begin_publication(generation)
+        .map_err(LiveRemoteFreePushError::Lifetime)?;
+    // SAFETY: the caller's PageMap lifetime proof and the guard above keep
+    // the exact page metadata live until the source AcqRel publication has
+    // completed. `push` touches only the producer-visible source atomics.
+    let result = unsafe { push(page, block) }.map_err(LiveRemoteFreePushError::Source);
+    drop(publication);
+    result
+}
 
 /// The bounded remote-free protocol encountered a state whose lifecycle is
 /// not yet implemented, or an invalid remote-list accounting condition.
@@ -358,6 +562,159 @@ fn move_local_to_free_if_empty(state: PageRemoteFreeOwnerState) {
             *state.free_is_zero.as_ptr() = false;
         }
     }
+}
+
+/// Atomic operations used by the compact page-lifetime word.
+///
+/// This is deliberately separate from [`ThreadFreeHead`]: the source
+/// `mi_thread_free_t` head is not repurposed as a Rust lifetime counter. Both
+/// the production `AtomicUsize` and the Loom adapter below execute this exact
+/// acquire / AcqRel transition surface.
+trait LiveRemoteFreePageLifetimeWord {
+    fn load_acquire(&self) -> usize;
+
+    fn cas_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool;
+
+    fn fetch_sub_acq_rel(&self, value: usize) -> usize;
+}
+
+impl LiveRemoteFreePageLifetimeWord for AtomicWord {
+    #[inline]
+    fn load_acquire(&self) -> usize {
+        word_load_acquire(self)
+    }
+
+    #[inline]
+    fn cas_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool {
+        word_cas_weak_acq_rel(self, expected, replacement)
+    }
+
+    #[inline]
+    fn fetch_sub_acq_rel(&self, value: usize) -> usize {
+        word_sub_acq_rel(self, value)
+    }
+}
+
+/// The source-independent producer admission transition.
+///
+/// A successful AcqRel CAS pins the metadata lifetime before a publisher can
+/// derive `Page::remote_free_producer_state_at`. An owner closing this same
+/// generation observes that count through its own AcqRel CAS; there is no
+/// registry scan or owner/TLD dependency in either path.
+fn begin_live_remote_page_publication_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) -> Result<(), LiveRemoteFreePagePublicationError>
+where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let mut observed = word.load_acquire();
+    loop {
+        if live_remote_page_generation(observed) != generation {
+            return Err(LiveRemoteFreePagePublicationError::StaleGeneration);
+        }
+        if observed & LIVE_REMOTE_PAGE_ACTIVE == 0 {
+            return Err(LiveRemoteFreePagePublicationError::Retired);
+        }
+        if observed & LIVE_REMOTE_PAGE_PUBLICATION_MASK == LIVE_REMOTE_PAGE_PUBLICATION_MASK {
+            return Err(LiveRemoteFreePagePublicationError::PublicationCountOverflow);
+        }
+        let replacement = observed + LIVE_REMOTE_PAGE_PUBLICATION_ONE;
+        if word.cas_weak_acq_rel(&mut observed, replacement) {
+            return Ok(());
+        }
+    }
+}
+
+/// Completes one source remote-head publication.
+///
+/// The guard that calls this function is the only way a successful admission
+/// can complete, so underflow would mean an internal one-way lifecycle bug.
+fn finish_live_remote_page_publication_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let previous = word.fetch_sub_acq_rel(LIVE_REMOTE_PAGE_PUBLICATION_ONE);
+    debug_assert_eq!(live_remote_page_generation(previous), generation);
+    debug_assert_ne!(previous & LIVE_REMOTE_PAGE_ACTIVE, 0);
+    debug_assert_ne!(previous & LIVE_REMOTE_PAGE_PUBLICATION_MASK, 0);
+}
+
+/// The source-independent owner close transition.
+///
+/// Closing is intentionally a single compare/exchange from the active,
+/// zero-publisher word. A losing producer rechecks the same page generation;
+/// it can never increment a page after the owner has closed that lifetime.
+fn begin_live_remote_page_retirement_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) -> Result<(), LiveRemoteFreePageRetirementError>
+where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let mut observed = word.load_acquire();
+    loop {
+        if live_remote_page_generation(observed) != generation {
+            return Err(LiveRemoteFreePageRetirementError::StaleGeneration);
+        }
+        if observed & LIVE_REMOTE_PAGE_ACTIVE == 0 {
+            return Err(LiveRemoteFreePageRetirementError::AlreadyRetired);
+        }
+        if observed & LIVE_REMOTE_PAGE_PUBLICATION_MASK != 0 {
+            return Err(LiveRemoteFreePageRetirementError::PublishersInFlight);
+        }
+        let replacement = observed & !LIVE_REMOTE_PAGE_ACTIVE;
+        if word.cas_weak_acq_rel(&mut observed, replacement) {
+            return Ok(());
+        }
+    }
+}
+
+/// Reopens only a closed page lifetime with a distinct PageMap generation.
+fn reinitialize_live_remote_page_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) -> Result<LiveRemoteFreePageGeneration, LiveRemoteFreePageReinitializeError>
+where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let mut observed = word.load_acquire();
+    loop {
+        if live_remote_page_generation(observed) != generation {
+            return Err(LiveRemoteFreePageReinitializeError::StaleGeneration);
+        }
+        if observed & LIVE_REMOTE_PAGE_ACTIVE != 0 {
+            return Err(LiveRemoteFreePageReinitializeError::StillLive);
+        }
+        if observed & LIVE_REMOTE_PAGE_PUBLICATION_MASK != 0 {
+            return Err(LiveRemoteFreePageReinitializeError::PublishersInFlight);
+        }
+        let Some(next_generation) = generation.checked_add(1) else {
+            return Err(LiveRemoteFreePageReinitializeError::GenerationExhausted);
+        };
+        let replacement = live_remote_page_word(next_generation, true, 0);
+        if word.cas_weak_acq_rel(&mut observed, replacement) {
+            return Ok(next_generation);
+        }
+    }
+}
+
+#[inline]
+const fn live_remote_page_word(
+    generation: LiveRemoteFreePageGeneration,
+    active: bool,
+    publications: usize,
+) -> usize {
+    ((generation as usize) << LIVE_REMOTE_PAGE_GENERATION_SHIFT)
+        | publications
+        | if active { LIVE_REMOTE_PAGE_ACTIVE } else { 0 }
+}
+
+#[inline]
+const fn live_remote_page_generation(word: usize) -> LiveRemoteFreePageGeneration {
+    (word >> LIVE_REMOTE_PAGE_GENERATION_SHIFT) as LiveRemoteFreePageGeneration
 }
 
 /// The narrow atomic boundary for the `mi_thread_free_t` head only.
@@ -725,6 +1082,38 @@ mod tests {
     }
 
     #[test]
+    fn live_remote_page_lifetime_holds_retirement_until_publication_completes() {
+        let state = LiveRemoteFreePageState::new();
+        let generation = state.current_generation();
+        let publication = state
+            .begin_publication(generation)
+            .expect("a fresh page accepts its first remote publisher");
+
+        assert_eq!(
+            state.begin_retirement(generation),
+            Err(LiveRemoteFreePageRetirementError::PublishersInFlight),
+            "the page may not lose its PageMap/metadata lifetime while the producer still holds its source publication pin"
+        );
+
+        drop(publication);
+
+        assert_eq!(
+            state.begin_retirement(generation),
+            Ok(()),
+            "the owner may begin terminal retirement after the remote publication completes"
+        );
+        let next_generation = state
+            .reinitialize(generation)
+            .expect("a closed page may begin its next source lifetime");
+        assert_ne!(next_generation, generation);
+        assert_eq!(
+            state.begin_publication(generation),
+            Err(LiveRemoteFreePagePublicationError::StaleGeneration),
+            "a stale PageMap observation cannot acquire the reused page's new lifetime"
+        );
+    }
+
+    #[test]
     fn remote_push_keeps_the_owner_bit_and_owner_collection_merges_before_local_frees() {
         let mut page = Page::remote_free_test_page(4, 4);
         let page_raw = NonNull::from(&mut page);
@@ -904,6 +1293,49 @@ mod tests {
         assert_eq!(page.0.remote_free_test_head(), 1);
         assert_eq!(page.0.remote_free_test_used(), 0);
         assert_eq!(page.0.remote_free_test_local_chain_len(BLOCKS + 1), BLOCKS);
+    }
+
+    #[test]
+    fn live_page_lifetime_drives_multiple_source_remote_publications_without_owner_lookup() {
+        const PRODUCERS: usize = 4;
+        const BLOCKS_PER_PRODUCER: usize = 16;
+        const BLOCKS: usize = PRODUCERS * BLOCKS_PER_PRODUCER;
+
+        let page = ConcurrentTestPage(Page::remote_free_test_page(BLOCKS as u16, BLOCKS));
+        let lifetime = LiveRemoteFreePageState::new();
+        let generation = lifetime.current_generation();
+        let mut blocks: [TestBlock; BLOCKS] = std::array::from_fn(|_| TestBlock([0; 16]));
+
+        thread::scope(|scope| {
+            for producer_blocks in blocks.chunks_mut(BLOCKS_PER_PRODUCER) {
+                let page = &page;
+                let lifetime = &lifetime;
+                scope.spawn(move || {
+                    for block in producer_blocks {
+                        // SAFETY: each worker owns one exact current block;
+                        // `push_live` admits only this PageMap generation and
+                        // then runs the existing source remote-head CAS. The
+                        // test owner touches ordinary page fields only after
+                        // every producer has joined.
+                        unsafe {
+                            push_live(lifetime, generation, page.page_pointer(), block.pointer())
+                                .expect("the page-local lifetime admits each remote publication");
+                        }
+                    }
+                });
+            }
+        });
+
+        // SAFETY: all production-shaped source publishers joined, so this is
+        // the exclusive owner collection that accounts their remote list.
+        assert_eq!(unsafe { collect(page.page_pointer()) }, Ok(BLOCKS));
+        assert_eq!(page.0.remote_free_test_head(), 1);
+        assert_eq!(page.0.remote_free_test_used(), 0);
+        assert_eq!(
+            lifetime.begin_retirement(generation),
+            Ok(()),
+            "the source-empty page may close its PageMap lifetime after collection"
+        );
     }
 
     /// Emits the fixed, address-independent native x86-64 differential
