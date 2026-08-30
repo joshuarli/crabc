@@ -1480,10 +1480,12 @@ fixture lock `inotify_init1=294`, `inotify_add_watch=254`, and
 the descriptor, scopes watch identifiers to it, reads only into caller storage,
 preserves byte names and unknown observed mask bits, validates variable-length
 records, and exposes direct `EAGAIN`, `EINVAL`, `ENOENT`, `ENAMETOOLONG`, and
-`EBADF` outcomes. It does not select C `sys/inotify.h` headers/APIs/ABI or
-errno TLS, legacy `inotify_init`, fanotify, recursive/background watcher
-policy, global registries, namespaces/capability mutation, wider system
-facilities, or public x86 support.
+`EBADF` outcomes. The Rust facade does not select a Rust C wrapper or errno
+TLS, legacy `inotify_init`, fanotify, recursive/background watcher policy,
+global registries, namespaces/capability mutation, wider system facilities, or
+public x86 support. The separate private `static-c-event-descriptors` artifact
+owns bounded C `sys/inotify.h` headers/APIs/ABI and legacy-init evidence without
+broadening this Rust slice or public support.
 
 `calendar-time-reference` is the separate private x86 civil-time vertical
 slice. Its focused UTC-calendar, timezone-rule, and local-calendar Rust

@@ -342,7 +342,7 @@ public x86 support.
 `system::inotify` owns a Linux inotify descriptor, typed watch identifiers,
 and a caller-buffered iterator of validated, byte-preserving event records.
 It is a direct `inotify_init1`/`inotify_add_watch`/`inotify_rm_watch` seam:
-there is no public C call or ABI, TLS `errno`, legacy `inotify_init`,
+the Rust facade has no C wrapper or ABI, TLS `errno`, legacy `inotify_init`,
 background reader, global watch registry, or policy engine. The parser rejects
 malformed variable-length records; queue overflow and unknown kernel mask bits
 stay observable. This does not imply namespaces, capability mutation, ptrace,
@@ -353,9 +353,11 @@ The private Linux/x86-64 evidence lane separately selects only this bounded
 `inotify_add_watch=254`, and `inotify_rm_watch=255` ABI proof; the 16-byte
 align-4 event header and caller-buffer record framing; pinned-musl/raw oracle;
 focused Rust regression; and no-std probe evidence. It leaves the wider system
-family planned and selects no C `sys/inotify.h` API/header/ABI, TLS `errno`,
-legacy init, fanotify, recursive or background watcher policy, global registry,
-namespace/capability mutation, or public x86 support.
+family planned and selects no Rust C wrapper, TLS `errno`, legacy init,
+fanotify, recursive or background watcher policy, global registry,
+namespace/capability mutation, or public x86 support. The separate private
+`static-c-event-descriptors` artifact owns bounded C `sys/inotify.h` and
+legacy-init evidence without broadening this Rust facade or public support.
 
 ## POSIX message queues
 
