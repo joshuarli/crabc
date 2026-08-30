@@ -6,7 +6,7 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-282,305-360,377-421,
 // 448-481`, `src/theap.c:228-306,414-449`, `src/threadlocal.c:205-214`,
-// `src/free.c:372-418,479-515`, and `src/prim/unix/prim.c:943-974`; the
+// `src/free.c:152-233,372-418,479-515`, and `src/prim/unix/prim.c:943-974`; the
 // direct libc fork placement follows pinned musl 1.2.6 `src/process/fork.c`.
 
 //! Private crabc-runtime lifecycle bridge.
@@ -6951,20 +6951,223 @@ pub unsafe fn native_reallocate(
     unsafe { native_later_thread_reallocate(block, new_size) }
 }
 
-/// Frees one current C-facing native-shadow block on its owning thread.
+/// Applies the Phase-A pointer-only detached-owner free bridge to one route.
+///
+/// Pinned `mi_free` first derives a page from `p`, then chooses the operation
+/// from that page's state. The native shadow does not have its common PageMap
+/// pointer classification yet, but a detached registry entry already owns an
+/// exact source client ledger and its route-owned short PageMap access. This
+/// bridge consumes only a matching exact client before any caller-local
+/// owner is considered.
+///
+/// The existing fresh-B operation may use a final-member adoption path that
+/// needs B's attachment. This bridge intentionally uses the existing direct
+/// post-exit remote-free primitive instead: it introduces no page geometry
+/// selection, new route, registry, ledger, or C fallback. Once
+/// `ProcessPageMapLease::classify_live_allocation_pointer` reaches the native
+/// dispatch, delete this temporary route probe.
+unsafe fn native_free_detached_route_entry_phase_a(
+    storage: &NativePostExitRouteStorage,
+    block: core::ptr::NonNull<u8>,
+) -> NativePostExitRouteFreeResult {
+    loop {
+        match storage.state.load(Ordering::Acquire) {
+            NATIVE_POST_EXIT_ROUTE_EMPTY | NATIVE_POST_EXIT_ROUTE_COMPLETED => {
+                return NativePostExitRouteFreeResult::NotOwned;
+            }
+            NATIVE_POST_EXIT_ROUTE_RETAINED => return NativePostExitRouteFreeResult::Retained,
+            NATIVE_POST_EXIT_ROUTE_BUSY => core::hint::spin_loop(),
+            NATIVE_POST_EXIT_ROUTE_ACTIVE => {
+                if storage
+                    .state
+                    .compare_exchange(
+                        NATIVE_POST_EXIT_ROUTE_ACTIVE,
+                        NATIVE_POST_EXIT_ROUTE_BUSY,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+            _ => {
+                RUNTIME_PROCESS.retain_page_owner();
+                storage.publish_retained();
+                return NativePostExitRouteFreeResult::Retained;
+            }
+        }
+    }
+
+    // SAFETY: the successful `ACTIVE -> BUSY` transition is this helper's
+    // exclusive move out of the stable route image. Every nonterminal result
+    // below restores a complete initialized entry before republishing it.
+    let entry = unsafe { (*storage.entry.get()).assume_init_read() };
+    let NativePostExitRouteEntry::Active(NativePostExitRoute { parked, route }) = entry else {
+        // The atomic state and entry image no longer agree about one linear
+        // source owner. No caller-local fallback may recover that fact.
+        core::mem::forget(entry);
+        RUNTIME_PROCESS.retain_page_owner();
+        storage.publish_retained();
+        return NativePostExitRouteFreeResult::Retained;
+    };
+
+    // The route itself proves exact ownership before it mutates source page
+    // state. The aggregate branch deliberately remains on its existing
+    // sequential remote-free primitive: the fresh-B-only adoption branch is
+    // not a caller-neutral pointer operation.
+    let free = match route {
+        NativePostExitFreeRoute::Aggregate(route) => {
+            match route.free_exact_native_block_sequential(block) {
+                AggregateNativePostExitFreeStep::NotOwned(route) => {
+                    NativePostExitFreeStep::NotOwned(NativePostExitFreeRoute::Aggregate(route))
+                }
+                AggregateNativePostExitFreeStep::Freed(route) => {
+                    NativePostExitFreeStep::Freed(NativePostExitFreeRoute::Aggregate(route))
+                }
+                AggregateNativePostExitFreeStep::Finished(proof) => {
+                    NativePostExitFreeStep::Finished(proof)
+                }
+                AggregateNativePostExitFreeStep::Retained(route) => {
+                    NativePostExitFreeStep::Retained(NativePostExitFreeRoute::Aggregate(route))
+                }
+                AggregateNativePostExitFreeStep::Poisoned(proof) => {
+                    NativePostExitFreeStep::Poisoned(proof)
+                }
+            }
+        }
+        NativePostExitFreeRoute::SoleMappedRegular(route) => {
+            route.free_exact_native_block(block)
+        }
+    };
+
+    match free {
+        NativePostExitFreeStep::NotOwned(route) => {
+            storage.restore_active(parked, route);
+            NativePostExitRouteFreeResult::NotOwned
+        }
+        NativePostExitFreeStep::Freed(route) => {
+            storage.restore_active(parked, route);
+            NativePostExitRouteFreeResult::Freed
+        }
+        NativePostExitFreeStep::Finished(proof) => {
+            // A pointer-only terminal free has no B attachment or TLS
+            // completion to retain. It nevertheless crosses the existing
+            // source-route -> completion transition before the matching
+            // parked token and A admission can leave. Every failed transition
+            // stores the exact remaining capability in this existing entry.
+            let parked = match parked.finish_source_route() {
+                Ok(parked) => parked,
+                Err(parked) => {
+                    unsafe {
+                        (*storage.entry.get()).write(
+                            NativePostExitRouteEntry::RetainedFinished { parked, proof },
+                        )
+                    };
+                    storage.publish_retained();
+                    return NativePostExitRouteFreeResult::Retained;
+                }
+            };
+            match parked.finish_after_b() {
+                Ok(()) => match proof.release_worker_admission(&RUNTIME_FORK_ADMISSION) {
+                    Ok(()) => {
+                        storage
+                            .state
+                            .store(NATIVE_POST_EXIT_ROUTE_EMPTY, Ordering::Release);
+                        NativePostExitRouteFreeResult::Freed
+                    }
+                    Err(proof) => {
+                        unsafe {
+                            (*storage.entry.get())
+                                .write(NativePostExitRouteEntry::RetainedAdmission { proof })
+                        };
+                        RUNTIME_PROCESS.retain();
+                        storage.publish_retained();
+                        NativePostExitRouteFreeResult::Retained
+                    }
+                },
+                Err(parked) => {
+                    unsafe {
+                        (*storage.entry.get()).write(
+                            NativePostExitRouteEntry::RetainedFinished { parked, proof },
+                        )
+                    };
+                    storage.publish_retained();
+                    NativePostExitRouteFreeResult::Retained
+                }
+            }
+        }
+        NativePostExitFreeStep::Retained(route) => {
+            storage.retain_route(parked, route);
+            NativePostExitRouteFreeResult::Retained
+        }
+        NativePostExitFreeStep::Poisoned(proof) => {
+            let parked = match parked.retain_source_route() {
+                Ok(parked) | Err(parked) => parked,
+            };
+            unsafe {
+                (*storage.entry.get()).write(NativePostExitRouteEntry::RetainedPoisoned {
+                    parked,
+                    proof,
+                })
+            };
+            storage.publish_retained();
+            NativePostExitRouteFreeResult::Retained
+        }
+    }
+}
+
+/// Queries existing detached routes by the input pointer before caller-local
+/// native ownership dispatch.
+///
+/// This Phase-A bridge is deliberately caller-neutral: it accepts only the
+/// allocation pointer, exposes no route/client/page capability, and restores
+/// each nonmatching entry unchanged. It must be deleted when the common
+/// PageMap classification and abandoned-state dispatch replace this temporary
+/// registry query.
+unsafe fn native_free_detached_route_phase_a(
+    block: core::ptr::NonNull<u8>,
+) -> NativePostExitRouteFreeResult {
+    if NATIVE_POST_EXIT_ROUTE.is_closed_for_retained_entry() {
+        return NativePostExitRouteFreeResult::Retained;
+    }
+    let mut current = NATIVE_POST_EXIT_ROUTE.head.load(Ordering::Acquire);
+    while !current.is_null() {
+        // SAFETY: the registry's append-only metadata nodes are stable for
+        // the process lifetime; this helper never exposes their addresses.
+        let node = unsafe { &*current };
+        match unsafe { native_free_detached_route_entry_phase_a(&node.storage, block) } {
+            NativePostExitRouteFreeResult::NotOwned => {
+                current = node.next.load(Ordering::Acquire);
+            }
+            result => return result,
+        }
+    }
+    NativePostExitRouteFreeResult::NotOwned
+}
+
+/// Frees one C-facing native-shadow block from its pointer-owned route.
 ///
 /// # Safety
 ///
 /// `block` must be a live native-shadow allocation. A wrong-domain pointer
-/// reports `InvalidPointer`. An attached later worker may either use its own
-/// local ledger, consume the one typed detached-owner route, or atomically
-/// source-publish an exact still-live ticket-zero or parked-live-owner client.
-/// A receiver that already has a parked local session briefly resumes and
-/// re-parks only that session for the source publication; it still receives no
-/// general pointer registry, page engine, or scheduler authority. Callers must
-/// not route any native failure to the C allocator as recovery.
+/// reports `InvalidPointer`. The temporary Phase-A detached-route probe runs
+/// before every caller-local selection. An attached later worker may otherwise
+/// use its own local ledger or atomically source-publish an exact still-live
+/// ticket-zero or parked-live-owner client. Callers must not route any native
+/// failure to the C allocator as recovery.
 #[doc(hidden)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
+    // SAFETY: `block` is forwarded unchanged from the C boundary's live
+    // native allocation contract. This pointer-only bridge consumes only an
+    // exact detached source client before caller-local owner selection.
+    match unsafe { native_free_detached_route_phase_a(block) } {
+        NativePostExitRouteFreeResult::Freed | NativePostExitRouteFreeResult::Finished => {
+            return NativePageFreeResult::Freed;
+        }
+        NativePostExitRouteFreeResult::Retained => return NativePageFreeResult::Retained,
+        NativePostExitRouteFreeResult::NotOwned => {}
+    }
     if RUNTIME_PROCESS.is_on_initial_thread() {
         // SAFETY: forwarded unchanged from this boundary's exact-current
         // native block contract.
