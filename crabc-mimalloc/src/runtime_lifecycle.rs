@@ -160,10 +160,11 @@ const NATIVE_POST_EXIT_ROUTE_RETAINED: u8 = 3;
 // Appending one permanent metadata-backed registry entry is separate from an
 // entry's own `ACTIVE -> BUSY` route serialization. Nodes never move or leave
 // the list, so a reader that acquired the list head may inspect a stable entry
-// without a raw-pointer lifetime race. Empty entries are reused; growth only
-// records the process high-water of concurrently detached source owners.
+// without a raw-pointer lifetime race. Empty entries are reused. The short
+// registry mutation word serializes installation with terminal closure: once
+// any route is retained, a later detached A may not publish beside it.
 const NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE: u8 = 0;
-const NATIVE_POST_EXIT_ROUTE_REGISTRY_GROWING: u8 = 1;
+const NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING: u8 = 1;
 const NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED: u8 = 2;
 
 // Native live-owner remote frees use metadata-backed entries, not a
@@ -3752,6 +3753,17 @@ impl NativePostExitRouteStorage {
             .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
     }
 
+    /// Publishes a terminal entry only after the private registry has closed
+    /// future detached-owner installation. The closure names no route or
+    /// client: it is solely the process-lifetime fact that a retained source
+    /// owner prevents another A from appending beside it.
+    #[inline]
+    fn publish_retained(&self) {
+        NATIVE_POST_EXIT_ROUTE.close_for_retained_entry();
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+    }
+
     /// Keeps a concrete route and its scheduler token process-terminal after
     /// an operation can no longer prove a retryable source state.
     #[inline]
@@ -3763,8 +3775,7 @@ impl NativePostExitRouteStorage {
                 NativePostExitRoute { parked, route },
             ))
         };
-        self.state
-            .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+        self.publish_retained();
     }
 
     /// Commits a consumed exact-source free into this storage entry.
@@ -3821,8 +3832,7 @@ impl NativePostExitRouteStorage {
                         })
                     };
                     RUNTIME_PROCESS.retain_page_owner();
-                    self.state
-                        .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                    self.publish_retained();
                     NativePostExitRouteFreeResult::Retained
                 } else {
                     slot.post_exit_route_proof = Some(NativePostExitRouteCompletion {
@@ -3847,8 +3857,7 @@ impl NativePostExitRouteStorage {
                         proof,
                     })
                 };
-                self.state
-                    .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                self.publish_retained();
                 NativePostExitRouteFreeResult::Retained
             }
         }
@@ -3883,8 +3892,7 @@ impl NativePostExitRouteStorage {
                 }
                 _ => {
                     RUNTIME_PROCESS.retain_page_owner();
-                    self.state
-                        .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                    self.publish_retained();
                     return NativePostExitRouteFreeResult::Retained;
                 }
             }
@@ -3901,8 +3909,7 @@ impl NativePostExitRouteStorage {
             // detached owner owns the source map.
             core::mem::forget(entry);
             RUNTIME_PROCESS.retain_page_owner();
-            self.state
-                .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+            self.publish_retained();
             return NativePostExitRouteFreeResult::Retained;
         };
 
@@ -3969,8 +3976,7 @@ impl NativePostExitRouteStorage {
                 }
                 _ => {
                     RUNTIME_PROCESS.retain_page_owner();
-                    self.state
-                        .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                    self.publish_retained();
                     return NativePostExitRouteReallocateResult::Retained;
                 }
             }
@@ -3987,8 +3993,7 @@ impl NativePostExitRouteStorage {
             // detached owner owns the old C client.
             core::mem::forget(entry);
             RUNTIME_PROCESS.retain_page_owner();
-            self.state
-                .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+            self.publish_retained();
             return NativePostExitRouteReallocateResult::Retained;
         };
 
@@ -4160,8 +4165,7 @@ impl NativePostExitRouteStorage {
                 }
                 _ => {
                     RUNTIME_PROCESS.retain_page_owner();
-                    self.state
-                        .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+                    self.publish_retained();
                     return NativePostExitRouteUsableSizeResult::Retained;
                 }
             }
@@ -4178,8 +4182,7 @@ impl NativePostExitRouteStorage {
             // process terminal instead of guessing a client/page owner.
             core::mem::forget(entry);
             RUNTIME_PROCESS.retain_page_owner();
-            self.state
-                .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
+            self.publish_retained();
             return NativePostExitRouteUsableSizeResult::Retained;
         };
 
@@ -4267,19 +4270,21 @@ enum NativePostExitRouteRegistryView {
 /// The private metadata-backed native post-exit router.
 ///
 /// Nodes have a stable process-lifetime address and the list only grows under
-/// the small append word. Scanning never returns a route, raw client, or
-/// PageMap fact to the caller. A foreign address restores the claimed entry
-/// before the next node is considered, so exact C frees remain serialized per
-/// route and source PageMap access remains route-local.
+/// the short registry mutation word. That word also closes future
+/// installation once any entry becomes terminally retained. Scanning never
+/// returns a route, raw client, or PageMap fact to the caller. A foreign
+/// address restores the claimed entry before the next node is considered, so
+/// exact C frees remain serialized per route and source PageMap access remains
+/// route-local.
 struct NativePostExitRouteRegistry {
-    growth: AtomicU8,
+    mutation: AtomicU8,
     head: AtomicPtr<NativePostExitRouteRegistryNode>,
 }
 
 impl NativePostExitRouteRegistry {
     const fn new() -> Self {
         Self {
-            growth: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE),
+            mutation: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE),
             head: AtomicPtr::new(core::ptr::null_mut()),
         }
     }
@@ -4312,27 +4317,29 @@ impl NativePostExitRouteRegistry {
             return NativePostExitRouteRegistryInstall::NeedsEntry(route);
         }
         // SAFETY: `candidate` was read from the stable registry list above.
-        // A concurrent installer can only win the entry's own EMPTY -> BUSY
-        // transition; in that case this returns the unchanged linear route so
-        // the caller can rescan or grow without overwriting it.
+        // The registry mutation word serializes another installer and a
+        // terminal close, while the entry CAS remains the local proof that a
+        // route never overwrites a nonempty stable node.
         match unsafe { (&*candidate).storage.install(route) } {
             Ok(()) => NativePostExitRouteRegistryInstall::Installed,
             Err(route) => NativePostExitRouteRegistryInstall::NeedsEntry(route),
         }
     }
 
-    /// Acquires only the list-growth word. It never covers a route's source
-    /// free or usable-size operation; those retain their existing per-entry
-    /// short `ACTIVE -> BUSY` serialization.
-    fn acquire_growth(&self) -> bool {
+    /// Acquires the registry-only transition that installs a new detached
+    /// owner. It never covers ordinary exact frees or usable-size queries;
+    /// those retain their existing per-entry `ACTIVE -> BUSY` serialization.
+    /// A retained registry is process-terminal for future detached-owner
+    /// installation, so this reports false without reopening it.
+    fn acquire_mutation(&self) -> bool {
         loop {
-            match self.growth.load(Ordering::Acquire) {
+            match self.mutation.load(Ordering::Acquire) {
                 NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE => {
                     if self
-                        .growth
+                        .mutation
                         .compare_exchange(
                             NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE,
-                            NATIVE_POST_EXIT_ROUTE_REGISTRY_GROWING,
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING,
                             Ordering::AcqRel,
                             Ordering::Acquire,
                         )
@@ -4341,7 +4348,8 @@ impl NativePostExitRouteRegistry {
                         return true;
                     }
                 }
-                NATIVE_POST_EXIT_ROUTE_REGISTRY_GROWING => core::hint::spin_loop(),
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING => core::hint::spin_loop(),
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED => return false,
                 _ => {
                     RUNTIME_PROCESS.retain_page_owner();
                     return false;
@@ -4351,9 +4359,63 @@ impl NativePostExitRouteRegistry {
     }
 
     #[inline]
-    fn release_growth(&self) {
-        self.growth
+    fn release_mutation(&self) {
+        self.mutation
             .store(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE, Ordering::Release);
+    }
+
+    /// Tries to close the registry for one already-retained route. A concurrent
+    /// installer owns the short mutation word until it has either published
+    /// its whole route or retained that exact source owner, so closing must
+    /// wait instead of overwriting its state back to idle.
+    #[inline]
+    fn try_close_for_retained_entry(&self) -> bool {
+        loop {
+            match self.mutation.load(Ordering::Acquire) {
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE => {
+                    if self
+                        .mutation
+                        .compare_exchange(
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE,
+                            NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING => return false,
+                NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED => return true,
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return true;
+                }
+            }
+        }
+    }
+
+    /// Closes future detached-route installation after a route becomes
+    /// terminally retained. It exposes no entry, client, PageMap, or allocator
+    /// capability; it is only the private registry-wide closure fact.
+    fn close_for_retained_entry(&self) {
+        while !self.try_close_for_retained_entry() {
+            core::hint::spin_loop();
+        }
+    }
+
+    #[inline]
+    fn is_closed_for_retained_entry(&self) -> bool {
+        match self.mutation.load(Ordering::Acquire) {
+            NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE
+            | NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING => false,
+            NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED => true,
+            _ => {
+                RUNTIME_PROCESS.retain_page_owner();
+                true
+            }
+        }
     }
 
     /// Installs one fully detached route. Existing empty metadata entries are
@@ -4366,26 +4428,22 @@ impl NativePostExitRouteRegistry {
         route: NativePostExitRoute,
         config: MemoryConfig,
     ) -> Result<(), NativePostExitRoute> {
-        let route = match self.try_install_existing(route) {
-            NativePostExitRouteRegistryInstall::Installed => return Ok(()),
-            NativePostExitRouteRegistryInstall::NeedsEntry(route) => route,
-            NativePostExitRouteRegistryInstall::Retained(route) => return Err(route),
-        };
-        if !self.acquire_growth() {
+        if !self.acquire_mutation() {
             return Err(route);
         }
 
-        // A prior grower may have published a reusable node while this thread
-        // waited. Recheck under the append word before asking metadata for a
-        // new process-lifetime entry.
+        // This whole decision shares one linearization boundary with terminal
+        // closure. A retained route therefore cannot appear after this A has
+        // selected an empty node but before that node receives its complete
+        // active image.
         let route = match self.try_install_existing(route) {
             NativePostExitRouteRegistryInstall::Installed => {
-                self.release_growth();
+                self.release_mutation();
                 return Ok(());
             }
             NativePostExitRouteRegistryInstall::NeedsEntry(route) => route,
             NativePostExitRouteRegistryInstall::Retained(route) => {
-                self.release_growth();
+                self.release_mutation();
                 return Err(route);
             }
         };
@@ -4396,7 +4454,7 @@ impl NativePostExitRouteRegistry {
         ) {
             Ok(backing) => backing,
             Err(_) => {
-                self.release_growth();
+                self.release_mutation();
                 return Err(route);
             }
         };
@@ -4410,7 +4468,7 @@ impl NativePostExitRouteRegistry {
         // initialization, before any registry reader can acquire `head`.
         unsafe { node.write(NativePostExitRouteRegistryNode::new(route, next, backing)) };
         self.head.store(node, Ordering::Release);
-        self.release_growth();
+        self.release_mutation();
         Ok(())
     }
 
@@ -4419,6 +4477,9 @@ impl NativePostExitRouteRegistry {
     /// means every pre-existing private OS-list member is still owned by one
     /// typed route whose terminal exact free unlinks only its own member.
     fn view(&self) -> NativePostExitRouteRegistryView {
+        if self.is_closed_for_retained_entry() {
+            return NativePostExitRouteRegistryView::Retained;
+        }
         let mut live = false;
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
@@ -4445,6 +4506,9 @@ impl NativePostExitRouteRegistry {
     /// entry has already made the shared runtime terminal, so no later node
     /// may safely answer a free after that point.
     fn free_exact(&self, block: core::ptr::NonNull<u8>) -> NativePostExitRouteFreeResult {
+        if self.is_closed_for_retained_entry() {
+            return NativePostExitRouteFreeResult::Retained;
+        }
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
             // SAFETY: nodes stay linked and stable for the process lifetime.
@@ -4469,6 +4533,9 @@ impl NativePostExitRouteRegistry {
         block: core::ptr::NonNull<u8>,
         new_size: usize,
     ) -> NativePostExitRouteReallocateResult {
+        if self.is_closed_for_retained_entry() {
+            return NativePostExitRouteReallocateResult::Retained;
+        }
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
             // SAFETY: nodes stay linked and stable for the process lifetime.
@@ -4487,6 +4554,9 @@ impl NativePostExitRouteRegistry {
     /// route owns it. A failed node lookup restores that entry before the next
     /// stable node is considered.
     fn usable_size_exact(&self, block: core::ptr::NonNull<u8>) -> Option<usize> {
+        if self.is_closed_for_retained_entry() {
+            return None;
+        }
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
             // SAFETY: nodes stay linked and stable for the process lifetime.
@@ -4533,7 +4603,8 @@ impl NativePostExitRouteRegistry {
 
 // SAFETY: the registry publishes only fully initialized immutable node links.
 // Each node's mutable route state is independently protected by its storage
-// protocol, and the append word serializes only list growth.
+// protocol, and the mutation word serializes installation with terminal
+// closure.
 unsafe impl Sync for NativePostExitRouteRegistry {}
 
 static NATIVE_POST_EXIT_ROUTE: NativePostExitRouteRegistry = NativePostExitRouteRegistry::new();
@@ -12473,6 +12544,39 @@ mod tests {
     // route and finishes its own no-page attachment, and only then may the
     // next worker begin.
     const OWNER_EXIT_STATE_AUDIT_CYCLES: usize = 8;
+
+    #[test]
+    fn native_post_exit_registry_terminal_close_waits_for_an_inflight_installation() {
+        let registry = NativePostExitRouteRegistry::new();
+
+        assert!(
+            registry.acquire_mutation(),
+            "the first detached-owner installer holds the registry-only mutation word"
+        );
+        assert!(
+            !registry.try_close_for_retained_entry(),
+            "a terminal route waits rather than overwriting an in-flight installation back to idle"
+        );
+        assert_eq!(
+            registry.mutation.load(Ordering::Acquire),
+            NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING,
+            "the terminal close leaves the complete in-flight installation authoritative"
+        );
+
+        registry.release_mutation();
+        assert!(
+            registry.try_close_for_retained_entry(),
+            "the retained route closes future installation after the current source owner publishes"
+        );
+        assert!(
+            registry.is_closed_for_retained_entry(),
+            "the terminal registry latch remains visible without exposing a route or client"
+        );
+        assert!(
+            !registry.acquire_mutation(),
+            "a later detached owner cannot install beside a retained route"
+        );
+    }
 
     /// Publishes C and D's two private post-exit clients only while B holds
     /// the source low owner bit for its direct free. Each scoped join is part

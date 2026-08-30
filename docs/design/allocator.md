@@ -126,8 +126,11 @@ proof and route-specific parked scheduler token in B TLS; B's own normal
 attachment finish settles that token and releases A's admission. The registry
 never contains a client address, page, or allocator; its exact frees take only
 short serialized PageMap access, and a sibling route blocks any consuming
-long-lease adoption. Metadata-growth or terminal-route failure retains the
-exact source owner rather than publishing a fallback. The default-off direct
+long-lease adoption. Before a retained entry publishes, it closes the same
+short registry mutation boundary that installs detached owners: an in-flight A
+finishes its complete installation before that closure, while a later A cannot
+publish beside the terminal route. Metadata-growth or terminal-route failure
+retains the exact source owner rather than publishing a fallback. The default-off direct
 `native_post_exit_failed_os_release` regression makes the next source
 `munmap` fail only after A's mixed aggregate has detached and B offers its one
 OS-aligned address. That exact free returns `Retained`; the stable entry remains

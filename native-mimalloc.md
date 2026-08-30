@@ -74,11 +74,14 @@ with its detached facts. Empty entries are reused, and registry storage grows
 only to the process high-water of independently detached A owners. Its terminal
 source release transfers a completion to its matched B; only that B's ordinary
 attachment finish removes the exact parked count and then releases A's admission.
-The registry never exposes a client address, and each route takes only short
-serialized PageMap access; a sibling route blocks consumption into a long
-PageMap lease. A metadata-growth or terminal-route failure retains the exact
-owner rather than publishing a fallback. This remains a lifecycle substrate,
-not general C routing or concurrent page mutation. The
+Before a retained entry publishes, it closes the same short registry mutation
+boundary that installs detached owners: an in-flight A finishes its complete
+installation before that closure, while a later A cannot publish beside the
+terminal route. The registry never exposes a client address, and each route
+takes only short serialized PageMap access; a sibling route blocks consumption
+into a long PageMap lease. A metadata-growth or terminal-route failure retains
+the exact owner rather than publishing a fallback. This remains a lifecycle
+substrate, not general C routing or concurrent page mutation. The
 selected C overflow witness drives 80 1 KiB direct-small clients, followed by
 non-direct-small, medium, large, and arena-singleton clients, through one
 ordinary session. It proves the same aggregate traversal accounts for the

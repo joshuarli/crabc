@@ -1279,8 +1279,13 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   The audited `native_post_exit_with_local_session` route additionally proves
   that B's parked local session holds both admissions through A's terminal
   release, then leaves only B's successor-route admission until C completes
-  its own typed terminal finish. Exact frees are serialized; this is not a
-  concurrent route or general pointer-routing claim. The
+  its own typed terminal finish. The
+  `native_post_exit_registry_terminal_close_waits_for_an_inflight_installation`
+  unit regression proves that terminal retention waits for an in-flight
+  detached-owner installation to complete, then permanently rejects a later
+  installation; the shared registry word cannot overwrite the in-flight route
+  back to idle. Exact frees are serialized; this is not a concurrent route or
+  general pointer-routing claim. The
   pinned AArch64 `allocator --churn` fixture executes its four existing routes
   once per deterministic seed-shuffled cycle for 128 cycles from seed
   `0xd1b54a32d192ed03` under its 30-second watchdog without changing the
