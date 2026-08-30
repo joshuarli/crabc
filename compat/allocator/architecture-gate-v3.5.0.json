@@ -30,6 +30,25 @@
       "crabc-mimalloc/src/process_page_map.rs"
     ]
   },
+  "caller_identity_first_free_dispatch": {
+    "path": "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "function": "native_free",
+    "caller_identity_patterns": [
+      "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\("
+    ],
+    "pointer_dispatch_patterns": [
+      "\\blookup_page_for_live_client\\s*\\(",
+      "\\bcanonical_remote_block_for_live_client_at\\s*\\("
+    ],
+    "maximum_phase_a_identity_matches": 1,
+    "phase_a_bridge": {
+      "phase": "A",
+      "marker": "CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE",
+      "source_anchor_pattern": "\\bRUNTIME_PROCESS\\.is_on_initial_thread\\s*\\(",
+      "removal_condition": "Remove CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE when native_free derives owner and abandoned-state authority from pointer-to-page dispatch, before any caller-identity branch, under production_general evidence.",
+      "final_acceptance": false
+    }
+  },
   "metrics": {
     "local_hot_path_process_scheduler_ops": {
       "final_required": 0,

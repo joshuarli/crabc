@@ -34,6 +34,16 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertEqual(report["scope"]["current"], "shadow_subset")
         self.assertTrue(report["scope"]["static_analysis_cannot_close_final_gate"])
         self.assertEqual(report["selected_production"]["status"], "static-selection-confirmed")
+        dispatch = report["caller_identity_first_free_dispatch"]
+        self.assertEqual(dispatch["status"], "phase_a_bridge")
+        self.assertTrue(dispatch["caller_identity_first"])
+        self.assertFalse(dispatch["final_acceptance"])
+        self.assertEqual(
+            dispatch["phase_a_bridge"]["marker"],
+            "CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE",
+        )
+        self.assertIn("pointer-to-page", dispatch["phase_a_bridge"]["removal_condition"])
+        self.assertEqual(report["structural_violations"], [])
         manifest_metadata = report["selected_production"]["libc_manifest"]
         self.assertTrue(manifest_metadata["feature_declared"])
         self.assertTrue(manifest_metadata["native_engine_dependency_declared"])
@@ -103,12 +113,43 @@ struct CurrentSource {};
         synthetic = copy.deepcopy(report)
         synthetic["forbidden_scaffolding_compiled"]["compiled_from_selected_source"] = False
         synthetic["unmodified_upstream_stress"]["status"] = "verified"
+        synthetic["caller_identity_first_free_dispatch"]["status"] = "no_caller_identity_dispatch"
         for metric in synthetic["metrics"].values():
             metric["source_indicator_count"] = 0
         self.assertEqual(
             RATCHET.gate_unmet(synthetic),
             ["production-general runtime/artifact evidence"],
         )
+
+    def test_phase_a_bridge_requires_its_explicit_removal_condition(self) -> None:
+        invalid = copy.deepcopy(self.manifest)
+        del invalid["caller_identity_first_free_dispatch"]["phase_a_bridge"]["removal_condition"]
+        with self.assertRaisesRegex(RATCHET.RatchetError, "removal_condition"):
+            RATCHET.validate_manifest(invalid)
+
+    def test_structural_checker_allows_pointer_first_but_rejects_an_extra_identity_branch(self) -> None:
+        policy = copy.deepcopy(self.manifest)
+        policy["caller_identity_first_free_dispatch"]["path"] = "runtime.rs"
+        pointer_first_source = """\
+pub unsafe fn native_free() { lookup_page_for_live_client(); if RUNTIME_PROCESS.is_on_initial_thread() {} }
+"""
+        repeated_identity_source = """\
+pub unsafe fn native_free() {
+    if RUNTIME_PROCESS.is_on_initial_thread() {}
+    if RUNTIME_PROCESS.is_on_initial_thread() {}
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "runtime.rs"
+            source.write_text(pointer_first_source, encoding="utf-8")
+            pointer_first = RATCHET.caller_identity_first_free_dispatch(root, policy)
+            self.assertEqual(pointer_first["status"], "pointer_dispatch_first")
+            self.assertFalse(pointer_first["structural_violation"])
+            source.write_text(repeated_identity_source, encoding="utf-8")
+            repeated_identity = RATCHET.caller_identity_first_free_dispatch(root, policy)
+            self.assertEqual(repeated_identity["status"], "forbidden")
+            self.assertTrue(repeated_identity["structural_violation"])
 
     def test_runtime_evidence_requires_selected_artifact_metadata_and_matching_sources(self) -> None:
         report = RATCHET.evaluate(ROOT, MANIFEST, None)

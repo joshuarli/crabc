@@ -149,6 +149,65 @@ def source_matches(root: Path, relative_path: str, pattern: str) -> list[SourceM
     return matches
 
 
+def rust_function_body(source: str, function: str) -> tuple[int, str]:
+    """Return one Rust function body's offset and comment-masked source.
+
+    This intentionally recognizes only the narrow free-dispatch boundary
+    named by the manifest.  It is not a general Rust parser; the brace walk
+    gives this ratchet a structural boundary stronger than a repository-wide
+    grep, while comments and ordinary strings cannot supply a false branch.
+    """
+
+    code = strip_rust_comments(source)
+    header = re.compile(
+        rf"\b(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?fn\s+{re.escape(function)}\b[^{{]*\{{",
+        re.MULTILINE,
+    )
+    match = header.search(code)
+    if match is None:
+        raise RatchetError(f"selected source does not define required function: {function}")
+    opening_brace = code.find("{", match.start(), match.end())
+    depth = 0
+    for index in range(opening_brace, len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return opening_brace + 1, code[opening_brace + 1 : index]
+    raise RatchetError(f"selected function has an unclosed body: {function}")
+
+
+def function_matches(
+    root: Path, relative_path: str, function: str, pattern: str
+) -> list[SourceMatch]:
+    return [
+        source_match
+        for _, source_match in function_match_offsets(root, relative_path, function, pattern)
+    ]
+
+
+def function_match_offsets(
+    root: Path, relative_path: str, function: str, pattern: str
+) -> list[tuple[int, SourceMatch]]:
+    path = root / relative_path
+    if not path.is_file():
+        raise RatchetError(f"selected production source is absent: {relative_path}")
+    source = path.read_text(encoding="utf-8")
+    body_offset, body = rust_function_body(source, function)
+    return [
+        (
+            match.start(),
+            SourceMatch(
+                path=relative_path,
+                line=source.count("\n", 0, body_offset + match.start()) + 1,
+                pattern=pattern,
+            ),
+        )
+        for match in re.finditer(pattern, body, flags=re.MULTILINE)
+    ]
+
+
 def required_mapping(value: object, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise RatchetError(f"architecture manifest {name} must be an object")
@@ -182,6 +241,29 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
         raise RatchetError("architecture manifest scope.current is not an evidence scope")
     if scope.get("static_analysis_cannot_close_final_gate") is not True:
         raise RatchetError("architecture manifest must prohibit static-only final success")
+    caller_dispatch = required_mapping(
+        manifest.get("caller_identity_first_free_dispatch"),
+        "caller_identity_first_free_dispatch",
+    )
+    required_string(caller_dispatch.get("path"), "caller_identity_first_free_dispatch.path")
+    required_string(caller_dispatch.get("function"), "caller_identity_first_free_dispatch.function")
+    for name in ("caller_identity_patterns", "pointer_dispatch_patterns"):
+        patterns = caller_dispatch.get(name)
+        if not isinstance(patterns, list) or not patterns or not all(
+            isinstance(pattern, str) and pattern for pattern in patterns
+        ):
+            raise RatchetError(f"architecture manifest caller-identity dispatch {name} is invalid")
+    maximum_identity_matches = caller_dispatch.get("maximum_phase_a_identity_matches")
+    if type(maximum_identity_matches) is not int or maximum_identity_matches < 1:
+        raise RatchetError("architecture manifest caller-identity bridge maximum is invalid")
+    phase_a_bridge = required_mapping(
+        caller_dispatch.get("phase_a_bridge"),
+        "caller_identity_first_free_dispatch.phase_a_bridge",
+    )
+    if phase_a_bridge.get("phase") != "A" or phase_a_bridge.get("final_acceptance") is not False:
+        raise RatchetError("caller-identity bridge must be a non-final Phase-A exception")
+    for name in ("marker", "removal_condition", "source_anchor_pattern"):
+        required_string(phase_a_bridge.get(name), f"caller_identity_first_free_dispatch.phase_a_bridge.{name}")
     metrics = required_mapping(manifest.get("metrics"), "metrics")
     required_metrics = {
         "local_hot_path_process_scheduler_ops",
@@ -274,6 +356,91 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
         "metadata_plateau_after_warmup": [],
     }
     return {name: sorted(matches, key=lambda item: (item.path, item.line, item.pattern)) for name, matches in signals.items()}
+
+
+def caller_identity_first_free_dispatch(
+    root: Path, manifest: Mapping[str, Any]
+) -> dict[str, object]:
+    """Classify `native_free` dispatch without treating a bridge as final acceptance."""
+
+    policy = required_mapping(
+        manifest["caller_identity_first_free_dispatch"],
+        "caller_identity_first_free_dispatch",
+    )
+    path = required_string(policy.get("path"), "caller_identity_first_free_dispatch.path")
+    function = required_string(policy.get("function"), "caller_identity_first_free_dispatch.function")
+    identity_matches_with_offsets = sorted(
+        (
+            match
+            for pattern in policy["caller_identity_patterns"]
+            for match in function_match_offsets(root, path, function, pattern)
+        ),
+        key=lambda item: item[0],
+    )
+    pointer_matches_with_offsets = sorted(
+        (
+            match
+            for pattern in policy["pointer_dispatch_patterns"]
+            for match in function_match_offsets(root, path, function, pattern)
+        ),
+        key=lambda item: item[0],
+    )
+    caller_identity_first = bool(identity_matches_with_offsets) and (
+        not pointer_matches_with_offsets
+        or identity_matches_with_offsets[0][0] < pointer_matches_with_offsets[0][0]
+    )
+    identity_matches = [match for _, match in identity_matches_with_offsets]
+    pointer_matches = [match for _, match in pointer_matches_with_offsets]
+    bridge = required_mapping(
+        policy["phase_a_bridge"],
+        "caller_identity_first_free_dispatch.phase_a_bridge",
+    )
+    bridge_anchor_matches = function_matches(
+        root,
+        path,
+        function,
+        required_string(
+            bridge.get("source_anchor_pattern"),
+            "caller_identity_first_free_dispatch.phase_a_bridge.source_anchor_pattern",
+        ),
+    )
+    bridge_active = (
+        caller_identity_first
+        and len(identity_matches) <= policy["maximum_phase_a_identity_matches"]
+        and bool(bridge_anchor_matches)
+    )
+    if bridge_active:
+        status = "phase_a_bridge"
+        structural_violation = False
+    elif caller_identity_first:
+        status = "forbidden"
+        structural_violation = True
+    elif pointer_matches:
+        status = "pointer_dispatch_first"
+        structural_violation = False
+    else:
+        status = "no_caller_identity_dispatch"
+        structural_violation = False
+    return {
+        "caller_identity_first": caller_identity_first,
+        "caller_identity_matches": [match.as_dict() for match in identity_matches],
+        "final_acceptance": False,
+        "function": function,
+        "phase_a_bridge": {
+            "active": bridge_active,
+            "marker": bridge["marker"],
+            "phase": bridge["phase"],
+            "removal_condition": bridge["removal_condition"],
+            "source_anchor_matches": [match.as_dict() for match in bridge_anchor_matches],
+        },
+        "pointer_dispatch_matches": [match.as_dict() for match in pointer_matches],
+        "status": status,
+        "structural_violation": structural_violation,
+        "warning": (
+            "A Phase-A bridge is only a documented temporary exception. It cannot close the "
+            "architecture gate and must be removed when pointer-to-page abandoned-state dispatch lands."
+        ),
+    }
 
 
 def selected_source_metadata(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
@@ -479,6 +646,11 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
         unmet.append("selected production feature/module graph")
     if report["forbidden_scaffolding_compiled"]["compiled_from_selected_source"]:
         unmet.append("forbidden production scaffolding is still selected")
+    caller_dispatch = report["caller_identity_first_free_dispatch"]
+    if caller_dispatch["status"] == "forbidden":
+        unmet.append("caller-identity-first native_free dispatch")
+    elif caller_dispatch["status"] == "phase_a_bridge":
+        unmet.append("temporary Phase-A caller-identity native_free bridge")
     for name, metric in report["metrics"].items():
         if metric["source_indicator_count"]:
             unmet.append(f"{name} has selected-source indicators")
@@ -509,6 +681,7 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
     selected = selected_source_metadata(root, manifest)
     signals = collect_static_signals(root, manifest)
     metrics = metric_statuses(manifest, signals)
+    caller_dispatch = caller_identity_first_free_dispatch(root, manifest)
     runtime = load_runtime_evidence(runtime_evidence_path, selected)
     report: dict[str, object] = {
         "format": 1,
@@ -516,10 +689,16 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
         "scope": required_mapping(manifest["scope"], "scope"),
         "selected_production": selected,
         "metrics": metrics,
+        "caller_identity_first_free_dispatch": caller_dispatch,
         "forbidden_scaffolding_compiled": collect_forbidden_scaffolding(root, manifest),
         "unmodified_upstream_stress": upstream_stress_capability(root, manifest),
         "runtime_artifact_evidence": runtime,
         "ratchet": {"regressions": ratchet_regressions(manifest, signals)},
+        "structural_violations": (
+            ["caller-identity-first native_free dispatch"]
+            if caller_dispatch["structural_violation"]
+            else []
+        ),
     }
     unmet = gate_unmet(report)
     report["summary"] = {
@@ -562,6 +741,8 @@ def main() -> int:
         print(report_path)
         if report["ratchet"]["regressions"]:
             raise RatchetError("architecture ratchet regressed: " + "; ".join(report["ratchet"]["regressions"]))
+        if report["structural_violations"]:
+            raise RatchetError("architecture structural prohibition: " + "; ".join(report["structural_violations"]))
         if arguments.gate and not report["summary"]["final_architecture_passed"]:
             raise RatchetError("architecture gate unmet: " + "; ".join(report["summary"]["unmet"]))
         return 0
