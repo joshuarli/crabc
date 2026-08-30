@@ -1381,6 +1381,12 @@ drains B locally before teardown.
 live A/B/C handoff: two independently attached publishers race distinct exact
 clients, one matching registry entry serializes them, and A collects both
 through the direct runtime and selected libc artifact.
+The selected `tests/fixtures/native_mimalloc_source_published_exit_test.c`
+companion covers the no-local-client finish boundary through the same shadow
+ABI: B publishes A's sole exact direct-small client, A performs no further
+allocator operation, and its ordinary pthread destructor must use the typed
+all-free drain before ticket zero can reactivate. It remains a one-address
+source publication witness, not a general worker-pointer route.
 `crabc-mimalloc/tests/native_two_live_remote_owners.rs` and
 `tests/fixtures/native_mimalloc_two_live_remote_owners_test.c` then park A1
 before A2 enters its own setup transition, leaving two registry entries active

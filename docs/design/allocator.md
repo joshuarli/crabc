@@ -963,7 +963,10 @@ its all-free test. Every live session remains
 outside the no-page finalizer. Isolated source-published-session regressions
 first warm ticket zero, publish either one or two joined private clients, and
 prove that normal finish force-collects them, tears down A, and returns ticket
-zero to ready.
+zero to ready. The selected-C `native_mimalloc_source_published_exit` companion
+narrows that same boundary to one A/B handoff: B publishes A's sole direct-small
+client, A performs no later local allocator operation, and its ordinary pthread
+finish must still complete the typed all-free drain before ticket zero resumes.
 For the two source-valid post-exit B/C/D interleavings, the same session can
 move exactly three generation-checked opaque ledger keys into either its
 direct-small group or its separately typed mapped, non-full medium group.

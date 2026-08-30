@@ -2100,6 +2100,12 @@ ordinary malloc work. The read-only query claims and restores that entry
 without borrowing a page engine or scheduler. Each stable metadata-backed
 entry retains only an A TLS slot/generation, never a client address, page, or
 allocator.
+The selected `native_mimalloc_source_published_exit` fixture covers the
+complementary no-local-client finish: after B publishes A's sole exact client,
+A performs no further allocator operation, so its ordinary pthread destructor
+must still force-collect the source head through the typed all-free drain
+before ticket zero can reactivate. It exposes no additional pointer or page
+capability.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The
