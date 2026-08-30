@@ -69,9 +69,21 @@ fn joined_source_publication_stays_with_a_when_live_native_client_exits() {
         .join()
         .expect("A reaches the typed native post-exit route");
 
-    assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "A's detached live sibling keeps ticket zero unavailable after source collection"
+    // A's route is still source-active: ticket zero may perform only its own
+    // private operation beside the parked route token. It neither consumes
+    // A's route nor releases A's worker-admission claim.
+    let private = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        TicketZeroPageAllocationResult::Unavailable
+        | TicketZeroPageAllocationResult::AllocationFailed
+        | TicketZeroPageAllocationResult::Retained => {
+            panic!("ticket zero can complete its private operation beside A's source-active route")
+        }
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(private) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its private client without touching A's route"
     );
 
     let releaser = std::thread::spawn(move || {
