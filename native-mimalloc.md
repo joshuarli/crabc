@@ -209,7 +209,11 @@ At this checkpoint:
   resumes, its moved session keeps its own entry `BUSY`. A second A may already
   have a separately parked active entry, but the source scheduler still
   serializes every PageMap operation and the registry never exposes either
-  client identity. General foreign worker `realloc` beyond the exact
+  client identity. If a raw-TLS handoff becomes terminal, it closes the same
+  short registry mutation boundary that installs live owners: an in-flight A
+  finishes its complete publication before that closure, while a later A
+  cannot publish beside the discarded handoff. General foreign worker `realloc`
+  beyond the exact
   detached-owner replacement, usable-size outside these exact routes, general
   single-page/adoption/reclaim routes, arbitrary concurrent worker setup or
   allocation, reclamation, and pthread stress remain incomplete.
@@ -1281,7 +1285,11 @@ considered, and no entry, address, page, or allocator capability escapes. A
 query claims and restores its matched entry without borrowing a page engine or
 scheduler; each later free performs one complete `PARKED -> BUSY -> PARKED`
 operation before restoring that entry. It never falls back to the C allocator.
-This does not claim a general owner-exit pointer domain: the
+If a raw-TLS handoff becomes terminal, it closes the same short registry
+mutation boundary that installs live owners: an in-flight A finishes its
+complete publication before that closure, while a later A cannot publish beside
+the discarded handoff. This does not claim a general owner-exit pointer domain:
+the
 selected-only `tests/native_mimalloc_owner_exit_realloc.rs` fixture proves one
 synchronized exact A/B route uses B allocation, bounded prefix copy, and the
 existing terminal A free, while invalid replacement size preserves A's

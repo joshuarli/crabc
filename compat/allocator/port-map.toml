@@ -2808,8 +2808,11 @@ that A's remote head. Empty entries are reused and metadata growth appends a
 process-lived node only when all entries are live. The selected two-live-owner
 witness parks A1 before A2 enters setup, then lets B1/B2 consume only their
 matching exact clients; the scheduler still serializes the two PageMap
-operations. This does not expose a pointer registry or concurrent PageMap
-mutation. The selected boundary has no C-backend fallback: unknown, foreign,
+operations. Before a terminal raw-TLS entry publishes, it closes the same
+short registry mutation boundary used for live-owner installation: an in-flight
+A completes its full publication before that closure, while a later A cannot
+publish beside the discarded handoff. This does not expose a pointer registry
+or concurrent PageMap mutation. The selected boundary has no C-backend fallback: unknown, foreign,
 unsupported, or terminal native frees fail-stop, and an unavailable allocation
 reports the selected C-ABI failure.
 

@@ -155,7 +155,10 @@ canonical block to A's remote head, and only then marks that ledger member
 `PublishedToLiveOwner`. A removes or claims its matching entry before every
 TLS inspection, resume, or teardown, so B cannot retain the raw TLS capability
 while A accesses its session. A's next ordinary operation or its all-free drain
-collects the source remote head. Native failure
+collects the source remote head. If a raw-TLS handoff becomes terminal, it
+closes the same short registry mutation boundary that installs live owners: an
+in-flight A finishes its complete publication before that closure, while a
+later A cannot publish beside the discarded handoff. Native failure
 returns the C allocation failure result, and an unknown or wrong-owner native
 pointer fail-stops instead of crossing to the C allocator. This remains a
 bounded source route, not an iterable or general pointer registry: detached
@@ -845,7 +848,9 @@ slot/generation, never a client address, page, or allocator; B restores that
 entry to `PARKED` before A can resume. The selected direct and C
 two-live-owner fixtures park A1 before A2 enters setup, then let B1/B2 query
 and free only their matching exact clients while the scheduler serializes the
-two PageMap operations. These routes compose once in the selected C fixture:
+two PageMap operations. Terminal raw-TLS retention closes the same short
+registry mutation boundary used for installation, so later A sessions cannot
+publish beside a discarded handoff. These routes compose once in the selected C fixture:
 A collects B's exact live-owner publication through its normal resumed
 operation, then its later ordinary owner exit moves only the remaining exact clients into
 `NativePostExitRouteRegistry` for fresh C. This does not create general page-bearing

@@ -181,10 +181,11 @@ const NATIVE_LIVE_REMOTE_OWNER_RETAINED: u8 = 3;
 
 // Appending one stable live-owner entry is separate from claiming that entry
 // for a source-shaped B operation. Readers may scan the append-only list
-// without exposing a client or node identity; growth never serializes ordinary
-// PageMap work or a different entry's `ACTIVE -> BUSY` transition.
+// without exposing a client or node identity. The short registry mutation word
+// serializes installation with terminal closure, while ordinary PageMap work
+// and a different entry's `ACTIVE -> BUSY` transition stay independent.
 const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE: u8 = 0;
-const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_GROWING: u8 = 1;
+const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_MUTATING: u8 = 1;
 const NATIVE_LIVE_REMOTE_OWNER_REGISTRY_RETAINED: u8 = 2;
 
 // Linux/AArch64's public C allocation ABI guarantees 16-byte natural malloc
@@ -5011,6 +5012,17 @@ impl NativeLiveRemoteOwnerStorage {
         }
     }
 
+    /// Publishes a terminal raw-TLS handoff only after the private registry
+    /// has closed future live-owner installation. The closure contains no TLS
+    /// identity, client, page, or allocator capability; it records only that
+    /// a discarded source handoff has made the process terminal.
+    #[inline]
+    fn publish_retained(&self) {
+        NATIVE_LIVE_REMOTE_OWNER.close_for_retained_entry();
+        self.state
+            .store(NATIVE_LIVE_REMOTE_OWNER_RETAINED, Ordering::Release);
+    }
+
     /// Classifies one stable entry without exposing its raw TLS identity. A
     /// malformed state has no reconstructible source owner, so it becomes
     /// terminal rather than reusable.
@@ -5168,20 +5180,16 @@ impl NativeLiveRemoteOwnerGuard {
     /// ownership closed instead.
     fn retain(mut self) {
         self.owner.take();
-        self.storage
-            .state
-            .store(NATIVE_LIVE_REMOTE_OWNER_RETAINED, Ordering::Release);
         RUNTIME_PROCESS.retain_page_owner();
+        self.storage.publish_retained();
     }
 }
 
 impl Drop for NativeLiveRemoteOwnerGuard {
     fn drop(&mut self) {
         if self.owner.take().is_some() {
-            self.storage
-                .state
-                .store(NATIVE_LIVE_REMOTE_OWNER_RETAINED, Ordering::Release);
             RUNTIME_PROCESS.retain_page_owner();
+            self.storage.publish_retained();
         }
     }
 }
@@ -5244,14 +5252,14 @@ enum NativeLiveRemoteOwnerRegistryInstall {
 /// considered. The only value that leaves this registry internally is an
 /// opaque guard paired with an already-validated private client fact.
 struct NativeLiveRemoteOwnerRegistry {
-    growth: AtomicU8,
+    mutation: AtomicU8,
     head: AtomicPtr<NativeLiveRemoteOwnerRegistryNode>,
 }
 
 impl NativeLiveRemoteOwnerRegistry {
     const fn new() -> Self {
         Self {
-            growth: AtomicU8::new(NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE),
+            mutation: AtomicU8::new(NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE),
             head: AtomicPtr::new(core::ptr::null_mut()),
         }
     }
@@ -5284,26 +5292,29 @@ impl NativeLiveRemoteOwnerRegistry {
         if candidate.is_null() {
             return NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner);
         }
-        // SAFETY: the candidate is an append-only stable node. A concurrent
-        // installer may win its EMPTY -> BUSY transition; in that case this
-        // returns the unchanged owner for a rescan rather than overwriting it.
+        // SAFETY: the candidate is an append-only stable node. The registry
+        // mutation word serializes another installer and terminal closure,
+        // while this entry transition proves no route overwrites a nonempty
+        // stable node.
         match unsafe { (&*candidate).storage.install(owner) } {
             Ok(()) => NativeLiveRemoteOwnerRegistryExistingInstall::Installed,
             Err(owner) => NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner),
         }
     }
 
-    /// Acquires only the append word. It never covers a live-owner source
-    /// operation, whose entry-level state retains the short serialization.
-    fn acquire_growth(&self) -> bool {
+    /// Acquires the registry-only transition that installs one parked live
+    /// owner. It never covers a source operation, whose entry-level state
+    /// retains the short serialization. A retained registry is terminal for
+    /// future raw-TLS handoffs, so this reports false without reopening it.
+    fn acquire_mutation(&self) -> bool {
         loop {
-            match self.growth.load(Ordering::Acquire) {
+            match self.mutation.load(Ordering::Acquire) {
                 NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE => {
                     if self
-                        .growth
+                        .mutation
                         .compare_exchange(
                             NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE,
-                            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_GROWING,
+                            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_MUTATING,
                             Ordering::AcqRel,
                             Ordering::Acquire,
                         )
@@ -5312,7 +5323,8 @@ impl NativeLiveRemoteOwnerRegistry {
                         return true;
                     }
                 }
-                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_GROWING => core::hint::spin_loop(),
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_MUTATING => core::hint::spin_loop(),
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_RETAINED => return false,
                 _ => {
                     RUNTIME_PROCESS.retain_page_owner();
                     return false;
@@ -5322,9 +5334,63 @@ impl NativeLiveRemoteOwnerRegistry {
     }
 
     #[inline]
-    fn release_growth(&self) {
-        self.growth
+    fn release_mutation(&self) {
+        self.mutation
             .store(NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE, Ordering::Release);
+    }
+
+    /// Tries to close the registry after a raw-TLS handoff becomes terminal.
+    /// An in-flight installer owns the mutation word until it has published a
+    /// complete live owner or retained that exact source, so closure waits
+    /// instead of overwriting its state back to idle.
+    #[inline]
+    fn try_close_for_retained_entry(&self) -> bool {
+        loop {
+            match self.mutation.load(Ordering::Acquire) {
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE => {
+                    if self
+                        .mutation
+                        .compare_exchange(
+                            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE,
+                            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_RETAINED,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_MUTATING => return false,
+                NATIVE_LIVE_REMOTE_OWNER_REGISTRY_RETAINED => return true,
+                _ => {
+                    RUNTIME_PROCESS.retain_page_owner();
+                    return true;
+                }
+            }
+        }
+    }
+
+    /// Closes future live-owner installation after one raw-TLS handoff has
+    /// become terminal. It is only a private process-lifetime closure fact;
+    /// it does not expose or release an entry, client, page, or allocator.
+    fn close_for_retained_entry(&self) {
+        while !self.try_close_for_retained_entry() {
+            core::hint::spin_loop();
+        }
+    }
+
+    #[inline]
+    fn is_closed_for_retained_entry(&self) -> bool {
+        match self.mutation.load(Ordering::Acquire) {
+            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_IDLE
+            | NATIVE_LIVE_REMOTE_OWNER_REGISTRY_MUTATING => false,
+            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_RETAINED => true,
+            _ => {
+                RUNTIME_PROCESS.retain_page_owner();
+                true
+            }
+        }
     }
 
     /// Installs a current A session into an empty stable entry or appends one
@@ -5336,29 +5402,22 @@ impl NativeLiveRemoteOwnerRegistry {
         owner: NativeLiveRemoteOwner,
         config: MemoryConfig,
     ) -> NativeLiveRemoteOwnerRegistryInstall {
-        let owner = match self.try_install_existing(owner) {
-            NativeLiveRemoteOwnerRegistryExistingInstall::Installed => {
-                return NativeLiveRemoteOwnerRegistryInstall::Installed;
-            }
-            NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner) => owner,
-            NativeLiveRemoteOwnerRegistryExistingInstall::Retained(owner) => {
-                return NativeLiveRemoteOwnerRegistryInstall::Retained(owner);
-            }
-        };
-        if !self.acquire_growth() {
+        if !self.acquire_mutation() {
             return NativeLiveRemoteOwnerRegistryInstall::Retained(owner);
         }
 
-        // A prior grower may have made an empty entry reusable while this
-        // caller waited. Recheck under the append word before allocating.
+        // This whole decision shares one linearization boundary with terminal
+        // closure. A retained raw-TLS handoff cannot appear after this A has
+        // selected an empty node but before that node receives its complete
+        // live image.
         let owner = match self.try_install_existing(owner) {
             NativeLiveRemoteOwnerRegistryExistingInstall::Installed => {
-                self.release_growth();
+                self.release_mutation();
                 return NativeLiveRemoteOwnerRegistryInstall::Installed;
             }
             NativeLiveRemoteOwnerRegistryExistingInstall::NeedsEntry(owner) => owner,
             NativeLiveRemoteOwnerRegistryExistingInstall::Retained(owner) => {
-                self.release_growth();
+                self.release_mutation();
                 return NativeLiveRemoteOwnerRegistryInstall::Retained(owner);
             }
         };
@@ -5369,7 +5428,7 @@ impl NativeLiveRemoteOwnerRegistry {
         ) {
             Ok(backing) => backing,
             Err(_) => {
-                self.release_growth();
+                self.release_mutation();
                 return NativeLiveRemoteOwnerRegistryInstall::Unavailable(owner);
             }
         };
@@ -5382,7 +5441,7 @@ impl NativeLiveRemoteOwnerRegistry {
         // is its one typed initialization before the Release publication.
         unsafe { node.write(NativeLiveRemoteOwnerRegistryNode::new(owner, next, backing)) };
         self.head.store(node, Ordering::Release);
-        self.release_growth();
+        self.release_mutation();
         NativeLiveRemoteOwnerRegistryInstall::Installed
     }
 
@@ -5393,6 +5452,9 @@ impl NativeLiveRemoteOwnerRegistry {
         &'static self,
         slot: core::ptr::NonNull<ThreadLifecycleSlot>,
     ) -> NativeLiveRemoteOwnerCurrentClaim {
+        if self.is_closed_for_retained_entry() {
+            return NativeLiveRemoteOwnerCurrentClaim::Retained;
+        }
         let mut saw_foreign = false;
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
@@ -5430,6 +5492,9 @@ impl NativeLiveRemoteOwnerRegistry {
         &'static self,
         block: core::ptr::NonNull<u8>,
     ) -> NativeLiveRemoteOwnerExactClaim {
+        if self.is_closed_for_retained_entry() {
+            return NativeLiveRemoteOwnerExactClaim::Retained;
+        }
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
             // SAFETY: see `claim_current_slot`; entries never move or leave
@@ -5477,6 +5542,9 @@ impl NativeLiveRemoteOwnerRegistry {
         &'static self,
         block: core::ptr::NonNull<u8>,
     ) -> NativeLiveRemoteOwnerUsableSizeResult {
+        if self.is_closed_for_retained_entry() {
+            return NativeLiveRemoteOwnerUsableSizeResult::Retained;
+        }
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
             // SAFETY: see `claim_current_slot`; this stable node owns the
@@ -5547,8 +5615,8 @@ impl NativeLiveRemoteOwnerRegistry {
 }
 
 // SAFETY: nodes publish only complete immutable links, and every mutable
-// entry operation owns its independent state word. The append word serializes
-// only metadata growth, not live allocator work.
+// entry operation owns its independent state word. The mutation word
+// serializes installation with terminal closure, not live allocator work.
 unsafe impl Sync for NativeLiveRemoteOwnerRegistry {}
 
 static NATIVE_LIVE_REMOTE_OWNER: NativeLiveRemoteOwnerRegistry =
@@ -12575,6 +12643,39 @@ mod tests {
         assert!(
             !registry.acquire_mutation(),
             "a later detached owner cannot install beside a retained route"
+        );
+    }
+
+    #[test]
+    fn native_live_owner_registry_terminal_close_waits_for_an_inflight_installation() {
+        let registry = NativeLiveRemoteOwnerRegistry::new();
+
+        assert!(
+            registry.acquire_mutation(),
+            "the first parked-live-owner installer holds the registry-only mutation word"
+        );
+        assert!(
+            !registry.try_close_for_retained_entry(),
+            "a terminal raw-TLS handoff waits rather than overwriting an in-flight installation back to idle"
+        );
+        assert_eq!(
+            registry.mutation.load(Ordering::Acquire),
+            NATIVE_LIVE_REMOTE_OWNER_REGISTRY_MUTATING,
+            "the terminal close leaves the complete in-flight live-owner installation authoritative"
+        );
+
+        registry.release_mutation();
+        assert!(
+            registry.try_close_for_retained_entry(),
+            "the terminal raw-TLS handoff closes future installation after the current owner publishes"
+        );
+        assert!(
+            registry.is_closed_for_retained_entry(),
+            "the terminal live-owner latch remains private and visible without exposing TLS state"
+        );
+        assert!(
+            !registry.acquire_mutation(),
+            "a later parked live owner cannot publish beside the retained handoff"
         );
     }
 
