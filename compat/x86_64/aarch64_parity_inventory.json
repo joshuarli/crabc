@@ -1517,7 +1517,7 @@
       "capability_count": 0,
       "contract_state": "implemented-foundation",
       "id": "crt.static-pie",
-      "verified_artifact_count": 0,
+      "verified_artifact_count": 1,
       "verified_slice_count": 0
     },
     {
@@ -1665,6 +1665,10 @@
     {
       "family": "crt.dynamic-startup",
       "id": "x86-crt-five-object-provenance-bundle"
+    },
+    {
+      "family": "crt.static-pie",
+      "id": "static-pie-rust-builtins-bundle"
     },
     {
       "family": "ldso.dynamic-runtime",
@@ -2011,7 +2015,7 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "99a5f4c9a44526d16796bc5c7e51e1f3d2c429bc6f95849ad0312b62f0539e40",
+    "x86_parity_ledger": "3dd173230e010ec01963eb982726da6e4cb478b4fbbc403cf564265562310585",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "bee215ccae04b2a1f619d2f42889d7599b530d7fdc2c9ab1dfd1c8137fd34467"
   },

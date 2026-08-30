@@ -57,3 +57,14 @@ python3 builtins/build.py --output target/crabc-sysroot/usr/lib/libcrabc-builtin
 The sealed driver passes `-mno-outline-atomics`, links `libc` before this
 archive, and audits resolved LLD inputs. Thus public libc math symbols remain
 owned by `libc`; the archive is selected only for compiler-generated helpers.
+
+## Private x86 static-PIE bundle helper
+
+`build_x86_64.py` is a deliberately narrower, native-evidence-only builder.
+It compiles the existing Rust helper source into a deterministic one-member
+`libcrabc-builtins.a`, audits its x86-64 ELF shape and helper closure, and is
+consumed only by `./crt/run-x86_64.sh static-pie-bundle`. The fixture selects
+`__udivti3` to prove the archive is really consumed alongside Rust
+`rcrt1.o`/`crti.o`/`crtn.o`; it rejects any ambient CRT or compiler-runtime
+input before linking. It neither reuses a prebuilt compiler runtime nor
+creates an installed x86 sysroot or complete x86 compiler-helper profile.

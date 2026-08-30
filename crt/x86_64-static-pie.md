@@ -86,6 +86,25 @@ fresh selected worker, and malformed `PT_TLS.p_filesz` rejection with status
 127. It does not promote general CRT/startup, libc entry ABI, pthread/TLS,
 loader TLS, sysroot, or public x86 support.
 
+The private Rust CRT/compiler-helper consumption bundle is separately proved
+with:
+
+```bash
+./crt/run-x86_64.sh static-pie-bundle
+```
+
+It builds a deterministic, one-member Rust-only `libcrabc-builtins.a` from
+`builtins/src/lib.rs`, then links a controlled `__udivti3` consumer through
+the real `rcrt1.o`/`crti.o`/`crtn.o` objects. The runner first proves that the
+consumer cannot link without that exact archive, attributes the resolved
+helper to it with LLD's symbol trace, and rejects any additional CRT object or
+compiler-runtime archive before invoking LLD. The resulting static `ET_DYN`
+has no interpreter, `DT_NEEDED`, PLT/GOT dynamic-link surface, unresolved
+symbol, or non-relative dynamic relocation, and executes the bounded `IBF`
+lifecycle. This is deliberately an evidence-only x86 helper bundle: it is not
+an installed compiler runtime, an owned sysroot, a libc/TLS proof, dynamic CRT
+support, or public x86 support.
+
 Remaining work is intentionally out of this slice: dynamic `crt1.o` and
 `Scrt1.o` contracts beyond this static `ET_EXEC` entry, owned-loader startup
 handoff, x86-64 ldso relocation/TLS support, pthread TLS lifecycle, sysroot

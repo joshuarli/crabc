@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -19,6 +20,8 @@ CRT_ROOT = Path(__file__).resolve().parents[1]
 ROOT = CRT_ROOT.parent
 BUILDER = CRT_ROOT / "build_x86_64.py"
 FIXTURE = CRT_ROOT / "fixtures" / "static_pie_fixture_x86_64.rs"
+BUNDLE_FIXTURE = CRT_ROOT / "fixtures" / "static_pie_builtins_bundle_x86_64.rs"
+BUILTINS_BUILDER = ROOT / "builtins" / "build_x86_64.py"
 TARGET = "x86_64-unknown-linux-musl"
 PINNED_TOOLCHAIN = "nightly-2026-07-24"
 
@@ -33,6 +36,8 @@ DT_NEEDED = 1
 DT_RELA = 7
 DT_RELASZ = 8
 DT_RELR = 36
+DT_PLTGOT = 3
+DT_JMPREL = 23
 R_X86_64_RELATIVE = 8
 R_X86_64_64 = 1
 
@@ -112,6 +117,8 @@ def inspect_static_pie(path: Path, *, packed_relr: bool) -> None:
     if tls_headers:
         raise AssertionError("no-TLS static PIE fixture unexpectedly has PT_TLS")
     tags = dynamic_tags(data, program_headers)
+    if DT_PLTGOT in tags or DT_JMPREL in tags:
+        raise AssertionError("static PIE unexpectedly retains a PLT/GOT dynamic-link surface")
     if packed_relr:
         if DT_RELR not in tags:
             raise AssertionError("packed static PIE lacks DT_RELR")
@@ -166,12 +173,63 @@ def relr_summary(path: Path) -> list[int]:
     return [struct.unpack_from("<Q", data, offset)[0] for offset in range(table, table + relr_size, 8)]
 
 
+def compile_fixture(source: Path, output: Path) -> None:
+    compile = subprocess.run(
+        toolchain_rustc()
+        + [
+            "--edition=2021",
+            "--crate-type=lib",
+            "--emit=obj",
+            "--target",
+            TARGET,
+            "-C",
+            "panic=abort",
+            "-C",
+            "opt-level=2",
+            "-C",
+            "relocation-model=pic",
+            "--remap-path-prefix",
+            f"{ROOT}=/crabc",
+            str(source),
+            "-o",
+            str(output),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if compile.returncode != 0:
+        raise AssertionError(compile.stderr.decode(errors="replace"))
+
+
+def closed_bundle_inputs(crt_output: Path, fixture: Path, builtins: Path, extras: tuple[Path, ...] = ()) -> list[str]:
+    """Return the only permitted inputs for the private static-PIE bundle.
+
+    The closed list is evidence infrastructure, not a compiler driver: adding
+    a CRT object or helper archive is rejected before LLD observes it, so an
+    ambient `crt1`, libgcc, or compiler-rt cannot silently satisfy the proof.
+    """
+
+    if extras:
+        raise ValueError("private static-PIE bundle rejects ambient CRT/runtime inputs")
+    return [
+        str(crt_output / "rcrt1.o"),
+        str(crt_output / "crti.o"),
+        str(fixture),
+        str(crt_output / "crtn.o"),
+        str(builtins),
+    ]
+
+
 @unittest.skipUnless(
     native_x86_64_evidence(),
     "requires the dedicated native Linux/x86-64 CRT evidence runner",
 )
 class X86_64StaticPieTests(unittest.TestCase):
     def test_static_pie_bootstrap_executes_and_rejects_unknown_relocations(self) -> None:
+        if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") == "bundle":
+            self.skipTest("bundle-only runner selects the CRT/builtins consumer")
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             crt_output = work / "crt"
@@ -270,6 +328,96 @@ class X86_64StaticPieTests(unittest.TestCase):
                         [str(malformed)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
                     )
                     self.assertEqual(rejected.returncode, 127, rejected.stderr.decode(errors="replace"))
+
+    def test_static_pie_bundle_consumes_owned_crt_and_rust_builtins_only(self) -> None:
+        if os.environ.get("CRABC_CRT_X86_64_EVIDENCE_SLICE") != "bundle":
+            self.skipTest("static-pie runner selects the no-TLS CRT foundation")
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            crt_output = work / "crt"
+            build = subprocess.run(
+                [sys.executable, str(BUILDER), "--out-dir", str(crt_output)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(build.returncode, 0, build.stderr.decode(errors="replace"))
+
+            builtins = work / "libcrabc-builtins.a"
+            builtins_build = subprocess.run(
+                [sys.executable, str(BUILTINS_BUILDER), "--output", str(builtins), "--verify-reproducible"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(builtins_build.returncode, 0, builtins_build.stderr.decode(errors="replace"))
+            provenance = json.loads(builtins.with_suffix(".a.provenance.json").read_text())
+            self.assertEqual(provenance["target"], TARGET)
+            self.assertTrue(provenance["reproducible"])
+            self.assertIn("__udivti3", provenance["archive"]["defined_symbols"])
+            self.assertEqual(provenance["archive"]["members"], ["crabc-builtins.o"])
+
+            fixture = work / "static_pie_builtins_bundle_x86_64.o"
+            compile_fixture(BUNDLE_FIXTURE, fixture)
+            undefined = subprocess.run(
+                ["llvm-nm", "--undefined-only", "--extern-only", str(fixture)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(undefined.returncode, 0, undefined.stderr.decode(errors="replace"))
+            self.assertIn("__udivti3", undefined.stdout.decode(errors="replace"))
+
+            missing_builtins = work / "static-pie-bundle-missing-builtins"
+            no_builtins_link = subprocess.run(
+                [
+                    link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start",
+                    str(crt_output / "rcrt1.o"), str(crt_output / "crti.o"), str(fixture),
+                    str(crt_output / "crtn.o"), "-o", str(missing_builtins),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(no_builtins_link.returncode, 0, "bundle unexpectedly linked without owned builtins")
+            self.assertIn("__udivti3", no_builtins_link.stderr.decode(errors="replace"))
+
+            ambient_runtime = work / "ambient-libgcc.a"
+            ambient_runtime.write_bytes(builtins.read_bytes())
+            ambient_crt = work / "ambient-rcrt1.o"
+            ambient_crt.write_bytes((crt_output / "rcrt1.o").read_bytes())
+            with self.assertRaisesRegex(ValueError, "rejects ambient CRT/runtime inputs"):
+                closed_bundle_inputs(crt_output, fixture, builtins, (ambient_runtime,))
+            with self.assertRaisesRegex(ValueError, "rejects ambient CRT/runtime inputs"):
+                closed_bundle_inputs(crt_output, fixture, builtins, (ambient_crt,))
+
+            executable = work / "static-pie-rust-crt-builtins-bundle"
+            link = subprocess.run(
+                [
+                    link_editor(), "-pie", "-static", "--no-dynamic-linker", "-e", "_start",
+                    "--trace-symbol=__udivti3",
+                    *closed_bundle_inputs(crt_output, fixture, builtins), "-o", str(executable),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(link.returncode, 0, link.stderr.decode(errors="replace"))
+            trace = (link.stdout + link.stderr).decode(errors="replace")
+            self.assertIn(str(builtins), trace)
+            self.assertNotIn("libgcc", trace)
+            self.assertNotIn("compiler-rt", trace)
+            inspect_static_pie(executable, packed_relr=False)
+            execution = subprocess.run(
+                [str(executable)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False
+            )
+            self.assertEqual(execution.returncode, 0, execution.stderr.decode(errors="replace"))
+            self.assertEqual(execution.stdout, b"IBF")
 
 
 if __name__ == "__main__":

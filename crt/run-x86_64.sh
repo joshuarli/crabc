@@ -16,6 +16,7 @@ Usage: ./crt/run-x86_64.sh <command>
 Native Linux/x86-64 bounded CRT evidence commands:
   image
   static-pie
+  static-pie-bundle
 
 The launcher refuses emulation and does not provide an x86 crabc runtime,
 libc, dynamic linker, sysroot, generic cargo, or shell command.
@@ -69,6 +70,20 @@ run_static_pie() {
         python3 crt/tests/test_x86_64_static_pie.py
 }
 
+run_static_pie_bundle() {
+    docker run --rm --init --read-only \
+        --platform "$PLATFORM" \
+        --workdir /workspace \
+        --env CRABC_CRT_X86_64_EVIDENCE=native \
+        --env CRABC_CRT_X86_64_EVIDENCE_SLICE=bundle \
+        --env CRABC_EXECUTION_MODE=native \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --tmpfs /tmp:rw,exec,nosuid,size=256m \
+        --volume "$ROOT_DIR:/workspace:ro" \
+        "$IMAGE" \
+        python3 crt/tests/test_x86_64_static_pie.py
+}
+
 if [ "$#" -ne 1 ]; then
     usage >&2
     exit 2
@@ -79,7 +94,7 @@ case "$1" in
         usage
         exit 0
         ;;
-    image|static-pie)
+    image|static-pie|static-pie-bundle)
         ;;
     *)
         usage >&2
@@ -96,5 +111,9 @@ case "$1" in
     static-pie)
         ensure_image
         run_static_pie
+        ;;
+    static-pie-bundle)
+        ensure_image
+        run_static_pie_bundle
         ;;
 esac

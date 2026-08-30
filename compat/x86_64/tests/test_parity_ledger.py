@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 87)
+        self.assertEqual(report["verified_artifact_count"], 88)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -3871,6 +3871,34 @@ class X86ParityLedgerTests(unittest.TestCase):
         static_pie_scope = static_pie["native_evidence"][0]["scope"]
         for detail in ("no-PT_TLS", "test-local", "TLS materialization", "public x86 support"):
             self.assertIn(detail, static_pie_scope)
+        builtins_bundle = next(
+            artifact
+            for artifact in static_pie["verified_artifact"]
+            if artifact["id"] == "static-pie-rust-builtins-bundle"
+        )
+        self.assertEqual(
+            {evidence["command"] for evidence in builtins_bundle["native_evidence"]},
+            {"./crt/run-x86_64.sh static-pie-bundle"},
+        )
+        bundle_description = builtins_bundle["description"]
+        for detail in (
+            "Rust-only `libcrabc-builtins.a`",
+            "`__udivti3`",
+            "ambient CRT objects",
+            "compiler-runtime archives",
+            "sysroot",
+            "public x86 support",
+        ):
+            self.assertIn(detail, bundle_description)
+        for owner in (
+            "builtins/build_x86_64.py",
+            "builtins/src/lib.rs",
+            "builtins/README.md",
+            "crt/fixtures/static_pie_builtins_bundle_x86_64.rs",
+            "crt/tests/test_x86_64_static_pie.py",
+            "crt/run-x86_64.sh",
+        ):
+            self.assertIn(owner, builtins_bundle["source_owners"])
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         for owner in (

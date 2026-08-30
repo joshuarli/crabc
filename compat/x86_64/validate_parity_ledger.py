@@ -5180,7 +5180,10 @@ def require_verified_artifacts(
     """
     if value is None:
         return []
-    require(status == "planned", f"{location} is allowed only on a planned family")
+    require(
+        status in {"planned", "foundation-verified"},
+        f"{location} is allowed only on a planned or foundation-verified family",
+    )
     require(isinstance(value, list) and value, f"{location} must be a non-empty array")
     records: list[Mapping[str, Any]] = []
     for index, entry in enumerate(value):
@@ -6011,6 +6014,92 @@ def require_static_crt1_initial_tls_handoff_artifact(family: Mapping[str, Any]) 
             phrase in scope,
             f"static-c-crt1-initial-tls-handoff evidence scope omits {phrase}",
         )
+
+
+def require_static_pie_rust_builtins_bundle_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the x86 CRT/helper consumer private, closed, and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[crt.static-pie].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-pie-rust-builtins-bundle"
+    ]
+    require(
+        len(matching) == 1,
+        "crt.static-pie must contain exactly one static-pie-rust-builtins-bundle artifact",
+    )
+    require(
+        family.get("status") == "foundation-verified",
+        "static-pie-rust-builtins-bundle must not change crt.static-pie foundation status",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-pie-rust-builtins-bundle needs a description")
+    for phrase in (
+        "Rust-only `libcrabc-builtins.a`",
+        "`__udivti3`",
+        "rcrt1.o`/`crti.o`/`crtn.o`",
+        "ambient CRT objects",
+        "compiler-runtime archives",
+        "complete x86 compiler runtime",
+        "sysroot",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-pie-rust-builtins-bundle description omits {phrase}")
+    owners = set(nonempty_strings(artifact["source_owners"], "static-pie-rust-builtins-bundle.source_owners"))
+    for owner in (
+        "builtins/build_x86_64.py",
+        "builtins/src/lib.rs",
+        "builtins/README.md",
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_rcrt1.rs",
+        "crt/src/x86_64_startup.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "crt/fixtures/static_pie_builtins_bundle_x86_64.rs",
+        "crt/tests/test_x86_64_static_pie.py",
+        "crt/run-x86_64.sh",
+        "crt/x86_64-static-pie.md",
+    ):
+        require(owner in owners, f"static-pie-rust-builtins-bundle source owners omit {owner}")
+    prerequisites = " ".join(nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-pie-rust-builtins-bundle.x86_abi_prerequisites"
+    ))
+    for phrase in (
+        "two consecutive machine words",
+        "__udivti3",
+        "R_X86_64_RELATIVE",
+        "DT_JMPREL",
+        "DT_PLTGOT",
+        "trace-symbol",
+        "no-TLS test stub",
+    ):
+        require(phrase in prerequisites, f"static-pie-rust-builtins-bundle ABI prerequisites omit {phrase}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./crt/run-x86_64.sh static-pie-bundle"},
+        "static-pie-rust-builtins-bundle must use the closed static-pie-bundle command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "deterministic one-member Rust-only",
+                "fail without it",
+                "ambient libgcc/compiler-rt",
+                "PLT/GOT dynamic-link surface",
+                "IBF",
+                "not a complete compiler runtime",
+                "public x86 support",
+            )
+        ),
+        "static-pie-rust-builtins-bundle evidence scope drifted",
+    )
 
 
 def require_static_pthread_identity_artifact(family: Mapping[str, Any]) -> None:
@@ -15063,6 +15152,7 @@ def validate_ledger(
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
+    require_static_pie_rust_builtins_bundle_artifact(by_id["crt.static-pie"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])

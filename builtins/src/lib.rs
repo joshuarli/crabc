@@ -1,8 +1,9 @@
-//! C-linkable compiler helpers owned by the Linux/AArch64 crabc sysroot.
+//! C-linkable compiler helpers owned by crabc's selected Linux targets.
 //!
-//! The AAPCS64 ABI represents a 128-bit integer in two consecutive general
-//! purpose registers. `Uint128` has that same two-word C representation: the
-//! low word precedes the high word on this little-endian target. Keeping the
+//! Both selected 64-bit little-endian ABIs pass a 128-bit integer in two
+//! consecutive machine words for these compiler-runtime entries. `Uint128`
+//! makes that representation explicit: the low word precedes the high word.
+//! Keeping the
 //! representation explicit avoids making this archive depend on Rust's
 //! language-level `u128` operations, which could recursively request the very
 //! helpers exported below.
@@ -13,15 +14,15 @@
 #[cfg(all(
     not(test),
     not(all(
-        target_arch = "aarch64",
+        any(target_arch = "aarch64", target_arch = "x86_64"),
         target_os = "linux",
         target_endian = "little",
         target_pointer_width = "64"
     ))
 ))]
-compile_error!("crabc-builtins is only built for Linux/AArch64 little-endian");
+compile_error!("crabc-builtins is only built for selected Linux 64-bit little-endian targets");
 
-/// The AAPCS64 representation of an unsigned 128-bit C integer.
+/// The selected target ABI representation of an unsigned 128-bit C integer.
 ///
 /// This type exists solely to make the exported helper ABI explicit. It is not
 /// a general public arithmetic API.
@@ -32,7 +33,7 @@ pub struct Uint128 {
     pub hi: u64,
 }
 
-/// AAPCS64's homogeneous floating aggregate representation of C
+/// The selected target ABI floating aggregate representation of C
 /// ``double _Complex``.
 ///
 /// The compiler helper ABI passes the real and imaginary components in the
@@ -47,7 +48,7 @@ pub struct ComplexDouble {
 
 /// Implement compiler-rt's IEEE recovery sequence for `(a + ib) * (c + id)`.
 ///
-/// The ordinary four products use AArch64 floating-point instructions. The
+/// The ordinary four products use target floating-point instructions. The
 /// NaN/infinity recovery preserves compiler-rt's observable C complex rules
 /// without importing a compiler runtime or a general math library.
 fn multiply_complex_double(mut a: f64, mut b: f64, mut c: f64, mut d: f64) -> ComplexDouble {
