@@ -1259,7 +1259,12 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   `0x9e3779b97f4a7c15`, proving ticket-zero reactivation after each.
   `crabc-mimalloc/tests/runtime_lifecycle_session_post_exit_publisher.rs`
   separately proves the active-session pair reaches B/C without exposing a
-  client address. The
+  client address. `crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs`
+  then proves one detached aggregate can outlive a nonterminal B no-page
+  lifecycle and reach terminal source release through fresh C: A's parked
+  scheduler token and admission remain private until C's normal finish. The
+  exact frees are serialized; this is not a concurrent route or general
+  pointer-routing claim. The
   pinned AArch64 `allocator --churn` fixture executes its four existing routes
   once per deterministic seed-shuffled cycle for 128 cycles from seed
   `0xd1b54a32d192ed03` under its 30-second watchdog without changing the

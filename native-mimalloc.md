@@ -1292,6 +1292,12 @@ not close Gate 5E.
 The focused `crabc-mimalloc/tests/native_post_exit_lifecycle.rs` regression
 pauses B after its terminal exact free and proves ticket zero remains blocked
 until B's normal finish consumes that completion.
+`crabc-mimalloc/tests/native_post_exit_split_releaser_lifecycle.rs` proves the
+same route may cross two sequential later-worker lifecycles: nonterminal B
+frees the OS, arena, and large tails then completes its own no-page teardown;
+fresh C frees the remaining medium and small clients, pauses after the terminal
+source free, and only C's normal finish releases A's parked scheduler token and
+admission. It is a serialized exact-free proof, not concurrent pointer routing.
 `crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs` proves the same
 ordering for the source-produced sole mapped-regular result.
 `crabc-mimalloc/tests/native_two_post_exit_lifecycle.rs` keeps the original
