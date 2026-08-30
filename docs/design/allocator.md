@@ -971,7 +971,11 @@ When a joined source-published client has a distinct live native sibling, the
 native destructor force-collects the source head during the same exit traversal
 and transfers only the live sibling into the deferred route. B cannot name the
 collected source client, and its terminal route proof still precedes release of
-A's admission.
+A's admission. The selected-C
+`native_mimalloc_source_published_live_owner_exit` companion exposes the same
+split without widening the seam: B source-publishes the small client, fresh C
+offers only the medium client after A exits, and C's ordinary finish settles
+the typed completion.
 For the two source-valid post-exit B/C/D interleavings, the same session can
 move exactly three generation-checked opaque ledger keys into either its
 direct-small group or its separately typed mapped, non-full medium group.

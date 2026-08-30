@@ -1106,7 +1106,12 @@ When a joined source-published client coexists with a distinct live native
 client, the native finish still selects the typed route for the live subset:
 the source drain consumes the published head before A detaches, and only B's
 terminal route proof plus B's own finish releases A's admission. The direct
-`native_source_published_live_owner_exit` regression proves that split.
+`native_source_published_live_owner_exit` regression proves that split. Its
+selected-C companion
+`native_mimalloc_source_published_live_owner_exit_test.c` makes the same
+boundary observable through the shadow ABI: B publishes the direct-small
+client, fresh C frees only the surviving medium client, and C's normal finish
+is required before the initial owner can resume.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

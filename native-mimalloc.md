@@ -1391,6 +1391,13 @@ ABI: B publishes A's sole exact direct-small client, A performs no further
 allocator operation, and its ordinary pthread destructor must use the typed
 all-free drain before ticket zero can reactivate. It remains a one-address
 source publication witness, not a general worker-pointer route.
+The selected
+`tests/fixtures/native_mimalloc_source_published_live_owner_exit_test.c`
+fixture covers the adjacent mixed lifecycle without adding a page-shape route:
+B source-publishes A's direct-small client, A exits with one distinct medium
+client still live, and fresh C may free only that medium client through the
+typed route. A's source collector consumes the first client privately; C's
+normal finish settles the terminal proof before ticket zero can reactivate.
 `crabc-mimalloc/tests/native_two_live_remote_owners.rs` and
 `tests/fixtures/native_mimalloc_two_live_remote_owners_test.c` then park A1
 before A2 enters its own setup transition, leaving two registry entries active
@@ -2450,7 +2457,9 @@ drain runs the source retired-page prepass, then force-collects the joined
 remote heads before it releases A's admission. When that joined source head
 has a distinct live native sibling, the native destructor takes the same
 source traversal but moves only the sibling into its deferred route; the
-source-published client remains unnameable to B.
+source-published client remains unnameable to B. The selected-C companion
+repeats that split as B source publication followed by a fresh C exact medium
+free, so neither client becomes a general route input.
 Separate isolated regressions warm ticket zero, publish either one or two
 joined private clients from an active session without preparing exit, and prove
 normal finish collects them, tears down A, and returns ticket zero to ready.

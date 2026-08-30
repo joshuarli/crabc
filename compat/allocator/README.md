@@ -2112,7 +2112,11 @@ ownership boundary: A's joined direct-small source publication remains solely
 for A's collector while a distinct live medium client enters the typed native
 post-exit route. B receives only that medium address, and its terminal free
 plus normal finish is still required before A's admission and ticket zero can
-release.
+release. The selected-C
+`native_mimalloc_source_published_live_owner_exit` fixture makes the same
+boundary explicit with separate actors: B publishes the small client before A
+exits, while fresh C receives only the medium address and must finish normally
+after its terminal typed free.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The
