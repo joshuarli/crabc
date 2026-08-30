@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph.rs"
+readonly SOURCE_ROOT="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_initial_graph_start.S"
 readonly LEAF="$ROOT_DIR/compat/x86_64/ldso_initial_graph_leaf.c"
 readonly MID="$ROOT_DIR/compat/x86_64/ldso_initial_graph_mid.c"
@@ -32,14 +32,41 @@ else
     trap 'rm -rf "$work_dir"' EXIT
 fi
 
-# A static Rust archive avoids selecting the host runtime while retaining the
-# toolchain's compiler-builtins.  The final link is explicitly ET_DYN and
-# keeps every x86 interpreter self-relocation symbol-free.
-rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
-    "$SOURCE" -o "$work_dir/libinitial_graph.a"
-cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
-    -Wl,--whole-archive "$work_dir/libinitial_graph.a" -Wl,--no-whole-archive \
-    -o "$work_dir/ld-crabc-x86_64-initial-graph.so"
+# Retain the original source-root artifact as a separate proof. The
+# target-root admission runner below selects the same graph through the
+# feature-gated `crabc-ldso` cdylib instead.
+case "${CRABC_LDSO_INITIAL_GRAPH_ROOT:-source}" in
+    source)
+        # A static Rust archive avoids selecting the host runtime while
+        # retaining the toolchain's compiler-builtins. The final link is
+        # explicitly ET_DYN and keeps every x86 interpreter self-relocation
+        # symbol-free.
+        rustc --edition=2021 --crate-type staticlib -C panic=abort -C relocation-model=pic \
+            "$SOURCE_ROOT" -o "$work_dir/libinitial_graph.a"
+        cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
+            -Wl,--whole-archive "$work_dir/libinitial_graph.a" -Wl,--no-whole-archive \
+            -o "$work_dir/ld-crabc-x86_64-initial-graph.so"
+        ;;
+    crabc-target)
+        # Build the actual private `crabc-ldso` target root. The feature is
+        # the only x86 admission path in that crate; it selects this fixed
+        # interpreter graph without changing the supported AArch64 root.
+        # `-crt-static` is required only because Rust's built-in musl target
+        # otherwise declines `cdylib`; the checks below still reject every
+        # external runtime edge in the resulting ET_DYN interpreter.
+        target_dir="$work_dir/ldso-target"
+        CARGO_TARGET_DIR="$target_dir" \
+        RUSTFLAGS='-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic' \
+            cargo build --locked --target x86_64-unknown-linux-musl -p crabc-ldso \
+                --no-default-features --features x86_64-initial-interpreter
+        cp "$target_dir/x86_64-unknown-linux-musl/debug/libldso.so" \
+            "$work_dir/ld-crabc-x86_64-initial-graph.so"
+        ;;
+    *)
+        printf '%s\n' 'ERROR: unsupported initial-graph root selection' >&2
+        exit 2
+        ;;
+esac
 
 test "$(readelf -h "$work_dir/ld-crabc-x86_64-initial-graph.so" | awk '/Type:/{print $2}')" = DYN
 if readelf -dW "$work_dir/ld-crabc-x86_64-initial-graph.so" | grep -Eq '\(NEEDED\)|\(INTERP\)'; then

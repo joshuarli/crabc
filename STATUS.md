@@ -6,7 +6,7 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
-The x86 lane has three private ET_DYN interpreter artifacts inside still-planned
+The x86 lane has four private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64
 RELA plus one bounded packed leaf `DT_RELR` direct-and-bitmap stream with
@@ -18,6 +18,13 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
+`ldso-target-root-admission` builds that unchanged fixed graph through the
+private feature-gated `crabc-ldso` x86-64 cdylib target and runs it as the
+actual ET_DYN `PT_INTERP` candidate. Its Cargo target admission rejects
+external runtime edges after building and preserves the pinned-musl graph and
+negative-input evidence. It remains a private target-root proof, not x86
+loader support, an installed interpreter, libc, CRT/sysroot, or a promotion.
+
 The separate `ldso-initial-tls` artifact keeps that original no-TLS proof
 unchanged while adding one fixed TLS-free main PIE -> two GNU-Dynamic TLS DSO
 graph. It proves checked DSO `PT_TLS` parsing and Variant-II copying,
@@ -26,7 +33,7 @@ and interpreter-owned `__tls_get_addr`, and reject-only TPOFF/static-TLS
 inputs. It remains neither a general loader/TLS/pthread implementation nor a
 dynamic CRT/sysroot, full x86-64 parity, or public x86 support claim.
 
-The third `ldso-owned-crt-handoff` sibling keeps both prior interpreter
+The `ldso-owned-crt-handoff` sibling keeps both prior interpreter
 artifacts unchanged while proving one fixed no-TLS main PIE -> mid.so -> leaf.so
 post-relocation publication to a Rust-produced Scrt1-owned dynamic main. Its
 only extra main lookup is the weak `R_X86_64_GLOB_DAT`

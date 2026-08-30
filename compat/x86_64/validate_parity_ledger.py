@@ -5686,6 +5686,7 @@ def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
         require(phrase in description, f"ldso-initial-graph description omits {phrase}")
     expected_sources = {
         "ldso/src/x86_64_initial_graph.rs",
+        "ldso/src/x86_64_initial_graph_source_root.rs",
         "compat/x86_64/ldso_initial_graph_start.S",
         "compat/x86_64/ldso_initial_graph_leaf.c",
         "compat/x86_64/ldso_initial_graph_mid.c",
@@ -5707,6 +5708,81 @@ def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
     require(
         "run_ldso_initial_graph.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-initial-graph dispatcher binding is missing",
+    )
+
+
+def require_ldso_target_root_admission_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the private Cargo-built x86 loader root without promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "ldso-target-root-admission"]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-target-root-admission artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-target-root-admission must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "`crabc-ldso` target-root admission",
+        "`x86_64-initial-interpreter` Cargo target",
+        "main PIE -> mid.so -> leaf.so",
+        "actual ET_DYN PT_INTERP candidate",
+        "no external DT_NEEDED/PT_TLS runtime edge",
+        "supported AArch64 loader root",
+        "public x86 support",
+    ):
+        require(phrase in description, f"ldso-target-root-admission description omits {phrase}")
+    expected_sources = {
+        "ldso/Cargo.toml",
+        "ldso/src/lib.rs",
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_initial_graph_leaf.c",
+        "compat/x86_64/ldso_initial_graph_mid.c",
+        "compat/x86_64/ldso_initial_graph_main.c",
+        "compat/x86_64/ldso_initial_graph_oracle_main.c",
+        "compat/x86_64/run_ldso_initial_graph.sh",
+        "compat/x86_64/run_ldso_target_root.sh",
+        "scripts/check_structure.py",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "ldso-target-root-admission source owners"))
+        == expected_sources,
+        "ldso-target-root-admission source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh ldso-target-root"},
+        "ldso-target-root-admission must use the dedicated native command",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_initial_graph.sh").read_text()
+    for phrase in (
+        "CRABC_LDSO_INITIAL_GRAPH_ROOT",
+        "crabc-target",
+        "cargo build --locked --target x86_64-unknown-linux-musl -p crabc-ldso",
+        "--features x86_64-initial-interpreter",
+        "target-feature=-crt-static",
+    ):
+        require(phrase in runner, f"ldso-target-root-admission runner omits {phrase}")
+    wrapper = (ROOT / "compat" / "x86_64" / "run_ldso_target_root.sh").read_text()
+    require(
+        "CRABC_LDSO_INITIAL_GRAPH_ROOT=crabc-target" in wrapper,
+        "ldso-target-root-admission wrapper must select the Cargo root",
+    )
+    require(
+        "run_ldso_target_root.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-target-root-admission dispatcher binding is missing",
     )
 
 
@@ -15733,6 +15809,7 @@ def validate_ledger(
     require_inet_address_header_evidence(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_target_root_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_exec_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])

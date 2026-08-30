@@ -1,11 +1,10 @@
-#![no_std]
-#![no_main]
 #![allow(unexpected_cfgs)]
 
 //! A bounded Linux/x86-64 initial-interpreter graph.
 //!
 //! This is intentionally a separately-built bootstrap artifact, not the
-//! `crabc-ldso` public target.  It proves the earliest x86-64 dynamic-loader
+//! `crabc-ldso` public target. It is compiled through the private
+//! `x86_64-initial-interpreter` feature only, which proves the earliest x86-64 dynamic-loader
 //! transaction against one ordinary shape: a kernel-mapped PIE, one direct
 //! DSO, and that DSO's direct DSO.  `_start` performs *this interpreter's*
 //! `R_X86_64_RELATIVE` relocations in assembly before entering Rust.  Rust

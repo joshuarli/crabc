@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 95)
+        self.assertEqual(report["verified_artifact_count"], 96)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -126,6 +126,47 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(changed_artifact, dict)
         changed_artifact["description"] = "private graph"
         with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-graph description omits"):
+            ledger.validate_ledger(changed)
+
+    def test_ldso_target_root_admission_is_a_planned_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts if entry["id"] == "ldso-target-root-admission"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "`crabc-ldso` target-root admission",
+            "`x86_64-initial-interpreter` Cargo target",
+            "actual ET_DYN PT_INTERP candidate",
+            "supported AArch64 loader root",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh ldso-target-root"},
+        )
+        self.assertIn("ldso/Cargo.toml", artifact["source_owners"])
+        self.assertIn("compat/x86_64/run_ldso_target_root.sh", artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "ldso-target-root-admission"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private target root"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "ldso-target-root-admission description omits"
+        ):
             ledger.validate_ledger(changed)
 
     def test_ldso_initial_tls_is_a_planned_private_artifact(self) -> None:

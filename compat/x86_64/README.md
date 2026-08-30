@@ -439,6 +439,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-relocation
 ./scripts/dev-x86_64.sh ldso-image
 ./scripts/dev-x86_64.sh ldso-initial-graph
+./scripts/dev-x86_64.sh ldso-target-root
 ./scripts/dev-x86_64.sh ldso-initial-tls
 ./scripts/dev-x86_64.sh ldso-initial-exec-tls
 ./scripts/dev-x86_64.sh ldso-owned-crt-handoff
@@ -3436,6 +3437,14 @@ Main-image constructor dispatch is explicitly rejected and remains future CRT
 handoff work. This is not general `DT_NEEDED` or RUNPATH policy,
 general or interpreter `DT_RELR`, TLS, symbol versions, `dl*`, a dynamic
 CRT/sysroot, or public x86 support.
+
+`ldso-target-root` is the companion private admission proof. It keeps the
+source-root graph artifact unchanged, then rebuilds that fixed graph through
+the feature-gated x86 `crabc-ldso` cdylib target and executes it as the actual
+ET_DYN `PT_INTERP` candidate. The runner still rejects every DT_NEEDED and
+PT_TLS runtime edge and reruns the complete fixed graph's pinned-musl and
+negative-input matrix. It does not select a general x86 loader, installed
+runtime, libc, dynamic CRT/sysroot, promotion, or public x86 support.
 
 `ldso-initial-tls` is a separate private Variant-II GNU-Dynamic TLS artifact
 inside the same still-planned `ldso.dynamic-runtime` family, not a widened

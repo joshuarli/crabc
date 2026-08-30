@@ -11,6 +11,11 @@ newer. This is a focused modern-runtime loader, not a general loader for
 other architectures or a promise of complete historical musl or glibc
 behavior.
 
+A private Linux/x86-64 little-endian `x86_64-initial-interpreter` feature
+exists only for the staged native evidence lane. It builds one bounded ET_DYN
+interpreter root for a fixed graph; it is not an installed loader target or
+x86-64 support claim.
+
 ## Usage
 
 Build with:

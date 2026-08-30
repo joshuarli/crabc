@@ -11,3 +11,9 @@ readme = "README.md"
 name = "ldso"
 crate-type = ["cdylib"]
 test = false
+
+[features]
+# Private x86-64 ET_DYN interpreter admission target.  This is intentionally
+# separate from the supported AArch64 loader root and is enabled only by the
+# native x86 evidence runner.
+x86_64-initial-interpreter = []

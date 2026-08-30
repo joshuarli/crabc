@@ -98,11 +98,15 @@ X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
    Path("crabc-rs/src/thread_x86_64.rs"),
     Path("crabc-rs/src/timezone.rs"),
 }
-# This source-only loader foundation has no `crabc-ldso` integration or public
+# The source-only loader foundations have no `crabc-ldso` integration or public
 # interpreter boundary. The image parser validates file-facing metadata before
 # the relative-relocation leaf consumes it; both are listed independently so a
-# later loader slice cannot inherit an artifact-wide x86 exception.
+# later loader slice cannot inherit an artifact-wide exception. `lib.rs` is
+# additionally admitted for exactly one feature-gated private x86 ET_DYN
+# target root; its runner proves a fixed graph through PT_INTERP and does not
+# make x86 a public loader target.
 X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
+    Path("ldso/src/lib.rs"),
     Path("ldso/src/x86_64_image.rs"),
     Path("ldso/src/x86_64_relocation.rs"),
 }
