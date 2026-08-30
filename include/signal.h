@@ -252,6 +252,11 @@ enum { REG_CR2 = 22 };
 #define REG_CR2 REG_CR2
 #endif
 
+/* musl exposes x86 machine and user-context records only to a POSIX-or-later
+ * feature profile. Keep that x86 visibility boundary local while preserving
+ * the existing AArch64 public-header behavior. */
+#if !defined(__x86_64__) || defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
+    defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #if defined(__x86_64__) && (defined(_GNU_SOURCE) || defined(_BSD_SOURCE))
 /* Match musl's Linux/x86-64 GNU/BSD signal-context vocabulary exactly. These
  * records describe signal-frame observations only; this source-only header
@@ -321,6 +326,7 @@ typedef struct __ucontext {
     sigset_t uc_sigmask;
     mcontext_t uc_mcontext;
 } ucontext_t;
+#endif
 #endif
 
 #ifndef __DEFINED_struct_timespec

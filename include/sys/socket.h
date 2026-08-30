@@ -109,18 +109,19 @@ struct cmsghdr {
     int cmsg_type;
 };
 struct linger { int l_onoff; int l_linger; };
-#define __CMSG_ALIGN(len) (((len) + sizeof(long) - 1) & ~(sizeof(long) - 1))
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define __CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & \
+    (size_t)~(sizeof(size_t) - 1))
+/* Musl exposes the ancillary alignment spelling in every feature profile. */
 #define CMSG_ALIGN(len) __CMSG_ALIGN(len)
-#endif
 #define CMSG_SPACE(len) (__CMSG_ALIGN(sizeof(struct cmsghdr)) + __CMSG_ALIGN(len))
 #define CMSG_LEN(len) (__CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
 #define CMSG_DATA(cmsg) ((unsigned char *)(cmsg) + __CMSG_ALIGN(sizeof(struct cmsghdr)))
 #define CMSG_FIRSTHDR(msg) ((msg)->msg_controllen >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(msg)->msg_control : (struct cmsghdr *)0)
 #define CMSG_NXTHDR(msg, cmsg) \
     ((cmsg)->cmsg_len < sizeof(struct cmsghdr) || \
-     (unsigned char *)(cmsg) + __CMSG_ALIGN((cmsg)->cmsg_len) + sizeof(struct cmsghdr) > \
-         (unsigned char *)(msg)->msg_control + (msg)->msg_controllen \
+     __CMSG_ALIGN((cmsg)->cmsg_len) + sizeof(struct cmsghdr) >= \
+         (unsigned char *)(msg)->msg_control + (msg)->msg_controllen - \
+             (unsigned char *)(cmsg) \
          ? (struct cmsghdr *)0 \
          : (struct cmsghdr *)((unsigned char *)(cmsg) + __CMSG_ALIGN((cmsg)->cmsg_len)))
 

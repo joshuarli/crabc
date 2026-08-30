@@ -146,6 +146,7 @@ getrlimit
 getrusage
 getsid
 getsockname
+getsockopt
 getuid
 imaxabs
 imaxdiv
@@ -251,6 +252,8 @@ readlink
 readv
 recv
 recvfrom
+recvmmsg
+recvmsg
 remove
 rename
 rindex
@@ -263,6 +266,8 @@ semop
 semtimedop
 send
 sendfile
+sendmmsg
+sendmsg
 sendto
 setdomainname
 setegid
@@ -280,6 +285,7 @@ setresuid
 setreuid
 setrlimit
 setsid
+setsockopt
 setuid
 shmat
 shmctl
@@ -302,6 +308,7 @@ sigsuspend
 sigtimedwait
 sigwait
 sigwaitinfo
+sockatmark
 socket
 socketpair
 stat

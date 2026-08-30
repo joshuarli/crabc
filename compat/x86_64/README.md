@@ -212,6 +212,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh math-complex-header-abi
 ./scripts/dev-x86_64.sh sys-reg-header-abi
+./scripts/dev-x86_64.sh machine-context-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
 ./scripts/dev-x86_64.sh stat-header-abi
 ./scripts/dev-x86_64.sh utime-header-abi
@@ -244,6 +245,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
+./scripts/dev-x86_64.sh socket-messages-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
 ./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
 ./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
@@ -385,6 +387,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-system-information
 ./scripts/dev-x86_64.sh libc-uts-identity
 ./scripts/dev-x86_64.sh libc-socket-transport
+./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
 ./scripts/dev-x86_64.sh libc-random-entropy
 ./scripts/dev-x86_64.sh libc-memory-search
@@ -429,7 +432,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the thirty-seven selected
+`headers-layouts.toml` is the checked-in contract for the thirty-eight selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -550,6 +553,14 @@ or public x86 support.
 `sys-reg-header-abi` places the project headers first and compile-checks the
 27 Linux/x86-64 ptrace register-index macros in `<sys/reg.h>`. It is another
 declaration-only header ratchet, not a ptrace runtime or `crabc-libc` claim.
+
+`machine-context-header-abi` separately compares seven isolated C11/C++17
+profiles through raw-GCC project-first and pinned-musl roots for the selected
+`sys/auxv.h`, `sys/ptrace.h`, `sys/reg.h`, `sys/user.h`, `sys/procfs.h`, and
+`sys/ucontext.h` declarations and x86 LP64 layouts. It checks x86-only
+HWCAP/register namespace separation and unmangled C++ references, but does not
+select aux-vector, ptrace, or context-switch runtime behavior, archive linkage,
+header-family completion, or public x86 support.
 
 `types-header-abi` compiles the C and C++ project-header-first
 `<bits/alltypes.h>`/`<sys/types.h>` declarations and opaque pthread layouts,
@@ -773,6 +784,15 @@ bind/listen/accept/`accept4`/connect, send/receive, name-query, and shutdown
 signatures, and the named IPv6 macro classifications. It is source-only header
 evidence: it does not select socket options, vector or ancillary-message APIs,
 address-conversion or socket behavior, `crabc-libc`, or public x86 support.
+
+`socket-messages-header-abi` compile-checks project-first and pinned-musl
+POSIX/GNU/BSD C/C++ `<sys/socket.h>` message/options declarations. It covers
+only `setsockopt`, `getsockopt`, `sendmsg`, `recvmsg`, `sendmmsg`, `recvmmsg`,
+and `sockatmark`; x86 `iovec`, padded public `msghdr`/`cmsghdr`, GNU
+`mmsghdr`, CMSG alignment/traversal boundaries, feature hiding, and unmangled
+C++ linkage. This is source-only declaration/layout/linkage evidence: it does
+not select archive linkage, socket runtime behavior, installed-header or
+family completion, or public x86 support.
 
 `sysv-semaphore-header-abi` compile-checks project-first and pinned-musl C and
 C++ `sys/ipc.h`/`sys/sem.h` declarations, selected LP64 SysV IPC layouts and
@@ -2516,6 +2536,18 @@ command no additional capabilities. It excludes socket options, vector or
 ancillary-message APIs, resolver/netdb state, interface ioctls, general socket
 policy, dynamic runtime, and public x86 support.
 
+`libc-socket-messages` is a separately recorded private
+`static-c-socket-messages` `verified_artifact` gate inside still-planned
+`libc.posix-runtime`, not a general socket capability. Its POSIX/GNU/BSD
+project-header/pinned-musl C/C++ matrix runs before one `-nostdlib -static`
+fixture checks exactly `setsockopt`, `getsockopt`, `sendmsg`, `recvmsg`,
+`sendmmsg`, `recvmmsg`, and `sockatmark`. The archive adapts musl's padded
+public message records, bounds outgoing ancillary copying to 1056 bytes,
+loops padded `sendmsg` rather than issuing raw `SYS_sendmmsg=307`, and uses
+direct `recvmmsg` and `SIOCATMARK`. Cancellation is explicitly deferred. It
+does not select resolver/netdb, generic socket/options/ancillary/ioctl
+behavior, dynamic runtime, family/platform parity, or public x86 support.
+
 `libc-sysv-semaphore` is a separately recorded
 `static-c-sysv-semaphore` `verified_artifact` gate over that archive, not a
 complete SysV IPC capability. The project-header fixture first executes
@@ -3070,6 +3102,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-timestamp-updates`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
+`libc-socket-messages`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,

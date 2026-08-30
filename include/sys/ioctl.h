@@ -43,6 +43,8 @@ int ioctl(int, int, ...);
 #define FIONBIO 0x5421
 #define FIOCLEX 0x5451
 #define FIONCLEX 0x5450
+/* Socket urgent-data mark query, consumed by sockatmark(3). */
+#define SIOCATMARK 0x8905
 
 /* Controlling-terminal requests are Linux ABI constants exposed by musl's
  * ioctl vocabulary; they are usable in every feature profile. */

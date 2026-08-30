@@ -3569,6 +3569,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory_mapping.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
+        '#[path = "socket_messages.rs"]',
         '#[path = "byte_strings.rs"]',
         '#[path = "random_entropy.rs"]',
         '#[path = "memory_search.rs"]',
@@ -5980,6 +5981,56 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must export only its named socket-transport symbols"
         )
 
+    socket_messages_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "socket_messages.rs"
+    )
+    socket_messages_text = socket_messages_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/network/setsockopt.c",
+        "src/network/getsockopt.c",
+        "src/network/sendmsg.c",
+        "src/network/recvmsg.c",
+        "src/network/sendmmsg.c",
+        "src/network/recvmmsg.c",
+        "src/network/sockatmark.c",
+        "MUSL_SEND_CONTROL_BYTES",
+        "zero_cmsg_padding",
+        "raw_syscall::SYS_SETSOCKOPT",
+        "raw_syscall::SYS_GETSOCKOPT",
+        "raw_syscall::SYS_SENDMSG",
+        "raw_syscall::SYS_RECVMSG",
+        "raw_syscall::SYS_RECVMMSG",
+        "raw_syscall::SYS_IOCTL",
+        "SIOCATMARK",
+        "cancellation",
+    ):
+        if required not in socket_messages_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/socket_messages.rs: selected static "
+                f"socket-message boundary is missing {required!r}"
+            )
+    socket_messages_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            socket_messages_text,
+        )
+    )
+    expected_socket_messages_exports = {
+        "setsockopt",
+        "getsockopt",
+        "sendmsg",
+        "recvmsg",
+        "sendmmsg",
+        "recvmmsg",
+        "sockatmark",
+    }
+    if socket_messages_exports != expected_socket_messages_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/socket_messages.rs: selected static "
+            "artifact must export only its named socket-message/options symbols"
+        )
+
     byte_strings_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "byte_strings.rs"
     )
@@ -6536,6 +6587,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         process_resources_text,
         readiness_waits_text,
         socket_transport_text,
+        socket_messages_text,
         byte_strings_text,
         random_entropy_text,
         memory_search_text,
@@ -6791,6 +6843,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "shutdown",
         "getsockname",
         "getpeername",
+        "setsockopt",
+        "getsockopt",
+        "sendmsg",
+        "recvmsg",
+        "sendmmsg",
+        "recvmmsg",
+        "sockatmark",
         "uname",
         "sysinfo",
         "gethostname",
@@ -6879,7 +6938,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
-            "selected socket transport, selected system-observation, selected UTS-identity, "
+            "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "find-first-set, "
@@ -6924,6 +6983,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("process_resources.rs", process_resources_text),
         ("readiness_waits.rs", readiness_waits_text),
         ("socket_transport.rs", socket_transport_text),
+        ("socket_messages.rs", socket_messages_text),
         ("random_entropy.rs", random_entropy_text),
         ("memory_search.rs", memory_search_text),
         ("string_copy.rs", string_copy_text),

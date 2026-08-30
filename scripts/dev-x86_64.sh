@@ -13,6 +13,7 @@
 # mode-zero POSIX range allocation, and descriptor advice,
 # selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
+# padded socket messages/options,
 # SysV semaphore operations,
 # byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
 # ctype, integer arithmetic, integer parsing, intmax arithmetic, credential
@@ -50,6 +51,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   math-complex-header-abi  verify x86 math/complex/tgmath C/C++ header semantics
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
+  machine-context-header-abi  verify staged x86 machine/context C/C++ header ABI profiles
   types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
   utime-header-abi  compile the staged x86 C/C++ utime header ABI/linkage slice
@@ -84,6 +86,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
+  socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
@@ -186,6 +189,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
+  crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
   libc-pthread-identity  run the static x86 crabc-libc pthread/C11 identity alias slice
   libc-c11-lifecycle  run the static x86 crabc-libc bounded C11 lifecycle slice
@@ -239,6 +243,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-search  run the static x86 crabc-libc memory-search slice
   libc-string-copy  run the static x86 crabc-libc C-string-copy slice
   libc-socket-transport  run the static x86 crabc-libc base socket transport slice
+  libc-socket-messages  run the static x86 crabc-libc socket-message/options slice
   libc-thread-pointer  run the source-only x86 opaque %fs:0 thread-pointer probe
   libc-foundation  run the source-only x86 C runtime primitive-composition probe
   libc-fenv  run the source-only x86 C x87/MXCSR floating-point-environment probe
@@ -619,6 +624,10 @@ consumers in SSE and x87 modes, then checks C++ references retain unmangled C
 linkage. It proves only the named math/complex/tgmath header semantics; both
 C consumers intentionally link pinned musl's math runtime, not crabc-libc.
 `sys-reg-header-abi` compiles only the staged ptrace register-index header.
+`machine-context-header-abi` compares only selected x86 aux-vector, ptrace,
+user-register, procfs, and ucontext declaration/layout profiles against pinned
+musl. It rejects AArch64 HWCAP/register leaks and does not select runtime,
+archive linkage, header-family completion, or public x86 support.
 `types-header-abi` compiles only staged C/C++ type declarations and opaque
 pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
 `select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
@@ -637,6 +646,11 @@ installed IPv6 address-classification macros through project and pinned-musl
 headers. It does not select socket options, vectored or ancillary-message
 APIs, address-conversion or socket behavior, a C runtime, or a general socket
 capability.
+`socket-messages-header-abi` separately compares project-first and pinned-musl
+C/C++ profiles for the bounded `<sys/socket.h>` message/options declarations,
+their LP64 `msghdr`/`cmsghdr`/GNU `mmsghdr` layouts and visibility, CMSG macro
+boundaries, and unmangled C++ linkage. It is declaration/layout evidence only,
+not a general installed-header, socket, cancellation, or runtime claim.
 `mm-abi-reference` establishes only the pinned-musl constants used by the
 separately admitted Rust mapping facade.
 `memory-vm-reference` establishes only the separate private x86 VM-policy
@@ -1482,6 +1496,10 @@ run_sys_reg_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sys_reg_header_abi.sh
 }
 
+run_machine_context_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_machine_context_header_abi.sh
+}
+
 run_types_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_types_header_abi.sh
 }
@@ -1680,6 +1698,10 @@ run_resource_header_abi() {
 
 run_socket_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_socket_header_abi.sh
+}
+
+run_socket_messages_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_socket_messages_header_abi.sh
 }
 
 run_sysv_semaphore_header_abi() {
@@ -2435,6 +2457,12 @@ run_libc_crt1_static_tls_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_crt1_static_tls.sh
 }
 
+run_crt_dynamic_startup_probe() {
+    run_musl_oracle
+    run_in_container env CRABC_X86_64_DYNAMIC_STARTUP_EVIDENCE=native \
+        python3 /workspace/crt/tests/test_x86_64_dynamic_startup.py
+}
+
 run_libc_termios_control_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_termios_control.sh
 }
@@ -2581,9 +2609,11 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls) ;;
+    machine-context-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
+    crt-dynamic-startup) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     uapi-wrapper-matrix) ;;
@@ -2703,6 +2733,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
         ensure_image
         run_sys_reg_header_abi
+        ;;
+    machine-context-header-abi)
+        [ "$#" -eq 0 ] || fail "machine-context-header-abi takes no arguments"
+        ensure_image
+        run_machine_context_header_abi
         ;;
     types-header-abi)
         [ "$#" -eq 0 ] || fail "types-header-abi takes no arguments"
@@ -2863,6 +2898,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "socket-header-abi takes no arguments"
         ensure_image
         run_socket_header_abi
+        ;;
+    socket-messages-header-abi)
+        [ "$#" -eq 0 ] || fail "socket-messages-header-abi takes no arguments"
+        ensure_image
+        run_socket_messages_header_abi
         ;;
     sysv-semaphore-header-abi)
         [ "$#" -eq 0 ] || fail "sysv-semaphore-header-abi takes no arguments"
@@ -3438,6 +3478,11 @@ case "$command" in
         ensure_image
         run_libc_crt1_static_tls_probe
         ;;
+    crt-dynamic-startup)
+        [ "$#" -eq 0 ] || fail "crt-dynamic-startup takes no arguments"
+        ensure_image
+        run_crt_dynamic_startup_probe
+        ;;
     libc-termios-control)
         [ "$#" -eq 0 ] || fail "libc-termios-control takes no arguments"
         ensure_image
@@ -3467,6 +3512,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-socket-transport takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_socket_transport.sh
+        ;;
+    libc-socket-messages)
+        [ "$#" -eq 0 ] || fail "libc-socket-messages takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_socket_messages.sh
         ;;
     libc-process-resources)
         [ "$#" -eq 0 ] || fail "libc-process-resources takes no arguments"

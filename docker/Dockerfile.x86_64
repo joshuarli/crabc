@@ -39,6 +39,8 @@ RUN test "$(uname -m)" = "x86_64" \
         coreutils \
         curl \
         git \
+        python3 \
+        rsync \
         rustup \
         tar \
         xz \

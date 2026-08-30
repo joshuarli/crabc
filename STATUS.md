@@ -303,6 +303,17 @@ offset above 4 GiB, and musl's selected pwritev append boundary. It does not
 select cancellation, v2/process-vm runtime, scalar descriptor I/O, stdio,
 family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh socket-messages-header-abi` and
+`./scripts/dev-x86_64.sh libc-socket-messages` are a separate private
+`static-c-socket-messages` artifact inside still-planned `libc.posix-runtime`.
+The POSIX/GNU/BSD project-header/pinned-musl C/C++ matrix and freestanding
+fixture cover exactly `setsockopt`, `getsockopt`, `sendmsg`, `recvmsg`,
+`sendmmsg`, `recvmmsg`, and `sockatmark`: the padded public x86 message
+records, a bounded 1056-byte ancillary-control copy, `sendmmsg`'s padded
+`sendmsg` loop rather than raw `SYS_sendmmsg`, and direct `recvmmsg`/
+`SIOCATMARK`. Cancellation, resolver/netdb, generic socket or ioctl behavior,
+family/platform parity, and public x86 support remain outside this leaf.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

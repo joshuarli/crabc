@@ -23,6 +23,7 @@
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
+//! padded socket messages/options,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
@@ -190,6 +191,8 @@ mod system_information;
 mod uts_identity;
 #[path = "socket_transport.rs"]
 mod socket_transport;
+#[path = "socket_messages.rs"]
+mod socket_messages;
 #[path = "sysv_semaphore.rs"]
 mod sysv_semaphore;
 #[path = "sysv_message_shared_memory.rs"]

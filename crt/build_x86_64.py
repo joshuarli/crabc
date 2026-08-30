@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build and audit bounded Linux/x86-64 static CRT startup objects.
+"""Build and audit bounded Linux/x86-64 static and dynamic CRT startup objects.
 
 This is deliberately not a target switch for ``build.py``. It produces only
-the target-specific ordinary-static and static-PIE objects: ``crt1.o``,
-``rcrt1.o``, ``crti.o``, and ``crtn.o``. Dynamic CRT objects and sysroot
-installation remain outside this native-evidence slice.
+the target-specific ordinary-static, static-PIE, and private dynamic-PIE entry
+objects: ``crt1.o``, ``Scrt1.o``, ``rcrt1.o``, ``crti.o``, and ``crtn.o``.
+It does not install a sysroot or select a crabc dynamic loader or libc.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ ET_REL = 1
 EM_X86_64 = 62
 SHT_SYMTAB = 2
 SHT_RELA = 4
+SHT_NOTE = 7
 SHF_EXECINSTR = 0x4
 STB_GLOBAL = 1
 STT_FUNC = 2
@@ -95,6 +96,12 @@ STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
     "__crabc_x86_static_tls_bootstrap",
 )
 
+OWNED_CRT_NOTE = (
+    struct.pack("<III", 6, 4, 0x43525401)
+    + b"CRABC\0\0\0"
+    + struct.pack("<I", 1)
+)
+
 RELOCATION_ARGUMENTS = {
     "static": "relocation-model=static",
     "pic": "relocation-model=pic",
@@ -118,6 +125,15 @@ OBJECTS = (
         (".text._start",),
         ("_start",),
         STATIC_PIE_LIBC_BOUNDARIES,
+    ),
+    ObjectSpec(
+        "Scrt1.o",
+        "x86_64_Scrt1.rs",
+        "pic",
+        "dynamic-pie-entry",
+        (".text._start",),
+        ("_start",),
+        STATIC_PIE_BOUNDARIES,
     ),
     ObjectSpec(
         "crti.o",
@@ -168,6 +184,8 @@ class Relocation:
     target_section_index: int
     offset: int
     relocation_type: int
+    symbol_name: str
+    symbol_section_index: int
 
 
 @dataclass(frozen=True)
@@ -328,18 +346,19 @@ def parse_elf_object(path: Path) -> ElfObject:
     )
 
     symbols: list[Symbol] = []
-    relocations: list[Relocation] = []
-    for section in sections:
+    symbols_by_table: dict[int, tuple[Symbol, ...]] = {}
+    for table_index, section in enumerate(sections):
         if section.section_type == SHT_SYMTAB:
             if section.entry_size != 24 or section.link >= len(sections) or section.size % section.entry_size != 0:
                 raise BuildError(f"{path}: malformed symbol table {section.name}")
             strings = sections[section.link]
             string_data = checked_range(data, strings.offset, strings.size, f"{path}: symbol strings")
+            table_symbols: list[Symbol] = []
             for offset in range(section.offset, section.offset + section.size, section.entry_size):
                 name, info, other, section_index, value, size = struct.unpack(
                     "<IBBHQQ", checked_range(data, offset, 24, f"{path}: symbol entry")
                 )
-                symbols.append(
+                table_symbols.append(
                     Symbol(
                         c_string(string_data, name, f"{path}: symbol name") if name else "",
                         info >> 4,
@@ -350,14 +369,34 @@ def parse_elf_object(path: Path) -> ElfObject:
                         size,
                     )
                 )
-        elif section.section_type == SHT_RELA:
+            symbols.extend(table_symbols)
+            symbols_by_table[table_index] = tuple(table_symbols)
+
+    relocations: list[Relocation] = []
+    for section in sections:
+        if section.section_type == SHT_RELA:
             if section.entry_size != 24 or section.size % section.entry_size != 0:
                 raise BuildError(f"{path}: malformed RELA section {section.name}")
+            if section.link not in symbols_by_table or section.info >= len(sections):
+                raise BuildError(f"{path}: relocation section {section.name} has an invalid symbol or target section")
+            relocation_symbols = symbols_by_table[section.link]
             for offset in range(section.offset, section.offset + section.size, section.entry_size):
                 relocation_offset, info, _ = struct.unpack(
                     "<QQq", checked_range(data, offset, 24, f"{path}: relocation entry")
                 )
-                relocations.append(Relocation(section.info, relocation_offset, info & 0xFFFFFFFF))
+                symbol_index = info >> 32
+                if symbol_index >= len(relocation_symbols):
+                    raise BuildError(f"{path}: relocation section {section.name} has an invalid symbol index")
+                symbol = relocation_symbols[symbol_index]
+                relocations.append(
+                    Relocation(
+                        section.info,
+                        relocation_offset,
+                        info & 0xFFFFFFFF,
+                        symbol.name,
+                        symbol.section_index,
+                    )
+                )
     return ElfObject(tuple(sections), tuple(symbols), tuple(relocations))
 
 
@@ -412,10 +451,23 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
     unexpected = sorted(unresolved.difference(spec.undefined_symbols))
     if unexpected:
         raise BuildError(f"{path}: unexpected runtime dependency symbols: {unexpected}")
+    if spec.name == "Scrt1.o":
+        owned_note = sections.get(".note.crabc.owned-crt")
+        if owned_note is None or owned_note.section_type != SHT_NOTE:
+            raise BuildError(f"{path}: Scrt1.o lacks the owned-CRT ELF note")
+        actual_note = checked_range(
+            path.read_bytes(),
+            owned_note.offset,
+            owned_note.size,
+            f"{path}: owned-CRT ELF note",
+        )
+        if actual_note != OWNED_CRT_NOTE:
+            raise BuildError(f"{path}: owned-CRT ELF note has an unexpected wire value")
     return {
         "path": path.name,
         "sha256": sha256_file(path),
         "entry_contract": spec.entry_contract,
+        "owned_lifecycle_note": spec.name == "Scrt1.o",
         "sections": [section.name for section in elf.sections],
         "defined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index != SHN_UNDEF),
         "undefined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index == SHN_UNDEF),
@@ -459,7 +511,7 @@ def audit_entry_machine_code(
     }
     if spec.entry_contract == "static-pie-entry":
         required_machine_sequences["syscall"] = b"\x0f\x05"
-    elif spec.entry_contract != "ordinary-static-entry":
+    elif spec.entry_contract not in {"ordinary-static-entry", "dynamic-pie-entry"}:
         raise BuildError(f"{path}: machine audit is invalid for {spec.entry_contract}")
     missing = [
         instruction
@@ -469,16 +521,40 @@ def audit_entry_machine_code(
     if missing:
         raise BuildError(f"{path}: emitted _start is missing required instruction encodings: {missing}")
     entry_end = start.value + start.size
-    relocation_types = sorted(
-        item.relocation_type
+    entry_relocations = [
+        item
         for item in elf.relocations
         if item.target_section_index == start.section_index and start.value <= item.offset < entry_end
-    )
+    ]
+    relocation_types = sorted(item.relocation_type for item in entry_relocations)
     forbidden = sorted(set(relocation_types).intersection(EARLY_ENTRY_FORBIDDEN_RELOCATIONS))
     if forbidden:
         raise BuildError(f"{path}: early entry has forbidden GOT/TLS relocations: {forbidden}")
     if R_X86_64_PLT32 not in relocation_types:
         raise BuildError(f"{path}: startup entry lacks its direct Rust handoff")
+    direct_handoff_symbol: str | None = None
+    if spec.entry_contract == "dynamic-pie-entry":
+        # This literal early-entry sequence preserves only `%rsp` in r15 and
+        # calls the Rust handoff. In particular it never captures `%rdx` as a
+        # guessed loader finalizer: musl 1.2.6 x86-64 Scrt1 passes null.
+        expected_prefix = b"\x49\x89\xe7\x31\xed\x48\x83\xe4\xf0\x4c\x89\xff\xe8"
+        if not entry_bytes.startswith(expected_prefix) or not entry_bytes.endswith(b"\x0f\x0b"):
+            raise BuildError(f"{path}: dynamic entry does not retain the bounded musl-shaped handoff")
+        direct_handoffs = [
+            item for item in entry_relocations if item.relocation_type == R_X86_64_PLT32
+        ]
+        if len(entry_relocations) != 1 or len(direct_handoffs) != 1:
+            raise BuildError(f"{path}: dynamic entry must retain exactly one direct Rust handoff relocation")
+        direct_handoff = direct_handoffs[0]
+        if (
+            direct_handoff.symbol_name != "__crabc_x86_64_dynamic_start"
+            or direct_handoff.symbol_section_index == SHN_UNDEF
+        ):
+            raise BuildError(
+                f"{path}: dynamic entry direct handoff must target the defined "
+                "__crabc_x86_64_dynamic_start symbol"
+            )
+        direct_handoff_symbol = direct_handoff.symbol_name
     return (
         {
             "status": "verified",
@@ -489,6 +565,16 @@ def audit_entry_machine_code(
             "entry_relocation_types": relocation_types,
             "no_early_got_or_tls_relocation": True,
             "stack_alignment_before_direct_handoff": True,
+            **(
+                {"direct_handoff_symbol": direct_handoff_symbol}
+                if direct_handoff_symbol is not None
+                else {}
+            ),
+            **(
+                {"loader_finalizer": "null-musl-x86_64-convention"}
+                if spec.entry_contract == "dynamic-pie-entry"
+                else {}
+            ),
         },
         machine_record,
     )
@@ -563,7 +649,11 @@ def build(args: argparse.Namespace) -> dict[str, object]:
             if not destination.is_file():
                 raise BuildError(f"rustc reported success but did not create {destination}")
             inspection = inspect_object(spec, destination)
-            if spec.entry_contract in {"ordinary-static-entry", "static-pie-entry"}:
+            if spec.entry_contract in {
+                "ordinary-static-entry",
+                "static-pie-entry",
+                "dynamic-pie-entry",
+            }:
                 machine_contract, machine_record = audit_entry_machine_code(
                     spec, destination, objdump, environment
                 )
@@ -580,6 +670,8 @@ def build(args: argparse.Namespace) -> dict[str, object]:
             object_records[spec.name] = inspection
         if object_records["crt1.o"]["sha256"] == object_records["rcrt1.o"]["sha256"]:
             raise BuildError("crt1.o and rcrt1.o are byte-identical; ordinary and self-relocating entry differ")
+        if object_records["crt1.o"]["sha256"] == object_records["Scrt1.o"]["sha256"]:
+            raise BuildError("crt1.o and Scrt1.o are byte-identical; dynamic PIE requires a distinct PIC object")
     except Exception:
         write_json(commands_path, records)
         raise
@@ -587,7 +679,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     report = {
         "schema": 1,
         "target": TARGET,
-        "scope": "bounded-static-startup",
+        "scope": "bounded-static-and-private-dynamic-startup",
         "toolchain": PINNED_TOOLCHAIN,
         "objects": object_records,
         "commands": {"name": commands_path.name, "sha256": sha256_file(commands_path)},

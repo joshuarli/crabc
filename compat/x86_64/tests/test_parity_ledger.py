@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 67)
-        self.assertEqual(report["header_layout_probe_count"], 37)
+        self.assertEqual(report["verified_artifact_count"], 69)
+        self.assertEqual(report["header_layout_probe_count"], 38)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -164,13 +164,59 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-tls description omits"):
             ledger.validate_ledger(changed)
 
+    def test_dynamic_pie_scrt1_is_a_planned_private_crt_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "crt.dynamic-startup")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(entry for entry in artifacts if entry["id"] == "dynamic-pie-scrt1-startup")
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "still-planned `crt.dynamic-startup`",
+            "Rust-produced `Scrt1.o`",
+            "null `rtld_fini`",
+            "%rdx",
+            "ET_DYN",
+            "DT_NEEDED=libc.so",
+            "forged marker",
+            "does not infer candidate callback consumption",
+            "GNU-property/CET/ISA metadata parity",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh crt-dynamic-startup"},
+        )
+        for owner in (
+            "crt/src/x86_64_Scrt1.rs",
+            "crt/src/x86_64_dynamic_startup.rs",
+            "crt/fixtures/dynamic_startup_lifecycle_fixture_x86_64.c",
+            "crt/tests/test_x86_64_dynamic_startup.py",
+            "crt/x86_64-dynamic-startup.md",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "crt.dynamic-startup")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry for entry in changed_artifacts if entry["id"] == "dynamic-pie-scrt1-startup"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private dynamic CRT"
+        with self.assertRaisesRegex(ledger.LedgerError, "dynamic-pie-scrt1-startup description omits"):
+            ledger.validate_ledger(changed)
+
     def test_header_layout_manifest_is_a_closed_direct_probe_inventory(self) -> None:
         data = self.data()
         manifest = self.header_manifest()
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 37)
+        self.assertEqual(report["header_layout_probe_count"], 38)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -299,6 +345,31 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/access_header_abi_probe.c",
                 "compat/x86_64/access_header_abi_probe.cpp",
                 "compat/x86_64/run_access_header_abi.sh",
+            ],
+        )
+        machine_context = next(
+            probe for probe in probes if probe["id"] == "machine-context"
+        )
+        assert isinstance(machine_context, dict)
+        self.assertEqual(machine_context["kind"], "compile-only")
+        self.assertEqual(
+            machine_context["headers"],
+            [
+                "include/stddef.h",
+                "include/sys/auxv.h",
+                "include/sys/ptrace.h",
+                "include/sys/reg.h",
+                "include/sys/user.h",
+                "include/sys/procfs.h",
+                "include/sys/ucontext.h",
+            ],
+        )
+        self.assertEqual(
+            machine_context["sources"],
+            [
+                "compat/x86_64/machine_context_header_abi_probe.c",
+                "compat/x86_64/machine_context_header_abi_probe.cpp",
+                "compat/x86_64/run_machine_context_header_abi.sh",
             ],
         )
 
@@ -1268,6 +1339,11 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         posix_runtime = self.family(data, "libc.posix-runtime")
         self.assertEqual(posix_runtime["status"], "planned")
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        self.assertIn(
+            "./scripts/dev-x86_64.sh socket-messages-header-abi",
+            {evidence["command"] for evidence in headers_layouts["native_evidence"]},
+        )
         slices = posix_runtime["verified_slice"]
         assert isinstance(slices, list) and len(slices) == 2
         slices_by_id = {slice_entry["id"]: slice_entry for slice_entry in slices}
@@ -1313,7 +1389,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 46
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 47
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -1350,6 +1426,38 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("src/unistd/pwritev.c", str(vector_io["oracle"]))
         self.assertIn("above 4 GiB", vector_io["description"])
         self.assertIn("public x86 support", vector_io["description"])
+        socket_messages = artifacts_by_id["static-c-socket-messages"]
+        assert isinstance(socket_messages, dict)
+        self.assertNotIn("capabilities", socket_messages)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/socket_messages.rs",
+            "compat/x86_64/run_socket_messages_header_abi.sh",
+            "compat/x86_64/libc_socket_messages_probe.c",
+            "compat/x86_64/libc_socket_messages_start.S",
+            "compat/x86_64/run_libc_socket_messages.sh",
+        ):
+            self.assertIn(owner, socket_messages["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in socket_messages["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-socket-messages"},
+        )
+        self.assertIn("src/network/sendmmsg.c", str(socket_messages["oracle"]))
+        for phrase in (
+            "still-planned `libc.posix-runtime`",
+            "padded",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, socket_messages["description"])
+        self.assertIn(
+            "SYS_sendmmsg=307",
+            socket_messages["native_evidence"][0]["scope"],
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/socket_messages.rs",
+            posix_runtime["source_owners"],
+        )
         signal_control = artifacts_by_id["static-c-signal-control"]
         assert isinstance(signal_control, dict)
         self.assertNotIn("capabilities", signal_control)
@@ -7199,6 +7307,61 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh ioctl-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-ioctl command"):
+            ledger.validate_ledger(data)
+
+    def test_socket_messages_artifact_keeps_its_padded_private_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-socket-messages"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-socket-messages"},
+        )
+        for phrase in (
+            "still-planned `libc.posix-runtime`",
+            "padded 56-byte public `msghdr`",
+            "1056-byte",
+            "SYS_sendmmsg=307",
+            "cancellation",
+            "generic ioctl",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-socket-messages"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("setsockopt=54", "setsockopt=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "selected Linux register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-socket-messages"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh socket-transport-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-socket-messages command"
+        ):
             ledger.validate_ledger(data)
 
     def test_sysv_semaphore_artifact_keeps_its_variadic_boundary(self) -> None:

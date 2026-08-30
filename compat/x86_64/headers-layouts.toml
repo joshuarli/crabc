@@ -485,3 +485,23 @@ sources = [
   "compat/x86_64/run_access_header_abi.sh",
 ]
 headers = ["include/fcntl.h", "include/unistd.h"]
+
+[[probe]]
+id = "machine-context"
+command = "./scripts/dev-x86_64.sh machine-context-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/machine_context_header_abi_probe.c",
+  "compat/x86_64/machine_context_header_abi_probe.cpp",
+  "compat/x86_64/run_machine_context_header_abi.sh",
+]
+headers = [
+  "include/stddef.h",
+  "include/sys/auxv.h",
+  "include/sys/ptrace.h",
+  "include/sys/reg.h",
+  "include/sys/user.h",
+  "include/sys/procfs.h",
+  "include/sys/ucontext.h",
+]

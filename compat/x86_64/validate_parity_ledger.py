@@ -553,6 +553,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "timeval-transitive": "./scripts/dev-x86_64.sh timeval-transitive-header-abi",
     "sys-time-direct": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
     "access-header": "./scripts/dev-x86_64.sh access-header-abi",
+    "machine-context": "./scripts/dev-x86_64.sh machine-context-header-abi",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -738,6 +739,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/access_header_abi_probe.c",
         "compat/x86_64/access_header_abi_probe.cpp",
         "compat/x86_64/run_access_header_abi.sh",
+    ),
+    "machine-context": (
+        "compat/x86_64/machine_context_header_abi_probe.c",
+        "compat/x86_64/machine_context_header_abi_probe.cpp",
+        "compat/x86_64/run_machine_context_header_abi.sh",
     ),
 }
 
@@ -3621,6 +3627,123 @@ def require_verified_artifacts(
         require_oracles(entry["oracle"], f"{item_location}.oracle")
         records.append(entry)
     return records
+
+
+def require_dynamic_pie_scrt1_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the private dynamic-PIE entry bridge without CRT promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[crt.dynamic-startup].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "dynamic-pie-scrt1-startup"]
+    require(
+        len(matching) == 1,
+        "crt.dynamic-startup must contain exactly one dynamic-pie-scrt1-startup artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "dynamic-pie-scrt1-startup must not promote crt.dynamic-startup",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `crt.dynamic-startup`",
+        "Rust-produced `Scrt1.o`",
+        "pinned musl 1.2.6 x86-64",
+        "null `rtld_fini`",
+        "%rdx",
+        "__libc_start_main",
+        "preinit/init/main/fini",
+        "candidate-only",
+        "does not infer candidate callback consumption",
+        "ET_DYN",
+        "PT_INTERP",
+        "DT_NEEDED=libc.so",
+        "forged marker",
+        "GNU-property/CET/ISA metadata parity",
+        "crabc-libc",
+        "crabc-ldso",
+        "RuntimeV1",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"dynamic-pie-scrt1-startup description omits {phrase}",
+        )
+    expected_sources = {
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_Scrt1.rs",
+        "crt/src/x86_64_dynamic_startup.rs",
+        "crt/src/x86_64_array_boundaries.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "crt/fixtures/dynamic_startup_fixture_x86_64.c",
+        "crt/fixtures/dynamic_startup_lifecycle_fixture_x86_64.c",
+        "crt/tests/test_x86_64_dynamic_startup.py",
+        "crt/x86_64-dynamic-startup.md",
+        "crt/x86_64-static-pie.md",
+        "compat/x86_64/run_musl_oracle.sh",
+        "docker/Dockerfile.x86_64",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "dynamic-pie-scrt1-startup source owners"))
+        == expected_sources,
+        "dynamic-pie-scrt1-startup source owners drifted",
+    )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "r15",
+        "R_X86_64_PLT32",
+        "no GOT or TLS",
+        "%rdx",
+        "rtld_fini",
+        "0x43525401",
+        "PT_NOTE",
+        "PQIJKMYXF",
+        "ET_DYN",
+        "DT_NEEDED libc.so",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"dynamic-pie-scrt1-startup ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh crt-dynamic-startup"},
+        "dynamic-pie-scrt1-startup must use the closed crt-dynamic-startup command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "pinned-musl oracle",
+        "null-finalizer",
+        "IMF",
+        "PQIJKMYXF",
+        "does not claim pinned musl consumed candidate callbacks",
+        "SHT_NOTE/PT_NOTE",
+        "forged-marker rejection",
+        "candidate libc",
+        "candidate ldso",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"dynamic-pie-scrt1-startup evidence scope omits {phrase}",
+        )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "run_crt_dynamic_startup_probe()" in dispatch_source
+        and "run_musl_oracle\n    run_in_container env CRABC_X86_64_DYNAMIC_STARTUP_EVIDENCE=native"
+        in dispatch_source,
+        "dynamic-pie-scrt1-startup dispatcher must verify musl before the native test",
+    )
 
 
 def require_byte_string_artifact(family: Mapping[str, Any]) -> None:
@@ -8035,6 +8158,189 @@ def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_socket_messages_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the padded socket-message/options archive block private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-socket-messages"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-socket-messages artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-socket-messages must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.posix-runtime`",
+        "`setsockopt`",
+        "`getsockopt`",
+        "`sendmsg`",
+        "`recvmsg`",
+        "`sendmmsg`",
+        "`recvmmsg`",
+        "`sockatmark`",
+        "padded 56-byte public `msghdr`",
+        "1056-byte",
+        "SYS_sendmmsg=307",
+        "cancellation",
+        "generic ioctl",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-socket-messages description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-socket-messages.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/socket_messages.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/sys/ioctl.h",
+        "include/sys/socket.h",
+        "include/sys/uio.h",
+        "compat/x86_64/socket_messages_header_abi_probe.c",
+        "compat/x86_64/socket_messages_header_abi_probe.cpp",
+        "compat/x86_64/socket_messages_header_visibility_probe.c",
+        "compat/x86_64/run_socket_messages_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_socket_messages_probe.c",
+        "compat/x86_64/libc_socket_messages_start.S",
+        "compat/x86_64/run_libc_socket_messages.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-socket-messages source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-socket-messages.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "setsockopt=54" in item
+            and "getsockopt=55" in item
+            and "rdi/rsi/rdx/r10/r8" in item
+            and "sendmsg=46" in item
+            and "recvmsg=47" in item
+            and "recvmmsg=299" in item
+            and "SIOCATMARK=0x8905" in item
+            for item in prerequisites
+        ),
+        "static-c-socket-messages must record its selected Linux register ABI",
+    )
+    require(
+        any(
+            "56-byte align-8" in item
+            and "16-byte align-4" in item
+            and "64-byte align-8" in item
+            and "1056-byte" in item
+            and "raw-error" in item
+            for item in prerequisites
+        ),
+        "static-c-socket-messages must record its padded public-record boundary",
+    )
+    require(
+        any(
+            "sendmmsg loops sendmsg=46" in item
+            and "SYS_sendmmsg=307" in item
+            and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-socket-messages must record musl's sendmmsg and cancellation boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-socket-messages.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "POSIX/GNU/BSD" in item
+            and "CMSG_ALIGN/CMSG_NXTHDR" in item
+            and "POSIX hiding" in item
+            and "unmangled C++" in item
+            for item in header_prerequisites
+        ),
+        "static-c-socket-messages must record its bounded C/C++ header matrix",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "setsockopt",
+        "getsockopt",
+        "sendmsg",
+        "recvmsg",
+        "sendmmsg",
+        "recvmmsg",
+        "sockatmark",
+    ):
+        require(
+            symbol in static_exports,
+            f"static-c-socket-messages must be included in the selected static export ratchet ({symbol})",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-socket-messages"},
+        "static-c-socket-messages must use the closed libc-socket-messages command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "setsockopt=54",
+                "getsockopt=55",
+                "sendmsg=46",
+                "recvmsg=47",
+                "recvmmsg=299",
+                "SYS_sendmmsg=307",
+                "SCM_RIGHTS",
+                "cancellation",
+                "public x86 support",
+            )
+        ),
+        "static-c-socket-messages evidence must retain its bounded runtime boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    oracle_text = str(oracle)
+    for source in (
+        "src/network/setsockopt.c",
+        "src/network/getsockopt.c",
+        "src/network/sendmsg.c",
+        "src/network/recvmsg.c",
+        "src/network/sendmmsg.c",
+        "src/network/recvmmsg.c",
+        "src/network/sockatmark.c",
+    ):
+        require(
+            source in oracle_text,
+            f"static-c-socket-messages oracle omits {source}",
+        )
+
+
 def require_sysv_semaphore_artifact(family: Mapping[str, Any]) -> None:
     """Keep the selected variadic SysV-semaphore ABI boundary private and exact."""
     artifacts = require_verified_artifacts(
@@ -9796,6 +10102,7 @@ def validate_ledger(
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
+    require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
@@ -9836,6 +10143,7 @@ def validate_ledger(
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
+    require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])

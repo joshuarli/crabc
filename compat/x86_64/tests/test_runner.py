@@ -449,6 +449,162 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_socket_messages_header_and_static_c_abi_stay_explicit(self) -> None:
+        """Socket messages/options remain one private header/archive vertical slice."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "socket_messages.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "socket_messages_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "socket_messages_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        visibility = (
+            ROOT / "compat" / "x86_64" / "socket_messages_header_visibility_probe.c"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_socket_messages_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_socket_messages_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_socket_messages_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_socket_messages.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "socket_messages.rs"]', static_root)
+        for required in (
+            "SYS_IOCTL: i64 = 16",
+            "SYS_SENDMSG: i64 = 46",
+            "SYS_RECVMSG: i64 = 47",
+            "SYS_SETSOCKOPT: i64 = 54",
+            "SYS_GETSOCKOPT: i64 = 55",
+            "SYS_RECVMMSG: i64 = 299",
+            "SYS_SENDMMSG: i64 = 307",
+        ):
+            self.assertIn(required, syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/network/setsockopt.c",
+            "src/network/sendmmsg.c",
+            "src/network/sockatmark.c",
+            "MUSL_SEND_CONTROL_BYTES",
+            "1_056",
+            "zero_cmsg_padding",
+            "SYS_SENDMSG",
+            "SYS_RECVMMSG",
+            "SIOCATMARK",
+            'extern "C" fn setsockopt',
+            'extern "C" fn getsockopt',
+            'extern "C" fn sendmsg',
+            'extern "C" fn recvmsg',
+            'extern "C" fn sendmmsg',
+            'extern "C" fn recvmmsg',
+            'extern "C" fn sockatmark',
+        ):
+            self.assertIn(required, implementation)
+        self.assertNotIn("crabc_core", implementation)
+        self.assertNotIn("crabc_mimalloc", implementation)
+
+        for probe in (header_c, header_cpp):
+            for required in (
+                "sys/socket.h",
+                "msghdr",
+                "cmsghdr",
+                "CMSG_ALIGN",
+                "setsockopt",
+                "getsockopt",
+                "sendmsg",
+                "recvmsg",
+                "sockatmark",
+            ):
+                self.assertIn(required, probe)
+        for required in ("mmsghdr", "sendmmsg", "recvmmsg"):
+            self.assertIn(required, visibility)
+        for required in (
+            "compile_profile posix",
+            "compile_profile gnu",
+            "compile_profile bsd",
+            "POSIX profile",
+            "unmangled",
+            "CMSG_ALIGN remains available",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SCM_RIGHTS",
+            "too_large.msg_controllen = 1057",
+            "failed_receive.__pad1 != 0",
+            "sendmmsg(pair[0], send_messages, 2, 0)",
+            "recvmmsg(pair[1], receive_messages, 2, 0, 0)",
+            "sockatmark(-1)",
+            "CRABC_SOCKET_MESSAGES_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_socket_messages_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_socket_messages_header_abi.sh",
+            "-nostdlib -static",
+            "assert_named_syscall setsockopt 36",
+            "assert_named_syscall getsockopt 37",
+            "assert_named_syscall sendmsg 2e",
+            "assert_named_syscall recvmsg 2f",
+            "assert_named_syscall recvmmsg 12b",
+            "assert_named_syscall sockatmark 10",
+            "sendmmsg lacks its musl-shaped sendmsg syscall path",
+            "sendmmsg incorrectly uses raw Linux SYS_sendmmsg",
+        ):
+            self.assertIn(required, artifact_runner)
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        for symbol in (
+            "setsockopt",
+            "getsockopt",
+            "sendmsg",
+            "recvmsg",
+            "sendmmsg",
+            "recvmmsg",
+            "sockatmark",
+        ):
+            self.assertIn(symbol, static_export_names)
+        for command in (
+            "./scripts/dev-x86_64.sh socket-messages-header-abi",
+            "./scripts/dev-x86_64.sh libc-socket-messages",
+        ):
+            self.assertIn(command, parity_ledger)
+        for required in (
+            "run_socket_messages_header_abi()",
+            "/workspace/compat/x86_64/run_socket_messages_header_abi.sh",
+            "/workspace/compat/x86_64/run_libc_socket_messages.sh",
+            '    socket-messages-header-abi)\n        [ "$#" -eq 0 ] || fail "socket-messages-header-abi takes no arguments"',
+            '    libc-socket-messages)\n        [ "$#" -eq 0 ] || fail "libc-socket-messages takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -481,9 +637,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
+            "machine-context-header-abi",
             "vector-io-header-abi",
             "libc-crt1-static-tls",
+            "crt-dynamic-startup",
             "linux-5-10-uapi",
             "candidate-header-closure",
             "uapi-wrapper-matrix",
@@ -595,6 +753,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_math_complex_header_abi.sh', source)
         self.assertIn('run_sys_reg_header_abi()', source)
         self.assertIn('compat/x86_64/run_sys_reg_header_abi.sh', source)
+        self.assertIn('run_machine_context_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_machine_context_header_abi.sh', source
+        )
         self.assertIn('run_types_header_abi()', source)
         self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
         self.assertIn('run_stat_header_abi()', source)
@@ -1953,6 +2115,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-socket-transport)\n        [ "$#" -eq 0 ] || fail "libc-socket-transport takes no arguments"',
+            source,
+        )
+        self.assertIn(
+            'run_in_container bash /workspace/compat/x86_64/run_libc_socket_messages.sh',
+            source,
+        )
+        self.assertIn(
+            '    libc-socket-messages)\n        [ "$#" -eq 0 ] || fail "libc-socket-messages takes no arguments"',
             source,
         )
         self.assertIn('run_libc_system_observation_probe()', source)

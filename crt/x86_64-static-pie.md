@@ -5,9 +5,11 @@ ordinary-static and static-PIE bootstrap objects built by
 `crt/build_x86_64.py`. It proves an ordinary `ET_EXEC` direct entry handoff,
 plus checked static-PIE relative relocation and GNU RELRO sealing. It does not
 add a supported x86-64 `crabc` platform, dynamic CRT, dynamic linker, libc,
-sysroot, or Rust facade.
+sysroot, or Rust facade. The builder also produces a separately scoped private
+dynamic-PIE `Scrt1.o`; its contract is documented in
+`crt/x86_64-dynamic-startup.md` and is not part of this static evidence.
 
-The builder emits exactly these Rust-produced objects:
+The static evidence consumes exactly these Rust-produced objects:
 
 - `crt1.o`: preserves the Linux entry stack, establishes the SysV call frame,
   and makes one direct `R_X86_64_PLT32` handoff to the shared static startup.

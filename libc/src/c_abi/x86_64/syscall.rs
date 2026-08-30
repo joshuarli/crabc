@@ -14,7 +14,9 @@
 //! `faccessat`, and flags-bearing `faccessat2` requests;
 //! the selected readiness/signal-waits leaf uses its named Linux wait syscalls;
 //! the selected socket-transport leaf uses its direct Linux socket lifecycle
-//! and byte-transfer syscalls; and the selected nanosleep leaf uses its direct
+//! and byte-transfer syscalls; the selected socket-message/options leaf uses
+//! its direct socket-option, padded-message, batched-receive, and SIOCATMARK
+//! syscall forms; and the selected nanosleep leaf uses its direct
 //! two-pointer relative sleep syscall. The separately selected bounded
 //! system-information leaf uses `sysinfo` and the fixed-size
 //! `sched_getaffinity` CPU mask here; its public processor helper deliberately
@@ -296,6 +298,8 @@ pub(crate) const SYS_CONNECT: i64 = 42;
 pub(crate) const SYS_ACCEPT: i64 = 43;
 pub(crate) const SYS_SENDTO: i64 = 44;
 pub(crate) const SYS_RECVFROM: i64 = 45;
+pub(crate) const SYS_SENDMSG: i64 = 46;
+pub(crate) const SYS_RECVMSG: i64 = 47;
 pub(crate) const SYS_SHUTDOWN: i64 = 48;
 pub(crate) const SYS_BIND: i64 = 49;
 pub(crate) const SYS_LISTEN: i64 = 50;
@@ -303,6 +307,7 @@ pub(crate) const SYS_GETSOCKNAME: i64 = 51;
 pub(crate) const SYS_GETPEERNAME: i64 = 52;
 pub(crate) const SYS_SOCKETPAIR: i64 = 53;
 pub(crate) const SYS_SETSOCKOPT: i64 = 54;
+pub(crate) const SYS_GETSOCKOPT: i64 = 55;
 pub(crate) const SYS_EXECVE: i64 = 59;
 pub(crate) const SYS_WAIT4: i64 = 61;
 pub(crate) const SYS_KILL: i64 = 62;
@@ -397,8 +402,10 @@ pub(crate) const SYS_FACCESSAT: i64 = 269;
 pub(crate) const SYS_DUP3: i64 = 292;
 pub(crate) const SYS_PIPE2: i64 = 293;
 pub(crate) const SYS_INOTIFY_INIT1: i64 = 294;
+pub(crate) const SYS_RECVMMSG: i64 = 299;
 pub(crate) const SYS_PRLIMIT64: i64 = 302;
 pub(crate) const SYS_SYNCFS: i64 = 306;
+pub(crate) const SYS_SENDMMSG: i64 = 307;
 pub(crate) const SYS_RENAMEAT2: i64 = 316;
 pub(crate) const SYS_GETRANDOM: i64 = 318;
 pub(crate) const SYS_STATFS: i64 = 137;
