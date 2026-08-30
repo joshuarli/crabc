@@ -123,6 +123,10 @@ name = "native_mimalloc_two_live_remote_owners"
 path = "../tests/native_mimalloc_two_live_remote_owners.rs"
 
 [[test]]
+name = "native_mimalloc_initial_post_exit_free"
+path = "../tests/native_mimalloc_initial_post_exit_free.rs"
+
+[[test]]
 name = "native_mimalloc_initial_remote_free"
 path = "../tests/native_mimalloc_initial_remote_free.rs"
 

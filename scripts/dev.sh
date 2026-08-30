@@ -550,6 +550,7 @@ case "$command" in
             --test native_mimalloc_post_exit_source_published_successor \
             --test native_mimalloc_post_exit_source_published_all_free_proof \
             --test native_mimalloc_two_live_remote_owners \
+            --test native_mimalloc_initial_post_exit_free \
             --test native_mimalloc_initial_remote_free \
             --test native_mimalloc_parallel_local_workers \
             --test native_mimalloc_concurrent_session_start \
