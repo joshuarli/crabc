@@ -2237,6 +2237,19 @@ struct RuntimeProcessStorage {
     /// native seam asks it for a valid allocation. It stays in this final
     /// slot afterward: source-shaped process exit is still out of scope.
     page_owner_state: AtomicUsize,
+    /// Counts only detached routes whose source aggregate still owns live
+    /// page clients. This is deliberately narrower than `page_owner_state`'s
+    /// parked-token count: a terminal route has moved its token into B's
+    /// no-page completion, and ticket zero must remain unavailable until that
+    /// B lifecycle consumes the token. A source-active route, by contrast,
+    /// lets ticket zero run a private operation beside its separate token.
+    active_post_exit_route_count: AtomicUsize,
+    /// Counts terminal source routes that have moved their parked scheduler
+    /// token into a matched B worker's no-page completion. This is separate
+    /// from source-active routes: even another live route must not reopen
+    /// ticket zero while any B still owes the terminal lifecycle that releases
+    /// its exact A-side worker-admission claim.
+    pending_post_exit_completion_count: AtomicUsize,
     page_owner: UnsafeCell<MaybeUninit<MainStaticRuntimeFirstArenaPageAllocator>>,
 }
 
@@ -2277,6 +2290,14 @@ struct RuntimeDormantPageOperation {
 #[must_use = "a parked detached post-exit token must finish with B or remain terminally retained"]
 struct RuntimeParkedPostExitRoute {
     runtime: &'static RuntimeProcessStorage,
+    /// The source route still owns at least one exact client. Once its final
+    /// exact free produces B's typed completion, this becomes false before
+    /// the scheduler token can wait for B's ordinary no-page finish.
+    source_route_active: bool,
+    /// The source route has terminally released and this still-parked token
+    /// now belongs to a matched B no-page completion. Ticket zero remains
+    /// unavailable until that B finishes and consumes this exact token.
+    terminal_completion_pending: bool,
     active: bool,
 }
 
@@ -2433,12 +2454,24 @@ impl RuntimeDormantPageOperation {
         }
         let runtime = self.runtime;
         let park_state = self.park_state;
+        if !runtime.register_active_post_exit_route() {
+            return Err(self);
+        }
         match self.settle(park_state) {
             Ok(()) => Ok(RuntimeParkedPostExitRoute {
                 runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
                 active: true,
             }),
-            Err(operation) => Err(operation),
+            Err(operation) => {
+                // `settle` has already made the scheduler terminal. Restore
+                // the narrower source-route count nevertheless so no
+                // diagnostic/audit path can mistake a failed publication for
+                // a live source route.
+                let _ = runtime.unregister_active_post_exit_route();
+                Err(operation)
+            }
         }
     }
 
@@ -2476,6 +2509,23 @@ impl Drop for RuntimeDormantPageOperation {
 }
 
 impl RuntimeParkedPostExitRoute {
+    /// Converts this token from a source-active detached route into B's
+    /// terminal no-page completion. The token itself stays parked until B
+    /// detaches, but ticket zero may no longer borrow beside it because no
+    /// source route remains to justify that narrower exception.
+    fn finish_source_route(mut self) -> Result<Self, Self> {
+        if !self.source_route_active
+            || !self.runtime.register_pending_post_exit_completion()
+            || !self.runtime.unregister_active_post_exit_route()
+        {
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
+        self.source_route_active = false;
+        self.terminal_completion_pending = true;
+        Ok(self)
+    }
+
     /// Removes this exact detached route from the scheduler only after its
     /// matched B worker has completed ordinary no-page teardown.
     ///
@@ -2484,6 +2534,13 @@ impl RuntimeParkedPostExitRoute {
     /// created the B-side completion. A direct parked-count transition keeps
     /// other detached routes and independently parked normal engines intact.
     fn finish_after_b(mut self) -> Result<(), Self> {
+        if self.source_route_active || !self.terminal_completion_pending {
+            // Only a terminal exact free can convert a source route into a
+            // B completion. Removing the scheduler token before that proof
+            // would make ticket zero appear reusable over live A clients.
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
         loop {
             let observed = self.runtime.page_owner_state.load(Ordering::Acquire);
             if observed == PAGE_OWNER_BUSY {
@@ -2510,6 +2567,15 @@ impl RuntimeParkedPostExitRoute {
                 .compare_exchange_weak(observed, next_state, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
+                if !self.runtime.finish_pending_post_exit_completion() {
+                    // The scheduler token already left its parked count, but
+                    // the matching B completion accounting disagreed. The
+                    // process is terminal; keep this concrete capability
+                    // alive rather than reporting an ordinary finish.
+                    self.runtime.retain_page_owner();
+                    return Err(self);
+                }
+                self.terminal_completion_pending = false;
                 self.active = false;
                 return Ok(());
             }
@@ -2839,8 +2905,114 @@ impl RuntimeProcessStorage {
             owner: UnsafeCell::new(MaybeUninit::uninit()),
             main_heap: UnsafeCell::new(MaybeUninit::uninit()),
             page_owner_state: AtomicUsize::new(PAGE_OWNER_COLD),
+            active_post_exit_route_count: AtomicUsize::new(0),
+            pending_post_exit_completion_count: AtomicUsize::new(0),
             page_owner: UnsafeCell::new(MaybeUninit::uninit()),
         }
+    }
+
+    /// Registers one typed route while its source aggregate is still live.
+    /// The route increments this narrower count before publishing its parked
+    /// scheduler token, so ticket zero cannot observe a route token without
+    /// the capability that permits its private interleaving.
+    fn register_active_post_exit_route(&self) -> bool {
+        let mut observed = self.active_post_exit_route_count.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.active_post_exit_route_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    /// Removes one source-active route after its terminal exact free has
+    /// created B's typed completion. The remaining parked scheduler token is
+    /// intentionally not represented here: it blocks ticket zero until B
+    /// completes ordinary no-page teardown.
+    fn unregister_active_post_exit_route(&self) -> bool {
+        let mut observed = self.active_post_exit_route_count.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_sub(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.active_post_exit_route_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn has_active_post_exit_route(&self) -> bool {
+        self.active_post_exit_route_count.load(Ordering::Acquire) != 0
+    }
+
+    /// Registers one source-terminal route before it drops its source-active
+    /// capability. This ordering leaves no interval in which another live
+    /// route could make ticket zero appear available while B still owes a
+    /// normal no-page lifecycle.
+    fn register_pending_post_exit_completion(&self) -> bool {
+        let mut observed = self
+            .pending_post_exit_completion_count
+            .load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.pending_post_exit_completion_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    /// Removes one B completion only after its exact parked scheduler token
+    /// has left the count during B's ordinary no-page finish.
+    fn finish_pending_post_exit_completion(&self) -> bool {
+        let mut observed = self
+            .pending_post_exit_completion_count
+            .load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_sub(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.pending_post_exit_completion_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn has_pending_post_exit_completion(&self) -> bool {
+        self.pending_post_exit_completion_count.load(Ordering::Acquire) != 0
     }
 
     #[inline]
@@ -3095,6 +3267,19 @@ impl RuntimeProcessStorage {
         let parked_count = page_owner_parked_count(observed)
             .expect("the ticket-zero scheduler admitted only ready or parked states");
         let ticket_zero_was_parked = owner.has_parked_live_engine();
+        if self.has_pending_post_exit_completion()
+            || (observed != PAGE_OWNER_READY
+                && !ticket_zero_was_parked
+                && !self.has_active_post_exit_route())
+        {
+            // A pending B completion always wins, even beside another live
+            // source route. Otherwise a normal parked engine owns the only
+            // token. Neither condition lets ticket zero borrow the dormant
+            // pair, so restore the exact state rather than treating every
+            // parked count alike.
+            self.page_owner_state.store(observed, Ordering::Release);
+            return None;
+        }
         let result = operation(owner);
         if owner.is_retained() {
             self.retain();
@@ -3883,6 +4068,24 @@ impl NativePostExitRouteStorage {
                 // continue their separately serialized PageMap operations,
                 // but ticket zero cannot reopen until B has crossed its
                 // required finish boundary.
+                let parked = match parked.finish_source_route() {
+                    Ok(parked) => parked,
+                    Err(parked) => {
+                        // The scheduler token cannot become a B completion
+                        // unless this exact source route first released its
+                        // narrower ticket-zero interleaving capability.
+                        // Preserve both terminally rather than making the
+                        // registry slot look empty with an unbalanced count.
+                        unsafe {
+                            (*self.entry.get()).write(NativePostExitRouteEntry::RetainedFinished {
+                                parked,
+                                proof,
+                            })
+                        };
+                        self.publish_retained();
+                        return NativePostExitRouteFreeResult::Retained;
+                    }
+                };
                 let slot = current_thread_slot();
                 let b_session_is_parked = match slot.page_owner.as_ref() {
                     None => true,
@@ -13996,12 +14199,21 @@ mod tests {
                 Ok(PAGE_OWNER_PARKED),
                 "two synthetic detached routes join ticket zero's parked token"
             );
+            assert!(
+                runtime.register_active_post_exit_route()
+                    && runtime.register_active_post_exit_route(),
+                "each synthetic detached route publishes its source-active capability before its parked token"
+            );
             let first_route = RuntimeParkedPostExitRoute {
                 runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
                 active: true,
             };
             let second_route = RuntimeParkedPostExitRoute {
                 runtime,
+                source_route_active: true,
+                terminal_completion_pending: false,
                 active: true,
             };
 
@@ -14058,6 +14270,22 @@ mod tests {
                 "both detached route claims remain after ticket zero finishes its private operation"
             );
 
+            let first_route = match first_route.finish_source_route() {
+                Ok(route) => route,
+                Err(_) => panic!("the first synthetic route converts into B's terminal completion"),
+            };
+            let second_route = match second_route.finish_source_route() {
+                Ok(route) => route,
+                Err(_) => panic!("the second synthetic route converts into B's terminal completion"),
+            };
+            assert!(
+                runtime
+                    .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
+                        owner.allocate(61, false)
+                    })
+                    .is_none(),
+                "terminal B completions keep ticket zero unavailable after every source route released"
+            );
             assert!(
                 first_route.finish_after_b().is_ok(),
                 "the first B terminal finish removes only its matching detached token"
