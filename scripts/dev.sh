@@ -558,6 +558,7 @@ case "$command" in
             --test native_mimalloc_initial_live_parallel_workers \
             --test native_mimalloc_many_owner_exit_allocations \
             --test native_mimalloc_concurrent_post_exit_release \
+            --test native_mimalloc_concurrent_owner_exit \
             --test native_mimalloc_live_remote_owner_exit \
             --test pthread_atfork \
             --test pthread_create_join_tls_regression \

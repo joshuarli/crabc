@@ -3734,11 +3734,16 @@ struct NativePostExitRouteStorage {
 unsafe impl Sync for NativePostExitRouteStorage {}
 
 impl NativePostExitRouteStorage {
+    /// Reserves a not-yet-published detached route while its A-side runtime
+    /// operation still owns the scheduler's `BUSY` state.  Readers classify
+    /// this `BUSY` entry as live for source preflight, but cannot borrow its
+    /// uninitialized route image before the reserving owner publishes the
+    /// matching parked scheduler token.
     #[inline]
-    fn from_active(route: NativePostExitRoute) -> Self {
+    fn reserved() -> Self {
         Self {
-            state: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_ACTIVE),
-            entry: UnsafeCell::new(MaybeUninit::new(NativePostExitRouteEntry::Active(route))),
+            state: AtomicU8::new(NATIVE_POST_EXIT_ROUTE_BUSY),
+            entry: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 
@@ -3765,29 +3770,41 @@ impl NativePostExitRouteStorage {
         }
     }
 
-    /// Installs one fully detached route into a previously allocated metadata
-    /// entry. An unexpected `EMPTY -> BUSY` race returns the original exact
-    /// route so the caller can retry another entry or retain it rather than
-    /// overwrite an independently parked owner.
-    fn install(&self, route: NativePostExitRoute) -> Result<(), NativePostExitRoute> {
-        if self
-            .state
+    /// Reserves a reusable empty entry while the registry mutation guard is
+    /// held. The route image remains in the caller until its A-side operation
+    /// can publish the matching parked scheduler token; this prevents another
+    /// concurrent A from observing an empty source-list proof in that gap.
+    fn reserve(&self) -> bool {
+        self.state
             .compare_exchange(
                 NATIVE_POST_EXIT_ROUTE_EMPTY,
                 NATIVE_POST_EXIT_ROUTE_BUSY,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             )
-            .is_err()
-        {
-            return Err(route);
-        }
-        // SAFETY: the successful EMPTY -> BUSY transition is the unique
-        // writer. The Active value is published before its Release store.
+            .is_ok()
+    }
+
+    /// Completes a previously reserved entry after the A-side operation has
+    /// converted its `BUSY` scheduler claim into the exact parked route token.
+    #[inline]
+    fn publish_reserved(&self, route: NativePostExitRoute) {
+        // SAFETY: the reservation owns this entry's BUSY state. No reader
+        // accesses `entry` until this Release publication makes it ACTIVE.
         unsafe { (*self.entry.get()).write(NativePostExitRouteEntry::Active(route)) };
         self.state
             .store(NATIVE_POST_EXIT_ROUTE_ACTIVE, Ordering::Release);
-        Ok(())
+    }
+
+    /// Closes a reservation that could not obtain a matching parked token.
+    /// Its route stays with the caller, which retains its exact admission and
+    /// client facts; readers must nevertheless treat this static registry
+    /// entry as terminal rather than read its deliberately uninitialized
+    /// image.
+    #[inline]
+    fn retain_reserved(&self) {
+        self.state
+            .store(NATIVE_POST_EXIT_ROUTE_RETAINED, Ordering::Release);
     }
 
     /// Restores one unchanged or still-live route after this entry's private
@@ -4286,14 +4303,13 @@ const _: [(); 1] = [();
 
 impl NativePostExitRouteRegistryNode {
     #[inline]
-    fn new(
-        route: NativePostExitRoute,
+    fn new_reserved(
         next: *mut NativePostExitRouteRegistryNode,
         backing: MetaAllocation<'static>,
     ) -> Self {
         Self {
             next: AtomicPtr::new(next),
-            storage: NativePostExitRouteStorage::from_active(route),
+            storage: NativePostExitRouteStorage::reserved(),
             _backing: backing,
         }
     }
@@ -4306,11 +4322,12 @@ impl NativePostExitRouteRegistryNode {
 // reference after initialization.
 unsafe impl Sync for NativePostExitRouteRegistryNode {}
 
-/// Result of looking for a reusable detached-route registry entry.
-enum NativePostExitRouteRegistryInstall {
-    Installed,
-    NeedsEntry(NativePostExitRoute),
-    Retained(NativePostExitRoute),
+/// Result of looking for a reusable detached-route registry entry while the
+/// registry's short mutation guard is held.
+enum NativePostExitRouteRegistryReservationLookup {
+    Reserved(&'static NativePostExitRouteStorage),
+    NeedsEntry,
+    Retained,
 }
 
 /// Private state of the complete registry view used before another A may
@@ -4336,6 +4353,52 @@ struct NativePostExitRouteRegistry {
     head: AtomicPtr<NativePostExitRouteRegistryNode>,
 }
 
+/// One short registry reservation held while an A-side operation is still
+/// `BUSY`. Its storage entry is visible as live to a concurrent source drain,
+/// but no raw-C route operation can read the uninitialized image until
+/// [`Self::publish`] installs the matching parked scheduler token.
+#[must_use = "a detached-route registry reservation must publish or retain its exact source route"]
+struct NativePostExitRouteRegistryReservation {
+    registry: &'static NativePostExitRouteRegistry,
+    storage: &'static NativePostExitRouteStorage,
+    active: bool,
+}
+
+impl NativePostExitRouteRegistryReservation {
+    /// Publishes the complete route before allowing another installer to use
+    /// the registry mutation boundary. `route` already contains the exact
+    /// parked token produced while this reservation kept the new node busy.
+    fn publish(mut self, route: NativePostExitRoute) {
+        self.storage.publish_reserved(route);
+        self.registry.release_mutation();
+        self.active = false;
+    }
+
+    /// Closes this reserved node after the matching page-owner operation
+    /// failed before it could produce a parked token. The caller retains the
+    /// separate route/admission image terminally; this storage has never
+    /// initialized its route cell and must not become reusable.
+    fn retain(mut self) {
+        self.storage.retain_reserved();
+        self.registry.retain_held_mutation();
+        self.active = false;
+    }
+}
+
+impl Drop for NativePostExitRouteRegistryReservation {
+    fn drop(&mut self) {
+        if self.active {
+            // A dropped reservation has a source route or scheduler claim
+            // whose complete relationship can no longer be proven. Keep the
+            // uninitialized entry non-reusable and close future route
+            // installation before the surrounding owner is retained.
+            self.storage.retain_reserved();
+            self.registry.retain_held_mutation();
+            RUNTIME_PROCESS.retain_page_owner();
+        }
+    }
+}
+
 impl NativePostExitRouteRegistry {
     const fn new() -> Self {
         Self {
@@ -4344,13 +4407,11 @@ impl NativePostExitRouteRegistry {
         }
     }
 
-    /// Scans the stable list once without exposing an entry. A retained node
-    /// wins over a reusable empty node: once source ownership is terminal,
-    /// another detached A may not publish a route beside it.
-    fn try_install_existing(
-        &self,
-        route: NativePostExitRoute,
-    ) -> NativePostExitRouteRegistryInstall {
+    /// Scans the stable list once while the short registry mutation boundary
+    /// is held. A retained node wins over a reusable empty node: once source
+    /// ownership is terminal, another detached A may not publish a route
+    /// beside it.
+    fn try_reserve_existing(&'static self) -> NativePostExitRouteRegistryReservationLookup {
         let mut candidate: *mut NativePostExitRouteRegistryNode = core::ptr::null_mut();
         let mut current = self.head.load(Ordering::Acquire);
         while !current.is_null() {
@@ -4363,21 +4424,23 @@ impl NativePostExitRouteRegistry {
                 }
                 NativePostExitRouteStorageState::Empty | NativePostExitRouteStorageState::Live => {}
                 NativePostExitRouteStorageState::Retained => {
-                    return NativePostExitRouteRegistryInstall::Retained(route);
+                    return NativePostExitRouteRegistryReservationLookup::Retained;
                 }
             }
             current = node.next.load(Ordering::Acquire);
         }
         if candidate.is_null() {
-            return NativePostExitRouteRegistryInstall::NeedsEntry(route);
+            return NativePostExitRouteRegistryReservationLookup::NeedsEntry;
         }
         // SAFETY: `candidate` was read from the stable registry list above.
         // The registry mutation word serializes another installer and a
         // terminal close, while the entry CAS remains the local proof that a
         // route never overwrites a nonempty stable node.
-        match unsafe { (&*candidate).storage.install(route) } {
-            Ok(()) => NativePostExitRouteRegistryInstall::Installed,
-            Err(route) => NativePostExitRouteRegistryInstall::NeedsEntry(route),
+        let storage = unsafe { &(*candidate).storage };
+        if storage.reserve() {
+            NativePostExitRouteRegistryReservationLookup::Reserved(storage)
+        } else {
+            NativePostExitRouteRegistryReservationLookup::NeedsEntry
         }
     }
 
@@ -4417,6 +4480,15 @@ impl NativePostExitRouteRegistry {
     fn release_mutation(&self) {
         self.mutation
             .store(NATIVE_POST_EXIT_ROUTE_REGISTRY_IDLE, Ordering::Release);
+    }
+
+    /// Completes a reservation that failed before publishing a route. The
+    /// caller already owns the mutation state, so it must not call the normal
+    /// close helper, which waits for that very state to become idle.
+    #[inline]
+    fn retain_held_mutation(&self) {
+        self.mutation
+            .store(NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED, Ordering::Release);
     }
 
     /// Tries to close the registry for one already-retained route. A concurrent
@@ -4473,35 +4545,41 @@ impl NativePostExitRouteRegistry {
         }
     }
 
-    /// Installs one fully detached route. Existing empty metadata entries are
-    /// reused first; if every live entry is occupied, one new process-lived
-    /// metadata node is initialized and published. An allocation failure
-    /// returns the exact route for terminal retention rather than adding a
-    /// cardinality cap or overwriting another A owner.
-    fn install(
-        &self,
-        route: NativePostExitRoute,
+    /// Reserves the next detached-route entry while A still owns its complete
+    /// runtime page operation. The reservation is already visible as `Live`
+    /// to a concurrent A's source-list preflight, but remains `BUSY` to raw-C
+    /// readers until A has converted its own operation into the route's
+    /// parked scheduler token and calls [`NativePostExitRouteRegistryReservation::publish`].
+    ///
+    /// This closes the publication gap between source abandonment and typed
+    /// route registration: another owner may no longer see an empty registry
+    /// after the first owner has detached its Theap/TLD.
+    fn reserve(
+        &'static self,
         config: MemoryConfig,
-    ) -> Result<(), NativePostExitRoute> {
+    ) -> Result<NativePostExitRouteRegistryReservation, ()> {
         if !self.acquire_mutation() {
-            return Err(route);
+            return Err(());
         }
 
-        // This whole decision shares one linearization boundary with terminal
-        // closure. A retained route therefore cannot appear after this A has
-        // selected an empty node but before that node receives its complete
-        // active image.
-        let route = match self.try_install_existing(route) {
-            NativePostExitRouteRegistryInstall::Installed => {
-                self.release_mutation();
-                return Ok(());
+        // This whole reservation shares one linearization boundary with
+        // terminal closure. A retained route therefore cannot appear after
+        // this A has selected an empty node but before that node becomes a
+        // visible busy source-list member.
+        match self.try_reserve_existing() {
+            NativePostExitRouteRegistryReservationLookup::Reserved(storage) => {
+                return Ok(NativePostExitRouteRegistryReservation {
+                    registry: self,
+                    storage,
+                    active: true,
+                });
             }
-            NativePostExitRouteRegistryInstall::NeedsEntry(route) => route,
-            NativePostExitRouteRegistryInstall::Retained(route) => {
+            NativePostExitRouteRegistryReservationLookup::NeedsEntry => {}
+            NativePostExitRouteRegistryReservationLookup::Retained => {
                 self.release_mutation();
-                return Err(route);
+                return Err(());
             }
-        };
+        }
 
         let backing = match MetaAllocator::global().zalloc(
             config,
@@ -4510,7 +4588,7 @@ impl NativePostExitRouteRegistry {
             Ok(backing) => backing,
             Err(_) => {
                 self.release_mutation();
-                return Err(route);
+                return Err(());
             }
         };
         let next = self.head.load(Ordering::Acquire);
@@ -4520,11 +4598,18 @@ impl NativePostExitRouteRegistry {
             .cast::<NativePostExitRouteRegistryNode>();
         // SAFETY: `backing` is a fresh zeroed metadata allocation with the
         // compile-time-checked alignment above. This is its one typed node
-        // initialization, before any registry reader can acquire `head`.
-        unsafe { node.write(NativePostExitRouteRegistryNode::new(route, next, backing)) };
+        // initialization, before any registry reader can acquire `head`. Its
+        // storage stays BUSY until the caller publishes a complete route.
+        unsafe { node.write(NativePostExitRouteRegistryNode::new_reserved(next, backing)) };
         self.head.store(node, Ordering::Release);
-        self.release_mutation();
-        Ok(())
+        // SAFETY: the new node has a process-lifetime metadata backing and
+        // was fully initialized before its Release publication above.
+        let storage = unsafe { &(*node).storage };
+        Ok(NativePostExitRouteRegistryReservation {
+            registry: self,
+            storage,
+            active: true,
+        })
     }
 
     /// Reports whether every currently published detached route remains live.
@@ -9171,17 +9256,38 @@ impl CurrentThreadPageOwnerSessionHandle {
         };
         let engine = match resume {
             Ok(engine) => engine,
-            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked })
-            | Err(RuntimePersistentPageEngineResumeFailure::Rejected {
-                parked,
-                ..
-            })
-            | Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy {
-                parked,
-                ..
-            }) => {
+            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked }) => {
                 session.parked = Some(parked);
                 restore_current_thread_page_owner_session(session);
+                if page_owner_transition_is_retryable(
+                    RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                ) {
+                    // A concurrent prepared exit owns the complete scheduler
+                    // handoff, but this exact session is still parked and
+                    // unchanged in TLS. Let the native destructor boundary
+                    // retry that typed state instead of relabeling it as an
+                    // owner-exit failure before its route exists.
+                    return Err(CurrentThreadPageOwnerSessionError::Busy);
+                }
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Rejected { parked, .. }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                return Err(CurrentThreadPageOwnerSessionError::Unavailable);
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy { parked, .. }) => {
+                session.parked = Some(parked);
+                restore_current_thread_page_owner_session(session);
+                if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_RETAINED
+                    && RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_RETAINED
+                {
+                    // A detached route may transiently own its short map
+                    // access after another A has republished the scheduler.
+                    // This parked session has not changed, so its native
+                    // owner-exit preparation may retry the map handoff.
+                    return Err(CurrentThreadPageOwnerSessionError::Busy);
+                }
                 return Err(CurrentThreadPageOwnerSessionError::Unavailable);
             }
             Err(RuntimePersistentPageEngineResumeFailure::Retained { terminal, .. }) => {
@@ -12209,12 +12315,30 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
     };
 
     if let Some(generation) = native_session_generation {
-        let session = CurrentThreadPageOwnerSessionHandle {
-            generation,
-            _current_thread_only: PhantomData,
-        };
-        if session.prepare_native_deferred_exit().is_err() {
-            return ThreadFinishResult::Retained;
+        loop {
+            let session = CurrentThreadPageOwnerSessionHandle {
+                generation,
+                _current_thread_only: PhantomData,
+            };
+            match session.prepare_native_deferred_exit() {
+                Ok(()) => break,
+                Err(CurrentThreadPageOwnerSessionError::Busy) => {
+                    // The session restored its exact parked token before
+                    // returning. A peer owns only a bounded scheduler or
+                    // PageMap handoff, so wait rather than prematurely
+                    // retaining A after its user destructors have run.
+                    core::hint::spin_loop();
+                }
+                Err(_) => {
+                    // Every non-busy error leaves a source owner, attachment,
+                    // or ledger whose post-destructor route cannot be
+                    // replayed. Preserve that concrete state terminally;
+                    // returning `Retained` alone would incorrectly leave the
+                    // process scheduler and worker admission looking live.
+                    retain_current_thread_live_page_owner();
+                    return ThreadFinishResult::Retained;
+                }
+            }
         }
     }
     finish_current_thread_after_user_destructors()
@@ -12305,13 +12429,15 @@ fn finish_current_thread_page_owner_after_post_exit_route(
 ///
 /// This is deliberately after the source aggregate has torn down A's
 /// Theap/TLD and after its long PageMap lease has become route-owned short
-/// access. The scheduler converts A's active operation into one parked route
-/// token, so a distinct normal engine may run between exact frees while
-/// ticket zero remains unavailable. That token may leave the parked count
-/// only after a B free returns the exact typed terminal proof and B finishes
-/// its own no-page lifecycle. A's TLS becomes finished because it owns no
-/// remaining route or admission capability, not because the global
-/// worker-admission count has been released.
+/// access. Before the scheduler releases A's active `BUSY` claim, the route
+/// reserves a `BUSY` registry entry that concurrent source exits classify as
+/// live but raw-C consumers cannot read. The matching parked route token and
+/// complete entry then publish together, so a second A cannot observe an
+/// empty registry after the first A has detached its Theap/TLD. That token
+/// may leave the parked count only after a B free returns the exact typed
+/// terminal proof and B finishes its own no-page lifecycle. A's TLS becomes
+/// finished because it owns no remaining route or admission capability, not
+/// because the global worker-admission count has been released.
 fn defer_current_thread_native_post_exit_route(
     operation: RuntimeDormantPageOperation,
     registry_config: MemoryConfig,
@@ -12331,6 +12457,23 @@ fn defer_current_thread_native_post_exit_route(
         admission
     };
     let route = build_route(admission);
+    let reservation = match NATIVE_POST_EXIT_ROUTE.reserve(registry_config) {
+        Ok(reservation) => reservation,
+        Err(()) => {
+            // Registry growth failed or a prior terminal entry closed future
+            // publication before this source owner could release `BUSY`.
+            // Preserve the exact detached route and admission rather than
+            // reopening the scheduler over an unregistered Theap/TLD exit.
+            let route = core::mem::ManuallyDrop::new(route);
+            // SAFETY: this retained route will never be dropped. Reading its
+            // exact non-Copy admission transfers the one fork-count claim
+            // into A's terminal TLS slot without exposing a client or route.
+            let admission = unsafe { core::ptr::read(route.admission_ptr()) };
+            drop(operation);
+            retain_current_thread_detached_owner_exit_with_admission(admission);
+            return ThreadFinishResult::Retained;
+        }
+    };
     let parked = match operation.park_detached_post_exit() {
         Ok(parked) => parked,
         Err(operation) => {
@@ -12338,6 +12481,7 @@ fn defer_current_thread_native_post_exit_route(
             // admission and page facts while the failed scheduler conversion
             // keeps the process terminal; no normal finalizer can repair
             // that one-way boundary.
+            reservation.retain();
             let route = core::mem::ManuallyDrop::new(route);
             // SAFETY: this retained route will never be dropped. Reading its
             // exact non-Copy admission transfers the only fork-count claim
@@ -12348,38 +12492,15 @@ fn defer_current_thread_native_post_exit_route(
             return ThreadFinishResult::Retained;
         }
     };
-    let deferred = NativePostExitRoute {
-        parked,
-        route,
-    };
-    let installed = NATIVE_POST_EXIT_ROUTE.install(deferred, registry_config);
-    match installed {
-        Ok(()) => {
-            let slot = current_thread_slot();
-            // The source aggregate completed the old Theap/TLD boundary.
-            // Its detached route—not this attachment—now owns every page
-            // client and A admission, so a later normal finalizer cannot
-            // touch this historical attachment.
-            drop(slot.attachment.take());
-            slot.state = ThreadLifecycleState::Finished;
-            ThreadFinishResult::Finished
-        }
-        Err(deferred) => {
-            // Registry growth failed or observed a terminal entry after A's
-            // source teardown. Preserve both exact capabilities rather than
-            // overwriting an independently parked owner or manufacturing a
-            // normal no-page finalizer.
-            let deferred = core::mem::ManuallyDrop::new(deferred);
-            // SAFETY: `deferred` is intentionally never dropped after this
-            // ownership mismatch. Reading its non-Copy admission transfers
-            // that one claim into the terminal A TLS slot while the leaked
-            // route retains all page/process state.
-            let admission = unsafe { core::ptr::read(deferred.route.admission_ptr()) };
-            RUNTIME_PROCESS.retain_page_owner();
-            retain_current_thread_detached_owner_exit_with_admission(admission);
-            ThreadFinishResult::Retained
-        }
-    }
+    reservation.publish(NativePostExitRoute { parked, route });
+    let slot = current_thread_slot();
+    // The source aggregate completed the old Theap/TLD boundary. Its
+    // detached route—not this attachment—now owns every page client and A
+    // admission, so a later normal finalizer cannot touch this historical
+    // attachment.
+    drop(slot.attachment.take());
+    slot.state = ThreadLifecycleState::Finished;
+    ThreadFinishResult::Finished
 }
 
 /// Moves one typed mapped-regular reclamation route into its private fresh-B
@@ -12623,29 +12744,76 @@ fn finish_current_thread_page_owner_after_user_destructors(
         return finish_current_thread_all_free_page_owner_after_user_destructors(session);
     };
 
-    let engine = {
-        let slot = current_thread_slot();
-        let Some(attachment) = slot.attachment.as_mut() else {
-            slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
-                ThreadLifecyclePreparedPageOwner { parked, exit },
-            ));
-            slot.state = ThreadLifecycleState::Retained;
-            RUNTIME_PROCESS.retain_page_owner();
-            return ThreadFinishResult::Retained;
-        };
-        match parked.resume(attachment) {
-            Ok(engine) => engine,
-            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked })
-            | Err(RuntimePersistentPageEngineResumeFailure::Rejected {
-                parked,
-                ..
-            })
-            | Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy {
-                parked,
-                ..
-            }) => {
+    let mut parked = parked;
+    let engine = loop {
+        let resume = {
+            let slot = current_thread_slot();
+            let Some(attachment) = slot.attachment.as_mut() else {
                 slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
                     ThreadLifecyclePreparedPageOwner { parked, exit },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            };
+            parked.resume(attachment)
+        };
+        match resume {
+            Ok(engine) => break engine,
+            Err(RuntimePersistentPageEngineResumeFailure::Unavailable { parked: retry }) => {
+                parked = retry;
+                if page_owner_transition_is_retryable(
+                    RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
+                ) {
+                    // A peer's deferred owner exit temporarily owns the one
+                    // scheduler/PageMap mutation slot. This worker still owns
+                    // its separate parked token and complete deferred route,
+                    // so it must wait for the peer to republish the parked
+                    // count rather than retaining a valid source exit.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                let slot = current_thread_slot();
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner { parked, exit },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::PageMapBusy {
+                parked: retry,
+                ..
+            }) => {
+                parked = retry;
+                if RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) != PAGE_OWNER_RETAINED
+                    && RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_RETAINED
+                {
+                    // A peer may have republished the scheduler while its
+                    // detached route completes one short PageMap operation.
+                    // The current prepared exit has not crossed its own drain
+                    // boundary yet, so retry against the same parked token.
+                    core::hint::spin_loop();
+                    continue;
+                }
+                let slot = current_thread_slot();
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner { parked, exit },
+                ));
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain_page_owner();
+                return ThreadFinishResult::Retained;
+            }
+            Err(RuntimePersistentPageEngineResumeFailure::Rejected {
+                parked: retry,
+                ..
+            }) => {
+                let slot = current_thread_slot();
+                slot.page_owner = Some(ThreadLifecyclePageOwner::PreparedExit(
+                    ThreadLifecyclePreparedPageOwner {
+                        parked: retry,
+                        exit,
+                    },
                 ));
                 slot.state = ThreadLifecycleState::Retained;
                 RUNTIME_PROCESS.retain_page_owner();
@@ -12656,11 +12824,13 @@ fn finish_current_thread_page_owner_after_user_destructors(
                 ..
             }) => {
                 core::mem::forget(terminal);
+                let slot = current_thread_slot();
                 slot.state = ThreadLifecycleState::Retained;
                 RUNTIME_PROCESS.retain_page_owner();
                 return ThreadFinishResult::Retained;
             }
             Err(RuntimePersistentPageEngineResumeFailure::PageOwnerRetained) => {
+                let slot = current_thread_slot();
                 slot.state = ThreadLifecycleState::Retained;
                 RUNTIME_PROCESS.retain_page_owner();
                 return ThreadFinishResult::Retained;
@@ -12680,7 +12850,6 @@ fn finish_current_thread_page_owner_after_user_destructors(
             return ThreadFinishResult::Retained;
         }
     };
-
     let DetachedOwnerExit {
         clients,
         disposition,
