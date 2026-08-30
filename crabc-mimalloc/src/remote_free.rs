@@ -47,14 +47,16 @@ const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
 //
 // `ACTIVE` admits a producer that already resolved this exact PageMap entry;
 // each admitted publisher adds `PUBLICATION_ONE` before it touches the source
-// `xthread_id` or `xthread_free` atomics.  An owner may close the lifetime only
-// from `ACTIVE` with a zero publication count.  The high 32 bits distinguish a
-// later reuse of the same metadata address from the PageMap generation read by
-// a producer.  This is intentionally a constant-size per-page state, not a
-// client ledger or owner registry.
+// `xthread_id` or `xthread_free` atomics. `OWNER_DRAINING` admits exactly the
+// source owner while it detaches `xthread_free`; it never blocks a producer.
+// An owner may close the lifetime only from `ACTIVE` with neither state held.
+// The high 32 bits distinguish a later reuse of the same metadata address from
+// the PageMap generation read by a producer. This is intentionally a
+// constant-size per-page state, not a client ledger or owner registry.
 const LIVE_REMOTE_PAGE_ACTIVE: usize = 1;
 const LIVE_REMOTE_PAGE_PUBLICATION_ONE: usize = 1 << 1;
-const LIVE_REMOTE_PAGE_PUBLICATION_MASK: usize = 0xffff_fffe;
+const LIVE_REMOTE_PAGE_PUBLICATION_MASK: usize = 0x7fff_fffe;
+const LIVE_REMOTE_PAGE_OWNER_DRAINING: usize = 1 << 31;
 const LIVE_REMOTE_PAGE_GENERATION_SHIFT: usize = 32;
 
 /// One compact page-owned lifetime state for a live remote-free producer.
@@ -100,6 +102,8 @@ pub(crate) enum LiveRemoteFreePageRetirementError {
     StaleGeneration,
     /// One or more publishers have entered but not completed `mi_free_block_mt`.
     PublishersInFlight,
+    /// The source owner is currently detaching `xthread_free` into `local_free`.
+    OwnerCollectionInProgress,
     /// A prior owner already closed this exact lifetime.
     AlreadyRetired,
 }
@@ -113,6 +117,8 @@ pub(crate) enum LiveRemoteFreePageReinitializeError {
     StillLive,
     /// A malformed state records publishers after the lifetime was closed.
     PublishersInFlight,
+    /// A malformed state retains an owner-side collector after the lifetime closed.
+    OwnerCollectionInProgress,
     /// Reusing this metadata address would repeat a PageMap generation.
     /// The caller must retain the closed page rather than permit ABA reuse.
     GenerationExhausted,
@@ -127,6 +133,26 @@ pub(crate) enum LiveRemoteFreePushError {
     Source(RemoteFreeError),
 }
 
+/// A live page could not start its source owner-side remote-list collection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePageOwnerCollectionError {
+    /// The PageMap observation refers to an earlier metadata lifetime.
+    StaleGeneration,
+    /// The page is retiring or already retired.
+    Retired,
+    /// The unique source page owner already has an active collector.
+    OwnerCollectionInProgress,
+}
+
+/// A generic live-page collection failed before or during the source drain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LiveRemoteFreePageCollectError {
+    /// The page-local lifetime rejected the owner-side collector.
+    Lifetime(LiveRemoteFreePageOwnerCollectionError),
+    /// The pinned `mi_page_thread_free_collect` path rejected the remote list.
+    Source(RemoteFreeError),
+}
+
 /// One admitted live remote publisher.
 ///
 /// Dropping this guard completes the page-local lifetime half of the source
@@ -134,6 +160,19 @@ pub(crate) enum LiveRemoteFreePushError {
 /// performs `mi_page_thread_free_collect` through [`collect`].
 #[must_use = "a live remote publication must keep the page lifetime pinned until its source atomic push completes"]
 pub(crate) struct LiveRemoteFreePagePublication<'page> {
+    state: &'page LiveRemoteFreePageState,
+    generation: LiveRemoteFreePageGeneration,
+}
+
+/// The sole owner-side drain of one live page's source remote-free head.
+///
+/// The guard maps to `mi_page_thread_free_collect` in pinned `src/page.c`.
+/// Its state bit excludes PageMap retirement while the owner mutates
+/// `used`/`local_free`, but does not change `mi_free_block_mt`: a foreign
+/// thread may continue to publish through the atomic source head and will be
+/// consumed by this or a later source collection.
+#[must_use = "a live owner collector must finish before the page lifetime can retire"]
+pub(crate) struct LiveRemoteFreePageOwnerCollection<'page> {
     state: &'page LiveRemoteFreePageState,
     generation: LiveRemoteFreePageGeneration,
 }
@@ -188,6 +227,25 @@ impl LiveRemoteFreePageState {
         begin_live_remote_page_retirement_with(&self.word, generation)
     }
 
+    /// Begins the source owner-side `xthread_free` collection for this page.
+    ///
+    /// The caller must be the one live source page owner and therefore the
+    /// sole writer of `used`, `local_free`, and `free`. Remote producers retain
+    /// only the disjoint atomic source fields; unlike a scheduler or registry,
+    /// this page-local guard does not wait for or reject them.
+    #[inline]
+    pub(crate) fn begin_owner_collection(
+        &self,
+        generation: LiveRemoteFreePageGeneration,
+    ) -> Result<LiveRemoteFreePageOwnerCollection<'_>, LiveRemoteFreePageOwnerCollectionError>
+    {
+        begin_live_remote_page_owner_collection_with(&self.word, generation)?;
+        Ok(LiveRemoteFreePageOwnerCollection {
+            state: self,
+            generation,
+        })
+    }
+
     /// Starts the next page lifetime after the old one was closed.
     ///
     /// This must run before publishing a new PageMap entry for reused metadata.
@@ -205,6 +263,31 @@ impl Drop for LiveRemoteFreePagePublication<'_> {
     #[inline]
     fn drop(&mut self) {
         finish_live_remote_page_publication_with(&self.state.word, self.generation);
+    }
+}
+
+impl LiveRemoteFreePageOwnerCollection<'_> {
+    /// Detaches and merges the source `xthread_free` head exactly once.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be this guard's live, associated page. The caller must be
+    /// its sole source owner for all non-atomic page fields and retain its
+    /// block area through the collection. Foreign threads may run [`push_live`]
+    /// concurrently, but no path may abandon, detach, reuse, or release this
+    /// page until this guard drops and the owner completes source collection.
+    #[inline]
+    pub(crate) unsafe fn collect(&self, page: NonNull<Page>) -> Result<usize, RemoteFreeError> {
+        // SAFETY: the caller supplies the same owner and page-lifetime proof
+        // required by `collect`; this guard adds retirement exclusion only.
+        unsafe { collect(page) }
+    }
+}
+
+impl Drop for LiveRemoteFreePageOwnerCollection<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        finish_live_remote_page_owner_collection_with(&self.state.word, self.generation);
     }
 }
 
@@ -240,6 +323,37 @@ pub(crate) unsafe fn push_live(
     // completed. `push` touches only the producer-visible source atomics.
     let result = unsafe { push(page, block) }.map_err(LiveRemoteFreePushError::Source);
     drop(publication);
+    result
+}
+
+/// Performs one generic owner-side remote-list drain for a live page.
+///
+/// This is the live counterpart to [`collect`] and the narrow integration seam
+/// for ordinary allocation/free slow paths: it establishes page-local
+/// retirement exclusion, executes pinned `mi_page_thread_free_collect` plus
+/// `mi_page_thread_collect_to_local`, then releases only that exclusion. It
+/// intentionally does not force collection, requeue a page, inspect an owner
+/// registry, or decide PageMap release.
+///
+/// # Safety
+///
+/// `page`, `generation`, and `lifetime` must describe one live associated
+/// PageMap entry. The caller must be the sole source owner of the ordinary
+/// page fields and preserve the page/block-area lifetime while this function
+/// runs. It may race only with source-shaped [`push_live`] producers.
+pub(crate) unsafe fn collect_live(
+    lifetime: &LiveRemoteFreePageState,
+    generation: LiveRemoteFreePageGeneration,
+    page: NonNull<Page>,
+) -> Result<usize, LiveRemoteFreePageCollectError> {
+    let collection = lifetime
+        .begin_owner_collection(generation)
+        .map_err(LiveRemoteFreePageCollectError::Lifetime)?;
+    // SAFETY: the caller's source owner proof plus the guard keep the page
+    // metadata and ordinary fields stable while `collect` detaches one atomic
+    // head. Producers may publish only to the successor head.
+    let result = unsafe { collection.collect(page) }.map_err(LiveRemoteFreePageCollectError::Source);
+    drop(collection);
     result
 }
 
@@ -642,6 +756,57 @@ fn finish_live_remote_page_publication_with<H>(
     debug_assert_ne!(previous & LIVE_REMOTE_PAGE_PUBLICATION_MASK, 0);
 }
 
+/// Acquires the one source owner-side collection slot without affecting remote
+/// producer admission. This is a page-local serialization of owner-only
+/// fields, not a global allocator scheduler or a replacement for the source
+/// `xthread_free` ownership bit.
+fn begin_live_remote_page_owner_collection_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) -> Result<(), LiveRemoteFreePageOwnerCollectionError>
+where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let mut observed = word.load_acquire();
+    loop {
+        if live_remote_page_generation(observed) != generation {
+            return Err(LiveRemoteFreePageOwnerCollectionError::StaleGeneration);
+        }
+        if observed & LIVE_REMOTE_PAGE_ACTIVE == 0 {
+            return Err(LiveRemoteFreePageOwnerCollectionError::Retired);
+        }
+        if observed & LIVE_REMOTE_PAGE_OWNER_DRAINING != 0 {
+            return Err(LiveRemoteFreePageOwnerCollectionError::OwnerCollectionInProgress);
+        }
+        let replacement = observed | LIVE_REMOTE_PAGE_OWNER_DRAINING;
+        if word.cas_weak_acq_rel(&mut observed, replacement) {
+            return Ok(());
+        }
+    }
+}
+
+/// Releases the owner-side collection slot after source list accounting.
+///
+/// Producer publication can change only the count portion while this guard is
+/// held, so the AcqRel loop preserves each successful producer admission.
+fn finish_live_remote_page_owner_collection_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let mut observed = word.load_acquire();
+    loop {
+        debug_assert_eq!(live_remote_page_generation(observed), generation);
+        debug_assert_ne!(observed & LIVE_REMOTE_PAGE_ACTIVE, 0);
+        debug_assert_ne!(observed & LIVE_REMOTE_PAGE_OWNER_DRAINING, 0);
+        let replacement = observed & !LIVE_REMOTE_PAGE_OWNER_DRAINING;
+        if word.cas_weak_acq_rel(&mut observed, replacement) {
+            return;
+        }
+    }
+}
+
 /// The source-independent owner close transition.
 ///
 /// Closing is intentionally a single compare/exchange from the active,
@@ -664,6 +829,9 @@ where
         }
         if observed & LIVE_REMOTE_PAGE_PUBLICATION_MASK != 0 {
             return Err(LiveRemoteFreePageRetirementError::PublishersInFlight);
+        }
+        if observed & LIVE_REMOTE_PAGE_OWNER_DRAINING != 0 {
+            return Err(LiveRemoteFreePageRetirementError::OwnerCollectionInProgress);
         }
         let replacement = observed & !LIVE_REMOTE_PAGE_ACTIVE;
         if word.cas_weak_acq_rel(&mut observed, replacement) {
@@ -690,6 +858,9 @@ where
         }
         if observed & LIVE_REMOTE_PAGE_PUBLICATION_MASK != 0 {
             return Err(LiveRemoteFreePageReinitializeError::PublishersInFlight);
+        }
+        if observed & LIVE_REMOTE_PAGE_OWNER_DRAINING != 0 {
+            return Err(LiveRemoteFreePageReinitializeError::OwnerCollectionInProgress);
         }
         let Some(next_generation) = generation.checked_add(1) else {
             return Err(LiveRemoteFreePageReinitializeError::GenerationExhausted);
@@ -1327,14 +1498,59 @@ mod tests {
         });
 
         // SAFETY: all production-shaped source publishers joined, so this is
-        // the exclusive owner collection that accounts their remote list.
-        assert_eq!(unsafe { collect(page.page_pointer()) }, Ok(BLOCKS));
+        // the exclusive owner collection that accounts their remote list
+        // under the page-local retirement exclusion.
+        assert_eq!(
+            unsafe { collect_live(&lifetime, generation, page.page_pointer()) },
+            Ok(BLOCKS)
+        );
         assert_eq!(page.0.remote_free_test_head(), 1);
         assert_eq!(page.0.remote_free_test_used(), 0);
         assert_eq!(
             lifetime.begin_retirement(generation),
             Ok(()),
             "the source-empty page may close its PageMap lifetime after collection"
+        );
+    }
+
+    #[test]
+    fn live_owner_collection_allows_remote_publication_before_retirement() {
+        let page = ConcurrentTestPage(Page::remote_free_test_page(1, 1));
+        let lifetime = LiveRemoteFreePageState::new();
+        let generation = lifetime.current_generation();
+        let collection = lifetime
+            .begin_owner_collection(generation)
+            .expect("the live source owner starts one page-local thread-free drain");
+        let mut block = TestBlock([0; 16]);
+
+        assert_eq!(
+            lifetime.begin_retirement(generation),
+            Err(LiveRemoteFreePageRetirementError::OwnerCollectionInProgress),
+            "PageMap retirement waits for the owner-side source collector"
+        );
+
+        thread::scope(|scope| {
+            let lifetime = &lifetime;
+            scope.spawn(|| {
+                // SAFETY: the exact client remains live while the owner drain
+                // holds this page lifetime. The source collector accepts a
+                // concurrent producer through the unchanged remote-head CAS.
+                unsafe {
+                    push_live(lifetime, generation, page.page_pointer(), block.pointer())
+                        .expect("the drain does not reject a legal remote producer");
+                }
+            });
+        });
+
+        // SAFETY: the joined producer has completed its source publication;
+        // this guard is the sole owner-side remote-list collector.
+        assert_eq!(unsafe { collection.collect(page.page_pointer()) }, Ok(1));
+        assert_eq!(page.0.remote_free_test_used(), 0);
+        drop(collection);
+        assert_eq!(
+            lifetime.begin_retirement(generation),
+            Ok(()),
+            "only the source-empty page may retire after the owner drain completes"
         );
     }
 
