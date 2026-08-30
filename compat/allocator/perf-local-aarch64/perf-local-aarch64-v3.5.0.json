@@ -23,6 +23,12 @@
     "samples_per_lane_and_workload": 5,
     "warmup_processes_per_lane_and_workload": 2
   },
+  "measurement_boundary": {
+    "final_promotion_qualification_eligible": false,
+    "kind": "direct-engine-friend-boundary",
+    "production_libc_measurement": false,
+    "reason": "The prefixed crabc_test_* adapter directly enters the Rust engine. It does not measure the production crabc-libc allocator ABI or backend selection."
+  },
   "profile": "linux-aarch64-local-private-shadow",
   "scope": {
     "final_promotion_qualification": false,

@@ -38,6 +38,42 @@ class HostQualificationTests(unittest.TestCase):
 
 
 class ReportContractTests(unittest.TestCase):
+    @staticmethod
+    def measured_friend_boundary_report() -> dict[str, object]:
+        host = {
+            "architecture": "aarch64",
+            "final_promotion_qualified": False,
+            "qualification": "linux-aarch64-development-smoke-only",
+        }
+        report = perf.empty_report(label="baseline", host_qualification=host)
+        report.update(
+            {
+                "lanes": {
+                    "rust_native_shadow": {
+                        "selected_artifact_attestation": {
+                            "build_identity": {"algorithm": "sha256-canonical-json", "sha256": "a" * 64},
+                            "runtime": {"backend_identity": perf.RUST_SHADOW_BACKEND_IDENTITY, "free_route": perf.RUST_SHADOW_FREE_ROUTE},
+                            "symbol_attestation": {
+                                "required_rust_shadow_symbol_defined": True,
+                                "rejected_c_symbol_defined": False,
+                            },
+                        }
+                    }
+                },
+                "measurement_contract": {"timing": "batches", "warmup": "fresh processes"},
+                "reproducible_command": ["python3", "run.py", "--smoke"],
+                "status": "measured-architecture-pass",
+                "workloads": {
+                    "alloc_free_64": {
+                        "allocation_sizes_bytes": [64],
+                        "throughput_ratio": {"median_rust_over_pinned_c": 1.0},
+                        "warmup_processes_per_lane": 2,
+                    }
+                },
+            }
+        )
+        return report
+
     def test_report_path_is_aarch64_local_and_label_checked(self) -> None:
         self.assertEqual(
             perf.default_report_path(perf.ROOT, "baseline"),
@@ -67,6 +103,26 @@ class ReportContractTests(unittest.TestCase):
         report = perf.empty_report(label="baseline", host_qualification=host)
         report["status"] = "measured-architecture-pass"
         with self.assertRaisesRegex(perf.HarnessError, "reproducible command"):
+            perf.validate_report_contract(report)
+
+    def test_passing_direct_engine_friend_boundary_cannot_qualify_for_promotion(self) -> None:
+        report = self.measured_friend_boundary_report()
+        perf.validate_report_contract(report)
+        self.assertFalse(report["measurement_boundary"]["production_libc_measurement"])
+        self.assertFalse(report["measurement_boundary"]["final_promotion_qualification_eligible"])
+        report["measurement_boundary"]["final_promotion_qualification_eligible"] = True
+        with self.assertRaisesRegex(perf.HarnessError, "cannot qualify for final promotion"):
+            perf.validate_report_contract(report)
+
+    def test_friend_boundary_cannot_be_relabelled_as_production_libc_measurement(self) -> None:
+        host = {
+            "architecture": "aarch64",
+            "final_promotion_qualified": False,
+            "qualification": "linux-aarch64-development-smoke-only",
+        }
+        report = perf.empty_report(label="baseline", host_qualification=host)
+        report["measurement_boundary"]["production_libc_measurement"] = True
+        with self.assertRaisesRegex(perf.HarnessError, "cannot claim production libc"):
             perf.validate_report_contract(report)
 
 

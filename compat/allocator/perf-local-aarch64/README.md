@@ -31,6 +31,14 @@ performance target. The report always records
 but final promotion needs the separately scoped qualified native Linux/AArch64
 suite described in §19.2.
 
+`measurement_boundary.kind` is explicitly
+`direct-engine-friend-boundary`: the prefixed `crabc_test_*` adapter enters the
+Rust engine directly, rather than measuring `crabc-libc`'s production
+malloc-family ABI/backend selection. Its boundary record sets both
+`production_libc_measurement` and
+`final_promotion_qualification_eligible` to `false`; report validation rejects
+any attempt to promote a passing friend-boundary ratio.
+
 The script exits nonzero after writing a complete report if either workload is
 below the architecture-smoke ratio. It makes no public `mi_*`, libc-backend,
 cross-thread, memory, latency, or final-promotion claim.

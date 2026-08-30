@@ -48,6 +48,7 @@ RUST_SHADOW_BACKEND_IDENTITY = "rust-native-shadow-crabc-test-free-v1"
 RUST_SHADOW_FREE_ROUTE = "crabc_test_free"
 PINNED_C_BACKEND_IDENTITY = "pinned-c-mimalloc-v3.5.0"
 REJECTED_C_FREE_ROUTE = "mi_free"
+MEASUREMENT_BOUNDARY_KIND = "direct-engine-friend-boundary"
 FIXTURE_RELEASE_FLAGS = ("-O3", "-DNDEBUG")
 PINNED_C_SOURCE_CONFIGURATION_FLAGS = (
     "-DMI_SHARED_LIB",
@@ -226,6 +227,14 @@ def load_manifest(path: Path = MANIFEST) -> tuple[dict[str, Any], tuple[Workload
         "rejected_c_free_route": REJECTED_C_FREE_ROUTE,
     }:
         raise HarnessError("local AArch64 performance manifest selected-artifact attestation changed")
+    measurement_boundary = raw.get("measurement_boundary")
+    if measurement_boundary != {
+        "final_promotion_qualification_eligible": False,
+        "kind": MEASUREMENT_BOUNDARY_KIND,
+        "production_libc_measurement": False,
+        "reason": "The prefixed crabc_test_* adapter directly enters the Rust engine. It does not measure the production crabc-libc allocator ABI or backend selection.",
+    }:
+        raise HarnessError("local AArch64 performance manifest measurement boundary changed")
     scope = raw.get("scope")
     if not isinstance(scope, Mapping) or any(
         scope.get(field) is not False
@@ -780,6 +789,12 @@ def empty_report(*, label: str, host_qualification: Mapping[str, Any]) -> dict[s
         "host_qualification": dict(host_qualification),
         "kind": KIND,
         "label": validate_label(label),
+        "measurement_boundary": {
+            "final_promotion_qualification_eligible": False,
+            "kind": MEASUREMENT_BOUNDARY_KIND,
+            "production_libc_measurement": False,
+            "reason": "The prefixed crabc_test_* adapter directly enters the Rust engine. It does not measure the production crabc-libc allocator ABI or backend selection.",
+        },
         "schema": SCHEMA,
         "scope": {
             "final_promotion_qualified": False,
@@ -802,6 +817,13 @@ def validate_report_contract(report: Mapping[str, Any]) -> None:
     scope = report.get("scope")
     if not isinstance(scope, Mapping) or any(scope.get(field) is not False for field in ("final_promotion_qualified", "public_crabc_allocator_integration", "public_mi_api")):
         raise HarnessError("local AArch64 performance report attempted a public or promotion claim")
+    measurement_boundary = report.get("measurement_boundary")
+    if not isinstance(measurement_boundary, Mapping) or measurement_boundary.get("kind") != MEASUREMENT_BOUNDARY_KIND:
+        raise HarnessError("local AArch64 performance report has an unexpected measurement boundary")
+    if measurement_boundary.get("production_libc_measurement") is not False:
+        raise HarnessError("direct-engine friend-boundary report cannot claim production libc measurement")
+    if measurement_boundary.get("final_promotion_qualification_eligible") is not False:
+        raise HarnessError("direct-engine friend-boundary report cannot qualify for final promotion")
     status = report.get("status")
     if status == "pending":
         return
@@ -870,7 +892,8 @@ def run(arguments: argparse.Namespace) -> tuple[Path, bool]:
     report["mode"] = "smoke"
     report["reproducible_command"] = ["python3", relative(Path(__file__)), "--smoke", "--label", label, "--timeout", str(arguments.timeout)] + ([] if arguments.cpu is None else ["--cpu", str(arguments.cpu)]) + ([] if not arguments.offline else ["--offline"])
     report["measurement_contract"] = {
-        "comparison": "one shared fixture source; opaque fixture-private boundary varies only by pinned-C versus prefixed Rust-native shadow backend",
+        "comparison": "one shared fixture source; opaque direct-engine friend boundary varies only by pinned-C versus prefixed Rust-native shadow backend",
+        "measurement_boundary": "direct-engine-friend-boundary; never production crabc-libc allocator ABI or backend selection",
         "fresh_processes": True,
         "timing": "one CLOCK_MONOTONIC pair around each fixed allocation/free batch; never a clock read per allocation",
         "warmup": "unreported fresh fixture processes run before randomized paired samples",
