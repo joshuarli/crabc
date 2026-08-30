@@ -102,10 +102,10 @@ fn release_detached_owner(clients: [usize; OWNER_EXIT_CLIENT_COUNT]) {
 }
 
 #[test]
-fn registry_reuses_terminal_route_storage_without_releasing_pending_b_admission() {
+fn completed_route_storage_keeps_pending_b_admission_while_a_sibling_publishes() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before its registry-reuse lifecycle witness"
+        "the native runtime initializes before its completion-storage lifecycle witness"
     );
     assert!(
         prepare_native_later_thread_arena(),
@@ -140,13 +140,14 @@ fn registry_reuses_terminal_route_storage_without_releasing_pending_b_admission(
         .expect("B1 reaches its route-terminal, pre-finish state");
     assert!(
         matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "A1's terminal route completion still keeps ticket zero unavailable in B1 TLS"
+        "A1's stable terminal completion still keeps ticket zero unavailable before B1 finishes"
     );
 
-    // B1's terminal free made only A1's registry entry empty. Its parked
-    // scheduler token and A1 admission stay in B1 TLS, while A2 remains a
-    // live sibling route. A3 must be able to publish beside A2 without using
-    // B1's normal no-page finalizer or reopening ticket zero.
+    // B1's terminal free leaves A1's completed registry entry live: it owns
+    // the parked scheduler token and A1 admission until B1's normal finish.
+    // A2 remains a live sibling route, and A3 must still publish through a
+    // distinct stable entry without using B1's normal no-page finalizer or
+    // reopening ticket zero.
     let third = publish_detached_owner();
     assert!(
         matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),

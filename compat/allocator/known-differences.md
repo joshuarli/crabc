@@ -1286,16 +1286,20 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   that B's parked local session holds both admissions through A's terminal
   release, then leaves only B's successor-route admission until C completes
   its own typed terminal finish. Once A's terminal proof is resident in B
-  TLS, B cannot create a local replacement: native allocation and local
-  `realloc` return unavailable, preserving B's existing client for its exact
-  free and source-defined finish. The selected
-  `native_mimalloc_owner_exit_realloc` C witness proves the ABI maps that
-  valid-request refusal to `ENOMEM` without changing B's client, including
-  from B's `pthread_exit` cleanup handler for a new local allocation and then
-  B's TSD destructor for the existing client's valid `realloc`, before its
-  native all-free finish settles A's proof. The same selected fixture repeats
-  the TSD-only normal-return phase and the cleanup/TSD ordering through
-  deferred cancellation at a real cancellation point. The
+  TLS, B may resume only its independently parked local session for ordinary
+  allocation, local `realloc`, and exact local free; that does not expose or
+  settle A's completion. The selected `native_mimalloc_owner_exit_realloc` C
+  witness proves the continued B-local replacement preserves the source-copied
+  contents, including from B's `pthread_exit` cleanup handler for a new local
+  allocation and then B's TSD destructor for the existing client's valid
+  `realloc`, before its native all-free finish settles A's proof. The same
+  selected fixture repeats the TSD-only normal-return phase and the
+  cleanup/TSD ordering through deferred cancellation at a real cancellation
+  point. The companion `native_terminal_completion_live_remote_free` direct
+  witness proves that the completed A route also does not freeze B's exact
+  source publication to a separately parked live C owner; B's normal finish
+  remains before A's proof release, while C's own all-free drain collects the
+  published C client. The
   `native_post_exit_registry_terminal_close_waits_for_an_inflight_installation`
   unit regression proves that terminal retention waits for an in-flight
   detached-owner installation to complete, then permanently rejects a later

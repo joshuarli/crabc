@@ -959,10 +959,11 @@ thread-recreation acceptance claim. `allocator --churn` and `--soak` do not
 silently run that distinct full-lane witness. `allocator --full` also executes
 the reviewed
 [`native-owner-exit-lifecycle-v3.5.0.json`](native-owner-exit-lifecycle-v3.5.0.json)
-suite: twelve focused direct `crabc-mimalloc` checks spanning the mixed runtime
-route, source publication before and after exit, aggregate final-member
-reclamation, failed OS terminal release, terminal finish ordering, and source
-traversal filters. It records Gate 5C as passed only when that complete checked
+suite: fifteen focused direct `crabc-mimalloc` checks spanning the mixed runtime
+route, source publication before and after exit, live-owner-to-post-exit
+handoff ordering, aggregate final-member reclamation, failed OS terminal
+release, terminal finish ordering, and source traversal filters. It records
+Gate 5C as passed only when that complete checked
 record is present; the suite is direct-engine lifecycle evidence, not a
 shadow-ABI or general concurrent-routing claim. It then runs the same 128-cycle,
 30-second, seed
@@ -1939,11 +1940,11 @@ snapshot after review; the normal gate never updates its own baseline.
 | `adapted/test-api-selected.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `adapted-stress-test-v3.5.0.json` | Reviewed creating-thread stress source/provenance map, exact patch/hash, fixed `NTHREADS=1`/`1 1 2` invocation, unsupported-mode rejections, and native link contract for the constrained upstream `test/test-stress.c` route. |
 | `adapted/test-stress-creating-thread.patch` | Minimal source adaptation of the exact upstream stress fixture; it keeps the source workload but intentionally excludes every unsupported scheduler or allocator mode rather than copying a C fork. |
-| `native-shadow-stress-v3.5.0.json` | Reviewed selected-libc source-stress provenance map, behavior-named patch/hash, fixed two-pthread `2 1 2` execution, fresh-process count, source-transfer cleanup boundary, and unsupported-mode rejections. |
+| `native-shadow-stress-v3.5.0.json` | Reviewed selected-libc source-stress provenance map, behavior-named patch/hash, fixed four-pthread `4 1 2` execution, fresh-process count, source-transfer cleanup boundary, and unsupported-mode rejections. |
 | `adapted/test-stress-native-shadow-pthreads.patch` | Minimal selected-shadow adaptation of the exact upstream stress fixture; standard C allocation names bind to the native shadow `libc.so`, while unsupported upstream modes fail at compile time. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, eleven-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus retained narrow, persistent mixed-local, live-owner remote-free, a fresh-B mixed post-exit owner route, and alternating sole-medium/direct-small reclamation worker round trips through one existing export. |
-| `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, twelve focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
+| `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, fifteen focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
 | `m5-gate-v3.5.0.json` | Versioned full-lane contract for the 128-cycle lifecycle schedule and its current Gate 5A--5E acceptance/blocker classification. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
@@ -2119,6 +2120,19 @@ ordinary malloc work. The read-only query claims and restores that entry
 without borrowing a page engine or scheduler. Each stable metadata-backed
 entry retains only an A TLS slot/generation, never a client address, page, or
 allocator.
+If B already holds one exact foreign route and needs B's own parked session,
+the current-slot scan probes every other entry without waiting. A distinct
+`BUSY` entry makes B restore the foreign route and revalidate the exact input
+with no live-route guard held; opposite source transfers therefore cannot form
+a raw-TLS handoff wait cycle. If A exits during that retry, the live lookup
+returns `NotOwned` and the existing post-exit successor retry remains the only
+path that can consume A's transferred client.
+When that live A starts a native deferred exit, its old entry remains `BUSY`
+until the typed post-exit route has published the same private ledger, then A
+clears the old entry. A B whose first detached lookup raced that publication
+waits on `BUSY`; after it sees `EMPTY`, it retries the detached route rather
+than treating the exact transferred client as foreign. This no-gap handoff
+does not expose a pointer registry or concurrent PageMap mutation.
 The selected `native_mimalloc_source_published_exit` fixture covers the
 complementary no-local-client finish: after B publishes A's sole exact client,
 A performs no further allocator operation, so its ordinary pthread destructor
@@ -2150,11 +2164,13 @@ B's only small client before B terminally frees A's routed medium; B then makes
 no further allocator operation. B must complete its typed all-free drain and
 its own attachment teardown before settling A's proof, with no B client moving
 into a new route.
-While B holds a terminal proof, the selected native boundary freezes B's local
-client set: new allocation and local `realloc` replacement return unavailable,
-but an exact local `free` remains available to complete B's source-defined
-exit. The direct local-session regression preserves sentinel bytes across the
-refused replacement before it proves the later successor or all-free finish.
+While B holds a terminal proof, the selected native boundary keeps A's parked
+token and admission private but does not freeze B's independently parked local
+session. B may make ordinary local allocation, `realloc`, and exact `free`
+operations; B's later source finish is still the only boundary that may settle
+A's proof. The direct local-session regression preserves sentinels across the
+continued local replacement before it proves the later successor or all-free
+finish.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The
@@ -2193,10 +2209,11 @@ transition serializes the source operation, and the final B carries the
 completion until its own normal finish. It establishes concurrent callers with
 serialized route mutation, not general concurrent route traversal or PageMap
 mutation.
-The separate direct registry-reuse regression pauses B1 after B1 has terminally
-freed A1, then lets A3 publish beside A2 before B1 finishes. It proves that an
-empty entry is reusable while B1's route-specific completion remains in B1 TLS,
-so only B1's eventual normal finish can release A1's admission or ticket zero.
+The separate direct completion-storage regression pauses B1 after B1 has
+terminally freed A1, then lets A3 publish beside A2 before B1 finishes. It
+proves that A1's completed entry remains live and non-reusable while it owns
+its parked token and admission; A3 uses a distinct stable entry, and only B1's
+eventual normal finish can release A1's admission or ticket zero.
 The direct `native_post_exit_registry_high_water` test enables a dedicated
 scalar-only test feature, establishes three concurrently detached routes, and
 then completes eight further three-route epochs. It proves the published
@@ -2218,10 +2235,26 @@ neither a generic fault plan nor an allocator capability.
 hold a parked local session while it consumes A's exact route clients: the
 same parked-state boundary serves A's exact recorded usable-size queries,
 one normal B replacement with a bounded copy, and frees; the last A free
-stores the completion beside B's session. B detaches its live local client
-into a successor route, and fresh C releases that successor before either
-parked count or admission can make ticket zero ready. A live registry entry is
-one remote-publication capability, not a global worker admission lock.
+stores a completion in the stable private registry matched to B's session.
+B detaches its live local client into a successor route, and fresh C releases
+that successor before either parked count or admission can make ticket zero
+ready. A live registry entry is one remote-publication capability, not a
+global worker admission lock.
+The feature-gated `native_multiple_post_exit_completions` regression then
+has one B establish a parked local session, terminally consume two independent
+A routes, resume B-local allocation and `realloc` after each completion, and
+then discharge B's local client before B's own teardown. Its scalar audits
+require both completed entries and all three admissions to remain live before
+B finishes, then require empty completion storage and zero later-worker
+admissions afterward. It proves a typed completion boundary, not a general
+cross-thread client registry or a normal no-page finalizer for an abandoned
+owner.
+`native_terminal_completion_live_remote_free` covers the adjacent live-owner
+interleaving: after B has terminally completed A, B may source-publish one
+exact C-owned client from B's independently parked session. B still finishes
+before the private registry releases A's admission; C later force-collects
+only its own published client. This remains one exact live-owner route, not a
+general worker-pointer dispatcher.
 `tests/native_mimalloc_parallel_local_workers.rs` pauses A after it has
 published a live entry and B after B has parked a distinct local allocation;
 B can query and free only B's own client, complete its all-free thread finish,
@@ -2251,16 +2284,16 @@ post-exit `realloc` transition: B allocates a normal replacement, preserves
 the bounded prefix on shrink and growth, receives a distinct zero-size
 replacement when requested, then frees it through B's local ledger. An invalid
 replacement size returns `ENOMEM` while preserving A's exact client. After
-the successful terminal route replacement stores A's proof in B TLS, a valid
-B-local replacement also returns `ENOMEM` and preserves B's client until its
-exact free and normal finish. The fixture retains that client in B's TSD value,
-whose destructor repeats the refusal and frees it before B's native all-free
-finish can settle A's proof. B exits through `pthread_exit`: its cleanup handler
-first receives `ENOMEM` for a new local allocation, then the TSD destructor
-receives `ENOMEM` for the existing client's valid `realloc` before freeing it.
-The same fixture also proves normal return's TSD-only phase and repeats the
-cleanup/TSD ordering through deferred cancellation at a real cancellation point
-before the native all-free finish settles A's proof. It does
+the successful terminal route replacement stores A's proof in B TLS, B can
+continue its own local `realloc` and allocation while that proof remains
+opaque. The fixture retains the continued client in B's TSD value, whose
+destructor makes a further local `realloc` and frees it before B's native
+all-free finish can settle A's proof. B exits through `pthread_exit`: its
+cleanup handler makes and frees a local allocation, then the TSD destructor
+continues the existing client before freeing it. The same fixture also proves
+normal return's TSD-only phase and repeats the cleanup/TSD ordering through
+deferred cancellation at a real cancellation point before the native all-free
+finish settles A's proof. It does
 not yet cover general cross-thread routing beyond that exact-live ticket-zero
 free, general single-page adoption/reclaim exits, foreign worker `realloc`
 beyond the exact detached-owner transition, usable-size outside the exact
@@ -2270,8 +2303,8 @@ bounded live-entry witnesses, and is not a Gate 5E or promotion pass.
 The same command ends with the separately reviewed
 `native-shadow-stress-v3.5.0.json` witness. It applies a behavior-named patch
 to pinned upstream `test/test-stress.c`, routes standard C allocation calls
-through the selected shadow `libc.so`, and runs exactly two source pthread
-workers with fixed `2 1 2` inputs for 128 fresh process epochs. Each selected
+through the selected shadow `libc.so`, and runs exactly four source pthread
+workers with fixed `4 1 2` inputs for 128 fresh process epochs. Each selected
 source transfer cleanup runs in one fresh pthread after its producing workers
 join. The contract rejects unsupported heap, walk, subprocess, leak, and
 large-object modes; this is bounded source-derived lifecycle evidence, not a

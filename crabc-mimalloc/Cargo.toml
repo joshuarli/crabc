@@ -19,6 +19,22 @@ path = "tests/native_post_exit_registry_high_water.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
+name = "native_multiple_post_exit_completions"
+path = "tests/native_multiple_post_exit_completions.rs"
+# This direct lifecycle witness observes only aggregate registry and admission
+# counts while one B carries two completed A routes to its own normal finish.
+# The audit surface is absent from the production allocator and libc friend API.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
+name = "native_terminal_completion_live_remote_free"
+path = "tests/native_terminal_completion_live_remote_free.rs"
+# This direct lifecycle witness proves a B-held completed A route does not
+# freeze B's separately parked session while it source-publishes one exact
+# live C client. The audit exposes only the aggregate admission count.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_live_remote_owner_registry_reuse"
 path = "tests/native_live_remote_owner_registry_reuse.rs"
 # The scalar registry audit is compiled only for this direct lifecycle test.

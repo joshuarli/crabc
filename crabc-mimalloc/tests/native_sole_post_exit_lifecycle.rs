@@ -14,7 +14,7 @@ fn current_page_size() -> usize {
 }
 
 #[test]
-fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_until_b_finishes() {
+fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_finishes() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before its shadow owner-exit witness"
@@ -103,12 +103,24 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_until_b_finishes
         );
         assert_eq!(unsafe { replacement.as_ptr().read() }, 0x52);
         assert_eq!(unsafe { replacement.as_ptr().add(4095).read() }, 0x53);
-        assert!(
-            matches!(
-                native_allocate_aligned(73, 16, false),
-                NativePageAllocationResult::Unavailable
+        let continued = match native_allocate_aligned(73, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!(
+                "B resumes only its independent local session after A's terminal sole-route completion"
             ),
-            "B stays a no-page finisher after the sole route releases until it consumes A's proof"
+        };
+        // SAFETY: this exact allocation belongs to B's local session, not the
+        // opaque completed sole route that still holds A's admission proof.
+        unsafe {
+            continued.as_ptr().write(0x55);
+            continued.as_ptr().add(72).write(0x56);
+            assert_eq!(continued.as_ptr().read(), 0x55);
+            assert_eq!(continued.as_ptr().add(72).read(), 0x56);
+        }
+        assert_eq!(
+            unsafe { native_free(continued) },
+            NativePageFreeResult::Freed,
+            "B can free its continued local client before its normal finish"
         );
         assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
         terminal_sender
@@ -118,7 +130,7 @@ fn native_sole_mapped_regular_route_keeps_the_dormant_pair_busy_until_b_finishes
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B finishes its no-page attachment before releasing A's completion"
+            "B finishes its own local session before releasing A's completion"
         );
     });
 

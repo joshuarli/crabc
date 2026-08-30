@@ -17,7 +17,7 @@ fn current_page_size() -> usize {
 }
 
 #[test]
-fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
+fn native_post_exit_route_keeps_the_dormant_pair_busy_while_b_continues_until_b_finishes() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before its shadow owner-exit witness"
@@ -122,7 +122,7 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
             "B attaches beside, rather than consumes, A's detached-route admission"
         );
         // SAFETY: A has completed its typed detached route, and the test
-        // passes each exact C-shaped client to its fresh no-page B consumer.
+        // passes each exact C-shaped client to its fresh B consumer.
         let direct_small = unsafe { core::ptr::NonNull::new_unchecked(direct_small as *mut u8) };
         let non_direct_small = unsafe { core::ptr::NonNull::new_unchecked(non_direct_small as *mut u8) };
         let medium = unsafe { core::ptr::NonNull::new_unchecked(medium as *mut u8) };
@@ -199,12 +199,25 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
             2,
             "the terminal source release leaves both A's typed proof and B's attachment admitted until B finishes"
         );
-        assert!(
-            matches!(
-                native_allocate_aligned(73, 16, false),
-                NativePageAllocationResult::Unavailable
+        let continued = match native_allocate_aligned(73, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!(
+                "B resumes only its independent local session after A's terminal route completion"
             ),
-            "B stays a no-page finisher after terminal route release until it consumes A's proof"
+        };
+        // SAFETY: this is B's exact post-completion local client. Its contents
+        // prove that the completed A route does not grant or consume B's own
+        // allocator session.
+        unsafe {
+            continued.as_ptr().write(0x4d);
+            continued.as_ptr().add(72).write(0x4e);
+            assert_eq!(continued.as_ptr().read(), 0x4d);
+            assert_eq!(continued.as_ptr().add(72).read(), 0x4e);
+        }
+        assert_eq!(
+            unsafe { native_free(continued) },
+            NativePageFreeResult::Freed,
+            "B can return its independent local client before its normal finish"
         );
         terminal_sender
             .send(())
@@ -213,7 +226,7 @@ fn native_post_exit_route_keeps_the_dormant_pair_busy_until_b_finishes() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B finishes its no-page attachment before releasing A's completion"
+            "B finishes its own local session before releasing A's completion"
         );
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(

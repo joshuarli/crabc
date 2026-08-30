@@ -110,12 +110,25 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
             NativePageFreeResult::Freed,
             "B terminally consumes the aggregate's final mapped member"
         );
-        assert!(
-            matches!(
-                native_allocate_aligned(73, 16, false),
-                NativePageAllocationResult::Unavailable
+        let continued = match native_allocate_aligned(73, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!(
+                "B resumes only its independent local session after the aggregate completion"
             ),
-            "B remains a no-page finisher after the route releases"
+        };
+        // SAFETY: this allocation is B-local and remains valid through the
+        // exact free below; the opaque completed A route retains no client
+        // capability over it.
+        unsafe {
+            continued.as_ptr().write(0x57);
+            continued.as_ptr().add(72).write(0x58);
+            assert_eq!(continued.as_ptr().read(), 0x57);
+            assert_eq!(continued.as_ptr().add(72).read(), 0x58);
+        }
+        assert_eq!(
+            unsafe { native_free(continued) },
+            NativePageFreeResult::Freed,
+            "B frees its independent local client before the terminal finish"
         );
         terminal_sender
             .send(())
@@ -139,7 +152,7 @@ fn native_aggregate_reclaims_its_final_mapped_regular_member_before_b_finishes()
     );
     finish_sender
         .send(())
-        .expect("the coordinator permits B's no-page lifecycle finish");
+        .expect("the coordinator permits B's normal lifecycle finish");
     releaser
         .join()
         .expect("B completes the detached aggregate lifecycle");

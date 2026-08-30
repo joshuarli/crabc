@@ -137,10 +137,13 @@ M5_STATIC_BLOCKED_GATE_IDS = frozenset({"m5.5d", "m5.5e"})
 NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS = frozenset(
     {
         "a-exits-b-frees",
+        "completed-route-local-session-continuation",
+        "completed-route-live-remote-publication",
         "empty-during-exit-collection",
         "failed-os-terminal-release",
         "general-production-traversal",
         "live-page-abandonment",
+        "live-owner-to-post-exit-handoff",
         "mixed-departing-theap",
         "multiple-bins-and-page-kinds",
         "multiple-live-pages",
@@ -2384,7 +2387,7 @@ def validate_native_shadow_stress_contract(
     Unlike the prefixed test adapter, this route intentionally invokes the
     standard C allocation names so the selected ``native-mimalloc-shadow``
     ``libc.so`` owns the complete source workload. Its fixed scheduler is
-    evidence for two source workers and fresh post-exit transfer releasers;
+    evidence for four source workers and fresh post-exit transfer releasers;
     it is not a general worker, pointer, heap, or subprocess admission API.
     """
 
@@ -2462,11 +2465,11 @@ def validate_native_shadow_stress_contract(
 
     execution = contract.get("execution")
     expected_execution = {
-        "arguments": ["2", "1", "2"],
-        "compile_defines": ["USE_STD_MALLOC", "NTHREADS=2"],
+        "arguments": ["4", "1", "2"],
+        "compile_defines": ["USE_STD_MALLOC", "NTHREADS=4"],
         "expected_stderr": "",
         "expected_stdout": (
-            "Using 2 threads with a 1% load-per-thread and 2 iterations\n"
+            "Using 4 threads with a 1% load-per-thread and 2 iterations\n"
             "crabc native shadow pthread stress ok\n"
         ),
         "main_participates": False,
@@ -2475,7 +2478,7 @@ def validate_native_shadow_stress_contract(
         ),
         "process_epochs": 128,
         "source_iterations": 2,
-        "source_worker_count": 2,
+        "source_worker_count": 4,
         "watchdog_seconds": 30,
     }
     if not isinstance(execution, dict):
@@ -2484,9 +2487,10 @@ def validate_native_shadow_stress_contract(
         if execution.get(key) != expected:
             raise HarnessError(f"native-shadow stress execution contract changed: {key}")
     expected_scheduler_assertions = [
-        "With NTHREADS=2 and main_participates false, the source scheduler creates exactly two pthread workers for every source iteration.",
+        "With NTHREADS=4 and main_participates false, the source scheduler creates exactly four pthread workers for every source iteration.",
         "The retained source transfer buffer carries exact live allocation pointers across source workers and source iterations.",
         "Each selected transfer cleanup runs free_items in one fresh source-shaped pthread after the producing workers have joined, exercising the typed post-exit release route without exposing a client address or page capability.",
+        "A worker that already holds one exact live-owner handoff restores it and revalidates the source input instead of waiting on a second busy handoff, so opposing source transfers cannot form a raw-TLS wait cycle.",
     ]
     if execution.get("scheduler_assertions") != expected_scheduler_assertions:
         raise HarnessError("native-shadow stress scheduler assertions changed")
@@ -2514,7 +2518,7 @@ def validate_native_shadow_stress_contract(
 
     expected_markers = [
         "#if !defined(USE_STD_MALLOC)",
-        "#if NTHREADS != 2",
+        "#if NTHREADS != 4",
         "#if ALLOW_LARGE",
         "#if defined(MI_USE_HEAPS)",
         "#if defined(MI_HEAP_WALK)",
@@ -2524,7 +2528,7 @@ def validate_native_shadow_stress_contract(
         "const size_t start = (main_participates ? 1 : 0);",
         "free_transferred_item_in_fresh_worker",
         "run_os_threads(subproc_null, 1, &free_transferred_item, p);",
-        "if (THREADS != 2 || SCALE != 1 || ITER != 2 || main_participates || allow_large_objects)",
+        "if (THREADS != 4 || SCALE != 1 || ITER != 2 || main_participates || allow_large_objects)",
         'printf("crabc native shadow pthread stress ok\\n");',
     ]
     if contract.get("required_source_markers") != expected_markers:
@@ -6171,7 +6175,7 @@ def run_native_shadow_stress_fixture(
 
 
 def run_native_shadow_stress(*, offline: bool) -> dict[str, Any]:
-    """Run the isolated two-pthread source stress evidence lane."""
+    """Run the isolated four-pthread source stress evidence lane."""
 
     require_native_aarch64()
     pin = load_pin()
@@ -6832,7 +6836,7 @@ def parse_arguments() -> argparse.Namespace:
     mode.add_argument(
         "--native-shadow-stress",
         action="store_true",
-        help="run the selected-libc two-pthread upstream stress evidence lane",
+        help="run the selected-libc four-pthread upstream stress evidence lane",
     )
     perf = parser.add_mutually_exclusive_group()
     perf.add_argument("--perf-smoke", action="store_true", help="attempt the later allocator performance smoke gate")

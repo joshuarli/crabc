@@ -71,7 +71,7 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
 }
 
 #[test]
-fn native_post_exit_free_preserves_a_preexisting_b_session() {
+fn native_post_exit_free_keeps_a_preexisting_b_session_continuable() {
     assert!(
         initialize_process(current_page_size()),
         "the native runtime initializes before the mixed B-session regression"
@@ -179,26 +179,54 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
             2,
             "A's terminal proof stays admitted beside B's parked local session before B exits"
         );
-        assert!(
-            matches!(
-                unsafe { native_reallocate(Some(local), 4096) },
-                NativePageAllocationResult::Unavailable
+        let continued = match native_allocate_aligned(89, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!(
+                "B resumes only its own parked session for a new local allocation after A's terminal proof"
             ),
-            "B cannot manufacture a local replacement after A's terminal proof requires B to finish"
+        };
+        // SAFETY: `continued` is B's exact local client until the local free
+        // immediately below. Its contents distinguish this ordinary resumed
+        // session operation from the opaque completed A route.
+        unsafe {
+            continued.as_ptr().write(0x73);
+            continued.as_ptr().add(88).write(0x74);
+        }
+        assert_eq!(
+            unsafe { continued.as_ptr().read() },
+            0x73,
+            "the resumed local allocation remains private to B's session"
         );
         assert_eq!(
-            unsafe { local.as_ptr().read() },
+            unsafe { continued.as_ptr().add(88).read() },
+            0x74,
+            "the resumed local allocation preserves B's exact extent"
+        );
+        assert_eq!(
+            unsafe { native_free(continued) },
+            NativePageFreeResult::Freed,
+            "B may return the continued local allocation before its own source finish"
+        );
+
+        let successor = match unsafe { native_reallocate(Some(local), 4096) } {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!(
+                "B resumes only its own parked session for a local replacement after A's terminal proof"
+            ),
+        };
+        assert_eq!(
+            unsafe { successor.as_ptr().read() },
             0x71,
-            "the refused local reallocation leaves B's exact successor client intact"
+            "the continued local replacement preserves B's first sentinel"
         );
         assert_eq!(
-            unsafe { local.as_ptr().add(52).read() },
+            unsafe { successor.as_ptr().add(52).read() },
             0x72,
-            "the refused local reallocation preserves B's successor client contents"
+            "the continued local replacement preserves B's second sentinel"
         );
         local_sender
-            .send(local.as_ptr().addr())
-            .expect("B publishes only its C-shaped local client before B exits");
+            .send(successor.as_ptr().addr())
+            .expect("B publishes only its continued C-shaped local client before B exits");
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,

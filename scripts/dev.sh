@@ -511,6 +511,8 @@ case "$command" in
         run_in_container cargo test -p crabc-mimalloc \
             --features native-runtime-test-audit \
             --test native_post_exit_registry_high_water \
+            --test native_multiple_post_exit_completions \
+            --test native_terminal_completion_live_remote_free \
             --test native_live_remote_owner_registry_reuse \
             -- --test-threads=1
         # The next-`munmap` injection is a separately gated direct witness:

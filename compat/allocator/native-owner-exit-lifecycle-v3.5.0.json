@@ -35,6 +35,15 @@
     },
     {
       "expected_passed_test_count": 1,
+      "id": "live-owner-to-post-exit-handoff",
+      "kind": "unit-test-filter",
+      "scenarios": [
+        "live-owner-to-post-exit-handoff"
+      ],
+      "target": "runtime_lifecycle::tests::native_prepared_exit_keeps_live_owner_handoff_busy_until_post_exit_publication"
+    },
+    {
+      "expected_passed_test_count": 1,
       "id": "mapped-medium-source-publication-after-exit",
       "kind": "integration-test",
       "scenarios": [
@@ -68,6 +77,28 @@
         "terminal-admission-order"
       ],
       "target": "native_post_exit_split_releaser_lifecycle"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "multiple-terminal-completions-one-b-finish",
+      "kind": "integration-test",
+      "scenarios": [
+        "completed-route-local-session-continuation",
+        "terminal-admission-order",
+        "terminal-ownership-release"
+      ],
+      "target": "native_multiple_post_exit_completions"
+    },
+    {
+      "expected_passed_test_count": 1,
+      "id": "completed-route-live-remote-publication",
+      "kind": "integration-test",
+      "scenarios": [
+        "completed-route-live-remote-publication",
+        "terminal-admission-order",
+        "terminal-ownership-release"
+      ],
+      "target": "native_terminal_completion_live_remote_free"
     },
     {
       "expected_passed_test_count": 1,

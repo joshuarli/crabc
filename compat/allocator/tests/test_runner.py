@@ -1435,7 +1435,7 @@ class ContractTests(unittest.TestCase):
             {
                 "excluded_upstream_mode_count": 5,
                 "process_epochs": 128,
-                "source_worker_count": 2,
+                "source_worker_count": 4,
             },
         )
 
@@ -1567,7 +1567,7 @@ class ContractTests(unittest.TestCase):
             RUNNER.load_pin(),
         )
 
-        self.assertEqual(summary["check_count"], 12)
+        self.assertEqual(summary["check_count"], 15)
         self.assertEqual(
             summary["scenario_coverage"],
             sorted(RUNNER.NATIVE_OWNER_EXIT_REQUIRED_SCENARIOS),
@@ -1625,9 +1625,9 @@ class ContractTests(unittest.TestCase):
             report = RUNNER.run_native_owner_exit_lifecycle(contract, RUNNER.load_pin())
 
         self.assertEqual(report["status"], "passed")
-        self.assertEqual(report["check_count"], 12)
-        self.assertEqual(len(report["checks"]), 12)
-        self.assertEqual(command_record.call_count, 12)
+        self.assertEqual(report["check_count"], 15)
+        self.assertEqual(len(report["checks"]), 15)
+        self.assertEqual(command_record.call_count, 15)
         self.assertTrue(
             all(call.kwargs["timeout_seconds"] == 300 for call in command_record.call_args_list)
         )

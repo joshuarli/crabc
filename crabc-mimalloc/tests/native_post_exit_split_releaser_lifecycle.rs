@@ -135,9 +135,17 @@ fn detached_route_releases_admission_only_after_its_terminal_releaser_finishes()
         .join()
         .expect("B completes its nonterminal detached-route frees");
 
-    assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "ticket zero stays unavailable after a nonterminal releaser has finished"
+    // A's route is still source-active after B's nonterminal frees. Ticket
+    // zero may run its own private operation beside that route, but this
+    // cannot consume A's scheduler token or worker-admission claim.
+    let bookkeeping = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("ticket zero runs only its private operation beside A's source-active route"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(bookkeeping) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its private client without settling A's live route"
     );
 
     let (terminal_ready_sender, terminal_ready_receiver) = mpsc::sync_channel(0);
@@ -160,9 +168,24 @@ fn detached_route_releases_admission_only_after_its_terminal_releaser_finishes()
             2,
             "the terminal source free leaves A's proof and C's attachment admitted until C finishes"
         );
-        assert!(
-            matches!(native_allocate_aligned(73, 16, false), NativePageAllocationResult::Unavailable),
-            "C cannot begin a new native session while it holds A's typed terminal proof"
+        let continued = match native_allocate_aligned(73, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!(
+                "C resumes only its independent local session while it holds A's typed terminal proof"
+            ),
+        };
+        // SAFETY: this is C's exact local client, distinct from every opaque
+        // A-route client consumed above.
+        unsafe {
+            continued.as_ptr().write(0x59);
+            continued.as_ptr().add(72).write(0x5a);
+            assert_eq!(continued.as_ptr().read(), 0x59);
+            assert_eq!(continued.as_ptr().add(72).read(), 0x5a);
+        }
+        assert_eq!(
+            unsafe { native_free(continued) },
+            NativePageFreeResult::Freed,
+            "C can free its independent local client before normal finish settles A's proof"
         );
         terminal_ready_sender
             .send(())

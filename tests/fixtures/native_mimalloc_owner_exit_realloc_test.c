@@ -6,7 +6,8 @@
  *
  * This is a selected-shadow lifecycle fixture, not a general cross-thread
  * realloc claim. Its synchronized A/B handoff also proves that a rejected
- * replacement preserves the original C client and its contents.
+ * detached-route replacement preserves the original C client and its
+ * contents, while a later B-local replacement continues B's own session.
  */
 #include <errno.h>
 #include <pthread.h>
@@ -32,21 +33,40 @@ static int terminal_proof_cleanup_failed;
 static unsigned int terminal_proof_destructor_calls;
 static int terminal_proof_destructor_failed;
 
+static int terminal_proof_replacement_is_valid(const unsigned char *replacement)
+{
+    if (replacement_size == 0)
+        return replacement[0] == 0;
+    if (replacement[0] != 0x61)
+        return 0;
+    if (replacement_size >= 4096 && replacement[4095] != 0x62)
+        return 0;
+    if (replacement_size >= 64 * 1024
+            && replacement[64 * 1024 - 1] != 0x63)
+        return 0;
+    return 1;
+}
+
 /* `pthread_exit` and cancellation invoke this cleanup before their TSD
  * destructors. It covers the user-owned phase between B's terminal A free and
- * the native lifecycle finish: neither phase may create a new B-local client. */
+ * the native lifecycle finish: a completed A proof remains opaque and
+ * unreleased while B independently resumes, uses, and re-parks its own
+ * session. */
 static void terminal_proof_cleanup(void *opaque)
 {
-    void *unexpected;
+    unsigned char *continued;
 
     (void)opaque;
     errno = 0;
-    unexpected = malloc(73);
-    if (unexpected != NULL) {
+    continued = malloc(73);
+    if (continued == NULL) {
         terminal_proof_cleanup_failed = 1;
-        free(unexpected);
-    } else if (errno != ENOMEM) {
-        terminal_proof_cleanup_failed = 1;
+    } else {
+        continued[0] = 0x73;
+        continued[72] = 0x74;
+        if (continued[0] != 0x73 || continued[72] != 0x74)
+            terminal_proof_cleanup_failed = 1;
+        free(continued);
     }
     terminal_proof_cleanup_calls += 1;
 }
@@ -66,10 +86,9 @@ static int terminal_proof_cleanup_order_is_valid(void)
 }
 
 /* This destructor runs after B has terminally freed A's route client, but
- * before libc calls the native owner finish. It therefore exercises the
- * proof-gated allocator boundary at the exact pthread TSD ordering point:
- * B may release its already-live local client, but cannot manufacture a
- * replacement before its own source teardown settles A's proof. */
+ * before libc calls the native owner finish. It proves that B may continue
+ * its own local session at the exact pthread TSD ordering point; A's opaque
+ * completion remains pending until that later native finish. */
 static void terminal_proof_destructor(void *value)
 {
     unsigned char *replacement = terminal_proof_replacement;
@@ -80,29 +99,13 @@ static void terminal_proof_destructor(void *value)
         terminal_proof_destructor_failed = 1;
     } else {
         errno = 0;
-        resized = realloc(replacement, 4096);
-        if (resized != NULL) {
-            /* Preserve an explicit cleanup path even for a broken boundary,
-             * so the failing fixture does not conceal its own lifecycle
-             * result behind a leaked B-local client. */
+        resized = realloc(replacement, 256 * 1024);
+        if (resized == NULL) {
             terminal_proof_destructor_failed = 1;
-            free(resized);
         } else {
-            if (errno != ENOMEM)
+            if (!terminal_proof_replacement_is_valid(resized))
                 terminal_proof_destructor_failed = 1;
-            if (replacement_size == 0) {
-                if (replacement[0] != 0)
-                    terminal_proof_destructor_failed = 1;
-            } else {
-                if (replacement[0] != 0x61)
-                    terminal_proof_destructor_failed = 1;
-                if (replacement_size >= 4096 && replacement[4095] != 0x62)
-                    terminal_proof_destructor_failed = 1;
-                if (replacement_size >= 64 * 1024
-                        && replacement[64 * 1024 - 1] != 0x63)
-                    terminal_proof_destructor_failed = 1;
-            }
-            free(replacement);
+            free(resized);
         }
     }
     terminal_proof_replacement = NULL;
@@ -124,6 +127,8 @@ static void *owner_worker(void *opaque)
 static void *release_worker(void *opaque)
 {
     unsigned char *replacement;
+    unsigned char *continued;
+    unsigned char *local;
 
     (void)opaque;
     if (shared_medium == NULL)
@@ -143,59 +148,54 @@ static void *release_worker(void *opaque)
         return (void *)(uintptr_t)5;
     if (replacement == shared_medium)
         return (void *)(uintptr_t)6;
-    if (replacement_size == 0) {
-        if (replacement[0] != 0)
-            return (void *)(uintptr_t)7;
-    } else {
-        if (replacement[0] != 0x61)
-            return (void *)(uintptr_t)8;
-        if (replacement_size >= 4096 && replacement[4095] != 0x62)
-            return (void *)(uintptr_t)9;
-        if (replacement_size >= 64 * 1024
-                && replacement[64 * 1024 - 1] != 0x63)
-            return (void *)(uintptr_t)10;
-    }
+    if (!terminal_proof_replacement_is_valid(replacement))
+        return (void *)(uintptr_t)7;
     /* The successful exact route replacement terminally freed A's client and
-     * left A's completion in B TLS. A valid B-local replacement must now
-     * fail: it cannot resume B's parked engine and manufacture another
-     * client before B's ordinary pthread finish settles that proof. The
-     * original B replacement remains live and unchanged on failure. */
+     * left A's completion in B TLS. That completion keeps A's scheduler token
+     * and admission private, but B may resume its independently parked local
+     * session for ordinary C allocation and replacement before B's own
+     * pthread finish settles A's proof. */
     errno = 0;
-    if (realloc(replacement, 4096) != NULL)
-        return (void *)(uintptr_t)11;
-    if (errno != ENOMEM)
-        return (void *)(uintptr_t)12;
-    if (replacement_size == 0) {
-        if (replacement[0] != 0)
-            return (void *)(uintptr_t)13;
-    } else {
-        if (replacement[0] != 0x61)
-            return (void *)(uintptr_t)14;
-        if (replacement_size >= 4096 && replacement[4095] != 0x62)
-            return (void *)(uintptr_t)15;
-        if (replacement_size >= 64 * 1024
-                && replacement[64 * 1024 - 1] != 0x63)
-            return (void *)(uintptr_t)16;
+    continued = realloc(replacement, 128 * 1024);
+    if (continued == NULL)
+        return (void *)(uintptr_t)8;
+    if (!terminal_proof_replacement_is_valid(continued)) {
+        free(continued);
+        return (void *)(uintptr_t)9;
     }
+    replacement = continued;
+    local = malloc(73);
+    if (local == NULL) {
+        free(replacement);
+        return (void *)(uintptr_t)10;
+    }
+    local[0] = 0x71;
+    local[72] = 0x72;
+    if (local[0] != 0x71 || local[72] != 0x72) {
+        free(local);
+        free(replacement);
+        return (void *)(uintptr_t)11;
+    }
+    free(local);
     shared_medium = NULL;
     terminal_proof_replacement = replacement;
     if (pthread_setspecific(terminal_proof_destructor_key, (void *)(uintptr_t)1) != 0) {
         terminal_proof_replacement = NULL;
         free(replacement);
-        return (void *)(uintptr_t)17;
+        return (void *)(uintptr_t)12;
     }
     if (terminal_proof_exit_kind == TERMINAL_PROOF_CANCELLATION) {
         /* Main cannot request deferred cancellation until both cleanup
          * handlers are installed and B
          * already holds A's terminal proof. The allocation cleanup must run
-         * first, then unlock, then the TSD destructor must reject `realloc`
-         * before the native finish can release A's admission. */
+         * first, then unlock, then the TSD destructor continues B's local
+         * `realloc` before the native finish can release A's admission. */
         if (pthread_mutex_lock(&terminal_proof_cancel_mutex) != 0)
-            return (void *)(uintptr_t)18;
+            return (void *)(uintptr_t)13;
         terminal_proof_cancel_ready = 1;
         if (pthread_cond_signal(&terminal_proof_cancel_cond) != 0) {
             (void)pthread_mutex_unlock(&terminal_proof_cancel_mutex);
-            return (void *)(uintptr_t)19;
+            return (void *)(uintptr_t)14;
         }
         pthread_cleanup_push(terminal_proof_cancel_unlock,
                 &terminal_proof_cancel_mutex);

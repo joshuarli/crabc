@@ -30,36 +30,37 @@
   },
   "patch": {
     "path": "compat/allocator/adapted/test-stress-native-shadow-pthreads.patch",
-    "sha256": "14a1323905f635550871a3a80876ad3e26e024ec873cb67d4d6c499e222f77df",
+    "sha256": "2b312a61699edb44a897710bb604b908c14868b5057e6cce081916ae1fff9fea",
     "apply_from": "the extracted mimalloc-3.5.0 root",
     "apply_command": "patch -p1 < /path/to/crabc/compat/allocator/adapted/test-stress-native-shadow-pthreads.patch"
   },
   "adapted_source": {
     "path": "test/test-stress.c",
-    "sha256": "8e397af093dfbfe081fdc6afffa61eff4a6fc8c2a17d48946d316becb1024eaf"
+    "sha256": "eb7c20ed21057dc6ccd7da6eec04f1ebb8021f5e4b55c9c6ef1ceba26a9b303b"
   },
   "execution": {
     "compile_defines": [
       "USE_STD_MALLOC",
-      "NTHREADS=2"
+      "NTHREADS=4"
     ],
     "arguments": [
-      "2",
+      "4",
       "1",
       "2"
     ],
     "watchdog_seconds": 30,
     "process_epochs": 128,
-    "expected_stdout": "Using 2 threads with a 1% load-per-thread and 2 iterations\ncrabc native shadow pthread stress ok\n",
+    "expected_stdout": "Using 4 threads with a 1% load-per-thread and 2 iterations\ncrabc native shadow pthread stress ok\n",
     "expected_stderr": "",
-    "source_worker_count": 2,
+    "source_worker_count": 4,
     "source_iterations": 2,
     "main_participates": false,
     "post_exit_transfer_releaser": "one fresh pthread runs the source free_items cleanup for every selected transfer slot",
     "scheduler_assertions": [
-      "With NTHREADS=2 and main_participates false, the source scheduler creates exactly two pthread workers for every source iteration.",
+      "With NTHREADS=4 and main_participates false, the source scheduler creates exactly four pthread workers for every source iteration.",
       "The retained source transfer buffer carries exact live allocation pointers across source workers and source iterations.",
-      "Each selected transfer cleanup runs free_items in one fresh source-shaped pthread after the producing workers have joined, exercising the typed post-exit release route without exposing a client address or page capability."
+      "Each selected transfer cleanup runs free_items in one fresh source-shaped pthread after the producing workers have joined, exercising the typed post-exit release route without exposing a client address or page capability.",
+      "A worker that already holds one exact live-owner handoff restores it and revalidates the source input instead of waiting on a second busy handoff, so opposing source transfers cannot form a raw-TLS wait cycle."
     ]
   },
   "excluded_upstream_modes": [
@@ -86,7 +87,7 @@
   ],
   "required_source_markers": [
     "#if !defined(USE_STD_MALLOC)",
-    "#if NTHREADS != 2",
+    "#if NTHREADS != 4",
     "#if ALLOW_LARGE",
     "#if defined(MI_USE_HEAPS)",
     "#if defined(MI_HEAP_WALK)",
@@ -96,7 +97,7 @@
     "const size_t start = (main_participates ? 1 : 0);",
     "free_transferred_item_in_fresh_worker",
     "run_os_threads(subproc_null, 1, &free_transferred_item, p);",
-    "if (THREADS != 2 || SCALE != 1 || ITER != 2 || main_participates || allow_large_objects)",
+    "if (THREADS != 4 || SCALE != 1 || ITER != 2 || main_participates || allow_large_objects)",
     "printf(\"crabc native shadow pthread stress ok\\n\");"
   ],
   "compile_requirements": {
