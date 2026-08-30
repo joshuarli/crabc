@@ -109,7 +109,12 @@ int fcntl(int, int, ...);
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_SYMLINK_FOLLOW 0x400
 #define AT_REMOVEDIR 0x200
-#ifdef _GNU_SOURCE
+/*
+ * Musl 1.2.6 exposes this Linux empty-path extension to both GNU and BSD
+ * feature profiles.  Keep that narrow visibility contract here; the broader
+ * GNU-only fcntl surface below remains independently selected.
+ */
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define AT_EMPTY_PATH 0x1000
 #endif
 

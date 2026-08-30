@@ -6,7 +6,7 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
-The x86 lane has two private ET_DYN interpreter artifacts inside still-planned
+The x86 lane has three private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64
 RELA plus one bounded packed leaf `DT_RELR` direct-and-bitmap stream with
@@ -25,6 +25,19 @@ initialized/TBSS/high-alignment values, a two-entry private DTV, DTPMOD/DTPOFF
 and interpreter-owned `__tls_get_addr`, and reject-only TPOFF/static-TLS
 inputs. It remains neither a general loader/TLS/pthread implementation nor a
 dynamic CRT/sysroot, full x86-64 parity, or public x86 support claim.
+
+The third `ldso-owned-crt-handoff` sibling keeps both prior interpreter
+artifacts unchanged while proving one fixed no-TLS main PIE -> mid.so -> leaf.so
+post-relocation publication to a Rust-produced Scrt1-owned dynamic main. Its
+only extra main lookup is the weak `R_X86_64_GLOB_DAT`
+`__crabc_x86_64_owned_crt_handoff` v1 record: the self-relocated interpreter
+RELRO-seals it, never uses `%rdx`, and defers only the existing leaf-before-mid
+init arrays until after executable preinit. The native no-libc fixture proves
+`PDdIMFL` under `env -i`; pinned musl proves the absent-record null-finalizer
+`A` route; malformed record data and an early finalizer fail status 127. It
+does not select another executable/root, general loader lifecycle or DSO
+finalization, candidate libc, RuntimeV1, dynamic CRT/sysroot, or public x86
+support.
 
 The x86 lane now has fourteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
@@ -210,6 +223,30 @@ allocator VM state. This is a bounded `static-c-mman-mapping-core` artifact
 inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
 family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
 shared-memory, and process-wide VM synchronization remain unselected.
+
+The same archive separately has a private per-range memory-locking artifact:
+`./scripts/dev-x86_64.sh memory-locking-header-abi` and
+`./scripts/dev-x86_64.sh libc-memory-locking` prove exactly `mlock`,
+`munlock`, and GNU `mlock2(MLOCK_ONFAULT)` through a six-profile
+project-header/pinned-musl C/C++ declaration matrix plus one
+pinned-musl/freestanding-static candidate. It retains musl's `flags=0`
+`mlock2` delegation to `mlock`, direct x86 `mlock=149`, `munlock=150`, and
+`mlock2=325`, stale-errno success, first-fault locking, and Linux's
+environment-dependent `EPERM`/`EAGAIN`/`ENOMEM` memlock outcome. This is a
+bounded `static-c-memory-locking` artifact inside planned
+`libc.posix-runtime`, not full `sys/mman.h`, C-runtime, family/platform parity,
+or public x86 support; `mlockall`/`munlockall`, `msync`, `mremap`, cancellation,
+and mapping policy remain unselected.
+
+The same archive has a private direct time-observation artifact:
+`./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,
+`difftime`, C11 `timespec_get`, `clock_getres`, and `gettimeofday` through a
+pinned-musl/reference plus freestanding-static candidate. It records the
+direct x86 `clock_gettime=228`, `clock_getres=229`, and `gettimeofday=96`
+paths, normalized outputs, stale-errno behavior, invalid-clock handling, and
+the `TIME_UTC`/unsupported-base boundary. It has no vDSO resolver, calendar or
+timezone state, clock mutation, POSIX timer, cancellation, libc.so, CRT,
+loader, sysroot, family/platform parity, or public-x86-support claim.
 
 `./scripts/dev-x86_64.sh libc-system-information` is a separate private
 `static-c-system-information` artifact inside planned `libc.posix-runtime`.
@@ -398,20 +435,27 @@ CRT, loader, sysroot, family or platform parity, promotion, full x86-64
 parity, and public x86 support remain unselected.
 
 `./scripts/dev-x86_64.sh event-descriptors-header-abi` adds an artifact-local
-eight-profile C11/C++17 project-header/pinned-musl matrix for selected
-`sys/eventfd.h` and `sys/inotify.h` declarations, layouts, flags, and unmangled
-C++ references; the existing `epoll-header-abi` matrix remains its own packed
-`sys/epoll.h` proof. The paired `./scripts/dev-x86_64.sh libc-event-descriptors`
-command records a separate private `static-c-event-descriptors` artifact in
-planned `libc.posix-runtime`. Its pinned-musl and freestanding-static C fixture
-selects exactly `epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`,
-`epoll_pwait`, `eventfd`, `eventfd_read`, `eventfd_write`, `inotify_init`,
-`inotify_init1`, `inotify_add_watch`, and `inotify_rm_watch`. It proves the
-packed 12-byte x86 epoll record, the `epoll_ctl` fourth argument in `r10`, and
-the `epoll_pwait` `r10`/`r8`/`r9` path with BPF-verified temporary-mask pointer
-and eight-byte kernel sigset size, plus bounded eventfd/inotify lifecycles.
-This direct static leaf intentionally omits pthread cancellation and musl's
-pre-Linux-5.10 `ENOSYS` fallbacks. It is a private non-promoting artifact, not
+eight-profile C/C++ project-header/pinned-musl matrix. It records that the
+selected direct `sys/eventfd.h` and `sys/inotify.h` surface is unconditional,
+with x86 LP64 `eventfd_t`/`inotify_event` layouts, selected direct flags, and
+header-requested unmangled C++ C-linkage spellings. Because both headers
+immediately include `fcntl.h`, the same narrow matrix records only
+`AT_EMPTY_PATH` as GNU/BSD/default-C-visible and strict/POSIX/XOPEN-hidden,
+including macro-free C++17. Its `nm` check is only header-requested external
+symbol spelling, not actual callable artifact linkage; the global
+feature-visibility facet remains planned. The existing `epoll-header-abi`
+matrix remains its own packed `sys/epoll.h` proof. The paired
+`./scripts/dev-x86_64.sh libc-event-descriptors` command records a separate
+private `static-c-event-descriptors` artifact in planned `libc.posix-runtime`.
+Its pinned-musl and freestanding-static C fixture selects exactly
+`epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`, `epoll_pwait`,
+`eventfd`, `eventfd_read`, `eventfd_write`, `inotify_init`, `inotify_init1`,
+`inotify_add_watch`, and `inotify_rm_watch`. It proves the packed 12-byte x86
+epoll record, the `epoll_ctl` fourth argument in `r10`, and the `epoll_pwait`
+`r10`/`r8`/`r9` path with BPF-verified temporary-mask pointer and eight-byte
+kernel sigset size, plus bounded eventfd/inotify lifecycles. This direct static
+leaf intentionally omits pthread cancellation and musl's pre-Linux-5.10
+`ENOSYS` fallbacks. It is a private non-promoting artifact, not
 event-descriptor-family closure: `epoll_pwait2`, timerfd, signalfd, fanotify,
 AIO, watcher policy, libc.so, startup, allocator, loader, sysroot, family or
 platform parity, and public x86 support remain unselected.
@@ -462,7 +506,15 @@ prove artifact linkage or generic device/request behavior. Its separate
 seven-row `epoll-header-abi`
 matrix resolves only `sys/epoll.h`'s packed x86 event record, selected
 declarations/values, and the direct `_IOC`/`_IOR`/`_IOW` encoding subset from
-`sys/ioctl.h`. Its separate 35-row `timeval-transitive-header-abi` matrix
+`sys/ioctl.h`. Its separate 16-row `event-descriptors-header-abi` matrix
+resolves the selected direct `sys/eventfd.h` and `sys/inotify.h` surface as
+unconditional across default-C plus seven C11/C++17 profiles, with x86 LP64
+`eventfd_t`/`inotify_event` layouts, selected direct constants, and
+header-requested C++ C-linkage spelling. Both headers immediately include
+`fcntl.h`, so it also records only `AT_EMPTY_PATH` as
+GNU/BSD/default-C-visible and strict/POSIX/XOPEN-hidden, including macro-free
+C++17; this leaves the global feature-visibility facet planned. Its separate
+35-row `timeval-transitive-header-abi` matrix
 checks five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`, and
 `sys/timex.h`) across seven isolated C11/C++17 profiles for complete
 `struct timeval` visibility and named x86 LP64 embedded-record layouts only.
@@ -479,7 +531,7 @@ crabc artifact export. Its separate eight-row `access-header-abi` matrix
 checks selected `access`/`faccessat` declarations, access and `AT_*` values,
 GNU-only `eaccess`/`euidaccess` visibility across default-C and isolated
 C11/C++17 profiles, and C++ declaration C-linkage spelling. It likewise
-proves only header-requested names, not an artifact export. All six are
+proves only header-requested names, not an artifact export. All seven are
 compile-only evidence: callable linkage,
 device behavior, all-header closure, runtime completion, family promotion, and
 public x86 support all remain planned. Its live `candidate-header-closure`

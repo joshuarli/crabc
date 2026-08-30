@@ -31,7 +31,9 @@
 //! installs one final-executable TLS image before C TLS exists; its distinct
 //! private musl-shaped assembly boundary owns clone and normal-return child
 //! exit so this generic register module does not become a public clone API.
-//! All other public C wrappers remain unintegrated until their own ABI
+//! The separately selected per-range memory-locking leaf uses direct mlock,
+//! munlock, and mlock2 syscalls here. All other public C wrappers remain
+//! unintegrated until their own ABI
 //! boundaries have evidence.
 //!
 //! Linux/x86-64 enters the kernel with `syscall`: `rax` holds the syscall
@@ -345,6 +347,7 @@ pub(crate) const SYS_READLINK: i64 = 89;
 pub(crate) const SYS_CHMOD: i64 = 90;
 pub(crate) const SYS_FCHMOD: i64 = 91;
 pub(crate) const SYS_UMASK: i64 = 95;
+pub(crate) const SYS_GETTIMEOFDAY: i64 = 96;
 pub(crate) const SYS_GETRLIMIT: i64 = 97;
 pub(crate) const SYS_GETRUSAGE: i64 = 98;
 pub(crate) const SYS_SYSINFO: i64 = 99;
@@ -366,6 +369,8 @@ pub(crate) const SYS_RT_SIGSUSPEND: i64 = 130;
 pub(crate) const SYS_SIGALTSTACK: i64 = 131;
 pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
+pub(crate) const SYS_MLOCK: i64 = 149;
+pub(crate) const SYS_MUNLOCK: i64 = 150;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
 pub(crate) const SYS_ARCH_PRCTL: i64 = 158;
 pub(crate) const SYS_SETHOSTNAME: i64 = 170;
@@ -408,6 +413,7 @@ pub(crate) const SYS_SYNCFS: i64 = 306;
 pub(crate) const SYS_SENDMMSG: i64 = 307;
 pub(crate) const SYS_RENAMEAT2: i64 = 316;
 pub(crate) const SYS_GETRANDOM: i64 = 318;
+pub(crate) const SYS_MLOCK2: i64 = 325;
 pub(crate) const SYS_STATFS: i64 = 137;
 pub(crate) const SYS_FSTATFS: i64 = 138;
 pub(crate) const SYS_FDATASYNC: i64 = 75;

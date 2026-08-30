@@ -27,6 +27,7 @@ ROOT = CRT_ROOT.parent
 BUILDER = CRT_ROOT / "build_x86_64.py"
 FIXTURE = CRT_ROOT / "fixtures" / "dynamic_startup_fixture_x86_64.c"
 LIFECYCLE_FIXTURE = CRT_ROOT / "fixtures" / "dynamic_startup_lifecycle_fixture_x86_64.c"
+OWNED_HANDOFF_FIXTURE = CRT_ROOT / "fixtures" / "dynamic_startup_owned_handoff_fixture_x86_64.c"
 TARGET = "x86_64-unknown-linux-musl"
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 MUSL_LIB = MUSL_ROOT / "lib"
@@ -140,6 +141,32 @@ def build_lifecycle_fixture_object(work: Path) -> Path:
             "-fno-asynchronous-unwind-tables",
             "-c",
             str(LIFECYCLE_FIXTURE),
+            "-o",
+            str(object_path),
+        ]
+    )
+    if compile_result.returncode != 0:
+        raise AssertionError(compile_result.stderr.decode(errors="replace"))
+    return object_path
+
+
+def build_owned_handoff_fixture_object(work: Path, *, malformed: bool = False) -> Path:
+    object_path = work / (
+        "dynamic_startup_owned_handoff_fixture_bad_x86_64.o"
+        if malformed
+        else "dynamic_startup_owned_handoff_fixture_x86_64.o"
+    )
+    compile_result = run(
+        oracle_compiler()
+        + [
+            "-std=c11",
+            "-ffreestanding",
+            "-fno-stack-protector",
+            "-fno-pie",
+            "-fno-asynchronous-unwind-tables",
+            *( ["-DCRABC_BAD_OWNED_HANDOFF=1"] if malformed else [] ),
+            "-c",
+            str(OWNED_HANDOFF_FIXTURE),
             "-o",
             str(object_path),
         ]
@@ -407,6 +434,32 @@ class X86_64DynamicStartupTests(unittest.TestCase):
             lifecycle_run = run([str(lifecycle_probe)])
             self.assertEqual(lifecycle_run.returncode, 0, lifecycle_run.stderr.decode(errors="replace"))
             self.assertEqual(lifecycle_run.stdout, b"PQIJKMYXF")
+
+            owned_handoff_fixture = build_owned_handoff_fixture_object(work)
+            owned_handoff_probe = work / "candidate-owned-handoff"
+            link_freestanding_lifecycle_probe(
+                owned_handoff_probe,
+                scrt1=output / "Scrt1.o",
+                fixture=owned_handoff_fixture,
+            )
+            assert_freestanding_lifecycle_contract(owned_handoff_probe)
+            owned_handoff_run = run([str(owned_handoff_probe)])
+            self.assertEqual(
+                owned_handoff_run.returncode,
+                0,
+                owned_handoff_run.stderr.decode(errors="replace"),
+            )
+            self.assertEqual(owned_handoff_run.stdout, b"PDiIMFfL")
+
+            malformed_handoff_fixture = build_owned_handoff_fixture_object(work, malformed=True)
+            malformed_handoff_probe = work / "candidate-malformed-owned-handoff"
+            link_freestanding_lifecycle_probe(
+                malformed_handoff_probe,
+                scrt1=output / "Scrt1.o",
+                fixture=malformed_handoff_fixture,
+            )
+            malformed_handoff_run = run([str(malformed_handoff_probe)])
+            self.assertEqual(malformed_handoff_run.returncode, 127)
 
             builder = load_builder_module()
             forged = work / "forged-Scrt1.o"

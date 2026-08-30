@@ -637,8 +637,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff",
             "machine-context-header-abi",
+            "memory-locking-header-abi",
             "vector-io-header-abi",
             "libc-crt1-static-tls",
             "crt-dynamic-startup",
@@ -665,7 +666,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-pthread-identity",
             "libc-pthread-detach",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-memory-locking",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-vector-io",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
@@ -8326,6 +8328,112 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_time_observation_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        time_observation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "time_observation.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_time_observation_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_time_observation_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_time_observation.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "time_observation.rs"]', static_root)
+        for symbol in (
+            "clock",
+            "time",
+            "difftime",
+            "timespec_get",
+            "clock_getres",
+            "gettimeofday",
+        ):
+            self.assertIn(f"fn {symbol}(", time_observation)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/clock.c",
+            "src/time/time.c",
+            "src/time/difftime.c",
+            "src/time/timespec_get.c",
+            "src/time/clock_getres.c",
+            "src/time/gettimeofday.c",
+            "SYS_CLOCK_GETTIME",
+            "SYS_CLOCK_GETRES",
+            "SYS_GETTIMEOFDAY",
+            "vDSO resolver",
+            "initial-TLS",
+        ):
+            self.assertIn(required, time_observation)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "clock_settime",
+            "timer_create",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, time_observation)
+        for required in (
+            "#include <sys/time.h>",
+            "SYS_gettimeofday == 96",
+            "SYS_clock_getres == 229",
+            "check_wall_clock_and_errno",
+            "check_cpu_clock_and_pure_conversion",
+            "check_error_conventions",
+            "CRABC_TIME_OBSERVATION_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_time_observation_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_time_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall clock e4",
+            "assert_named_syscall clock_getres e5",
+            "assert_named_syscall gettimeofday 60",
+            "direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-time-observation"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-time-observation"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_time_observation()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_time_observation.sh", runner
+        )
+        self.assertIn(
+            '    libc-time-observation)\n        [ "$#" -eq 0 ] || fail "libc-time-observation takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_system_configuration_artifact_stays_narrow(
         self,
     ) -> None:
@@ -8599,6 +8707,136 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '    libc-mapping-core)\n        [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"',
             runner,
         )
+
+    def test_libc_static_c_abi_memory_locking_artifact_stays_narrow(self) -> None:
+        """Per-range locking remains one private C/header/archive vertical."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_locking.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "memory_locking_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "memory_locking_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_memory_locking_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_memory_locking_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_memory_locking_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_memory_locking.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "memory_locking.rs"]', static_root)
+        for required in (
+            "SYS_MLOCK: i64 = 149",
+            "SYS_MUNLOCK: i64 = 150",
+            "SYS_MLOCK2: i64 = 325",
+        ):
+            self.assertIn(required, syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/mman/mlock.c",
+            "src/mman/munlock.c",
+            "src/linux/mlock2.c",
+            "SYS_MLOCK",
+            "SYS_MUNLOCK",
+            "SYS_MLOCK2",
+            "if flags == 0",
+            "return unsafe { mlock(address, length) }",
+            "c_status(result)",
+            "initial-TLS",
+            "cancellation-point syscall path",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn mlockall(",
+            "fn munlockall(",
+            "fn msync(",
+            "fn mremap(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for probe in (header_c, header_cpp):
+            for required in ("sys/mman.h", "mlock", "munlock", "mlock2", "MLOCK_ONFAULT"):
+                self.assertIn(required, probe)
+        for required in (
+            "c11-strict",
+            "cxx17-strict",
+            "c11-posix-2008",
+            "cxx17-posix-2008",
+            "c11-gnu",
+            "cxx17-gnu",
+            "GNU mlock2",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_mlock == 149",
+            "SYS_munlock == 150",
+            "SYS_mlock2 == 325",
+            "MLOCK_ONFAULT",
+            "permitted_lock_error",
+            "overflowing",
+            "CRABC_MEMORY_LOCKING_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_memory_locking_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_memory_locking_header_abi.sh",
+            "run_x86_mlock_reference.sh",
+            "-nostdlib -static",
+            "assert_named_syscall mlock 95",
+            "assert_named_syscall munlock 96",
+            "assert_named_syscall mlock2 145",
+            "mlockall munlockall msync mremap",
+            "direct fs initial TLS",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        for symbol in ("mlock", "munlock", "mlock2"):
+            self.assertIn(symbol, static_export_names)
+        for command in (
+            "./scripts/dev-x86_64.sh memory-locking-header-abi",
+            "./scripts/dev-x86_64.sh libc-memory-locking",
+        ):
+            self.assertIn(command, parity_ledger)
+        for required in (
+            "run_memory_locking_header_abi()",
+            "/workspace/compat/x86_64/run_memory_locking_header_abi.sh",
+            "/workspace/compat/x86_64/run_libc_memory_locking.sh",
+            '    memory-locking-header-abi)\n        [ "$#" -eq 0 ] || fail "memory-locking-header-abi takes no arguments"',
+            '    libc-memory-locking)\n        [ "$#" -eq 0 ] || fail "libc-memory-locking takes no arguments"',
+        ):
+            self.assertIn(required, runner)
 
     def test_libc_static_header_layouts_baseline_stays_c_and_cxx_only(self) -> None:
         """The aggregate records must not smuggle in a C++ runtime or exports."""
@@ -10498,8 +10736,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "IN_IGNORED",
             ):
                 self.assertIn(required, header_probe)
-        self.assertIn('extern "C" int eventfd', header_cxx_probe)
-        self.assertIn('extern "C" int inotify_init', header_cxx_probe)
+        # The profile runner now retains header-derived function references and
+        # checks their undefined ELF spellings with `nm`; handwritten C++
+        # redeclarations would no longer prove the header's own linkage.
+        self.assertIn("eventfd_cxx_eventfd = eventfd", header_cxx_probe)
+        self.assertIn("inotify_cxx_init = inotify_init", header_cxx_probe)
         for required in (
             "EXPECTED_PROFILE_COUNT=8",
             "c-default c11-gnu cxx17-gnu",

@@ -33,6 +33,9 @@ UAPI_WRAPPER_MATRIX_RUNNER_PATH = (
 )
 IOCTL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_ioctl_header_abi.sh"
 EPOLL_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_epoll_header_abi.sh"
+EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH = (
+    ROOT / "compat" / "x86_64" / "run_event_descriptors_header_abi.sh"
+)
 TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_timeval_transitive_header_abi.sh"
 )
@@ -67,6 +70,41 @@ EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh epoll-he
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "sys/epoll.h"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_DIRECT_MACRO_HEADER = "sys/ioctl.h"
 EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ROW_COUNT = 7
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ID = (
+    "x86-event-descriptors-header-profile-matrix"
+)
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_COMMAND = (
+    "./scripts/dev-x86_64.sh event-descriptors-header-abi"
+)
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS = (
+    "sys/eventfd.h",
+    "sys/inotify.h",
+)
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_IMMEDIATE_FEATURE_HEADER = "fcntl.h"
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_PROFILES = (
+    "c-default",
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-bsd",
+    "cxx17-strict",
+)
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_DIRECT_SURFACE_VISIBILITY = "unconditional"
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_VISIBLE_PROFILES = (
+    "c-default",
+    "c11-gnu",
+    "cxx17-gnu",
+    "c11-bsd",
+)
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_HIDDEN_PROFILES = (
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "cxx17-strict",
+)
+EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ROW_COUNT = 16
 EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID = (
     "x86-timeval-transitive-header-profile-matrix"
 )
@@ -198,6 +236,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "c11-gnu-consumability",
         "ioctl-header-profile-matrix",
         "epoll-header-profile-matrix",
+        "event-descriptors-header-profile-matrix",
         "timeval-transitive-header-profile-matrix",
         "sys-time-direct-header-profile-matrix",
         "access-header-profile-matrix",
@@ -414,6 +453,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "libc.headers-layouts",
         (EXPECTED_EPOLL_HEADER_PROFILE_MATRIX_ID,),
     ),
+    "event-descriptors-header-profile-matrix": (
+        "partial-verified",
+        "sys/eventfd.h and sys/inotify.h unconditional declaration layout macro and C++ linkage subset plus immediate fcntl.h AT_EMPTY_PATH feature boundary",
+        "libc.headers-layouts",
+        (EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ID,),
+    ),
     "timeval-transitive-header-profile-matrix": (
         "partial-verified",
         "sys/time.h plus utmpx.h, utmp.h, lastlog.h, and sys/timex.h timeval transitive layout subset",
@@ -554,6 +599,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "sys-time-direct": "./scripts/dev-x86_64.sh sys-time-direct-header-abi",
     "access-header": "./scripts/dev-x86_64.sh access-header-abi",
     "machine-context": "./scripts/dev-x86_64.sh machine-context-header-abi",
+    "event-descriptors": "./scripts/dev-x86_64.sh event-descriptors-header-abi",
 }
 
 EXPECTED_HEADER_LAYOUT_SOURCES = {
@@ -745,6 +791,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/machine_context_header_abi_probe.cpp",
         "compat/x86_64/run_machine_context_header_abi.sh",
     ),
+    "event-descriptors": (
+        "compat/x86_64/event_descriptors_header_abi_probe.c",
+        "compat/x86_64/event_descriptors_header_abi_probe.cpp",
+        "compat/x86_64/run_event_descriptors_header_abi.sh",
+    ),
 }
 
 EXPECTED_FAMILIES = (
@@ -897,6 +948,15 @@ CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
+
+TIME_OBSERVATION_SYMBOLS = (
+    "clock",
+    "time",
+    "difftime",
+    "timespec_get",
+    "clock_getres",
+    "gettimeofday",
+)
 
 FILESYSTEM_ACCESS_SYMBOLS = ("access", "faccessat", "euidaccess", "eaccess")
 
@@ -1384,6 +1444,7 @@ def validate_header_layout_foundation_manifest(
         "uapi_wrapper_matrix",
         "ioctl_header_profile_matrix",
         "epoll_header_profile_matrix",
+        "event_descriptors_header_profile_matrix",
         "timeval_transitive_header_profile_matrix",
         "sys_time_direct_header_profile_matrix",
         "access_header_profile_matrix",
@@ -1449,6 +1510,7 @@ def validate_header_layout_foundation_manifest(
             "uapi_wrapper_profile_matrix_slice": True,
             "ioctl_header_profile_matrix_slice": True,
             "epoll_header_profile_matrix_slice": True,
+            "event_descriptors_header_profile_matrix_slice": True,
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
             "access_header_profile_matrix_slice": True,
@@ -2149,6 +2211,212 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts epoll header matrix evidence must retain its non-completion boundary",
     )
 
+    event_descriptors_header_profile_matrix = manifest[
+        "event_descriptors_header_profile_matrix"
+    ]
+    require(
+        isinstance(event_descriptors_header_profile_matrix, Mapping),
+        "header-foundation event-descriptor header matrix must be a table",
+    )
+    require(
+        set(event_descriptors_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_headers",
+            "immediate_feature_header",
+            "profiles",
+            "direct_surface_visibility",
+            "at_empty_path_visible_profiles",
+            "at_empty_path_hidden_profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation event-descriptor header matrix keys drifted",
+    )
+    require(
+        event_descriptors_header_profile_matrix["id"]
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation event-descriptor header matrix id drifted",
+    )
+    require(
+        event_descriptors_header_profile_matrix["state"] == "partial-verified"
+        and event_descriptors_header_profile_matrix["required_result"] == "pass",
+        "header-foundation event-descriptor header matrix must remain partial verified evidence",
+    )
+    require(
+        event_descriptors_header_profile_matrix["command"]
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation event-descriptor header matrix command drifted",
+    )
+    require(
+        event_descriptors_header_profile_matrix["header_class"] == "pinned-non-uapi",
+        "header-foundation event-descriptor header matrix must remain scoped to pinned non-UAPI headers",
+    )
+    event_descriptor_subject_headers = string_list(
+        event_descriptors_header_profile_matrix["subject_headers"],
+        "header-foundation event-descriptor header matrix subject headers",
+    )
+    require(
+        tuple(event_descriptor_subject_headers)
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS,
+        "header-foundation event-descriptor header matrix subject headers drifted",
+    )
+    require(
+        event_descriptors_header_profile_matrix["immediate_feature_header"]
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_IMMEDIATE_FEATURE_HEADER,
+        "header-foundation event-descriptor immediate feature header drifted",
+    )
+    event_descriptor_profiles = string_list(
+        event_descriptors_header_profile_matrix["profiles"],
+        "header-foundation event-descriptor header matrix profiles",
+    )
+    require(
+        tuple(event_descriptor_profiles)
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation event-descriptor header matrix profiles drifted",
+    )
+    require(
+        event_descriptors_header_profile_matrix["direct_surface_visibility"]
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_DIRECT_SURFACE_VISIBILITY,
+        "header-foundation event-descriptor direct-surface visibility drifted",
+    )
+    event_descriptor_visible_profiles = string_list(
+        event_descriptors_header_profile_matrix["at_empty_path_visible_profiles"],
+        "header-foundation event-descriptor AT_EMPTY_PATH visible profiles",
+    )
+    event_descriptor_hidden_profiles = string_list(
+        event_descriptors_header_profile_matrix["at_empty_path_hidden_profiles"],
+        "header-foundation event-descriptor AT_EMPTY_PATH hidden profiles",
+    )
+    require(
+        tuple(event_descriptor_visible_profiles)
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_VISIBLE_PROFILES,
+        "header-foundation event-descriptor AT_EMPTY_PATH visible profile roster drifted",
+    )
+    require(
+        tuple(event_descriptor_hidden_profiles)
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_HIDDEN_PROFILES,
+        "header-foundation event-descriptor AT_EMPTY_PATH hidden profile roster drifted",
+    )
+    require(
+        not set(event_descriptor_visible_profiles).intersection(event_descriptor_hidden_profiles)
+        and set(event_descriptor_visible_profiles).union(event_descriptor_hidden_profiles)
+        == set(event_descriptor_profiles),
+        "header-foundation event-descriptor AT_EMPTY_PATH visibility partition drifted",
+    )
+    require(
+        event_descriptors_header_profile_matrix["row_count"]
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and event_descriptors_header_profile_matrix["row_count"]
+        == len(event_descriptor_subject_headers) * len(event_descriptor_profiles),
+        "header-foundation event-descriptor header matrix row count drifted",
+    )
+    event_descriptor_scope = event_descriptors_header_profile_matrix["scope"]
+    require(
+        isinstance(event_descriptor_scope, str)
+        and all(
+            phrase in event_descriptor_scope
+            for phrase in (
+                "unconditional",
+                "AT_EMPTY_PATH",
+                "actual callable artifact linkage",
+                "runtime behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation event-descriptor header matrix scope must retain its narrow non-completion boundary",
+    )
+    event_descriptor_rows = event_descriptors_header_profile_matrix["row"]
+    require(
+        isinstance(event_descriptor_rows, list)
+        and len(event_descriptor_rows)
+        == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation event-descriptor header matrix row roster drifted",
+    )
+    expected_event_descriptor_rows = tuple(
+        (header, profile)
+        for header in EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS
+        for profile in EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_PROFILES
+    )
+    observed_event_descriptor_rows: list[tuple[str, str]] = []
+    for index, row in enumerate(event_descriptor_rows):
+        location = f"header-foundation event_descriptors_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"header", "profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        header = row["header"]
+        profile = row["profile"]
+        require(
+            isinstance(header, str) and isinstance(profile, str),
+            f"{location} row key is invalid",
+        )
+        require(
+            header in EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS,
+            f"{location} header is not a declared event-descriptor subject",
+        )
+        require(
+            profile in EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_PROFILES,
+            f"{location} profile is not a declared event-descriptor header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_event_descriptor_rows.append((header, profile))
+    require(
+        tuple(observed_event_descriptor_rows) == expected_event_descriptor_rows,
+        "header-foundation event-descriptor header matrix row order or cross-product drifted",
+    )
+    require(
+        EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation event-descriptor header matrix runner is missing",
+    )
+    require(
+        "event-descriptors-header-abi)" in dispatch_source,
+        "event-descriptors-header-abi is absent from the native dispatcher",
+    )
+    event_descriptor_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(event_descriptor_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one event-descriptor header matrix evidence command",
+    )
+    require(
+        event_descriptor_matrix_evidence[0].get("state") == "required"
+        and isinstance(event_descriptor_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in event_descriptor_matrix_evidence[0]["scope"]
+            for phrase in (
+                "unconditional",
+                "AT_EMPTY_PATH",
+                "nm",
+                "actual callable artifact linkage",
+                "event-descriptor runtime behavior",
+                "all-header closure",
+                "runtime completion",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts event-descriptor header matrix evidence must retain its narrow non-completion boundary",
+    )
+
     ioctl_header_profile_matrix = manifest["ioctl_header_profile_matrix"]
     require(
         isinstance(ioctl_header_profile_matrix, Mapping),
@@ -2784,6 +3052,12 @@ def validate_header_layout_foundation_manifest(
         set(access_header_subject_headers) <= pinned_path_set - uapi_header_set,
         "header-foundation access header subjects must remain pinned non-UAPI headers",
     )
+    require(
+        set(event_descriptor_subject_headers) <= pinned_path_set - uapi_header_set
+        and event_descriptors_header_profile_matrix["immediate_feature_header"]
+        in pinned_path_set - uapi_header_set,
+        "header-foundation event-descriptor subjects and immediate feature header must remain pinned non-UAPI headers",
+    )
     project_only_paths = tuple(sorted(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY))
     project_only_set = set(project_only_paths)
     class_expected_paths = {
@@ -3084,6 +3358,9 @@ def validate_header_layout_foundation_manifest(
         "uapi_wrapper_matrix_row_count": len(observed_matrix_rows),
         "ioctl_header_profile_matrix_row_count": len(observed_ioctl_rows),
         "epoll_header_profile_matrix_row_count": len(observed_epoll_rows),
+        "event_descriptors_header_profile_matrix_row_count": len(
+            observed_event_descriptor_rows
+        ),
         "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
         "access_header_profile_matrix_row_count": len(observed_access_header_rows),
@@ -3895,6 +4172,133 @@ def require_ldso_initial_tls_artifact(family: Mapping[str, Any]) -> None:
     require(
         "run_ldso_initial_tls.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-initial-tls dispatcher binding is missing",
+    )
+
+
+def require_ldso_owned_crt_handoff_publication_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one checked ldso publication wire without loader promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "ldso-owned-crt-handoff-publication"
+    ]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-owned-crt-handoff-publication artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-owned-crt-handoff-publication must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "cfg-gated sibling",
+        "main PIE -> mid.so -> leaf.so",
+        "weak undefined Scrt1 GLOB_DAT",
+        "immutable 32-byte v1 RELRO record",
+        "DT_PREINIT_ARRAY/DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY/DT_FINI",
+        "leaf-before-mid dependency init arrays",
+        "DSO DT_FINI/DT_FINI_ARRAY",
+        "`PDdIMFL`",
+        "`env -i`",
+        "absent-weak-record null-finalizer route `A`",
+        "status 127",
+        "%rdx",
+        "ambient libc or loader state",
+        "another loader executable/root",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"ldso-owned-crt-handoff-publication description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/ldso_initial_graph_leaf.c",
+        "compat/x86_64/ldso_initial_graph_mid.c",
+        "compat/x86_64/ldso_owned_crt_handoff_main.c",
+        "compat/x86_64/run_ldso_owned_crt_handoff.sh",
+        "crt/build_x86_64.py",
+        "crt/src/x86_64_Scrt1.rs",
+        "crt/src/x86_64_dynamic_startup.rs",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "ldso-owned-crt-handoff-publication source owners",
+            )
+        )
+        == expected_sources,
+        "ldso-owned-crt-handoff-publication source owners drifted",
+    )
+    prerequisite_text = " ".join(
+        string_list(
+            artifact["x86_abi_prerequisites"],
+            "ldso-owned-crt-handoff-publication ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "never `%rdx`",
+        "R_X86_64_GLOB_DAT",
+        "STB_WEAK",
+        "0x43524142435f4831",
+        "size 32",
+        "preinit, dependency constructors, legacy _init, init array, main, fini array, legacy _fini",
+        "DSO DT_FINI/DT_FINI_ARRAY",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"ldso-owned-crt-handoff-publication ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-owned-crt-handoff"},
+        "ldso-owned-crt-handoff-publication must use the dedicated native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "`PDdIMFL`",
+        "`A`",
+        "malformed-v1 status 127",
+        "early-finalizer status 127",
+        "does not make the original initial-graph or initial-TLS artifacts wider",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"ldso-owned-crt-handoff-publication evidence scope omits {phrase}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_owned_crt_handoff.sh").read_text()
+    for phrase in (
+        "crabc_owned_crt_handoff",
+        "crabc_owned_crt_handoff_malformed",
+        "env -i PATH=/usr/bin:/bin",
+        "__crabc_x86_64_owned_crt_handoff",
+        "R_X86_64_GLOB_DAT",
+        "CRABC_OWNED_CRT_EARLY_FINI",
+        "libc DT_NEEDED",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-owned-crt-handoff runner omits {phrase}",
+        )
+    require(
+        "run_ldso_owned_crt_handoff.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-owned-crt-handoff dispatcher binding is missing",
     )
 
 
@@ -6731,6 +7135,72 @@ def require_clock_gettime_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_time_observation_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct static C time-query block explicit and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-time-observation"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-time-observation artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in TIME_OBSERVATION_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-time-observation description omits {symbol}",
+        )
+    for phrase in (
+        "time-observation block",
+        "initial-TLS-errno",
+        "clock_gettime=228",
+        "clock_getres=229",
+        "gettimeofday=96",
+        "vDSO resolver",
+        "clock_settime",
+        "TIME_UTC",
+    ):
+        require(
+            phrase in description,
+            f"static-c-time-observation description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "clock_gettime=228" in item
+            and "clock_getres=229" in item
+            and "gettimeofday=96" in item
+            and "rdi/rsi" in item
+            for item in prerequisites
+        ),
+        "static-c-time-observation must record its direct two-register syscall ABI",
+    )
+    require(
+        any(
+            "vDSO resolver" in item and "dynamic process-lifetime state" in item
+            for item in prerequisites
+        ),
+        "static-c-time-observation must record the vDSO boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-time-observation"},
+        "static-c-time-observation must use the closed libc-time-observation command",
+    )
+
+
 def require_system_configuration_artifact(family: Mapping[str, Any]) -> None:
     """Keep the musl-oracle configuration boundary closed and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -7002,6 +7472,196 @@ def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
         == {"./scripts/dev-x86_64.sh libc-mapping-core"},
         "static-c-mman-mapping-core must use the closed libc-mapping-core command",
     )
+
+
+def require_memory_locking_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected per-range C locking block concrete and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-memory-locking"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-memory-locking artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "per-range memory-locking block",
+        "`mlock`",
+        "`munlock`",
+        "`mlock2`",
+        "mlock=149",
+        "munlock=150",
+        "mlock2=325",
+        "MLOCK_ONFAULT=1",
+        "flags=0",
+        "cancellation",
+        "`mlockall`",
+        "`munlockall`",
+        "`msync`",
+        "`mremap`",
+        "planned `libc.posix-runtime`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-memory-locking description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/memory_locking.rs",
+        "compat/x86_64/memory_locking_header_abi_probe.c",
+        "compat/x86_64/memory_locking_header_abi_probe.cpp",
+        "compat/x86_64/run_memory_locking_header_abi.sh",
+        "compat/x86_64/x86_mlock_reference_probe.c",
+        "compat/x86_64/run_x86_mlock_reference.sh",
+        "compat/x86_64/libc_memory_locking_probe.c",
+        "compat/x86_64/libc_memory_locking_start.S",
+        "compat/x86_64/run_libc_memory_locking.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(
+            owner in owners,
+            f"static-c-memory-locking must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "mlock=149" in item
+            and "munlock=150" in item
+            and "mlock2=325" in item
+            and "rdi/rsi/rdx" in item
+            for item in prerequisites
+        ),
+        "static-c-memory-locking must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "flags=0" in item and "MLOCK_ONFAULT=1" in item
+            for item in prerequisites
+        ),
+        "static-c-memory-locking must record musl mlock2 zero-flag delegation",
+    )
+    require(
+        any(
+            "EPERM" in item
+            and "EAGAIN" in item
+            and "ENOMEM" in item
+            and "cancellation-point syscall path" in item
+            for item in prerequisites
+        ),
+        "static-c-memory-locking must record its memlock and cancellation boundary",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any(
+            "six-profile" in item
+            and "mlock" in item
+            and "munlock" in item
+            and "mlock2" in item
+            and "MLOCK_ONFAULT" in item
+            and "unmangled C++" in item
+            for item in header_prerequisites
+        ),
+        "static-c-memory-locking must record its bounded C/C++ header ABI",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-memory-locking"},
+        "static-c-memory-locking must use the closed libc-memory-locking command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "memory-locking header proof",
+        "mlock=149",
+        "munlock=150",
+        "mlock2=325",
+        "MLOCK_ONFAULT",
+        "EPERM/EAGAIN/ENOMEM",
+        "unknown-flag EINVAL",
+        "overflow-range EINVAL",
+        "mlockall/munlockall",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-memory-locking evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "src/mman/mlock.c" in entry.get("role", "")
+            and "src/mman/munlock.c" in entry.get("role", "")
+            and "src/linux/mlock2.c" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-memory-locking must retain its musl source mapping",
+    )
+    require(
+        any(
+            entry.get("kind") == "kernel-abi"
+            and "mlock=149" in entry.get("role", "")
+            and "munlock=150" in entry.get("role", "")
+            and "mlock2=325" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-memory-locking must retain its Linux syscall oracle",
+    )
+
+
+def require_memory_locking_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the artifact-local declaration gate outside the direct manifest."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matching = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command")
+        == "./scripts/dev-x86_64.sh memory-locking-header-abi"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must retain exactly one memory-locking-header-abi evidence command",
+    )
+    entry = matching[0]
+    scope = entry.get("scope")
+    require(
+        entry.get("state") == "required" and isinstance(scope, str),
+        "memory-locking-header-abi evidence must remain required text",
+    )
+    for phrase in (
+        "strict/POSIX/GNU C/C++",
+        "`mlock`/`munlock`",
+        "`mlock2`/`MLOCK_ONFAULT`",
+        "GNU hiding",
+        "unmangled C++ linkage",
+        "archive linkage",
+        "runtime behavior",
+        "installed-header completion",
+        "public support",
+    ):
+        require(
+            phrase in scope,
+            f"memory-locking-header-abi evidence scope omits {phrase}",
+        )
 
 
 def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
@@ -10099,9 +10759,11 @@ def validate_ledger(
         header_layout_foundation_manifest,
     )
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
+    require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
@@ -10128,9 +10790,11 @@ def validate_ledger(
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
+    require_time_observation_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
+    require_memory_locking_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
@@ -10236,6 +10900,9 @@ def validate_ledger(
         ],
         "header_foundation_epoll_header_profile_matrix_row_count": header_layout_foundation_report[
             "epoll_header_profile_matrix_row_count"
+        ],
+        "header_foundation_event_descriptors_header_profile_matrix_row_count": header_layout_foundation_report[
+            "event_descriptors_header_profile_matrix_row_count"
         ],
         "header_foundation_timeval_transitive_header_profile_matrix_row_count": header_layout_foundation_report[
             "timeval_transitive_header_profile_matrix_row_count"

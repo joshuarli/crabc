@@ -156,6 +156,60 @@ const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 
 const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
 const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
+// The owned-CRT sibling accepts exactly one tiny Rust-Scrt1 lifecycle shape.
+// This caps every executable array before the handoff without pretending to
+// be a general constructor-array policy.
+#[cfg(crabc_owned_crt_handoff)]
+const MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES: usize = 16;
+
+// This record is compiled only into the third private sibling artifact.  The
+// older no-TLS and GNU-Dynamic-TLS runners do not even export its name: their
+// fixed direct-main transfer remains byte-for-byte a no-CRT-handoff boundary.
+#[cfg(crabc_owned_crt_handoff)]
+const OWNED_CRT_HANDOFF_MAGIC: u64 = if cfg!(crabc_owned_crt_handoff_malformed) {
+    0
+} else {
+    0x4352_4142_435f_4831
+};
+#[cfg(crabc_owned_crt_handoff)]
+const OWNED_CRT_HANDOFF_VERSION: u32 = 1;
+#[cfg(crabc_owned_crt_handoff)]
+const OWNED_CRT_STATE_UNPUBLISHED: u8 = 0;
+#[cfg(crabc_owned_crt_handoff)]
+const OWNED_CRT_STATE_READY: u8 = 1;
+#[cfg(crabc_owned_crt_handoff)]
+const OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE: u8 = 2;
+#[cfg(crabc_owned_crt_handoff)]
+const OWNED_CRT_STATE_FINALIZED: u8 = 3;
+
+#[cfg(crabc_owned_crt_handoff)]
+type OwnedCrtLifecycleHook = unsafe extern "C" fn();
+
+/// Exact post-relocation wire consumed by the Rust-produced private Scrt1.o.
+///
+/// This is deliberately a data symbol rather than a register convention.  It
+/// is self-relocated before the interpreter enters Rust and sealed with this
+/// interpreter's final RELRO transition before the executable can read it.
+#[cfg(crabc_owned_crt_handoff)]
+#[repr(C)]
+pub struct OwnedCrtHandoffV1 {
+    magic: u64,
+    version: u32,
+    abi_size: u32,
+    dependency_constructors: OwnedCrtLifecycleHook,
+    process_fini: OwnedCrtLifecycleHook,
+}
+
+#[cfg(crabc_owned_crt_handoff)]
+#[used]
+#[no_mangle]
+pub static __crabc_x86_64_owned_crt_handoff: OwnedCrtHandoffV1 = OwnedCrtHandoffV1 {
+    magic: OWNED_CRT_HANDOFF_MAGIC,
+    version: OWNED_CRT_HANDOFF_VERSION,
+    abi_size: core::mem::size_of::<OwnedCrtHandoffV1>() as u32,
+    dependency_constructors: owned_crt_dependency_constructors,
+    process_fini: owned_crt_process_fini,
+};
 
 #[derive(Copy, Clone)]
 struct Object {
@@ -219,6 +273,37 @@ const EMPTY_OBJECT: Object = Object {
     tls_offset_below_tp: 0,
     tls_module_id: 0,
 };
+
+// The record itself is immutable RELRO data.  The two dynamic values it needs
+// are deliberately separate one-shot bootstrap state: the loader writes them
+// after it has relocated and sealed all three graph objects, then Scrt1 calls
+// the constructor callback exactly once before the process finalizer is
+// admissible.  This is neither a pthread-safe registry nor a general loader
+// lifecycle model.
+#[cfg(crabc_owned_crt_handoff)]
+#[derive(Copy, Clone)]
+struct OwnedCrtInitializerRange {
+    base: u64,
+    phdr: *const u8,
+    phnum: usize,
+    init_array: *const usize,
+    init_count: usize,
+}
+
+#[cfg(crabc_owned_crt_handoff)]
+const EMPTY_OWNED_CRT_INITIALIZER_RANGE: OwnedCrtInitializerRange = OwnedCrtInitializerRange {
+    base: 0,
+    phdr: core::ptr::null(),
+    phnum: 0,
+    init_array: core::ptr::null(),
+    init_count: 0,
+};
+
+#[cfg(crabc_owned_crt_handoff)]
+static mut OWNED_CRT_INITIALIZER_RANGES: [OwnedCrtInitializerRange; MAX_OBJECTS - 1] =
+    [EMPTY_OWNED_CRT_INITIALIZER_RANGE; MAX_OBJECTS - 1];
+#[cfg(crabc_owned_crt_handoff)]
+static mut OWNED_CRT_HANDOFF_STATE: u8 = OWNED_CRT_STATE_UNPUBLISHED;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -361,6 +446,9 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         for object in &objects {
             apply_relro(object).unwrap_or_else(|| fail(b"relro\n"));
         }
+        #[cfg(crabc_owned_crt_handoff)]
+        publish_owned_crt_handoff(&objects).unwrap_or_else(|| fail(b"crtwire\n"));
+        #[cfg(not(crabc_owned_crt_handoff))]
         run_initializers(&objects[1..]).unwrap_or_else(|| fail(b"init\n"));
         // The interpreter's bootstrap RELA table was applied in `_start`, so
         // its own PT_GNU_RELRO is the final protection transition before
@@ -498,6 +586,26 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     let mut runpath_offset = None;
     let mut init_array_virtual_address = None;
     let mut init_array_byte_len = None;
+    // The owned-CRT sibling does not execute any main-image lifecycle entry.
+    // It only validates this exact Rust-Scrt1 dynamic-tag shape before that
+    // CRT takes over through the post-relocation record.  The two established
+    // siblings retain the old reject-only main-image rule below.
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_init = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_fini = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_preinit_array = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_preinit_array_len = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_init_array = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_init_array_len = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_fini_array = None;
+    #[cfg(crabc_owned_crt_handoff)]
+    let mut owned_crt_main_fini_array_len = None;
     let mut strtab_virtual_address = None;
     let mut strtab_byte_len = None;
     let mut symtab_virtual_address = None;
@@ -538,6 +646,34 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             DT_JMPREL => { if jmprel_virtual_address.replace(value).is_some() { return None; } }
             DT_PLTRELSZ => { if pltrel_byte_len.replace(value).is_some() { return None; } }
             DT_PLTREL => { if plt_is_rela.replace(value == ELF64_RELA).is_some() { return None; } }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_INIT if !mapped => { if owned_crt_main_init.replace(value).is_some() { return None; } }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_FINI if !mapped => { if owned_crt_main_fini.replace(value).is_some() { return None; } }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_PREINIT_ARRAY if !mapped => {
+                if owned_crt_main_preinit_array.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_PREINIT_ARRAYSZ if !mapped => {
+                if owned_crt_main_preinit_array_len.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_INIT_ARRAY if !mapped => {
+                if owned_crt_main_init_array.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_INIT_ARRAYSZ if !mapped => {
+                if owned_crt_main_init_array_len.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_FINI_ARRAY if !mapped => {
+                if owned_crt_main_fini_array.replace(value).is_some() { return None; }
+            }
+            #[cfg(crabc_owned_crt_handoff)]
+            DT_FINI_ARRAYSZ if !mapped => {
+                if owned_crt_main_fini_array_len.replace(value).is_some() { return None; }
+            }
             DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
@@ -557,6 +693,30 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             | DT_PREINIT_ARRAY | DT_PREINIT_ARRAYSZ | DT_GNU_HASH
             | DT_VERSYM | DT_VERDEF | DT_VERDEFNUM | DT_VERNEED | DT_VERNEEDNUM | DT_TEXTREL => return None,
             _ => {}
+        }
+    }
+    #[cfg(crabc_owned_crt_handoff)]
+    if !mapped {
+        // Scrt1's private `__crabc_*_array_*_address` bridges own dispatch;
+        // the interpreter does not execute main entries or retain their
+        // pointers.  Require complete, nonempty, executable/main-load ranges
+        // so a malformed dynamic table cannot silently select another main
+        // lifecycle convention at this narrowly admitted boundary.
+        let init = owned_crt_main_init?;
+        let fini = owned_crt_main_fini?;
+        let preinit_array = owned_crt_main_preinit_array?;
+        let preinit_array_len = owned_crt_main_preinit_array_len?;
+        let init_array = owned_crt_main_init_array?;
+        let init_array_len = owned_crt_main_init_array_len?;
+        let fini_array = owned_crt_main_fini_array?;
+        let fini_array_len = owned_crt_main_fini_array_len?;
+        if !virtual_range_in_executable_load(phdr, phnum, init, 1)
+            || !virtual_range_in_executable_load(phdr, phnum, fini, 1)
+            || !owned_crt_array_in_load(phdr, phnum, preinit_array, preinit_array_len)
+            || !owned_crt_array_in_load(phdr, phnum, init_array, init_array_len)
+            || !owned_crt_array_in_load(phdr, phnum, fini_array, fini_array_len)
+        {
+            return None;
         }
     }
     object.strsz = usize::try_from(strtab_byte_len?).ok()?;
@@ -1291,6 +1451,28 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
     if len == b"__tls_get_addr".len() && bytes_eq(name, b"__tls_get_addr".as_ptr(), len) {
         return Some(__tls_get_addr as *const () as usize as u64);
     }
+    // The owned-CRT handoff is one explicit weak data import from the one
+    // Rust-Scrt1 main image.  It is not a normal global lookup: accepting a
+    // DSO request, a defined main symbol, or a strong import would turn this
+    // private post-relocation wire into ambient loader policy.
+    #[cfg(crabc_owned_crt_handoff)]
+    if len == b"__crabc_x86_64_owned_crt_handoff".len()
+        && bytes_eq(
+            name,
+            b"__crabc_x86_64_owned_crt_handoff".as_ptr(),
+            len,
+        )
+    {
+        let is_main = !requestor.mapped
+            && requestor.base == objects[0].base
+            && requestor.phdr == objects[0].phdr;
+        let binding = *symbol.add(4) >> 4;
+        let section = read_u16(symbol.add(6));
+        if !is_main || binding != 2 || section != 0 {
+            return None;
+        }
+        return Some(core::ptr::addr_of!(__crabc_x86_64_owned_crt_handoff) as usize as u64);
+    }
     for object in objects {
         for candidate in 1..object.symcount {
             let symbol = object.symtab.add(candidate * 24);
@@ -1440,21 +1622,124 @@ unsafe fn apply_relro_span(base: u64, virtual_address: u64, byte_len: u64) -> Op
     Some(())
 }
 
+#[cfg(not(crabc_owned_crt_handoff))]
 unsafe fn run_initializers(objects: &[Object]) -> Option<()> {
     // The closed dependency graph has already been mapped and relocated.
     // Walking this suffix in reverse produces leaf then mid. Main-image
     // constructor dispatch remains a future CRT handoff boundary.
     for object in objects.iter().rev() {
-        for index in 0..object.init_count {
-            let initializer = *object.init_array.add(index);
-            if initializer == 0 { return None; }
-            let initializer_virtual_address = initializer.checked_sub(object.base as usize)? as u64;
-            if !virtual_range_in_executable_load(object.phdr, object.phnum, initializer_virtual_address, 1) { return None; }
-            let initializer: unsafe extern "C" fn() = core::mem::transmute(initializer);
-            initializer();
-        }
+        invoke_initializer_range(
+            object.base,
+            object.phdr,
+            object.phnum,
+            object.init_array,
+            object.init_count,
+        )?;
     }
     Some(())
+}
+
+unsafe fn invoke_initializer_range(
+    base: u64,
+    phdr: *const u8,
+    phnum: usize,
+    init_array: *const usize,
+    init_count: usize,
+) -> Option<()> {
+    if init_count != 0 && init_array.is_null() {
+        return None;
+    }
+    for index in 0..init_count {
+        let initializer = *init_array.add(index);
+        if initializer == 0 {
+            return None;
+        }
+        let initializer_virtual_address = initializer.checked_sub(base as usize)? as u64;
+        if !virtual_range_in_executable_load(phdr, phnum, initializer_virtual_address, 1) {
+            return None;
+        }
+        let initializer: unsafe extern "C" fn() = core::mem::transmute(initializer);
+        initializer();
+    }
+    Some(())
+}
+
+/// Publish the two fixed dependency initializer ranges for the checked
+/// post-relocation record.  This runs after every object is relocated and
+/// RELRO sealed, but before the interpreter seals its own record and jumps to
+/// the Rust-produced main image.
+#[cfg(crabc_owned_crt_handoff)]
+unsafe fn publish_owned_crt_handoff(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+    if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE))
+        != OWNED_CRT_STATE_UNPUBLISHED
+    {
+        return None;
+    }
+    for index in 0..MAX_OBJECTS - 1 {
+        let object = objects[index + 1];
+        // The handoff is intentionally not a generic empty-array callback.
+        // This exact fixture has one named initializer range for each DSO.
+        if object.init_count == 0 || object.init_array.is_null() {
+            return None;
+        }
+        core::ptr::write(
+            core::ptr::addr_of_mut!(OWNED_CRT_INITIALIZER_RANGES).cast::<OwnedCrtInitializerRange>().add(index),
+            OwnedCrtInitializerRange {
+                base: object.base,
+                phdr: object.phdr,
+                phnum: object.phnum,
+                init_array: object.init_array,
+                init_count: object.init_count,
+            },
+        );
+    }
+    core::ptr::write(
+        core::ptr::addr_of_mut!(OWNED_CRT_HANDOFF_STATE),
+        OWNED_CRT_STATE_READY,
+    );
+    Some(())
+}
+
+#[cfg(crabc_owned_crt_handoff)]
+unsafe extern "C" fn owned_crt_dependency_constructors() {
+    if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE)) != OWNED_CRT_STATE_READY {
+        fail(b"crtinit\n");
+    }
+    for index in (0..MAX_OBJECTS - 1).rev() {
+        let range = core::ptr::read(
+            core::ptr::addr_of!(OWNED_CRT_INITIALIZER_RANGES)
+                .cast::<OwnedCrtInitializerRange>()
+                .add(index),
+        );
+        invoke_initializer_range(
+            range.base,
+            range.phdr,
+            range.phnum,
+            range.init_array,
+            range.init_count,
+        )
+        .unwrap_or_else(|| fail(b"crtinit\n"));
+    }
+    core::ptr::write(
+        core::ptr::addr_of_mut!(OWNED_CRT_HANDOFF_STATE),
+        OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE,
+    );
+}
+
+#[cfg(crabc_owned_crt_handoff)]
+unsafe extern "C" fn owned_crt_process_fini() {
+    // This fixed graph still rejects DSO DT_FINI/DT_FINI_ARRAY.  Its one
+    // process-finalizer callback therefore closes the record's lifecycle
+    // phase rather than selecting general DSO destruction semantics.
+    if core::ptr::read(core::ptr::addr_of!(OWNED_CRT_HANDOFF_STATE))
+        != OWNED_CRT_STATE_CONSTRUCTORS_COMPLETE
+    {
+        fail(b"crtfini\n");
+    }
+    core::ptr::write(
+        core::ptr::addr_of_mut!(OWNED_CRT_HANDOFF_STATE),
+        OWNED_CRT_STATE_FINALIZED,
+    );
 }
 
 unsafe fn virtual_range_in_load(phdr: *const u8, phnum: usize, address: u64, byte_len: u64) -> bool {
@@ -1546,6 +1831,24 @@ unsafe fn virtual_range_in_executable_load(phdr: *const u8, phnum: usize, addres
         if address >= start && end <= load_end { return true; }
     }
     false
+}
+
+/// Validate the exact nonempty pointer-array shape that Rust-produced Scrt1
+/// later reaches through its hidden linker-boundary bridges.  The interpreter
+/// never dispatches these main-image entries itself.
+#[cfg(crabc_owned_crt_handoff)]
+unsafe fn owned_crt_array_in_load(
+    phdr: *const u8,
+    phnum: usize,
+    address: u64,
+    byte_len: u64,
+) -> bool {
+    byte_len != 0
+        && byte_len % core::mem::size_of::<usize>() as u64 == 0
+        && byte_len / core::mem::size_of::<usize>() as u64
+            <= MAX_OWNED_CRT_MAIN_ARRAY_ENTRIES as u64
+        && address % core::mem::align_of::<usize>() as u64 == 0
+        && virtual_range_in_load(phdr, phnum, address, byte_len)
 }
 
 fn runtime_address(base: u64, virtual_address: u64) -> Option<u64> { base.checked_add(virtual_address) }

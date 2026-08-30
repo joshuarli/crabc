@@ -124,8 +124,9 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
-# arithmetic, and find-first-set, direct POSIX clock_gettime, nanosleep, and
-# clock_nanosleep, descriptor entry, selected filesystem access, bounded fcntl
+# arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
+# observation, nanosleep, and clock_nanosleep, descriptor entry, selected
+# filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the
 # basic x87 classification/sign plus complex accessor/conjugation foundation.
 # The older leaves remain source-only. Keeping exact file boundaries makes
@@ -139,6 +140,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/credential_observation.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/time_observation.rs"),
     Path("libc/src/c_abi/x86_64/clock_nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/nanosleep.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_entry.rs"),
@@ -3567,6 +3569,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
         '#[path = "memory_mapping.rs"]',
+        '#[path = "memory_locking.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
         '#[path = "socket_messages.rs"]',
@@ -5407,6 +5410,55 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary is missing {required!r}"
             )
 
+    memory_locking_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_locking.rs"
+    )
+    memory_locking_text = memory_locking_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/mman/mlock.c",
+        "src/mman/munlock.c",
+        "src/linux/mlock2.c",
+        "raw_syscall::SYS_MLOCK",
+        "raw_syscall::SYS_MUNLOCK",
+        "raw_syscall::SYS_MLOCK2",
+        "if flags == 0",
+        "return unsafe { mlock(address, length) }",
+        "c_status(result)",
+        "initial-TLS",
+        "cancellation-point syscall path",
+        "mlockall",
+        "munlockall",
+        "msync",
+        "mremap",
+    ):
+        if required not in memory_locking_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memory_locking.rs: selected static "
+                f"per-range locking boundary is missing {required!r}"
+            )
+    memory_locking_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            memory_locking_text,
+        )
+    )
+    if memory_locking_exports != {"mlock", "munlock", "mlock2"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/memory_locking.rs: selected static artifact "
+            "must export only mlock, munlock, and mlock2"
+        )
+    for required in (
+        "pub(crate) const SYS_MLOCK: i64 = 149;",
+        "pub(crate) const SYS_MUNLOCK: i64 = 150;",
+        "pub(crate) const SYS_MLOCK2: i64 = 325;",
+    ):
+        if required not in raw_syscall_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/syscall.rs: selected static per-range "
+                f"locking boundary is missing {required!r}"
+            )
+
     signal_execution_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_execution.rs"
     )
@@ -6579,6 +6631,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         clock_gettime_text,
         clock_nanosleep_text,
         memory_mapping_text,
+        memory_locking_text,
         nanosleep_text,
         descriptor_entry_text,
         filesystem_access_text,
@@ -6793,6 +6846,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "madvise",
         "posix_madvise",
         "mincore",
+        "mlock",
+        "munlock",
+        "mlock2",
         "nanosleep",
         "open",
         "openat",
@@ -6974,6 +7030,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),
+        ("memory_locking.rs", memory_locking_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),

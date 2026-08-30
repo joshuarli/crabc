@@ -57,6 +57,8 @@ chmod
 cimag
 cimagf
 cimagl
+clock
+clock_getres
 clock_gettime
 clock_nanosleep
 close
@@ -74,6 +76,7 @@ creal
 crealf
 creall
 creat
+difftime
 div
 dup
 dup2
@@ -147,6 +150,7 @@ getrusage
 getsid
 getsockname
 getsockopt
+gettimeofday
 getuid
 imaxabs
 imaxdiv
@@ -191,6 +195,8 @@ memrchr
 memset
 mincore
 mkdir
+mlock
+mlock2
 mmap
 mprotect
 msgctl
@@ -202,6 +208,7 @@ mtx_init
 mtx_lock
 mtx_trylock
 mtx_unlock
+munlock
 munmap
 nanosleep
 nice
@@ -356,6 +363,8 @@ thrd_equal
 thrd_exit
 thrd_join
 thrd_sleep
+time
+timespec_get
 toascii
 tolower
 toupper

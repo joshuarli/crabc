@@ -243,6 +243,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
 ./scripts/dev-x86_64.sh mman-header-abi
+./scripts/dev-x86_64.sh memory-locking-header-abi
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
 ./scripts/dev-x86_64.sh socket-messages-header-abi
@@ -359,8 +360,10 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-immediate-termination
 ./scripts/dev-x86_64.sh libc-callback-algorithms
 ./scripts/dev-x86_64.sh libc-clock-gettime
+./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-mapping-core
+./scripts/dev-x86_64.sh libc-memory-locking
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
@@ -411,6 +414,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-image
 ./scripts/dev-x86_64.sh ldso-initial-graph
 ./scripts/dev-x86_64.sh ldso-initial-tls
+./scripts/dev-x86_64.sh ldso-owned-crt-handoff
 ```
 
 The runner rejects non-Linux and non-x86_64 hosts before Docker, requests
@@ -432,7 +436,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the thirty-eight selected
+`headers-layouts.toml` is the checked-in contract for the thirty-nine selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -487,12 +491,19 @@ header: its x86 packed event record, selected declarations/values, and only
 the direct `sys/ioctl.h` `_IOC`/`_IOR`/`_IOW` encoding subset used by
 `EPIOC*`. It excludes standalone ioctl declaration parity/linkage, epoll
 linkage, runtime/device behavior, and header-family completion.
-The separate `event-descriptors-header-abi` command resolves eight compile-only
-C11/C++17 profiles for the selected `sys/eventfd.h` and `sys/inotify.h`
-surface: `eventfd_t`, `inotify_event`, selected flags, and unmangled C++
-references. Together with the retained `epoll-header-abi` matrix, this is
-artifact-local input to `static-c-event-descriptors`; it is not general
-descriptor-header completion.
+The direct `event-descriptors-header-abi` inventory gate resolves eight
+compile-only C/C++ profiles for the selected `sys/eventfd.h` and
+`sys/inotify.h` surface. Pinned musl 1.2.6 makes that direct selected surface
+unconditional: `eventfd_t`, `inotify_event`, selected direct flags, and
+header-requested unmangled C++ C-linkage spelling compile in every row. Because
+both headers immediately include `fcntl.h`, the gate also records just one
+real feature boundary: `AT_EMPTY_PATH` is visible in default-C/GNU/BSD and
+hidden in strict/POSIX/XOPEN, including macro-free C++17. Its `nm` check proves
+only a header-requested external spelling, not actual callable artifact
+linkage. This is an explicit narrow foundation facet; global feature
+visibility remains planned. Together with the retained `epoll-header-abi`
+matrix, it is artifact-local header evidence and not general
+descriptor-header completion or event-descriptor runtime evidence.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete
@@ -767,6 +778,12 @@ evidence, not a general C terminal/runtime claim.
 `mman-header-abi` compile-checks staged C and C++ `<sys/mman.h>` declarations
 and selected Linux/x86 mapping values, including `MAP_32BIT`, against pinned
 musl. It is source-only and does not select mapping behavior or `crabc-libc`.
+
+`memory-locking-header-abi` separately compares project-first and pinned-musl
+strict/POSIX/GNU C/C++ `<sys/mman.h>` profiles for exactly `mlock`, `munlock`,
+and GNU `mlock2`/`MLOCK_ONFAULT`, including GNU hiding and unmangled C++
+linkage. It is compile-only evidence, not archive linkage, locking behavior,
+complete `sys/mman.h`, family completion, or public x86 support.
 
 `resource-header-abi` compile-checks strict and GNU/LFS C and C++
 `<sys/resource.h>` records, selectors, priorities, declarations, and aliases
@@ -2190,6 +2207,19 @@ this direct leaf intentionally owns no vDSO resolver or dynamic runtime state.
 It excludes `clock_getres`/`clock_settime`, `time`, calendar/timer state,
 pthread cancellation, dynamic runtime, and public x86 support.
 
+`libc-time-observation` is a separately recorded
+`static-c-time-observation` `verified_artifact` gate over that archive, not a
+C time-runtime capability. Its project-header C body first executes through
+pinned musl and then through a `-nostdlib -static` candidate. It selects only
+`clock`, `time`, `difftime`, C11 `timespec_get`, `clock_getres`, and
+`gettimeofday`: normalized realtime/CPU records, integer-second/window
+consistency, `TIME_UTC` and unsupported-base behavior, invalid-clock errors,
+and stale errno preservation. The candidate emits direct
+`clock_gettime=228`, `clock_getres=229`, and `gettimeofday=96` rdi/rsi paths;
+it deliberately ignores obsolete timezone output and owns no vDSO resolver or
+dynamic runtime state. It excludes calendar/timezone state, clock mutation,
+POSIX timers, cancellation, dynamic runtime, and public x86 support.
+
 `libc-system-configuration` is a separately recorded
 `static-c-system-configuration` `verified_artifact` gate over that archive,
 not a general system-information, filesystem, or runtime capability. Its
@@ -2226,6 +2256,21 @@ It excludes `msync` cancellation, `mremap`, `mlock*`, remap/shared-memory and
 memfd paths, mapping policy, allocator, libc.so, CRT, loader, sysroot, and
 public x86 support. This is one artifact within planned `libc.posix-runtime`,
 not full `<sys/mman.h>`, family, C-runtime, or platform completion.
+
+`libc-memory-locking` is a separately recorded
+`static-c-memory-locking` `verified_artifact` gate over that archive, not a
+general C mapping or runtime capability. Its project-header C body first
+executes through pinned musl and then through a `-nostdlib -static` candidate,
+while the paired six-profile C/C++ `sys/mman.h` gate checks declarations. It
+selects exactly `mlock`, `munlock`, and GNU `mlock2(MLOCK_ONFAULT)`: musl's
+`flags=0` delegation to `mlock`, direct x86 `mlock=149`, `munlock=150`, and
+`mlock2=325`, stale-errno success, first-fault locking, invalid-flag `EINVAL`,
+and overflow-range `EINVAL`. Linux's `EPERM`/`EAGAIN`/`ENOMEM` memlock result
+is accepted where locking is not available. It excludes cancellation,
+`mlockall`/`munlockall`, `msync`, `mremap`, mapping policy, allocator, libc.so,
+CRT, loader, sysroot, and public x86 support. This is one artifact within
+planned `libc.posix-runtime`, not full `<sys/mman.h>`, family, C-runtime, or
+platform completion.
 
 `libc-header-layouts-baseline` is a separately recorded
 `static-c-header-layouts-baseline` artifact within planned
@@ -3016,6 +3061,26 @@ parser. It validates file-facing ELF/program-header and RELA/RELR metadata
 before a future mapper or relocation engine can consume it; it neither maps an
 image nor selects `crabc-ldso`.
 
+`ldso-owned-crt-handoff-wire` is a separate private post-relocation CRT
+acceptance artifact within the still-planned `ldso.dynamic-runtime` family.
+`Scrt1.o` retains pinned musl's null-finalizer path for a foreign loader; only
+after its direct entry handoff can it read the weak GOT-resolved
+`__crabc_x86_64_owned_crt_handoff` record. The versioned record supplies a
+dependency-constructor callback and a process finalizer, and the freestanding
+fixture proves the bounded `PDiIMFfL` order plus malformed-record status-127
+rejection. The separate publication artifact below is the only current x86
+interpreter route; this acceptance artifact alone remains neither a loader
+execution path nor dynamic CRT, libc, sysroot, or public x86 support.
+
+`ldso-owned-crt-handoff` is a third private post-relocation sibling of the
+initial graph. It maps the same fixed no-TLS main -> mid -> leaf shape, but
+publishes exactly one immutable v1 weak-GOT record to a Rust-produced `Scrt1.o`
+main after relocation. Its fixture-local no-libc lifecycle proves
+`PDdIMFL` under `env -i`, while pinned musl proves the absent-record `A` path;
+malformed records and an early finalizer fail closed. It uses neither `%rdx`
+nor an ambient loader/libc contract, and does not select a generic loader,
+DSO finalization, dynamic CRT/sysroot, or public x86 support.
+
 `ldso-initial-graph` is one separately built private ET_DYN interpreter
 artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso`
 target. Its native runner first verifies the pinned musl 1.2.6 oracle, then
@@ -3078,8 +3143,10 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,
 `libc-clock-gettime`,
+`libc-time-observation`,
 `libc-system-configuration`,
 `libc-mapping-core`,
+`libc-memory-locking`,
 `libc-header-layouts-baseline`,
 `libc-nanosleep`,
 `libc-clock-nanosleep`,

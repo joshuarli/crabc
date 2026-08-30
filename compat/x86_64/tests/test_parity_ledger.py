@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 69)
-        self.assertEqual(report["header_layout_probe_count"], 38)
+        self.assertEqual(report["verified_artifact_count"], 73)
+        self.assertEqual(report["header_layout_probe_count"], 39)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -60,6 +60,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_ioctl_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
+        self.assertEqual(
+            report["header_foundation_event_descriptors_header_profile_matrix_row_count"],
+            16,
+        )
         self.assertEqual(
             report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
             35,
@@ -75,7 +79,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["header_foundation_language_profile_count"], 7)
         self.assertEqual(report["header_foundation_profile_obligation_count"], 21)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
-        self.assertEqual(report["header_foundation_abi_facet_count"], 18)
+        self.assertEqual(report["header_foundation_abi_facet_count"], 19)
         self.assertEqual(report["header_foundation_linkage_owner_count"], 3)
         self.assertGreater(report["header_foundation_static_export_count"], 0)
         self.assertFalse(report["promotion_ready"])
@@ -164,6 +168,66 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-tls description omits"):
             ledger.validate_ledger(changed)
 
+    def test_ldso_owned_crt_handoff_publication_is_a_planned_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "ldso-owned-crt-handoff-publication"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "cfg-gated sibling",
+            "weak undefined Scrt1 GLOB_DAT",
+            "immutable 32-byte v1 RELRO record",
+            "DT_PREINIT_ARRAY/DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY/DT_FINI",
+            "`PDdIMFL`",
+            "absent-weak-record null-finalizer route `A`",
+            "%rdx",
+            "another loader executable/root",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh ldso-owned-crt-handoff"},
+        )
+        self.assertEqual(
+            set(artifact["source_owners"]),
+            {
+                "ldso/src/x86_64_initial_graph.rs",
+                "compat/x86_64/ldso_initial_graph_leaf.c",
+                "compat/x86_64/ldso_initial_graph_mid.c",
+                "compat/x86_64/ldso_owned_crt_handoff_main.c",
+                "compat/x86_64/run_ldso_owned_crt_handoff.sh",
+                "crt/build_x86_64.py",
+                "crt/src/x86_64_Scrt1.rs",
+                "crt/src/x86_64_dynamic_startup.rs",
+                "scripts/dev-x86_64.sh",
+            },
+        )
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "ldso-owned-crt-handoff-publication"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private record"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "ldso-owned-crt-handoff-publication description omits",
+        ):
+            ledger.validate_ledger(changed)
+
     def test_dynamic_pie_scrt1_is_a_planned_private_crt_artifact(self) -> None:
         data = self.data()
         family = self.family(data, "crt.dynamic-startup")
@@ -216,7 +280,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 38)
+        self.assertEqual(report["header_layout_probe_count"], 39)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -372,6 +436,28 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/run_machine_context_header_abi.sh",
             ],
         )
+        event_descriptors = next(
+            probe for probe in probes if probe["id"] == "event-descriptors"
+        )
+        assert isinstance(event_descriptors, dict)
+        self.assertEqual(event_descriptors["kind"], "compile-only")
+        self.assertEqual(
+            event_descriptors["headers"],
+            [
+                "include/stddef.h",
+                "include/stdint.h",
+                "include/sys/eventfd.h",
+                "include/sys/inotify.h",
+            ],
+        )
+        self.assertEqual(
+            event_descriptors["sources"],
+            [
+                "compat/x86_64/event_descriptors_header_abi_probe.c",
+                "compat/x86_64/event_descriptors_header_abi_probe.cpp",
+                "compat/x86_64/run_event_descriptors_header_abi.sh",
+            ],
+        )
 
     def test_header_layout_manifest_rejects_scope_or_probe_drift(self) -> None:
         data = self.data()
@@ -434,11 +520,19 @@ class X86ParityLedgerTests(unittest.TestCase):
             headers_layouts["source_owners"],
         )
         self.assertIn("compat/upstreams.toml", headers_layouts["source_owners"])
+        self.assertIn(
+            "compat/x86_64/tests/test_event_descriptors_header_abi.py",
+            headers_layouts["source_owners"],
+        )
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_profile_matrix_row_count"], 1337)
         self.assertEqual(report["header_foundation_uapi_wrapper_matrix_row_count"], 21)
         self.assertEqual(report["header_foundation_ioctl_header_profile_matrix_row_count"], 7)
         self.assertEqual(report["header_foundation_epoll_header_profile_matrix_row_count"], 7)
+        self.assertEqual(
+            report["header_foundation_event_descriptors_header_profile_matrix_row_count"],
+            16,
+        )
         self.assertEqual(
             report["header_foundation_timeval_transitive_header_profile_matrix_row_count"],
             35,
@@ -616,6 +710,66 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for row in epoll_rows
             )
         )
+        event_descriptor_matrix = manifest["event_descriptors_header_profile_matrix"]
+        assert isinstance(event_descriptor_matrix, dict)
+        self.assertEqual(
+            event_descriptor_matrix["id"],
+            "x86-event-descriptors-header-profile-matrix",
+        )
+        self.assertEqual(event_descriptor_matrix["state"], "partial-verified")
+        self.assertEqual(event_descriptor_matrix["required_result"], "pass")
+        self.assertEqual(
+            event_descriptor_matrix["command"],
+            "./scripts/dev-x86_64.sh event-descriptors-header-abi",
+        )
+        self.assertEqual(event_descriptor_matrix["header_class"], "pinned-non-uapi")
+        self.assertEqual(
+            event_descriptor_matrix["subject_headers"],
+            ["sys/eventfd.h", "sys/inotify.h"],
+        )
+        self.assertEqual(event_descriptor_matrix["immediate_feature_header"], "fcntl.h")
+        self.assertEqual(
+            event_descriptor_matrix["profiles"],
+            list(ledger.EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_PROFILES),
+        )
+        self.assertEqual(event_descriptor_matrix["direct_surface_visibility"], "unconditional")
+        self.assertEqual(
+            event_descriptor_matrix["at_empty_path_visible_profiles"],
+            list(
+                ledger.EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_VISIBLE_PROFILES
+            ),
+        )
+        self.assertEqual(
+            event_descriptor_matrix["at_empty_path_hidden_profiles"],
+            list(
+                ledger.EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_AT_EMPTY_PATH_HIDDEN_PROFILES
+            ),
+        )
+        self.assertEqual(event_descriptor_matrix["row_count"], 16)
+        event_descriptor_rows = event_descriptor_matrix["row"]
+        assert isinstance(event_descriptor_rows, list)
+        self.assertEqual(len(event_descriptor_rows), 16)
+        self.assertEqual(
+            [
+                (row["header"], row["profile"])
+                for row in event_descriptor_rows
+                if isinstance(row, dict)
+            ],
+            [
+                (header, profile)
+                for header in ledger.EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_SUBJECT_HEADERS
+                for profile in ledger.EXPECTED_EVENT_DESCRIPTORS_HEADER_PROFILE_MATRIX_PROFILES
+            ],
+        )
+        self.assertTrue(
+            all(
+                isinstance(row, dict)
+                and row["reference"] == "compile-ok"
+                and row["candidate"] == "compile-ok"
+                and row["applicability"] == "applicable"
+                for row in event_descriptor_rows
+            )
+        )
         timeval_matrix = manifest["timeval_transitive_header_profile_matrix"]
         assert isinstance(timeval_matrix, dict)
         self.assertEqual(
@@ -743,6 +897,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
         self.assertTrue(completion["ioctl_header_profile_matrix_slice"])
         self.assertTrue(completion["epoll_header_profile_matrix_slice"])
+        self.assertTrue(completion["event_descriptors_header_profile_matrix_slice"])
         self.assertTrue(completion["timeval_transitive_header_profile_matrix_slice"])
         self.assertTrue(completion["sys_time_direct_header_profile_matrix_slice"])
         self.assertTrue(completion["access_header_profile_matrix_slice"])
@@ -911,6 +1066,28 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(epoll_matrix, dict)
         epoll_matrix["direct_macro_header"] = "sys/socket.h"
         with self.assertRaisesRegex(ledger.LedgerError, "direct macro header drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        event_descriptor_matrix = manifest["event_descriptors_header_profile_matrix"]
+        assert isinstance(event_descriptor_matrix, dict)
+        event_descriptor_rows = event_descriptor_matrix["row"]
+        assert isinstance(event_descriptor_rows, list)
+        event_descriptor_rows.pop()
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "event-descriptor header matrix row roster drifted"
+        ):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
+        event_descriptor_matrix = manifest["event_descriptors_header_profile_matrix"]
+        assert isinstance(event_descriptor_matrix, dict)
+        event_descriptor_matrix["at_empty_path_visible_profiles"] = ["c11-gnu"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "AT_EMPTY_PATH visible profile roster drifted"
+        ):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
         data = self.data()
@@ -1389,7 +1566,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 47
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 49
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -6537,6 +6714,95 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh time-abi-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-clock-gettime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_time_observation_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-time-observation"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace(
+            "gettimeofday=96", "gettimeofday=999"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "two-register syscall ABI"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-time-observation"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh time-observation-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-time-observation command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_memory_locking_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-memory-locking"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("mlock=149", "mlock=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-memory-locking"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh mlock-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-memory-locking command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        evidence = headers["native_evidence"]
+        assert isinstance(evidence, list)
+        header_evidence = next(
+            entry
+            for entry in evidence
+            if isinstance(entry, dict)
+            and entry["command"]
+            == "./scripts/dev-x86_64.sh memory-locking-header-abi"
+        )
+        header_evidence["command"] = (
+            "./scripts/dev-x86_64.sh memory-locking-header-abi-broken"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "memory-locking-header-abi evidence command"
         ):
             ledger.validate_ledger(data)
 

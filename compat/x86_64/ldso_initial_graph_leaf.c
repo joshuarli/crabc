@@ -3,6 +3,10 @@ int leaf_initializer_state;
 static int leaf_private = 1;
 static int *leaf_private_pointer = &leaf_private;
 
+#if defined(CRABC_OWNED_CRT_HANDOFF)
+extern void crabc_owned_crt_record_dependency(char);
+#endif
+
 #if defined(CRABC_RELR_RECORD_OVER_CAP)
 /*
  * This runner-only negative fixture spreads 513 relative-pointer words 512
@@ -57,6 +61,9 @@ static int *leaf_relro_pointer __attribute__((section(".data.rel.ro"))) = &leaf_
 
 __attribute__((constructor)) static void leaf_initializer(void) {
     leaf_initializer_state = 1;
+#if defined(CRABC_OWNED_CRT_HANDOFF)
+    crabc_owned_crt_record_dependency('D');
+#endif
 }
 
 int leaf_value(void) {

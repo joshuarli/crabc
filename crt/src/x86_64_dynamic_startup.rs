@@ -6,9 +6,10 @@
 //! argument, so this six-argument `__libc_start_main` handoff receives a null
 //! `rtld_fini`. Pinned musl owns and invokes its own executable lifecycle; a
 //! freestanding native fixture separately exercises the callback arguments
-//! below. A future crabc loader handoff will be a separately versioned wire
-//! contract; this object currently carries only its auditable private ELF
-//! marker.
+//! below. An owned crabc interpreter may instead resolve the weak data symbol
+//! `__crabc_x86_64_owned_crt_handoff` after relocation. That is an explicit
+//! versioned post-relocation wire, never `%rdx`; foreign loaders leave it null
+//! and retain the musl-shaped null-finalizer call.
 //!
 //! This is not the static startup path. In particular, it must not install
 //! static TLS itself or call `__crabc_x86_static_tls_bootstrap`: an interpreter
@@ -19,6 +20,44 @@ const MAX_INITIAL_POINTERS: usize = 1 << 20;
 type ApplicationMain = unsafe extern "C" fn(i32, *const *const u8, *const *const u8) -> i32;
 type LifecycleHook = unsafe extern "C" fn();
 type LinkerArrayEntry = *const ();
+
+const OWNED_CRT_HANDOFF_MAGIC: u64 = 0x4352_4142_435f_4831;
+const OWNED_CRT_HANDOFF_VERSION: u32 = 1;
+
+/// Private x86 post-relocation loader-to-CRT handoff, revision one.
+///
+/// The interpreter owns this immutable record. Its weak data-symbol transport
+/// is intentionally read only after `_start` entered normal Rust code.
+#[repr(C)]
+struct OwnedCrtHandoffV1 {
+    magic: u64,
+    version: u32,
+    abi_size: u32,
+    dependency_constructors: Option<LifecycleHook>,
+    process_fini: Option<LifecycleHook>,
+}
+
+static mut INITIAL_DEPENDENCY_CONSTRUCTORS: Option<LifecycleHook> = None;
+
+core::arch::global_asm!(
+    ".att_syntax prefix",
+    ".weak __crabc_x86_64_owned_crt_handoff",
+    ".type __crabc_x86_64_owned_crt_handoff,@object",
+    ".text",
+    ".global __crabc_x86_64_owned_crt_handoff_value",
+    ".type __crabc_x86_64_owned_crt_handoff_value,@function",
+    "__crabc_x86_64_owned_crt_handoff_value:",
+    "lea __crabc_x86_64_owned_crt_handoff@GOTPCREL(%rip), %rax",
+    "mov (%rax), %rax",
+    "test %rax, %rax",
+    "je 1f",
+    "ret",
+    "1:",
+    "xor %eax, %eax",
+    "ret",
+    ".size __crabc_x86_64_owned_crt_handoff_value, .-__crabc_x86_64_owned_crt_handoff_value",
+    ".intel_syntax noprefix",
+);
 
 struct InitialProcess {
     argc: i32,
@@ -43,6 +82,7 @@ unsafe extern "C" {
     fn __crabc_init_array_end_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_start_address() -> *const LinkerArrayEntry;
     fn __crabc_fini_array_end_address() -> *const LinkerArrayEntry;
+    fn __crabc_x86_64_owned_crt_handoff_value() -> *const OwnedCrtHandoffV1;
 }
 
 impl InitialProcess {
@@ -91,8 +131,8 @@ impl InitialProcess {
 ///
 /// The null finalizer is intentional and architecture-specific: pinned musl
 /// x86-64 `Scrt1.o` does not forward a loader register finalizer. Do not add a
-/// guessed glibc-style `%rdx` convention here; crabc's eventual owned-loader
-/// handoff needs its own checked, documented wire record. Pinned musl's
+/// guessed glibc-style `%rdx` convention here; crabc's owned-loader handoff
+/// uses its checked post-relocation data wire. Pinned musl's
 /// dynamic libc owns lifecycle invocation itself, so its launch behavior must
 /// not be used to infer whether these callback arguments were consumed.
 #[no_mangle]
@@ -101,6 +141,11 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(initial_stack: *const usiz
         Some(process) => process,
         None => startup_reject(),
     };
+    // The tiny assembly helper checks the unresolved weak GOT entry before it
+    // reads the data word. Rust must not form a direct reference to an absent
+    // weak object: that would fault on the required foreign-musl null path.
+    let handoff = unsafe { __crabc_x86_64_owned_crt_handoff_value() };
+    let rtld_fini = unsafe { configure_owned_loader_handoff(handoff) };
     unsafe {
         __libc_start_main(
             Some(main),
@@ -108,7 +153,7 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(initial_stack: *const usiz
             process.argv,
             Some(__crabc_x86_64_dynamic_executable_init),
             Some(__crabc_x86_64_dynamic_executable_fini),
-            None,
+            rtld_fini,
         )
     }
 }
@@ -121,6 +166,11 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init() {
             __crabc_preinit_array_end_address(),
             ArrayOrder::Forward,
         );
+        let dependency_constructors = core::ptr::read(core::ptr::addr_of!(INITIAL_DEPENDENCY_CONSTRUCTORS));
+        core::ptr::write(core::ptr::addr_of_mut!(INITIAL_DEPENDENCY_CONSTRUCTORS), None);
+        if let Some(callback) = dependency_constructors {
+            callback();
+        }
         _init();
         invoke_linker_array(
             __crabc_init_array_start_address(),
@@ -128,6 +178,37 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init() {
             ArrayOrder::Forward,
         );
     }
+}
+
+/// Decode the owned x86 post-relocation loader handoff.
+///
+/// A null value is the foreign-loader path and deliberately returns a null
+/// finalizer. A non-null value must be the complete v1 record; malformed
+/// owned state fails before libc startup rather than falling back to an
+/// implicit ABI.
+unsafe fn configure_owned_loader_handoff(handoff: *const OwnedCrtHandoffV1) -> Option<LifecycleHook> {
+    if handoff.is_null() {
+        return None;
+    }
+    let magic = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!((*handoff).magic)) };
+    let version = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!((*handoff).version)) };
+    let abi_size = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!((*handoff).abi_size)) };
+    let dependencies = unsafe {
+        core::ptr::read_unaligned(core::ptr::addr_of!((*handoff).dependency_constructors))
+    };
+    let process_fini = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!((*handoff).process_fini)) };
+    if magic != OWNED_CRT_HANDOFF_MAGIC
+        || version != OWNED_CRT_HANDOFF_VERSION
+        || usize::try_from(abi_size).ok() < Some(core::mem::size_of::<OwnedCrtHandoffV1>())
+        || dependencies.is_none()
+        || process_fini.is_none()
+    {
+        startup_reject();
+    }
+    unsafe {
+        core::ptr::write(core::ptr::addr_of_mut!(INITIAL_DEPENDENCY_CONSTRUCTORS), dependencies);
+    }
+    process_fini
 }
 
 #[no_mangle]

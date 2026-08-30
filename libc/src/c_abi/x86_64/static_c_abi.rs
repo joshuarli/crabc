@@ -21,13 +21,15 @@
 //! regular-file sendfile transfer, mode-zero POSIX range allocation,
 //! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
-//! system-configuration, caller-owned mapping-core, system-observation,
+//! system-configuration, caller-owned mapping-core, per-range memory locking,
+//! system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! padded socket messages/options,
 //! credential-observation, integer-arithmetic, integer-parsing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
-//! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
-//! `nanosleep` and `clock_nanosleep` artifacts, plus one bounded System V
+//! startup/ordinary-exit lifecycle, callback-algorithms, POSIX `nanosleep`
+//! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
+//! bounded System V
 //! message-queue/shared-memory artifact and one bounded event-descriptor
 //! artifact, plus one bounded pathname-mutation/lifecycle artifact.
 //! It deliberately shares only the raw
@@ -147,6 +149,8 @@ mod callback_algorithms;
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]
 mod clock_gettime;
+#[path = "time_observation.rs"]
+mod time_observation;
 #[path = "nanosleep.rs"]
 mod nanosleep;
 #[path = "descriptor_entry.rs"]
@@ -177,6 +181,8 @@ mod process_resources;
 mod system_configuration;
 #[path = "memory_mapping.rs"]
 mod memory_mapping;
+#[path = "memory_locking.rs"]
+mod memory_locking;
 #[path = "readiness_waits.rs"]
 mod readiness_waits;
 #[path = "event_descriptors.rs"]

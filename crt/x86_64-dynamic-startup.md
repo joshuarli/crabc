@@ -20,6 +20,19 @@ and the environment terminator, it calls
 `__libc_start_main(main, argc, argv, init, fini, NULL)`. It does not install
 TLS, parse loader state, or invent a `%rdx` finalizer path.
 
+An owned x86 interpreter has one separate post-relocation option. `Scrt1.o`
+weakly imports the record symbol `__crabc_x86_64_owned_crt_handoff`; normal
+Rust startup reaches a tiny GOT-reading helper only after the direct entry
+handoff. An absent weak symbol is null, preserving the pinned-musl call. A
+non-null value is the private v1 record: magic `0x43524142435f4831`, version
+one, a complete `abi_size`, and non-null dependency-constructor and
+process-finalizer callbacks. Invalid non-null data fails with status 127. The
+executable runs the dependency callback after its preinit array and before
+`_init`, while libc receives the process finalizer as its sixth argument. This
+is a CRT acceptance wire only. The separate private
+`ldso-owned-crt-handoff` artifact now publishes it to one fixed graph; that
+does not select a general x86 interpreter or dynamic-CRT path.
+
 The callback arguments retain the conventional executable order: preinit
 array, `_init`, init array; then reverse fini array and `_fini`. Pinned musl's
 dynamic `__libc_start_main` owns that lifecycle internally and does not use

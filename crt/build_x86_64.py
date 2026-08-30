@@ -92,6 +92,8 @@ STATIC_PIE_BOUNDARIES = (
     "__fini_array_end",
 )
 
+X86_64_OWNED_CRT_HANDOFF_BOUNDARY = "__crabc_x86_64_owned_crt_handoff"
+
 STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
     "__crabc_x86_static_tls_bootstrap",
 )
@@ -133,7 +135,7 @@ OBJECTS = (
         "dynamic-pie-entry",
         (".text._start",),
         ("_start",),
-        STATIC_PIE_BOUNDARIES,
+        STATIC_PIE_BOUNDARIES + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY,),
     ),
     ObjectSpec(
         "crti.o",

@@ -3,9 +3,12 @@
 #
 # Pinned musl is the declaration/layout oracle. The candidate side uses raw
 # GCC with only project headers and compiler builtin headers, so an ambient
-# libc cannot conceal a public-header mismatch. This is artifact-local
-# compile-only evidence; it proves no runtime event-descriptor behavior,
-# installed-header completion, family promotion, or public x86 support.
+# libc cannot conceal a public-header mismatch. Musl exposes the selected
+# event-descriptor surface unconditionally; the one real feature-test boundary
+# here is the immediate <fcntl.h> AT_EMPTY_PATH GNU/BSD spelling. This is
+# artifact-local compile-only evidence; it proves no runtime event-descriptor
+# behavior, installed-header completion, family promotion, or public x86
+# support.
 set -euo pipefail
 export LC_ALL=C
 
@@ -17,7 +20,11 @@ readonly PROJECT_INCLUDE="$ROOT_DIR/include"
 readonly C_PROBE="$ROOT_DIR/compat/x86_64/event_descriptors_header_abi_probe.c"
 readonly CXX_PROBE="$ROOT_DIR/compat/x86_64/event_descriptors_header_abi_probe.cpp"
 readonly EXPECTED_PROFILE_COUNT=8
+readonly EXPECTED_AT_EMPTY_PATH_VISIBLE_PROFILE_COUNT=4
+readonly EXPECTED_AT_EMPTY_PATH_HIDDEN_PROFILE_COUNT=4
 readonly -a PROFILES=(c-default c11-gnu cxx17-gnu c11-strict c11-posix-2008 c11-xopen-700 c11-bsd cxx17-strict)
+readonly -a AT_EMPTY_PATH_VISIBLE_PROFILES=(c-default c11-gnu cxx17-gnu c11-bsd)
+readonly -a AT_EMPTY_PATH_HIDDEN_PROFILES=(c11-strict c11-posix-2008 c11-xopen-700 cxx17-strict)
 
 fail() {
     printf 'ERROR: x86 eventfd/inotify header ABI: %s\n' "$*" >&2
@@ -98,9 +105,11 @@ profile_arguments() {
     local profile="$1"
 
     case "$profile" in
-        c-default) ;;
+        c-default|c11-strict) ;;
         c11-gnu|cxx17-gnu) printf '%s\n' '-D_GNU_SOURCE' ;;
-        c11-strict|cxx17-strict) ;;
+        # GCC predefines _GNU_SOURCE for C++; remove that ambient selection
+        # so this row exercises the declared macro-free C++17 profile.
+        cxx17-strict) printf '%s\n' '-U_GNU_SOURCE' ;;
         c11-posix-2008) printf '%s\n' '-D_POSIX_C_SOURCE=200809L' ;;
         c11-xopen-700) printf '%s\n' '-D_XOPEN_SOURCE=700' ;;
         c11-bsd) printf '%s\n' '-D_BSD_SOURCE' ;;
@@ -108,14 +117,44 @@ profile_arguments() {
     esac
 }
 
+profile_has_at_empty_path() {
+    local profile="$1"
+    local visible_profile
+
+    for visible_profile in "${AT_EMPTY_PATH_VISIBLE_PROFILES[@]}"; do
+        [ "$profile" = "$visible_profile" ] && return 0
+    done
+    return 1
+}
+
+mode_arguments() {
+    local profile="$1"
+    local mode="$2"
+
+    case "$mode" in
+        normal)
+            if profile_has_at_empty_path "$profile"; then
+                printf '%s\n' '-DCRABC_EVENT_DESCRIPTOR_REQUIRE_AT_EMPTY_PATH'
+            fi
+            ;;
+        at-empty-path-hidden)
+            printf '%s\n' '-DCRABC_EVENT_DESCRIPTOR_REQUIRE_AT_EMPTY_PATH_HIDDEN'
+            ;;
+        *) fail "unknown compile mode: $mode" ;;
+    esac
+}
+
 compile_profile() {
     local tree="$1"
     local profile="$2"
-    local diagnostic="$3"
+    local mode="$3"
+    local diagnostic="$4"
+    local object="$5"
     local compiler
     local include_root
     local source
     local -a profile_args
+    local -a mode_args
     local -a arguments
 
     case "$tree" in
@@ -131,21 +170,28 @@ compile_profile() {
     esac
 
     mapfile -t profile_args < <(profile_arguments "$profile")
+    mapfile -t mode_args < <(mode_arguments "$profile" "$mode")
     arguments=(
         -nostdinc
         -I "$include_root"
         -isystem "$candidate_compiler_builtin_include"
         -H
-        -fsyntax-only
+        -fno-builtin
+        "${profile_args[@]}"
+        "${mode_args[@]}"
     )
     case "$profile" in
         c-default|c11-*)
             source="$C_PROBE"
-            arguments=(-x c -std=c11 "${profile_args[@]}" "${arguments[@]}" "$source")
+            if [ "$profile" = c-default ]; then
+                arguments=(-x c "${arguments[@]}" -fsyntax-only "$source")
+            else
+                arguments=(-x c -std=c11 "${arguments[@]}" -fsyntax-only "$source")
+            fi
             ;;
         cxx17-*)
             source="$CXX_PROBE"
-            arguments=(-x c++ -std=c++17 -nostdinc++ "${profile_args[@]}" "${arguments[@]}" "$source")
+            arguments=(-x c++ -std=c++17 -nostdinc++ "${arguments[@]}" -c -o "$object" "$source")
             ;;
         *) fail "unknown profile language: $profile" ;;
     esac
@@ -173,15 +219,33 @@ check_trace() {
     if trace_has_unapproved_path "$tree" "$trace"; then
         fail "$profile $tree trace escaped its declared header roots"
     fi
-    for header in sys/eventfd.h sys/inotify.h; do
+    for header in sys/eventfd.h sys/inotify.h fcntl.h; do
         trace_has_header "$trace" "$root" "$header" ||
             fail "$profile $tree trace omitted ${root}/$header"
     done
 }
 
+check_cxx_symbols() {
+    local tree="$1"
+    local profile="$2"
+    local object="$3"
+    local undefined
+    local symbol
+    local -a expected=(eventfd eventfd_read eventfd_write inotify_init inotify_init1 inotify_add_watch inotify_rm_watch)
+
+    undefined="$(nm --undefined-only "$object")"
+    for symbol in "${expected[@]}"; do
+        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+            fail "$tree $profile C++ probe does not retain C linkage for ${symbol}"
+    done
+    if printf '%s\n' "$undefined" | grep -Eq '_Z.*(eventfd|inotify_)'; then
+        fail "$tree $profile C++ probe retained a mangled event-descriptor reference"
+    fi
+}
+
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
-for tool in grep mapfile mktemp realpath sed tr uname; do
+for tool in grep mapfile mktemp nm realpath sed tr uname; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -191,6 +255,10 @@ done
 [ -f "$C_PROBE" ] || fail "missing C eventfd/inotify ABI probe"
 [ -f "$CXX_PROBE" ] || fail "missing C++ eventfd/inotify ABI probe"
 [ "${#PROFILES[@]}" = "$EXPECTED_PROFILE_COUNT" ] || fail "profile roster drifted"
+[ "${#AT_EMPTY_PATH_VISIBLE_PROFILES[@]}" = "$EXPECTED_AT_EMPTY_PATH_VISIBLE_PROFILE_COUNT" ] ||
+    fail "AT_EMPTY_PATH visible profile roster drifted"
+[ "${#AT_EMPTY_PATH_HIDDEN_PROFILES[@]}" = "$EXPECTED_AT_EMPTY_PATH_HIDDEN_PROFILE_COUNT" ] ||
+    fail "AT_EMPTY_PATH hidden profile roster drifted"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
@@ -210,15 +278,39 @@ trap 'rm -rf -- "$work_dir"' EXIT
 for profile in "${PROFILES[@]}"; do
     reference_trace="$work_dir/$profile.reference.trace"
     candidate_trace="$work_dir/$profile.candidate.trace"
-    if ! compile_profile reference "$profile" "$reference_trace"; then
+    reference_object="$work_dir/$profile.reference.o"
+    candidate_object="$work_dir/$profile.candidate.o"
+    if ! compile_profile reference "$profile" normal "$reference_trace" "$reference_object"; then
         fail "$profile pinned-musl reference failed: $(first_diagnostic "$reference_trace")"
     fi
     check_trace reference "$profile" "$reference_trace"
-    if ! compile_profile candidate "$profile" "$candidate_trace"; then
+    if ! compile_profile candidate "$profile" normal "$candidate_trace" "$candidate_object"; then
         fail "$profile project-header candidate failed: $(first_diagnostic "$candidate_trace")"
+    fi
+    check_trace candidate "$profile" "$candidate_trace"
+    case "$profile" in
+        cxx17-*)
+            check_cxx_symbols reference "$profile" "$reference_object"
+            check_cxx_symbols candidate "$profile" "$candidate_object"
+            ;;
+    esac
+done
+
+for profile in "${AT_EMPTY_PATH_HIDDEN_PROFILES[@]}"; do
+    reference_trace="$work_dir/$profile.reference.at-empty-path-hidden.trace"
+    candidate_trace="$work_dir/$profile.candidate.at-empty-path-hidden.trace"
+    reference_object="$work_dir/$profile.reference.at-empty-path-hidden.o"
+    candidate_object="$work_dir/$profile.candidate.at-empty-path-hidden.o"
+    if ! compile_profile reference "$profile" at-empty-path-hidden "$reference_trace" "$reference_object"; then
+        fail "$profile pinned-musl reference did not hide AT_EMPTY_PATH: $(first_diagnostic "$reference_trace")"
+    fi
+    check_trace reference "$profile" "$reference_trace"
+    if ! compile_profile candidate "$profile" at-empty-path-hidden "$candidate_trace" "$candidate_object"; then
+        fail "$profile project header did not hide AT_EMPTY_PATH: $(first_diagnostic "$candidate_trace")"
     fi
     check_trace candidate "$profile" "$candidate_trace"
 done
 
-printf 'x86 pinned-musl/project C/C++ eventfd/inotify ABI matrix: PASS (%s profiles; compile-only)\n' \
-    "$EXPECTED_PROFILE_COUNT"
+printf 'x86 pinned-musl/project C/C++ eventfd/inotify ABI matrix: PASS (%s profiles; AT_EMPTY_PATH GNU/BSD=%s strict/POSIX/XOPEN=%s; compile-only)\n' \
+    "$EXPECTED_PROFILE_COUNT" "$EXPECTED_AT_EMPTY_PATH_VISIBLE_PROFILE_COUNT" \
+    "$EXPECTED_AT_EMPTY_PATH_HIDDEN_PROFILE_COUNT"

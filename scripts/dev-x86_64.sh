@@ -6,7 +6,7 @@
 # set of static C ABI archive boundaries (stat, credentials, bootstrap primitives,
 # simple signal control, bounded process-signal execution, bounded pthread create/exit/join initial TLS, normal private pthread mutexes and their private condition-variable handoff, named termios control, selected process context, child reaping,
 # C11 immediate termination, callback algorithms, direct clock_gettime,
-# system configuration,
+# system configuration, per-range memory locking,
 # nanosleep, and clock_nanosleep,
 # selected descriptor entry, selected filesystem access, selected fcntl status control,
 # nonblocking record locks, advisory flock, bounded regular-file sendfile,
@@ -84,6 +84,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
+  memory-locking-header-abi  verify selected x86 per-range mlock C/C++ declarations
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
@@ -207,8 +208,10 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-callback-algorithms  run the static x86 crabc-libc callback-algorithms slice
   libc-access  run the static x86 crabc-libc access/faccessat slice
   libc-clock-gettime  run the static x86 crabc-libc clock_gettime slice
+  libc-time-observation  run the static x86 crabc-libc clock-observation slice
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
   libc-mapping-core  run the static x86 crabc-libc caller-owned mapping-core slice
+  libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
   libc-header-layouts-baseline  run the static x86 crabc-libc C/C++ header/layout baseline
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
@@ -257,6 +260,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ldso-image  run the source-only checked x86 ELF image parser tests
   ldso-initial-graph  run the bounded x86 ET_DYN initial-interpreter graph artifact
   ldso-initial-tls  run the bounded x86 Variant-II initial-TLS interpreter graph artifact
+  ldso-owned-crt-handoff  run the bounded x86 ldso-to-Rust-Scrt1 handoff artifact
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 a general x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or
@@ -633,9 +637,10 @@ pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
 `select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
 `system-header-abi` compile only their named C/C++ layout/declaration slices.
 `syscall-header-abi` compares only staged syscall number macros.
-`signal-header-abi`, `termios-header-abi`, `mman-header-abi`, and
-`resource-header-abi` compile only their named staged signal-frame, GNU
-termios, mapping, and strict/GNU/LFS resource declarations.
+`signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
+`memory-locking-header-abi`, and `resource-header-abi` compile only their
+named staged signal-frame, GNU termios, mapping, per-range memory-locking,
+and strict/GNU/LFS resource declarations.
 `termios-header-abi` remains a header-only C/C++ layout/declaration gate, not
 a general C terminal/runtime claim. `resource-header-abi` is likewise
 header-only and does not select process-resource behavior or a C runtime.
@@ -1082,6 +1087,18 @@ no-op VM-wait site is explicitly not musl's process-wide `__vm_wait` contract.
 It does not select `msync` cancellation, `mremap`, `mlock*`, shared memory,
 allocator, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
 support.
+`libc-memory-locking` separately links that archive into one freestanding
+project-header C fixture after an equivalent pinned-musl run, and runs the
+six-profile C/C++ declaration gate first. It selects only caller-owned
+`mlock`, `munlock`, and GNU `mlock2(MLOCK_ONFAULT)`: direct x86
+`mlock=149`/`munlock=150` wrappers, musl's zero-flags `mlock2` delegation to
+`mlock`, and direct `mlock2=325` for nonzero flags. Its fixture accepts the
+environment-dependent `EPERM`/`EAGAIN`/`ENOMEM` lock-limit outcome; otherwise
+it proves stale-errno success, first-fault locking, invalid-flag `EINVAL`, and
+overflow-range `EINVAL`. The direct musl-shaped wrappers deliberately omit a
+cancellation path. It does not select `mlockall`/`munlockall`, `msync`,
+`mremap`, mapping policy, allocator, dynamic libc, CRT/TLS lifecycle, loader,
+sysroot, or public x86 support.
 `libc-header-layouts-baseline` links one project-header C fixture and one
 separately compiled freestanding C++17 companion into the same static
 candidate after an equivalent pinned-musl run. It proves the named existing
@@ -1301,6 +1318,13 @@ one TLS-free main and two TLS DSOs prove initial PT_TLS copying, TBSS,
 alignment, DTPMOD/DTPOFF plus `__tls_get_addr`, and fail-closed malformed
 TLS/TPOFF/static-TLS inputs. It remains neither general loader or pthread
 TLS, dynamic CRT/sysroot, nor public x86 support.
+`ldso-owned-crt-handoff` is a separate private post-relocation sibling of the
+no-TLS initial graph. One Rust-produced Scrt1.o main weakly imports one
+RELRO-sealed v1 record after direct entry; it defers only the two fixed DSO
+init arrays to that record, never `%rdx`, and proves clean-environment,
+absent-record, malformed-record, and out-of-order-finalizer boundaries. It
+does not select a general loader, DSO finalization, candidate libc, dynamic
+CRT/sysroot, or public x86 support.
 None of the other C-runtime commands is a crabc-libc or crabc-ldso build,
 general facade admission, or C ABI support claim.
 EOF
@@ -1576,12 +1600,20 @@ run_libc_clock_gettime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_clock_gettime.sh
 }
 
+run_libc_time_observation() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_time_observation.sh
+}
+
 run_libc_system_configuration() {
     run_in_container bash /workspace/compat/x86_64/run_libc_system_configuration.sh
 }
 
 run_libc_mapping_core() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mapping_core.sh
+}
+
+run_libc_memory_locking() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_memory_locking.sh
 }
 
 run_libc_header_layouts_baseline() {
@@ -1690,6 +1722,10 @@ run_termios_header_abi() {
 
 run_mman_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_mman_header_abi.sh
+}
+
+run_memory_locking_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_memory_locking_header_abi.sh
 }
 
 run_resource_header_abi() {
@@ -2600,6 +2636,10 @@ run_ldso_initial_tls_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_initial_tls.sh
 }
 
+run_ldso_owned_crt_handoff_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_owned_crt_handoff.sh
+}
+
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
@@ -2609,8 +2649,9 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff) ;;
     machine-context-header-abi) ;;
+    memory-locking-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     crt-dynamic-startup) ;;
@@ -2637,7 +2678,8 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-memory-locking) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-vector-io) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -2888,6 +2930,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "mman-header-abi takes no arguments"
         ensure_image
         run_mman_header_abi
+        ;;
+    memory-locking-header-abi)
+        [ "$#" -eq 0 ] || fail "memory-locking-header-abi takes no arguments"
+        ensure_image
+        run_memory_locking_header_abi
         ;;
     resource-header-abi)
         [ "$#" -eq 0 ] || fail "resource-header-abi takes no arguments"
@@ -3638,6 +3685,11 @@ case "$command" in
         ensure_image
         run_libc_clock_gettime
         ;;
+    libc-time-observation)
+        [ "$#" -eq 0 ] || fail "libc-time-observation takes no arguments"
+        ensure_image
+        run_libc_time_observation
+        ;;
     libc-system-configuration)
         [ "$#" -eq 0 ] || fail "libc-system-configuration takes no arguments"
         ensure_image
@@ -3647,6 +3699,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-mapping-core takes no arguments"
         ensure_image
         run_libc_mapping_core
+        ;;
+    libc-memory-locking)
+        [ "$#" -eq 0 ] || fail "libc-memory-locking takes no arguments"
+        ensure_image
+        run_libc_memory_locking
         ;;
     libc-header-layouts-baseline)
         [ "$#" -eq 0 ] || fail "libc-header-layouts-baseline takes no arguments"
@@ -3787,5 +3844,10 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-initial-tls takes no arguments"
         ensure_image
         run_ldso_initial_tls_tests
+        ;;
+    ldso-owned-crt-handoff)
+        [ "$#" -eq 0 ] || fail "ldso-owned-crt-handoff takes no arguments"
+        ensure_image
+        run_ldso_owned_crt_handoff_tests
         ;;
 esac
