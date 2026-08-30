@@ -952,6 +952,58 @@ where
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
     H: FnOnce() -> bool,
 {
+    // SAFETY: the established bounded callers already own their complete
+    // source collection protocol. Preserve their existing raw tail while the
+    // generic post-owner-exit entry below supplies its explicit local-list
+    // collection seam.
+    unsafe {
+        free_regular_after_failed_reclaim_select_map_with_after_claim_and_owner_deferred_collection(
+            page,
+            block,
+            select_map,
+            after_claim,
+            |_page| Ok(()),
+        )
+    }
+}
+
+/// Shared regular post-owner-exit tail with the owner-side local-free phase
+/// made explicit.
+///
+/// `page.c:_mi_page_free_collect` always drains the atomic remote list and
+/// then transfers the owner-local `local_free` list before `free.c` decides
+/// whether to release, reabandon, or unown the page. The existing raw remote
+/// helpers model the first half; this callback is the second half. It is not
+/// mimalloc's unrelated `_mi_deferred_free` user callback, and it receives no
+/// former Theap, client route, PageMap, or arena authority.
+///
+/// # Safety
+///
+/// This has the same stable page/block/bitmap requirements as
+/// [`free_regular_after_failed_reclaim_select_map`]. After the source remote
+/// collection succeeds, `collect_owner_deferred_frees` must perform only the
+/// false-force owner-local collection for this exact page while the caller
+/// holds its low owner bit. It must not release, unown, reabandon, or retain
+/// aliases to the page. An error leaves that low bit with the caller as the
+/// one terminal owner and prevents every later state transition in this tail.
+unsafe fn free_regular_after_failed_reclaim_select_map_with_after_claim_and_owner_deferred_collection<
+    M,
+    F,
+    H,
+    C,
+>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    select_map: F,
+    after_claim: H,
+    collect_owner_deferred_frees: C,
+) -> Result<RegularAbandonedFreeAfterFailedReclaimResult, AbandonError>
+where
+    M: MappedAbandonedPages,
+    F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
+    H: FnOnce() -> bool,
+    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
+{
     // SAFETY: the route holds the stable abandoned-page/client allocation
     // proof through this source `allow_collect=true` publication.
     match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
@@ -966,7 +1018,8 @@ where
     }
 
     // A successful low-bit claim is the first legal point to inspect ordinary
-    // page fields and select this page's exact static-main bitmap/count pair.
+    // page fields. Source collection must finish before this tail acquires a
+    // PageMap capability for its later reabandon/unown/release decisions.
     let state = unsafe { Page::abandonment_state_at(page) };
     let source_identity = source_thread_identity(&state);
     if !is_owned(&state)
@@ -997,11 +1050,6 @@ where
     if source_identity == THREAD_ID_ABANDONED_MAPPED && page_is_full(&state) {
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
-    let map = select_map(state.memid, state.block_size)?;
-    if map.bin() != bin || map.page_slice_index(state.memid).is_none() {
-        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
-    }
-
     // `_mi_page_free_collect_partly` retains the just-published direct-small
     // head. Its exact address remains the first expected owner-word image;
     // normal collection detaches the list and expects zero instead.
@@ -1020,11 +1068,27 @@ where
     }
     .map_err(AbandonError::RemoteFree)?;
 
+    // `page.c:_mi_page_free_collect` transfers owner-local deferred frees
+    // only after it detached/merged the atomic remote list and before every
+    // free/reclaim/reabandon/unown decision. The callback is deliberately
+    // positioned before the all-free test so a failure retains the low owner
+    // bit with no PageMap or terminal-release mutation.
+    collect_owner_deferred_frees(page)?;
+
     if page_is_empty(&state) {
         if source_identity == THREAD_ID_ABANDONED_MAPPED {
+            let map = select_map(state.memid, state.block_size)?;
+            if map.bin() != bin || map.page_slice_index(state.memid).is_none() {
+                return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+            }
             unabandon_mapped(&state, Some(&map))?;
         }
         return Ok(RegularAbandonedFreeAfterFailedReclaimResult::Empty);
+    }
+
+    let map = select_map(state.memid, state.block_size)?;
+    if map.bin() != bin || map.page_slice_index(state.memid).is_none() {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
 
     if source_identity == THREAD_ID_ABANDONED {
@@ -1081,14 +1145,16 @@ where
 /// PageMap/span owner.
 ///
 /// This is the pointer/page-state portion of
-/// `free.c:mi_free_try_collect_mt` and
+/// `free.c:mi_free_try_collect_mt`,
+/// `page.c:_mi_page_free_collect`, and
 /// `mi_abandoned_page_try_free`. It intentionally composes only the regular
 /// Small/Medium/Large arena-page branch already shared by mapped and
 /// source-unmapped abandonment. The caller recovers `page` and `block` from
 /// the allocation pointer; `select_map` runs only after the source low-owner
-/// claim makes ordinary page fields readable. No input identifies the former
-/// thread, an owner admission, or an exact client route, and this function
-/// never reads or dereferences `page->theap`.
+/// claim makes ordinary page fields readable and only after source collection
+/// completes does it acquire the PageMap capability for the release tail. No
+/// input identifies the former thread, an owner admission, or an exact client
+/// route, and this function never reads or dereferences `page->theap`.
 ///
 /// The final release is deliberately injected at the PageMap boundary rather
 /// than guessed from page geometry. On [`PostOwnerExitTerminalRelease::Released`]
@@ -1106,26 +1172,40 @@ where
 /// live allocation. The PageMap entry and page metadata must remain valid
 /// through the atomic publication and source collection. `select_map` must
 /// return the exact mapped-abandoned bitmap/count capability for the selected
-/// page identity, only for the duration of this call. `terminal_release` runs
-/// only with the source low owner bit retained after all-free collection; it
-/// must either release PageMap/span/metadata in source order or retain all of
-/// them under that bit. Callers must not use either pointer after reporting
-/// `Released`.
-pub(crate) unsafe fn free_post_owner_exit_regular_page<M, F, R>(
+/// page identity, only for the duration of this call.
+/// `collect_owner_deferred_frees` must perform exactly the source false-force
+/// owner-local `local_free` collection after the remote list is detached and
+/// before any empty/reabandon/unown decision; it has no PageMap or terminal
+/// release authority. An error retains the claimed low owner bit and prevents
+/// the terminal callback. `terminal_release` runs only with that bit retained
+/// after all-free collection; it must either release PageMap/span/metadata in
+/// source order or retain all of them under that bit. Callers must not use
+/// either pointer after reporting `Released`.
+pub(crate) unsafe fn free_post_owner_exit_regular_page<M, F, C, R>(
     page: NonNull<Page>,
     block: NonNull<u8>,
     select_map: F,
+    collect_owner_deferred_frees: C,
     terminal_release: R,
 ) -> Result<PostOwnerExitRegularFreeResult, AbandonError>
 where
     M: MappedAbandonedPages,
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
+    C: FnOnce(NonNull<Page>) -> Result<(), AbandonError>,
     R: FnOnce(NonNull<Page>) -> PostOwnerExitTerminalRelease,
 {
     // SAFETY: the caller supplies the stable pointer-to-page, canonical-block,
     // PageMap, and terminal-owner proof. The shared tail publishes through
     // only the page's atomic remote-free word before it wins the low bit.
-    match unsafe { free_regular_after_failed_reclaim_select_map(page, block, select_map) }? {
+    match unsafe {
+        free_regular_after_failed_reclaim_select_map_with_after_claim_and_owner_deferred_collection(
+            page,
+            block,
+            select_map,
+            || true,
+            collect_owner_deferred_frees,
+        )
+    }? {
         RegularAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
             Ok(PostOwnerExitRegularFreeResult::PublishedToExistingOwner)
         }
@@ -2797,6 +2877,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use core::cell::Cell;
     use core::mem::MaybeUninit;
     use core::sync::atomic::AtomicI64;
     use std::sync::{Arc, Barrier};
@@ -2947,6 +3028,7 @@ mod tests {
                         view.abandoned_pages(bin)
                             .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
                     },
+                    |_page| Ok(()),
                     |_page| {
                         terminal_called = true;
                         PostOwnerExitTerminalRelease::Released
@@ -2972,6 +3054,7 @@ mod tests {
                         view.abandoned_pages(bin)
                             .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
                     },
+                    |_page| Ok(()),
                     |_page| {
                         assert!(
                             !view.abandoned_pages(bin).unwrap().is_published(17),
@@ -3019,6 +3102,7 @@ mod tests {
                         view.abandoned_pages(bin)
                             .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
                     },
+                    |_page| Ok(()),
                     |_page| {
                         assert!(
                             !view.abandoned_pages(bin).unwrap().is_published(17),
@@ -3069,6 +3153,7 @@ mod tests {
                         selected_map = true;
                         Ok(map)
                     },
+                    |_page| Ok(()),
                     |_page| {
                         terminal_called = true;
                         PostOwnerExitTerminalRelease::Released
@@ -3081,6 +3166,152 @@ mod tests {
         assert!(!terminal_called, "the losing producer cannot release the page");
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
         assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
+    }
+
+    #[test]
+    fn abandoned_post_exit_deferred_collection_precedes_reabandon_and_terminal_release() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let mut page = Page::remote_free_test_page(2, 2);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        let phase = Cell::new(0u8);
+
+        assert_eq!(
+            unsafe {
+                free_post_owner_exit_regular_page(
+                    page_raw,
+                    first.pointer(),
+                    |memory, selected_block_size| {
+                        assert_eq!(memory.kind(), MemoryKind::Arena);
+                        assert_eq!(selected_block_size, block_size);
+                        assert_eq!(
+                            phase.get(),
+                            1,
+                            "PageMap selection follows owner deferred collection"
+                        );
+                        phase.set(2);
+                        view.abandoned_pages(bin)
+                            .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                    },
+                    |_page| {
+                        assert_eq!(phase.get(), 0);
+                        assert!(
+                            !view.abandoned_pages(bin).unwrap().is_published(17),
+                            "owner collection runs before an unmapped page reabandonment"
+                        );
+                        phase.set(1);
+                        Ok(())
+                    },
+                    |_page| panic!("a still-live page cannot enter terminal release"),
+                )
+            },
+            Ok(PostOwnerExitRegularFreeResult::StillLive)
+        );
+        assert_eq!(phase.get(), 2);
+        assert!(view.abandoned_pages(bin).unwrap().is_published(17));
+
+        assert_eq!(
+            unsafe {
+                free_post_owner_exit_regular_page(
+                    page_raw,
+                    second.pointer(),
+                    |memory, selected_block_size| {
+                        assert_eq!(memory.kind(), MemoryKind::Arena);
+                        assert_eq!(selected_block_size, block_size);
+                        assert_eq!(
+                            phase.get(),
+                            3,
+                            "PageMap selection follows the second owner collection"
+                        );
+                        phase.set(4);
+                        view.abandoned_pages(bin)
+                            .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                    },
+                    |_page| {
+                        assert_eq!(phase.get(), 2);
+                        assert!(view.abandoned_pages(bin).unwrap().is_published(17));
+                        phase.set(3);
+                        Ok(())
+                    },
+                    |_page| {
+                        assert_eq!(phase.get(), 4);
+                        assert!(
+                            !view.abandoned_pages(bin).unwrap().is_published(17),
+                            "terminal release follows mapped identity removal"
+                        );
+                        phase.set(5);
+                        PostOwnerExitTerminalRelease::Released
+                    },
+                )
+            },
+            Ok(PostOwnerExitRegularFreeResult::Released)
+        );
+        assert_eq!(phase.get(), 5);
+    }
+
+    #[test]
+    fn abandoned_post_exit_deferred_collection_failure_retains_before_terminal_release() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(2, 1);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        let mut block = TestBlock([0; 16]);
+        let map_selected = Cell::new(false);
+        let mut terminal_called = false;
+
+        assert_eq!(
+            unsafe {
+                free_post_owner_exit_regular_page(
+                    page_raw,
+                    block.pointer(),
+                    |memory, selected_block_size| {
+                        assert_eq!(memory.kind(), MemoryKind::Arena);
+                        assert_eq!(selected_block_size, block_size);
+                        map_selected.set(true);
+                        view.abandoned_pages(bin)
+                            .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                    },
+                    |_page| {
+                        assert!(
+                            !map_selected.get(),
+                            "a collection failure cannot acquire PageMap release state"
+                        );
+                        assert!(
+                            view.abandoned_pages(bin).unwrap().is_published(17),
+                            "owner deferred collection precedes mapped identity removal"
+                        );
+                        Err(AbandonError::LocalFree(FreeListError::InvalidPage))
+                    },
+                    |_page| {
+                        terminal_called = true;
+                        PostOwnerExitTerminalRelease::Released
+                    },
+                )
+            },
+            Err(AbandonError::LocalFree(FreeListError::InvalidPage))
+        );
+        assert!(!terminal_called);
+        assert!(!map_selected.get());
+        assert!(view.abandoned_pages(bin).unwrap().is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_ne!(page.remote_free_test_head() & THREAD_FREE_OWNED, 0);
+        assert_eq!(page.remote_free_test_used(), 0);
     }
 
     #[test]
