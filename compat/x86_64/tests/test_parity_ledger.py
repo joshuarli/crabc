@@ -50,8 +50,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 83)
-        self.assertEqual(report["header_layout_probe_count"], 42)
+        self.assertEqual(report["verified_artifact_count"], 84)
+        self.assertEqual(report["header_layout_probe_count"], 43)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
         self.assertEqual(report["header_foundation_pinned_header_count"], 183)
@@ -288,7 +288,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(data, header_layout_manifest=manifest)
         headers_layouts = self.family(data, "libc.headers-layouts")
 
-        self.assertEqual(report["header_layout_probe_count"], 42)
+        self.assertEqual(report["header_layout_probe_count"], 43)
         self.assertEqual(manifest["schema"], "crabc.x86_64-headers-layouts/v1")
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -306,6 +306,20 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             [probe["id"] for probe in probes],
             list(ledger.EXPECTED_HEADER_LAYOUT_PROBES),
+        )
+        stdio_standard = next(
+            probe for probe in probes if probe["id"] == "stdio-standard"
+        )
+        assert isinstance(stdio_standard, dict)
+        self.assertEqual(stdio_standard["kind"], "compile-only")
+        self.assertEqual(stdio_standard["headers"], ["include/stdio.h"])
+        self.assertEqual(
+            stdio_standard["sources"],
+            [
+                "compat/x86_64/stdio_standard_header_abi_probe.c",
+                "compat/x86_64/stdio_standard_header_abi_probe.cpp",
+                "compat/x86_64/run_stdio_standard_header_abi.sh",
+            ],
         )
         socket = next(probe for probe in probes if probe["id"] == "socket")
         assert isinstance(socket, dict)
@@ -1671,7 +1685,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         artifact = next(
             entry
             for entry in artifacts
@@ -1747,12 +1761,152 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_stdio_standard_streams_remain_a_closed_non_capability_artifact(
+        self,
+    ) -> None:
+        data = self.data()
+        text_math = self.family(data, "libc.text-math-locale-stdio")
+        self.assertEqual(text_math["status"], "planned")
+        artifacts = text_math["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 4
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-standard-streams"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stdio_standard.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/stdio.h",
+            "compat/x86_64/headers-layouts.toml",
+            "compat/x86_64/headers-layouts-foundation.toml",
+            "compat/x86_64/stdio_standard_header_abi_probe.c",
+            "compat/x86_64/stdio_standard_header_abi_probe.cpp",
+            "compat/x86_64/run_stdio_standard_header_abi.sh",
+            "compat/x86_64/libc_stdio_standard_probe.c",
+            "compat/x86_64/libc_stdio_standard_start.S",
+            "compat/x86_64/run_libc_stdio_standard.sh",
+            "compat/x86_64/tests/test_runner.py",
+            "compat/x86_64/tests/test_parity_ledger.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stdio-standard"},
+        )
+        for symbol in (
+            "stdin",
+            "stdout",
+            "stderr",
+            "fileno",
+            "fflush",
+            "fgetc",
+            "getc",
+            "getchar",
+            "ungetc",
+            "fread",
+            "fputc",
+            "putc",
+            "putchar",
+            "fwrite",
+            "feof",
+            "ferror",
+            "clearerr",
+        ):
+            self.assertIn(f"`{symbol}`", artifact["description"])
+        for phrase in (
+            "permanent-standard-stream block",
+            "eight bytes",
+            "read/readv lookahead",
+            "fixed 1024-byte buffer",
+            "direct/unbuffered",
+            "`fflush(stdout)`",
+            "`fflush(NULL)`",
+            "C99's one-byte opaque `FILE`",
+            "opaque C11/C++ pointer ABI",
+            "POSIX.1-2008-only `fileno`",
+            "explicit-flush-only",
+            "general stdio",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-standard-streams"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "explicit-flush-only", "automatic flushing"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-stdio-standard-streams description omits explicit-flush-only",
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-standard-streams"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        prerequisites[3] = prerequisites[3].replace(
+            "read=0/readv=19/write=1", "read/write"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-stdio-standard-streams must record its raw-I/O and static-TLS boundary",
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.text-math-locale-stdio")[
+            "verified_artifact"
+        ]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-stdio-standard-streams"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-fenv"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-stdio-standard command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_math_complex_foundation_remains_a_closed_non_capability_artifact(self) -> None:
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         artifacts_by_id = {
             entry["id"]: entry for entry in artifacts if isinstance(entry, dict)
         }
@@ -1830,7 +1984,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
         artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         artifact = next(
             entry
             for entry in artifacts

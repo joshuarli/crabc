@@ -29,7 +29,8 @@
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! padded socket messages/options,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
-//! C-locale binary32/binary64/x87-binary80 floating parsing, intmax-arithmetic,
+//! C-locale binary32/binary64/x87-binary80 floating parsing, bounded permanent
+//! stdin/stdout/stderr byte/block I/O with explicit flushing, intmax-arithmetic,
 //! find-first-set, C11 immediate-termination, a bounded private static
 //! startup/ordinary-exit lifecycle, callback-algorithms, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
@@ -43,8 +44,10 @@
 //! archive is not `libc.so`,
 //! a general C runtime, a CRT, a general pthread/TLS lifecycle, a dynamic-TLS
 //! implementation, a loader, or a sysroot. Its private static startup owns
-//! only bounded no-allocation `atexit` callbacks; it is not stdio flushing,
-//! C++/DSO destruction, or a concurrent process-exit protocol. The pthread artifacts are
+//! only bounded no-allocation `atexit` callbacks. Its permanent-standard-stream
+//! leaf owns explicit `fflush` only; neither that leaf nor this lifecycle owns
+//! input flushing, ordinary-exit stdio flushing, C++/DSO destruction, or a
+//! concurrent process-exit protocol. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path, plus prompt detach with later
 //! clear-child-tid reaping and opaque current/equality identity. The mutex
@@ -158,6 +161,8 @@ mod child_reaping;
 mod immediate_termination;
 #[path = "static_startup.rs"]
 mod static_startup;
+#[path = "stdio_standard.rs"]
+mod stdio_standard;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
 #[path = "clock_nanosleep.rs"]

@@ -4,6 +4,14 @@
 #include <features.h>
 
 #define __NEED_FILE
+/*
+ * C11 permits FILE to remain incomplete.  Earlier C modes must be able to
+ * form the historical one-byte opaque object, matching musl's public header
+ * contract without exposing the target-private stream state used by libc.
+ */
+#if __STDC_VERSION__ < 201112L
+#define __NEED_struct__IO_FILE
+#endif
 #define __NEED_size_t
 #define __NEED___isoc_va_list
 #define __NEED_va_list

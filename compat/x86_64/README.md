@@ -448,7 +448,7 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
-`headers-layouts.toml` is the checked-in contract for the forty-one selected
+`headers-layouts.toml` is the checked-in contract for the forty-three selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -545,6 +545,18 @@ behavior, including strict `stdio.h`-first and `string.h`-first include orders.
 It is compile-only header evidence: it does not prove callable/archive linkage,
 stdlib runtime or lifecycle behavior, all-header closure, family promotion, or
 public x86 support.
+
+The paired private `stdio-standard-header-abi` and `libc-stdio-standard` gates
+record only the static `static-c-stdio-standard-streams` evidence slice for the
+permanent `stdin`, `stdout`, and `stderr` streams. The header gate covers
+selected declarations, data, macros, and C/C++ ABI; the static fixture covers
+selected byte/block/status APIs, explicit `fflush`, sticky EOF/`ungetc`
+transitions, and musl-shaped discard-on-output-error behavior. It excludes
+path or dynamically owned streams and ordinary-exit flushing, and does not
+constitute general stdio, x86 support, parity, promotion, or public support.
+Run `./scripts/dev-x86_64.sh stdio-standard-header-abi` for the declaration
+matrix and `./scripts/dev-x86_64.sh libc-stdio-standard` for the static
+runtime fixture.
 
 `libc-directory-streams` is the separate private static C runtime artifact
 that follows that compile-only header evidence. One project-header fixture runs

@@ -648,6 +648,7 @@ EXPECTED_HEADER_LAYOUT_PROBES = {
     "stat": "./scripts/dev-x86_64.sh stat-header-abi",
     "utime": "./scripts/dev-x86_64.sh utime-header-abi",
     "pthread-c11": "./scripts/dev-x86_64.sh pthread-c11-header-abi",
+    "stdio-standard": "./scripts/dev-x86_64.sh stdio-standard-header-abi",
     "ctype": "./scripts/dev-x86_64.sh ctype-header-abi",
     "integer-arithmetic": "./scripts/dev-x86_64.sh integer-arithmetic-header-abi",
     "integer-parse": "./scripts/dev-x86_64.sh integer-parse-header-abi",
@@ -718,6 +719,11 @@ EXPECTED_HEADER_LAYOUT_SOURCES = {
         "compat/x86_64/pthread_c11_header_abi_probe.c",
         "compat/x86_64/pthread_c11_header_abi_probe.cpp",
         "compat/x86_64/run_pthread_c11_header_abi.sh",
+    ),
+    "stdio-standard": (
+        "compat/x86_64/stdio_standard_header_abi_probe.c",
+        "compat/x86_64/stdio_standard_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_standard_header_abi.sh",
     ),
     "ctype": (
         "compat/x86_64/ctype_header_abi_probe.c",
@@ -1041,6 +1047,30 @@ INTEGER_PARSE_SYMBOLS = (
 )
 
 FLOAT_PARSE_SYMBOLS = ("strtof", "strtod", "strtold", "atof")
+
+STDIO_STANDARD_STREAM_DATA_SYMBOLS = ("stdin", "stdout", "stderr")
+
+STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS = (
+    "clearerr",
+    "feof",
+    "ferror",
+    "fflush",
+    "fgetc",
+    "fileno",
+    "fputc",
+    "fread",
+    "fwrite",
+    "getc",
+    "getchar",
+    "putc",
+    "putchar",
+    "ungetc",
+)
+
+STDIO_STANDARD_STREAM_SYMBOLS = (
+    *STDIO_STANDARD_STREAM_DATA_SYMBOLS,
+    *STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS,
+)
 
 CREDENTIAL_OBSERVATION_SYMBOLS = ("getgroups", "getresuid", "getresgid")
 
@@ -13009,6 +13039,457 @@ def require_float_parse_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_stdio_standard_streams_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the permanent standard-stream static leaf below stdio completion.
+
+    This artifact owns three process-lifetime stream records and their bounded
+    byte/block boundary, not a general ``FILE`` implementation. The ratchet
+    keeps its source map, opaque public-header boundary, static-TLS seam, and
+    explicit-flush-only behavior reviewable without treating it as general
+    stdio, text/locale, or x86 platform completion.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-stdio-standard-streams"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-stdio-standard-streams artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in STDIO_STANDARD_STREAM_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-stdio-standard-streams description omits {symbol}",
+        )
+    for phrase in (
+        "permanent-standard-stream block",
+        "still-planned `libc.text-math-locale-stdio`",
+        "process-lifetime, externally serialized stream records",
+        "eight bytes",
+        "read/readv lookahead",
+        "fixed 1024-byte buffer",
+        "direct/unbuffered",
+        "distinct permanent globals",
+        "buffered stdin plus EOF/error/clearerr/ungetc transitions",
+        "`fflush(stdout)`",
+        "`fflush(NULL)`",
+        "immediate stderr output",
+        "C99's one-byte opaque `FILE`",
+        "opaque C11/C++ pointer ABI",
+        "POSIX.1-2008-only `fileno`",
+        "unmangled C++ spellings",
+        "explicit-flush-only",
+        "ordinary exit",
+        "input-stream fflush semantics",
+        "terminal-sensitive newline flushing",
+        "path/open/close/reopen streams",
+        "general FILE layout or registry",
+        "stream allocation",
+        "locks/unlocked entries",
+        "seeking/positioning/buffer reconfiguration",
+        "formatted or line I/O",
+        "wide/cookie/memory/popen streams",
+        "general stdio",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-stdio-standard-streams description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-stdio-standard-streams.source_owners"
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/stdio_standard.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/features.h",
+        "include/stdio.h",
+        "include/unistd.h",
+        "compat/x86_64/headers-layouts.toml",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/stdio_standard_header_abi_probe.c",
+        "compat/x86_64/stdio_standard_header_abi_probe.cpp",
+        "compat/x86_64/run_stdio_standard_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_stdio_standard_probe.c",
+        "compat/x86_64/libc_stdio_standard_start.S",
+        "compat/x86_64/run_libc_stdio_standard.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-stdio-standard-streams omits {owner}",
+        )
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-stdio-standard-streams.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "general-purpose pointer register" in item
+            and "`stdin`/`stdout`/`stderr`" in item
+            and "`FILE *const`" in item
+            and "C99 one-byte" in item
+            and "target-private state record" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-stdio-standard-streams must record the opaque FILE/data-symbol ABI boundary",
+    )
+    require(
+        any(
+            "stdio_impl.h" in item
+            and "F_PERM/F_NORD/F_NOWR/F_EOF/F_ERR" in item
+            and "BUFSIZ=1024" in item
+            and "UNGET=8" in item
+            and "src/stdio/{stdin,stdout,stderr}.c" in item
+            and "__stdio_read" in item
+            and "__stdio_write" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-stdio-standard-streams must record its permanent-stream musl state mapping",
+    )
+    require(
+        any(
+            all(symbol in item for symbol in STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS)
+            and "Locks" in item
+            and "__stdio_exit" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-stdio-standard-streams must record its exact selected public function mapping",
+    )
+    require(
+        any(
+            "read=0/readv=19/write=1" in item
+            and "Variant-II initial-exec errno TLS" in item
+            and "__crabc_x86_static_tls_bootstrap" in item
+            and "untouched entry stack" in item
+            and "ad-hoc FS base" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-stdio-standard-streams must record its raw-I/O and static-TLS boundary",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-stdio-standard-streams.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict C99, C11, C++17, and POSIX.1-2008 C11/C++17" in item
+            and "`stdin`/`stdout`/`stderr`" in item
+            and "C99's one-byte opaque FILE boundary" in item
+            and "opaque C11/C++ pointers" in item
+            and "strict-hidden fileno" in item
+            and "POSIX-visible fileno" in item
+            and "unmangled C++ spellings" in item
+            and "no archive linkage or runtime behavior" in item
+            for item in header_prerequisites
+        ),
+        "static-c-stdio-standard-streams must retain its C99/C11/C++ header boundary",
+    )
+    require(
+        any(
+            all(
+                header in item
+                for header in (
+                    "stdio.h",
+                    "errno.h",
+                    "fcntl.h",
+                    "unistd.h",
+                    "features.h",
+                    "bits/alltypes.h",
+                    "bits/fcntl.h",
+                )
+            )
+            and "header-only" in item
+            for item in header_prerequisites
+        ),
+        "static-c-stdio-standard-streams must record its project-header provenance boundary",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in STDIO_STANDARD_STREAM_SYMBOLS:
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits {symbol}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "stdio_standard.rs"]\nmod stdio_standard;' in static_root,
+        "x86 static C ABI must compose the stdio_standard leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in STDIO_STANDARD_STREAM_DATA_SYMBOLS:
+        require(
+            f"pub static mut {symbol}:" in implementation,
+            f"stdio_standard leaf omits permanent data symbol {symbol}",
+        )
+    for symbol in STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS:
+        require(
+            f'pub unsafe extern "C" fn {symbol}' in implementation,
+            f"stdio_standard leaf omits selected function {symbol}",
+        )
+    for snippet in (
+        "musl 1.2.6 release commit",
+        "src/internal/stdio_impl.h",
+        "src/stdio/{stdin,stdout,stderr}.c",
+        "src/stdio/{__stdio_read,__uflow,__toread}.c",
+        "src/stdio/{__stdio_write,__overflow,__towrite}.c",
+        "const BUFSIZ: usize = 1024;",
+        "const UNGET: usize = 8;",
+        "The only valid non-null `FILE *` arguments",
+        "terminal-sensitive automatic",
+        "ordinary-exit flushing",
+        "raw_syscall::SYS_READ",
+        "raw_syscall::SYS_READV",
+        "raw_syscall::SYS_WRITE",
+    ):
+        require(
+            snippet in implementation,
+            f"stdio_standard leaf omits its required {snippet} boundary",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_stdio_standard_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "c99-strict",
+        "c11-strict",
+        "c11-posix-2008",
+        "cxx17-strict",
+        "cxx17-posix-2008",
+        "-nostdinc",
+        "-nostdinc++",
+        "check_cxx_c_linkage",
+        "CRABC_STDIO_STANDARD_REQUIRE_FILENO_HIDDEN",
+        "one-byte opaque struct _IO_FILE placeholder",
+        "retained a mangled stdio reference",
+    ):
+        require(
+            snippet in header_runner,
+            f"stdio standard header runner omits {snippet}",
+        )
+    for symbol in STDIO_STANDARD_STREAM_SYMBOLS:
+        require(
+            symbol in header_runner,
+            f"stdio standard header runner omits {symbol}",
+        )
+    for probe_name in (
+        "stdio_standard_header_abi_probe.c",
+        "stdio_standard_header_abi_probe.cpp",
+    ):
+        probe = (ROOT / "compat" / "x86_64" / probe_name).read_text(
+            encoding="utf-8"
+        )
+        for symbol in STDIO_STANDARD_STREAM_SYMBOLS:
+            require(
+                symbol in probe,
+                f"stdio standard header probe {probe_name} omits {symbol}",
+            )
+    header_c_probe = (
+        ROOT / "compat" / "x86_64" / "stdio_standard_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "sizeof(FILE) == 1",
+        "__alignof__(FILE) == 1",
+        "CRABC_STDIO_STANDARD_C11_POSIX_2008",
+        "CRABC_STDIO_STANDARD_REQUIRE_FILENO_HIDDEN",
+    ):
+        require(
+            snippet in header_c_probe,
+            f"stdio standard C header probe omits {snippet}",
+        )
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_standard_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "CRABC_STDIO_STANDARD_FREESTANDING",
+        "check_standard_globals",
+        "check_stdin_buffering_and_ebadf",
+        "check_stdout_explicit_flush",
+        "check_stderr_immediate",
+        "expect_pipe_empty",
+        "fflush_entry(stdout)",
+        "fflush_entry(NULL)",
+        "No fflush call precedes this read",
+    ):
+        require(
+            snippet in fixture,
+            f"stdio standard fixture omits closed regression {snippet}",
+        )
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_stdio_standard_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "untouched Linux entry stack",
+        "__crabc_x86_static_tls_bootstrap",
+        "Linux x86-64 exit_group",
+    ):
+        require(
+            snippet in start,
+            f"stdio standard start shim omits {snippet}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_stdio_standard.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_stdio_standard_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+        "__crabc_x86_static_tls_bootstrap",
+        "TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD",
+        "fopen fdopen freopen fclose",
+        "ordinary-exit",
+    ):
+        require(
+            snippet in runner,
+            f"libc-stdio-standard runner omits {snippet}",
+        )
+    for symbol in STDIO_STANDARD_STREAM_SYMBOLS:
+        require(
+            symbol in runner,
+            f"libc-stdio-standard runner omits {symbol}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-stdio-standard"},
+        "static-c-stdio-standard-streams must use the closed libc-stdio-standard command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C reference",
+                "dependency-free x86 crabc-libc archive",
+                "`-nostdlib -static` candidate",
+                "strict/POSIX C/C++ standard-stream header matrix",
+                "three data symbols",
+                "initial-exec errno TLS",
+                "Static Initial TLS v1 bootstrap",
+                "permanent-global identity and fileno",
+                "stdin read/readv lookahead",
+                "EOF/error/clearerr/ungetc",
+                "explicit fflush(stdout)/fflush(NULL)",
+                "immediate stderr writes",
+                "input fflush",
+                "terminal line buffering",
+                "ordinary-exit flushing",
+                "path streams",
+                "general stdio",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-stdio-standard-streams evidence must retain its exact native regression boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "stdio_impl.h",
+                    "src/stdio/{stdin,stdout,stderr}.c",
+                    "__stdio_read.c",
+                    "__uflow.c",
+                    "__toread.c",
+                    "__stdio_write.c",
+                    "__overflow.c",
+                    "__towrite.c",
+                    *STDIO_STANDARD_STREAM_FUNCTION_SYMBOLS,
+                    "__stdio_exit remain unselected",
+                )
+            )
+            for entry in oracle
+        ),
+        "static-c-stdio-standard-streams must retain its pinned-musl source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "kernel-abi"
+            and isinstance(entry.get("role"), str)
+            and "read=0" in entry["role"]
+            and "write=1" in entry["role"]
+            and "readv=19" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-standard-streams must retain its Linux raw-I/O oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "C99 one-byte opaque FILE placeholder" in entry["role"]
+            and "C11/C++ opaque FILE boundary" in entry["role"]
+            and "Variant-II initial-exec errno TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-stdio-standard-streams must retain its FILE and TLS ABI oracle",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "stdio-standard-header-abi)",
+        "libc-stdio-standard)",
+        "run_stdio_standard_header_abi()",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits {snippet}",
+        )
+
+
 def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
     """Keep the x87-only math/complex foundation distinct from math parity.
 
@@ -13696,6 +14177,7 @@ def validate_ledger(
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
+    require_stdio_standard_streams_artifact(by_id["libc.text-math-locale-stdio"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
     require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
 

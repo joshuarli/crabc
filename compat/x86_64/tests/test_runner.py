@@ -857,7 +857,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             if line.strip().endswith(") ;;")
         )
         expected_groups = (
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|stdlib-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-owned-crt-handoff",
             "inet-address-header-abi",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -890,6 +890,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-event-descriptors",
             "libc-pathname-lifecycle",
             "libc-directory-streams",
+            "libc-stdio-standard",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-memory-sync",
@@ -1003,6 +1004,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_pthread_c11_header_abi.sh', source)
         self.assertIn('run_stdlib_header_abi()', source)
         self.assertIn('compat/x86_64/run_stdlib_header_abi.sh', source)
+        self.assertIn('run_stdio_standard_header_abi()', source)
+        self.assertIn('compat/x86_64/run_stdio_standard_header_abi.sh', source)
         self.assertIn('run_ctype_header_abi()', source)
         self.assertIn('compat/x86_64/run_ctype_header_abi.sh', source)
         self.assertIn('run_integer_arithmetic_header_abi()', source)
@@ -8334,6 +8337,157 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("float-parse-header-abi", runner)
         self.assertIn("libc-float-parse", runner)
+
+    def test_libc_static_c_abi_stdio_standard_streams_artifact_stays_narrow(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stdio_standard.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "stdio_standard_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "stdio_standard_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_stdio_standard_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_standard_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_stdio_standard_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stdio_standard.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        data_symbols = ("stdin", "stdout", "stderr")
+        function_symbols = (
+            "clearerr",
+            "feof",
+            "ferror",
+            "fflush",
+            "fgetc",
+            "fileno",
+            "fputc",
+            "fread",
+            "fwrite",
+            "getc",
+            "getchar",
+            "putc",
+            "putchar",
+            "ungetc",
+        )
+        self.assertIn('#[path = "stdio_standard.rs"]', static_root)
+        for symbol in data_symbols:
+            self.assertIn(f"pub static mut {symbol}:", implementation)
+            self.assertIn(symbol, static_export_names)
+        for symbol in function_symbols:
+            self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
+            self.assertIn(symbol, static_export_names)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/internal/stdio_impl.h",
+            "src/stdio/{stdin,stdout,stderr}.c",
+            "src/stdio/{__stdio_read,__uflow,__toread}.c",
+            "src/stdio/{__stdio_write,__overflow,__towrite}.c",
+            "const BUFSIZ: usize = 1024;",
+            "const UNGET: usize = 8;",
+            "The only valid non-null `FILE *` arguments",
+            "terminal-sensitive automatic",
+            "ordinary-exit flushing",
+            "raw_syscall::SYS_READ",
+            "raw_syscall::SYS_READV",
+            "raw_syscall::SYS_WRITE",
+        ):
+            self.assertIn(required, implementation)
+        for probe in (header_c_probe, header_cxx_probe):
+            for symbol in (*data_symbols, *function_symbols):
+                self.assertIn(symbol, probe)
+        for required in (
+            "sizeof(FILE) == 1",
+            "__alignof__(FILE) == 1",
+            "CRABC_STDIO_STANDARD_C99_STRICT",
+            "CRABC_STDIO_STANDARD_C11_POSIX_2008",
+            "CRABC_STDIO_STANDARD_REQUIRE_FILENO_HIDDEN",
+        ):
+            self.assertIn(required, header_c_probe)
+        for required in (
+            "CRABC_STDIO_STANDARD_CXX17_STRICT",
+            "CRABC_STDIO_STANDARD_CXX17_POSIX_2008",
+            "unmangled C spellings",
+            "crabc_stdio_fileno_reference",
+        ):
+            self.assertIn(required, header_cxx_probe)
+        for required in (
+            "c99-strict",
+            "c11-strict",
+            "c11-posix-2008",
+            "cxx17-strict",
+            "cxx17-posix-2008",
+            "-nostdinc",
+            "-nostdinc++",
+            "check_cxx_c_linkage",
+            "one-byte opaque struct _IO_FILE placeholder",
+            "strict fileno hidden witness",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "CRABC_STDIO_STANDARD_FREESTANDING",
+            "check_standard_globals",
+            "check_stdin_buffering_and_ebadf",
+            "check_stdout_explicit_flush",
+            "check_stderr_immediate",
+            "expect_pipe_empty",
+            "fflush_entry(stdout)",
+            "fflush_entry(NULL)",
+            "No fflush call precedes this read",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "untouched Linux entry stack",
+            "__crabc_x86_static_tls_bootstrap",
+            "Linux x86-64 exit_group",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_stdio_standard_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+            "__crabc_x86_static_tls_bootstrap",
+            "fopen fdopen freopen fclose",
+            "ordinary-exit",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-stdio-standard-streams"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-standard"',
+            parity_ledger,
+        )
+        self.assertIn("stdio-standard-header-abi", dispatcher)
+        self.assertIn("libc-stdio-standard", dispatcher)
+        self.assertIn("run_stdio_standard_header_abi()", dispatcher)
 
     def test_libc_static_c_abi_intmax_arithmetic_artifact_stays_narrow(self) -> None:
         static_root = (

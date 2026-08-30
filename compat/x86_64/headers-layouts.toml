@@ -110,6 +110,18 @@ headers = [
 ]
 
 [[probe]]
+id = "stdio-standard"
+command = "./scripts/dev-x86_64.sh stdio-standard-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/stdio_standard_header_abi_probe.c",
+  "compat/x86_64/stdio_standard_header_abi_probe.cpp",
+  "compat/x86_64/run_stdio_standard_header_abi.sh",
+]
+headers = ["include/stdio.h"]
+
+[[probe]]
 id = "ctype"
 command = "./scripts/dev-x86_64.sh ctype-header-abi"
 state = "required"
