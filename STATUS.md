@@ -937,8 +937,8 @@ sequential client-free-only. The reserved fixtures cover both medium and
 direct-small prefixes, prefix-covered direct-small reuse without a direct
 commit, direct page-area commitment, and failed-commit mapped reabandonment
 before a same-candidate retry; non-direct-small, malformed or out-of-profile
-no-immediate direct-small metadata, and aggregate registry members remain
-sequential client-free-only.
+no-immediate direct-small metadata, and aggregate registry members outside the
+separately recorded final mapped-regular edge remain sequential client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -1403,8 +1403,12 @@ exact page/span/bin fact before registry construction and returns the existing
 one-page mapped route. Its reclaim revalidates the immediate head and cannot
 extend, commit, scan, or take a fresh-page fallback. Fresh engines may
 serialize independent PageMap operations between client frees, but no current
-path can adopt, reclaim, or requeue an aggregate registry member, including a
-registry later reduced to one member by a client free. The general registry
+path can adopt, reclaim, or requeue a live multi-member aggregate registry.
+After every sibling and singleton tail has terminally released, its one final
+mapped regular member may instead take the separately recorded consuming
+bitmap-claim edge into a fresh later-main engine; every other aggregate member
+remains sequential client-free-only. That edge neither scans alternative
+members nor exposes general reclaim or requeue authority. The general registry
 accepts unchanged full regular medium/large/direct-small/non-direct-small
 members as its source-unmapped tail plus live arena and OS singletons as their
 separate raw-terminal classes. A live OS singleton requires an initially empty
