@@ -7120,11 +7120,11 @@ unsafe fn native_free_detached_route_entry_phase_a(
 /// Queries existing detached routes by the input pointer before caller-local
 /// native ownership dispatch.
 ///
-/// This Phase-A bridge is deliberately caller-neutral: it accepts only the
-/// allocation pointer, exposes no route/client/page capability, and restores
-/// each nonmatching entry unchanged. It must be deleted when the common
-/// PageMap classification and abandoned-state dispatch replace this temporary
-/// registry query.
+/// `CRABC-MI-PHASE-A-CALLER-IDENTITY-FREE-BRIDGE`: this temporary Phase-A
+/// bridge accepts only the allocation pointer, exposes no route/client/page
+/// capability, and restores each nonmatching entry unchanged. Delete it when
+/// common PageMap classification and abandoned-state dispatch replace this
+/// temporary registry query.
 unsafe fn native_free_detached_route_phase_a(
     block: core::ptr::NonNull<u8>,
 ) -> NativePostExitRouteFreeResult {
