@@ -113,8 +113,8 @@ assert_cxx_c_linkage() {
     local symbols
     local symbol
     local -a required_symbols=(
-        pthread_create pthread_self pthread_equal
-        thrd_create thrd_join thrd_exit thrd_current thrd_equal
+        pthread_create pthread_detach pthread_self pthread_equal
+        thrd_create thrd_detach thrd_join thrd_exit thrd_current thrd_equal
     )
 
     symbols="$(nm -u "$object" | awk '{print $NF}')"
@@ -125,7 +125,7 @@ assert_cxx_c_linkage() {
         printf '%s\n' "$symbols" | grep -Fxq "$symbol" ||
             fail "$label does not request C-linkage symbol $symbol"
     done
-    if printf '%s\n' "$symbols" | grep -Eq '(^|.*)_Z.*(pthread_create|pthread_self|pthread_equal|pthread_sigmask|thrd_create|thrd_join|thrd_exit|thrd_current|thrd_equal)'; then
+    if printf '%s\n' "$symbols" | grep -Eq '(^|.*)_Z.*(pthread_create|pthread_detach|pthread_self|pthread_equal|pthread_sigmask|thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_current|thrd_equal)'; then
         fail "$label requests a mangled C++ pthread/C11 symbol"
     fi
 }

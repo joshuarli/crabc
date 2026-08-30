@@ -221,7 +221,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate retains a dynamic TLS model or unowned runtime dependency"
 fi
-for unselected in clone __clone pthread_detach \
+for unselected in clone __clone \
     pthread_cancel pthread_key_create pthread_mutex_init malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$candidate_symbols"; then
         fail "candidate unexpectedly selects ${unselected}"

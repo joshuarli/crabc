@@ -11,7 +11,7 @@
 //!   clone failure.
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
 //!   result-before-thread-exit ordering. Its cleanup, TSD, signal, robust-list,
-//!   thread-list, detach, and last-thread paths remain explicitly unselected.
+//!   thread-list, and last-thread paths remain explicitly unselected.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -19,11 +19,15 @@
 //! - `src/thread/pthread_join.c` supplies the essential wait-before-reclaim
 //!   ordering: a joiner waits for `CLONE_CHILD_CLEARTID` to clear the worker
 //!   TID before it releases worker-owned memory.
+//! - `src/thread/pthread_detach.c` supplies the single successful
+//!   joinable-to-detached ownership transition. This selected artifact keeps
+//!   musl's prompt detach shape but uses its established AArch64-style later
+//!   external reaper because a worker cannot unmap its own active stack/TLS.
 //!
-//! The admitted contract is exactly one default-attribute, joinable worker:
+//! The admitted contract is exactly one default-attribute worker:
 //! `pthread_create(NULL)`, a normal returning start routine or selected-worker
-//! `pthread_exit`, and one `pthread_join`. The private C11 lifecycle sibling
-//! reuses this allocation/clone/join seam through a distinct typed
+//! `pthread_exit`, and one `pthread_join` **or** `pthread_detach`. The private
+//! C11 lifecycle sibling reuses this allocation/clone/join/detach seam through a distinct typed
 //! `int (*)(void *)` start mode; it never reinterprets that callback as the
 //! pointer-returning pthread type. The child gets a distinct copy of the
 //! libc-owned Static Initial TLS v1 final-executable image, including its
@@ -34,8 +38,14 @@
 //! scan/result publication with join withdrawal, and validates `%fs:0`, Linux
 //! `gettid`, and the still-live child-TID word so a foreign thread cannot turn
 //! a copied TLS base into a control-record write after task-ID reuse. It is
-//! intentionally neither signal-safe nor reentrant. The leaf intentionally
-//! does **not** provide attrs, detach,
+//! intentionally neither signal-safe nor reentrant. A successful selected
+//! detach is prompt: it changes ownership to detached without waiting for the
+//! child. A later selected create/join boundary reclaims the detached
+//! TLS/control mappings only after `CLONE_CHILD_CLEARTID` has cleared the
+//! child TID. This follows the existing AArch64 runtime's safe external
+//! reaping shape; it is not a claim of general detached-thread reclamation or
+//! full pthread parity. The leaf intentionally does **not** provide attrs,
+//! detached-at-create attributes,
 //! `pthread_exit` cleanup/TSD/main-thread behavior, cancellation, keys/TSD,
 //! synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
 //! coordination, thread lists, fork/atfork, custom stacks, guards, or general
@@ -246,6 +256,39 @@ pub(super) struct SelectedWorkerJoinResult {
     pub(super) kind: SelectedWorkerResultKind,
 }
 
+/// One selected worker's one-winner post-create ownership state.
+///
+/// `Joinable` is the only claimable state. A joiner owns `JoinClaimed` until
+/// it has observed clear-child-tid and reclaimed the mappings. A detacher
+/// publishes `Detached` without waiting; a later external selected lifecycle
+/// call may change that state to `DetachedReclaiming` after it observes the
+/// kernel-cleared child TID. The worker itself never releases its stack or TLS
+/// mapping: it is still executing with both while it exits.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SelectedWorkerLifecycleState {
+    Joinable,
+    JoinClaimed,
+    Detached,
+    DetachedReclaiming,
+}
+
+impl SelectedWorkerLifecycleState {
+    const JOINABLE: u8 = 0;
+    const JOIN_CLAIMED: u8 = 1;
+    const DETACHED: u8 = 2;
+    const DETACHED_RECLAIMING: u8 = 3;
+
+    #[inline]
+    const fn encode(self) -> u8 {
+        match self {
+            Self::Joinable => Self::JOINABLE,
+            Self::JoinClaimed => Self::JOIN_CLAIMED,
+            Self::Detached => Self::DETACHED,
+            Self::DetachedReclaiming => Self::DETACHED_RECLAIMING,
+        }
+    }
+}
+
 /// One opaque pthread handle for the admitted lifecycle.
 ///
 /// The handle has no public Rust representation. C observes it only through
@@ -261,9 +304,11 @@ struct ThreadControl {
     // the record visible with this release flag before clone. The child first
     // acquires it, rather than treating clone as a Rust memory-ordering edge.
     start_ready: AtomicU8,
-    // One joiner claims a still-live handle before waiting. It is private
-    // coordination only; repeated/concurrent joining is outside this slice.
-    join_claimed: AtomicU8,
+    // A joiner or detacher makes the sole state transition out of Joinable
+    // while the registry lock still proves this control mapping is live.
+    // Detached workers retain their live registry entry until a later
+    // external reaper has observed the kernel's clear-child-tid write.
+    lifecycle: AtomicU8,
     // A selected child publishes its callback result and its typed result tag
     // before `finished`. The tag prevents cross-mode explicit exits from
     // being decoded as the other API's public result representation.
@@ -463,15 +508,14 @@ fn publish_selected_worker(
     unlock_selected_worker_registry();
 }
 
-/// Withdraw a selected-worker registry entry without touching its mapping.
+/// Withdraw a selected-worker registry entry while its registry lock is held.
 ///
 /// A failed compare-and-exchange deliberately retains the entry rather than
 /// risking a corruption-driven release of some other worker's identity. A
 /// successful return guarantees that no pthread_exit scanner can retain this
 /// mapping beyond the lock, so its caller may subsequently unmap it.
-fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) -> bool {
-    lock_selected_worker_registry();
-    let released = if let Some(slot) = SELECTED_WORKER_REGISTRY.get(registry_slot) {
+fn release_selected_worker_locked(registry_slot: usize, control: *mut ThreadControl) -> bool {
+    if let Some(slot) = SELECTED_WORKER_REGISTRY.get(registry_slot) {
         if slot
             .control
             .compare_exchange(
@@ -490,7 +534,13 @@ fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) ->
         }
     } else {
         false
-    };
+    }
+}
+
+/// Withdraw a selected-worker registry entry without touching its mapping.
+fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) -> bool {
+    lock_selected_worker_registry();
+    let released = release_selected_worker_locked(registry_slot, control);
     unlock_selected_worker_registry();
     released
 }
@@ -501,13 +551,20 @@ fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) ->
 /// opaque handle, matching musl x86's `__pthread_self()` value and C's raw
 /// `pthread_equal` macro. This lookup remains under the same registry lock
 /// that withdraws entries before `munmap`, so the returned control pointer
-/// cannot name a reclaimed mapping. Claiming `join_claimed` while still
-/// locked then gives this joiner exclusive ownership until it either releases
-/// the claim on an error or completes reclamation.
-fn claim_selected_worker_by_thread_pointer(thread: *mut c_void) -> Option<*mut ThreadControl> {
+/// cannot name a reclaimed mapping. Claiming a non-joinable lifecycle state
+/// while still locked gives that caller exclusive ownership until it either
+/// releases a join claim on an error or completes reclamation.
+fn claim_selected_worker_by_thread_pointer(
+    thread: *mut c_void,
+    claimed_state: SelectedWorkerLifecycleState,
+) -> Option<*mut ThreadControl> {
     if thread.is_null() {
         return None;
     }
+    debug_assert!(matches!(
+        claimed_state,
+        SelectedWorkerLifecycleState::JoinClaimed | SelectedWorkerLifecycleState::Detached
+    ));
 
     let thread_pointer = thread as usize;
     lock_selected_worker_registry();
@@ -525,8 +582,13 @@ fn claim_selected_worker_by_thread_pointer(thread: *mut c_void) -> Option<*mut T
         // control record. The record is therefore live for the atomic claim.
         if unsafe {
             (*control)
-                .join_claimed
-                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .lifecycle
+                .compare_exchange(
+                    SelectedWorkerLifecycleState::Joinable.encode(),
+                    claimed_state.encode(),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
         }
         .is_ok()
         {
@@ -536,6 +598,141 @@ fn claim_selected_worker_by_thread_pointer(thread: *mut c_void) -> Option<*mut T
     }
     unlock_selected_worker_registry();
     claimed
+}
+
+/// Release a join claim before the worker has been withdrawn from the registry.
+///
+/// A detachment never uses this transition: once detached, only the external
+/// clear-child-tid reaper may own its mappings.
+unsafe fn release_join_claim(control: *mut ThreadControl) {
+    // SAFETY: the joining caller still owns a registry-published control
+    // record on each error path that reaches this helper.
+    let _ = unsafe {
+        (*control).lifecycle.compare_exchange(
+            SelectedWorkerLifecycleState::JoinClaimed.encode(),
+            SelectedWorkerLifecycleState::Joinable.encode(),
+            Ordering::Release,
+            Ordering::Relaxed,
+        )
+    };
+}
+
+/// Claim one exited detached worker while its registry mapping is still live.
+///
+/// The lock covers the lookup, `Detached -> DetachedReclaiming` transition,
+/// second clear-child-tid observation, and registry withdrawal. This prevents
+/// an explicit-exit publisher from retaining a raw control pointer while the
+/// external reaper begins releasing its TLS/control mappings.
+fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
+    lock_selected_worker_registry();
+    let mut claimed = None;
+    for (registry_slot, slot) in SELECTED_WORKER_REGISTRY.iter().enumerate() {
+        let control = slot.control.load(Ordering::Acquire);
+        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
+            continue;
+        }
+        let control = control as *mut ThreadControl;
+        // SAFETY: this registry entry remains published while the lock is
+        // held, so every control-field access through it is valid.
+        let detached = unsafe {
+            (*control).lifecycle.load(Ordering::Acquire)
+                == SelectedWorkerLifecycleState::Detached.encode()
+        };
+        if !detached {
+            continue;
+        }
+        if unsafe { (*control).child_tid.load(Ordering::Acquire) } != 0 {
+            continue;
+        }
+        let claimed_reclamation = unsafe {
+            (*control).lifecycle.compare_exchange(
+                SelectedWorkerLifecycleState::Detached.encode(),
+                SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+        };
+        if claimed_reclamation.is_err() {
+            continue;
+        }
+        // `CLONE_CHILD_CLEARTID` cannot restore a nonzero TID, but keep this
+        // defensive second observation next to the ownership transition so a
+        // future clone-path change cannot free a still-running child's stack.
+        if unsafe { (*control).child_tid.load(Ordering::Acquire) } != 0 {
+            let _ = unsafe {
+                (*control).lifecycle.compare_exchange(
+                    SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
+                    SelectedWorkerLifecycleState::Detached.encode(),
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                )
+            };
+            continue;
+        }
+        if release_selected_worker_locked(registry_slot, control) {
+            // The selected worker can no longer reach this record through its
+            // explicit-exit identity scan, and child_tid==0 proves it is no
+            // longer executing on either worker-owned mapping.
+            unsafe { (*control).registry_retired.store(1, Ordering::Release) };
+            claimed = Some(control);
+            break;
+        }
+        let _ = unsafe {
+            (*control).lifecycle.compare_exchange(
+                SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
+                SelectedWorkerLifecycleState::Detached.encode(),
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+        };
+    }
+    unlock_selected_worker_registry();
+    claimed
+}
+
+/// Release mappings for a registry-withdrawn completed selected worker.
+///
+/// # Safety
+///
+/// `control` must remain mapped, be withdrawn from the registry, and have a
+/// zero `child_tid` observed after `CLONE_CHILD_CLEARTID`. The caller must not
+/// access it after this function successfully unmaps its control/stack range.
+unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Result<(), c_int> {
+    // SAFETY: the caller proves the record remains mapped for this first read.
+    let tls_block = unsafe { (*control).tls_block };
+    if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
+        // The caller's zero child-TID observation and prior registry
+        // withdrawal prove that neither the worker nor pthread_exit's scan can
+        // retain the private Static Initial TLS v1 mapping.
+        let tls_unmap_result = unsafe { static_tls::release_thread(tls_block) };
+        if is_linux_error(tls_unmap_result) {
+            return Err(positive_linux_error(tls_unmap_result));
+        }
+        unsafe { (*control).tls_released.store(1, Ordering::Release) };
+    }
+    let mapping = unsafe { (*control).mapping };
+    let mapping_size = unsafe { (*control).mapping_size };
+    let unmap_result = unsafe { unmap_worker(mapping, mapping_size) };
+    if is_linux_error(unmap_result) {
+        return Err(positive_linux_error(unmap_result));
+    }
+    Ok(())
+}
+
+/// Reap every detached selected worker whose kernel lifetime has ended.
+///
+/// This deliberately runs only at later selected lifecycle boundaries. It
+/// gives `pthread_detach`/`thrd_detach` their prompt ownership transition
+/// without asking an exiting worker to unmap the stack and TLS mapping it is
+/// still using. A cold unmap failure is fail-closed: the registry remains
+/// withdrawn and the private mappings are retained rather than republishing a
+/// pointer that might later be reclaimed concurrently.
+fn reap_finished_detached_selected_workers() {
+    while let Some(control) = claim_finished_detached_selected_worker() {
+        // SAFETY: the claim withdrew this zero-child-TID control record under
+        // the registry lock, so no selected worker can retain it now.
+        let _ = unsafe { reclaim_withdrawn_selected_worker(control) };
+    }
 }
 
 /// Publish one result only for the current admitted selected worker.
@@ -734,6 +931,12 @@ pub(super) unsafe fn create_selected_worker(
     if !static_tls::is_ready() {
         return ENOTSUP;
     }
+    // A detached child cannot release its active stack/TLS mappings itself.
+    // Reap only here at a later lifecycle boundary, after the kernel's
+    // clear-child-tid write proves any selected detached child has stopped
+    // using them. Creation remains bounded by the 64-slot registry even when
+    // a caller never joins detached workers.
+    reap_finished_detached_selected_workers();
     let tls_block = match unsafe { static_tls::allocate_thread() } {
         Some(block) => block,
         // The retained template stays immutable after `is_ready`; a later
@@ -768,7 +971,7 @@ pub(super) unsafe fn create_selected_worker(
             ThreadControl {
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
-                join_claimed: AtomicU8::new(0),
+                lifecycle: AtomicU8::new(SelectedWorkerLifecycleState::Joinable.encode()),
                 result: AtomicUsize::new(0),
                 result_kind: AtomicU8::new(SelectedWorkerResultKind::NONE),
                 finished: AtomicU8::new(0),
@@ -904,7 +1107,17 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 pub(super) unsafe fn join_selected_worker(
     thread: *mut c_void,
 ) -> Result<SelectedWorkerJoinResult, c_int> {
-    let Some(control) = claim_selected_worker_by_thread_pointer(thread) else {
+    if thread.is_null() {
+        return Err(EINVAL);
+    }
+    // A later join boundary may reclaim already-finished detached workers,
+    // but never touches a joinable worker or the handle this caller is about
+    // to claim.
+    reap_finished_detached_selected_workers();
+    let Some(control) = claim_selected_worker_by_thread_pointer(
+        thread,
+        SelectedWorkerLifecycleState::JoinClaimed,
+    ) else {
         return Err(EINVAL);
     };
 
@@ -916,7 +1129,7 @@ pub(super) unsafe fn join_selected_worker(
             break;
         }
         if child_tid < 0 {
-            unsafe { (*control).join_claimed.store(0, Ordering::Release) };
+            unsafe { release_join_claim(control) };
             return Err(EINVAL);
         }
         // CLONE_CHILD_CLEARTID wakes this shared (not FUTEX_PRIVATE) word as
@@ -936,7 +1149,7 @@ pub(super) unsafe fn join_selected_worker(
             if error == EAGAIN || error == EINTR {
                 continue;
             }
-            unsafe { (*control).join_claimed.store(0, Ordering::Release) };
+            unsafe { release_join_claim(control) };
             return Err(error);
         }
     }
@@ -956,7 +1169,7 @@ pub(super) unsafe fn join_selected_worker(
         // call into the following munmap, and a retry after a failed munmap
         // intentionally leaves the worker withdrawn.
         if !release_selected_worker(registry_slot, control) {
-            unsafe { (*control).join_claimed.store(0, Ordering::Release) };
+            unsafe { release_join_claim(control) };
             return Err(EINVAL);
         }
         unsafe { (*control).registry_retired.store(1, Ordering::Release) };
@@ -965,34 +1178,69 @@ pub(super) unsafe fn join_selected_worker(
     let worker_result = unsafe { (*control).result.load(Ordering::Relaxed) };
     let worker_result_kind =
         SelectedWorkerResultKind::decode(unsafe { (*control).result_kind.load(Ordering::Relaxed) });
-    let tls_block = unsafe { (*control).tls_block };
-    if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
-        // The clear-child-tid observation plus registry withdrawal above prove
-        // that neither a running worker nor the selected pthread_exit scan can
-        // retain this full Static Initial TLS v1 mapping. Release it before
-        // the control record so an unexpected control-map failure leaves a
-        // retryable handle with an explicit no-double-release state.
-        let tls_unmap_result = unsafe { static_tls::release_thread(tls_block) };
-        if is_linux_error(tls_unmap_result) {
-            unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-            return Err(positive_linux_error(tls_unmap_result));
-        }
-        unsafe { (*control).tls_released.store(1, Ordering::Release) };
-    }
-    let mapping = unsafe { (*control).mapping };
-    let mapping_size = unsafe { (*control).mapping_size };
-    let unmap_result = unsafe { unmap_worker(mapping, mapping_size) };
-    if is_linux_error(unmap_result) {
-        // An unexpected munmap failure leaves the handle live; permit a retry
-        // instead of claiming successful join/reclamation. Its registry entry
-        // stays withdrawn: a dead worker needs no future pthread_exit lookup.
-        unsafe { (*control).join_claimed.store(0, Ordering::Release) };
-        return Err(positive_linux_error(unmap_result));
+    // The zero child-TID observation plus registry withdrawal above prove that
+    // neither a running worker nor the selected pthread_exit scan can retain
+    // either private mapping. Once withdrawn, a cold reclaim failure stays
+    // fail-closed: there is no safe public retry path that republishes this
+    // opaque handle.
+    if let Err(error) = unsafe { reclaim_withdrawn_selected_worker(control) } {
+        return Err(error);
     }
     Ok(SelectedWorkerJoinResult {
         encoded_result: worker_result,
         kind: worker_result_kind,
     })
+}
+
+/// Detach one selected worker without waiting for its callback to finish.
+///
+/// The state transition is result-representation-neutral, so the typed C11
+/// sibling shares this seam without any function-pointer or result cast. A
+/// successful call makes `thread` non-joinable immediately. It deliberately
+/// performs no syscall or reclamation itself: the worker can still be using
+/// its stack and Static Initial TLS v1 mapping. A later selected create/join
+/// boundary reaps it only after `CLONE_CHILD_CLEARTID` has cleared the child
+/// TID. This is a private bounded lifecycle, not a claim of general pthread
+/// detached-thread semantics.
+///
+/// # Safety
+///
+/// `thread` must be the opaque TP returned by one selected pthread or C11
+/// create call. The caller must not concurrently use that handle for another
+/// ownership operation. Following a successful detach, it no longer denotes
+/// an admitted joinable lifecycle handle. The candidate fixture's one-winner
+/// ownership races exercise this private registry's fail-closed lifetime
+/// boundary only; they do not select a concurrent public pthread/C11 contract.
+#[inline(always)]
+pub(super) unsafe fn detach_selected_worker(thread: *mut c_void) -> c_int {
+    if thread.is_null() {
+        return EINVAL;
+    }
+    let Some(_) = claim_selected_worker_by_thread_pointer(
+        thread,
+        SelectedWorkerLifecycleState::Detached,
+    ) else {
+        return EINVAL;
+    };
+    0
+}
+
+/// Detach one selected static pthread/C11 worker.
+///
+/// This boundary has the same private selected-worker requirements as
+/// [`pthread_create`] and does not accept detached attributes or arbitrary
+/// system pthread handles. It reports a positive errno and never writes the
+/// calling thread's `errno` slot.
+///
+/// # Safety
+///
+/// `thread` must be one selected opaque thread handle. After a successful
+/// return it is no longer valid for an admitted join operation.
+#[no_mangle]
+pub unsafe extern "C" fn pthread_detach(thread: *mut c_void) -> c_int {
+    // SAFETY: this C boundary preserves the selected opaque-handle ownership
+    // contract documented above.
+    unsafe { detach_selected_worker(thread) }
 }
 
 /// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].

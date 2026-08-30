@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has six private static artifacts inside still-planned
+The x86 lane now has seven private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -49,8 +49,18 @@ preserves normal and explicit signed `int` results, including `INT_MIN` and
 The pinned-musl portion covers only those standard C11 paths; candidate-only
 null-start and bidirectional unsupported C11/pthread-exit crossover checks
 fail closed after reclamation without decoding an incompatible result. It does
-not select detach, C11 synchronization/TSS/cancellation, dynamic or loader
-TLS, or general pthread/C11 behavior. The CRT-composition artifact,
+not select detachment beyond the separately recorded private artifact, C11
+synchronization/TSS/cancellation, dynamic or loader TLS, or general
+pthread/C11 behavior. The separate `./scripts/dev-x86_64.sh
+libc-pthread-detach` artifact selects only prompt state-only
+`pthread_detach`/`thrd_detach` ownership for those selected workers. A
+successful detach neither waits nor reclaims the still-live worker mappings;
+only a later selected create/join boundary may reap an exited detached worker
+after `CLONE_CHILD_CLEARTID` clears its child TID. Its pinned-musl comparison
+covers external workers before and after the fixture's callback-completion
+signal, not a detach call after kernel exit. Self-detach, null/repeated/racing
+ownership attempts, join-after-detach, and 64-slot delayed reuse are
+candidate-only diagnostics, not pthread/C11 parity. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls

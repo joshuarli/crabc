@@ -176,6 +176,7 @@ pread
 prlimit
 pselect
 pthread_create
+pthread_detach
 pthread_equal
 pthread_exit
 pthread_join
@@ -265,6 +266,7 @@ tcsetattr
 tcsetwinsize
 thrd_create
 thrd_current
+thrd_detach
 thrd_equal
 thrd_exit
 thrd_join

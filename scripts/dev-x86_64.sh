@@ -173,6 +173,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-create-join-tls  run the static x86 crabc-libc private create/exit/join TLS slice
   libc-pthread-identity  run the static x86 crabc-libc pthread/C11 identity alias slice
   libc-c11-lifecycle  run the static x86 crabc-libc bounded C11 lifecycle slice
+  libc-pthread-detach  run the static x86 crabc-libc bounded pthread/C11 detach slice
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-child-reaping  run the static x86 crabc-libc child-reaping slice
@@ -252,7 +253,7 @@ registry validates an explicit-exit caller's `%fs:0`, kernel `gettid`, and
 still-live clear-child-tid word, and serializes its publication with join
 withdrawal before reclamation. The
 candidate-only capacity route exhausts all 64 slots and proves reuse after
-joining. It is not a general pthread runtime: attributes, detach, pthread-exit
+joining. It is not a general pthread runtime: attributes, pthread-exit
 cleanup/TSD/main-thread/signal-handler behavior, cancellation, synchronization,
 dynamic TLS/DTV, loader/CRT integration, and public x86 support remain outside
 this artifact. Its handle identity and self/equal behavior are selected only
@@ -270,8 +271,19 @@ typed `thrd_create`/`thrd_join`/`thrd_exit` callback/result transport over the
 same TP-handle and Static Initial TLS v1 worker seam, including normal and
 explicit signed-int return paths, a null join result, two live workers, and a
 candidate-only 64-worker admission/reuse check. It does not select C11
-detach/sleep/yield, synchronization, TSS, cancellation, dynamic TLS, CRT,
+sleep/yield, synchronization, TSS, cancellation, dynamic TLS, CRT,
 loader, sysroot, C11-family completion, or public x86 support.
+`libc-pthread-detach` is a separate static project-header fixture that first
+runs comparable pthread/C11 detach routes through pinned musl, then links only
+the selected archive. It selects prompt `pthread_detach`/`thrd_detach`
+ownership transitions over the existing selected worker seam, with later
+selected create/join reaping only after `CLONE_CHILD_CLEARTID`. Its comparable
+routes run before and after the fixture's callback-completion signal, not after
+kernel exit; candidate-only checks cover self-detach, null/repeated-handle
+rejection, ownership races, and 64-slot reuse. It does not select detached-at-create
+attributes, a general pthread/C11 runtime, cancellation, TSS, synchronization,
+dynamic TLS, CRT, loader, sysroot, C11-family completion, or public x86
+support.
 `libc-termios-control` exercises the same archive through a
 freestanding project-header C fixture after an equivalent pinned-musl run. It
 selects only fixed baud/raw helpers, named attribute/queue/flow/break requests,
@@ -2118,6 +2130,10 @@ run_libc_c11_lifecycle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_c11_lifecycle.sh
 }
 
+run_libc_pthread_detach_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
+}
+
 run_libc_static_tls_v1_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_static_tls_v1.sh
 }
@@ -2241,6 +2257,7 @@ case "$command" in
     string-copy-header-abi) ;;
     random-entropy-header-abi) ;;
     libc-pthread-identity) ;;
+    libc-pthread-detach) ;;
     libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     *)
         usage >&2
@@ -2988,6 +3005,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-c11-lifecycle takes no arguments"
         ensure_image
         run_libc_c11_lifecycle_probe
+        ;;
+    libc-pthread-detach)
+        [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"
+        ensure_image
+        run_libc_pthread_detach_probe
         ;;
     libc-static-tls-v1)
         [ "$#" -eq 0 ] || fail "libc-static-tls-v1 takes no arguments"

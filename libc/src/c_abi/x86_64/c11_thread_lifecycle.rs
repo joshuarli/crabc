@@ -20,21 +20,24 @@
 //!   the explicitly signed encode/decode helpers.
 //! - `src/thread/thrd_exit.c` supplies the C11 `int` result conversion before
 //!   the selected worker exits.
+//! - `src/thread/thrd_detach.c` supplies the `thrd_success`/`thrd_error`
+//!   translation around pthread-style lifetime detachment.
 //!
 //! The admitted contract is one valid C11 callback, a TP-as-`thrd_t` handle,
-//! one join, and either a normal callback return or `thrd_exit`. Normal and
-//! explicit exit preserve every signed `int` result, including `INT_MIN` and
-//! `INT_MAX`, through the sibling's private pointer-sized result word. The
-//! shared worker seam starts each child from an independent Static Initial TLS
-//! v1 image, retains its `%fs:0` identity, and uses the established
-//! clear-child-tid/futex-before-reclaim lifecycle. It never changes the
-//! creator's `errno`: C11's selected errors use only `thrd_*` statuses.
+//! one join **or** detach, and either a normal callback return or `thrd_exit`.
+//! Normal and explicit exit preserve every signed `int` result, including
+//! `INT_MIN` and `INT_MAX`, through the sibling's private pointer-sized result
+//! word when joined. A successful detach is prompt and result-neutral; the
+//! sibling's later selected create/join boundary reclaims mappings only after
+//! `CLONE_CHILD_CLEARTID` clears the child TID. The shared worker seam starts
+//! each child from an independent Static Initial TLS v1 image, retains its
+//! `%fs:0` identity, and never changes the creator's `errno`: C11's selected
+//! errors use only `thrd_*` statuses.
 //!
-//! This leaf intentionally excludes `thrd_detach`, `thrd_sleep`,
-//! `thrd_yield`, `call_once`, mutexes, conditions, TSS keys/destructors,
-//! cancellation, attributes, detached lifecycle, dynamic/loader TLS, a full
-//! TCB, CRT/sysroot integration, a crabc-rs surface, C11-family completion,
-//! and public x86 support.
+//! This leaf intentionally excludes `thrd_sleep`, `thrd_yield`, `call_once`,
+//! mutexes, conditions, TSS keys/destructors, cancellation, attributes and
+//! detached-at-create lifecycle, dynamic/loader TLS, a full TCB, CRT/sysroot
+//! integration, a crabc-rs surface, C11-family completion, and public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C11 lifecycle leaf requires little-endian Linux/x86-64");
@@ -61,7 +64,8 @@ const THRD_NOMEM: c_int = 3;
 ///
 /// This C ABI cannot validate the output pointer, callback code, or argument
 /// lifetime. The callback must return normally or call this leaf's `thrd_exit`;
-/// no detached, cancellation, or general C11 lifecycle behavior is selected.
+/// no detached-at-create, cancellation, or general C11 lifecycle behavior is
+/// selected.
 #[no_mangle]
 pub unsafe extern "C" fn thrd_create(
     thread: *mut *mut c_void,
@@ -126,12 +130,34 @@ pub unsafe extern "C" fn thrd_join(thread: *mut c_void, result: *mut c_int) -> c
     THRD_SUCCESS
 }
 
+/// Detach one selected C11 worker with a prompt ownership transition.
+///
+/// This shares the sibling's result-neutral selected ownership state: it does
+/// not reinterpret a C11 result as a pthread pointer, wait for the worker, or
+/// reclaim a still-live stack/TLS mapping. A later selected create/join
+/// boundary reaps an exited detached worker after `CLONE_CHILD_CLEARTID`.
+///
+/// # Safety
+///
+/// `thread` must be a selected opaque handle. After success, it no longer
+/// denotes an admitted joinable C11 lifecycle handle.
+#[no_mangle]
+pub unsafe extern "C" fn thrd_detach(thread: *mut c_void) -> c_int {
+    // SAFETY: this C11 boundary retains the selected opaque-handle ownership
+    // contract and maps every selected pthread-style failure to thrd_error.
+    match unsafe { pthread_create_join::detach_selected_worker(thread) } {
+        0 => THRD_SUCCESS,
+        _ => THRD_ERROR,
+    }
+}
+
 /// End the current selected C11 worker with its exact signed `int` result.
 ///
 /// # Safety
 ///
 /// This is valid only for a callback created through [`thrd_create`]. The
-/// callback must not access any object after this call; it never returns.
+/// callback must not access any object after this call; it never returns. A
+/// detached worker's result is deliberately discarded.
 #[no_mangle]
 #[inline(never)]
 pub unsafe extern "C" fn thrd_exit(result: c_int) -> ! {

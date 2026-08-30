@@ -3998,6 +3998,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "src/thread/pthread_create.c::__pthread_exit",
         "src/thread/x86_64/clone.s::__clone",
         "src/thread/pthread_join.c",
+        "src/thread/pthread_detach.c",
         "struct ThreadControl",
         "PTHREAD_CLONE_FLAGS",
         "CLONE_SETTLS",
@@ -4021,6 +4022,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "claim_selected_worker_by_thread_pointer",
         "publish_current_selected_worker_result",
         "release_selected_worker",
+        "release_selected_worker_locked",
+        "reclaim_withdrawn_selected_worker",
+        "reap_finished_detached_selected_workers",
+        "SelectedWorkerLifecycleState",
+        "DetachedReclaiming",
         "pthread_identity::current_thread_pointer",
         "current_linux_thread_id",
         "raw_syscall::SYS_GETTID",
@@ -4030,6 +4036,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_create",
         "pthread_exit",
         "pthread_join",
+        "pthread_detach",
         "tls_block.thread_pointer().cast()",
         "ENOTSUP",
     ):
@@ -4057,10 +4064,15 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             pthread_create_join_text,
         )
     )
-    if pthread_create_join_exports != {"pthread_create", "pthread_exit", "pthread_join"}:
+    if pthread_create_join_exports != {
+        "pthread_create",
+        "pthread_exit",
+        "pthread_join",
+        "pthread_detach",
+    }:
         errors.append(
             "libc/src/c_abi/x86_64/pthread_create_join.rs: bounded static "
-            "pthread worker must export only pthread_create, pthread_exit, and pthread_join"
+            "pthread worker must export only pthread_create, pthread_exit, pthread_join, and pthread_detach"
         )
     public_pthread_create_marker = 'pub unsafe extern "C" fn pthread_create'
     public_pthread_create_end = (
@@ -4101,9 +4113,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_join_text = pthread_create_join_text.split(selected_join_marker, 1)[1].split(
             "/// Join one normal-returning", 1
         )[0]
-        join_claim_marker = "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
+        join_claim_marker = "claim_selected_worker_by_thread_pointer("
         if (
             join_claim_marker not in pthread_join_text
+            or "SelectedWorkerLifecycleState::JoinClaimed" not in pthread_join_text
             or "(*control)" not in pthread_join_text
             or pthread_join_text.index(join_claim_marker)
             > pthread_join_text.index("(*control)")
@@ -4115,32 +4128,88 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             )
         if (
             "release_selected_worker" not in pthread_join_text
-            or "static_tls::release_thread(tls_block)" not in pthread_join_text
-            or "unmap_worker" not in pthread_join_text
+            or "reclaim_withdrawn_selected_worker(control)" not in pthread_join_text
             or pthread_join_text.index("release_selected_worker")
-            > pthread_join_text.index("unmap_worker")
-            or pthread_join_text.index("static_tls::release_thread(tls_block)")
-            > pthread_join_text.index("unmap_worker")
+            > pthread_join_text.index("reclaim_withdrawn_selected_worker(control)")
         ):
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_create_join.rs: join must withdraw "
-                "the selected worker registry and release its full TLS block before "
-                "unmapping its control record"
+                "the selected worker registry before shared completed-worker reclamation"
             )
-        else:
-            tls_reclamation = pthread_join_text.split("let tls_block", 1)[1].split(
-                "let mapping", 1
-            )[0]
-            if (
-                "tls_released.load(Ordering::Acquire)" not in tls_reclamation
-                or "tls_released.store(1, Ordering::Release)" not in tls_reclamation
-                or tls_reclamation.index("static_tls::release_thread(tls_block)")
-                > tls_reclamation.index("tls_released.store(1, Ordering::Release)")
-            ):
-                errors.append(
-                    "libc/src/c_abi/x86_64/pthread_create_join.rs: join must guard "
-                    "full TLS reclamation against a retry double release"
-                )
+    reclaim_marker = "unsafe fn reclaim_withdrawn_selected_worker"
+    reclaim_end = "/// Reap every detached selected worker"
+    if reclaim_marker not in pthread_create_join_text or reclaim_end not in pthread_create_join_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+            "is missing its shared completed-worker reclamation boundary"
+        )
+    else:
+        tls_reclamation = pthread_create_join_text.split(reclaim_marker, 1)[1].split(
+            reclaim_end, 1
+        )[0]
+        if (
+            "tls_released.load(Ordering::Acquire)" not in tls_reclamation
+            or "tls_released.store(1, Ordering::Release)" not in tls_reclamation
+            or "static_tls::release_thread(tls_block)" not in tls_reclamation
+            or "unmap_worker" not in tls_reclamation
+            or tls_reclamation.index("static_tls::release_thread(tls_block)")
+            > tls_reclamation.index("unmap_worker")
+            or tls_reclamation.index("static_tls::release_thread(tls_block)")
+            > tls_reclamation.index("tls_released.store(1, Ordering::Release)")
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: completed-worker "
+                "reclamation must release full TLS once before control-map unmapping"
+            )
+    detach_marker = "pub(super) unsafe fn detach_selected_worker"
+    detach_end = "/// Detach one selected static pthread/C11 worker"
+    if detach_marker not in pthread_create_join_text or detach_end not in pthread_create_join_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+            "is missing its detach ownership boundary"
+        )
+    else:
+        detach_text = pthread_create_join_text.split(detach_marker, 1)[1].split(detach_end, 1)[0]
+        if (
+            "SelectedWorkerLifecycleState::Detached" not in detach_text
+            or "claim_selected_worker_by_thread_pointer" not in detach_text
+            or "reap_finished_detached_selected_workers" in detach_text
+            or "reclaim_withdrawn_selected_worker" in detach_text
+            or "raw_syscall" in detach_text
+            or "unmap_worker" in detach_text
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: detach must remain "
+                "a prompt state-only ownership transition"
+            )
+    detached_claim_marker = "fn claim_finished_detached_selected_worker"
+    detached_claim_end = "/// Release mappings for a registry-withdrawn"
+    if (
+        detached_claim_marker not in pthread_create_join_text
+        or detached_claim_end not in pthread_create_join_text
+    ):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_create_join.rs: selected pthread worker "
+            "is missing its clear-child-tid detached reaper claim"
+        )
+    else:
+        detached_claim_text = pthread_create_join_text.split(detached_claim_marker, 1)[1].split(
+            detached_claim_end, 1
+        )[0]
+        required_detached_order = (
+            "SelectedWorkerLifecycleState::Detached.encode()",
+            "child_tid.load(Ordering::Acquire)",
+            "SelectedWorkerLifecycleState::DetachedReclaiming.encode()",
+            "release_selected_worker_locked",
+        )
+        if any(marker not in detached_claim_text for marker in required_detached_order) or any(
+            detached_claim_text.index(left) > detached_claim_text.index(right)
+            for left, right in zip(required_detached_order, required_detached_order[1:])
+        ):
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_create_join.rs: detached reaping must "
+                "claim only a clear-child-tid detached worker before withdrawal"
+            )
     explicit_exit_publish_marker = "fn publish_current_selected_worker_result"
     explicit_exit_publish_end = "/// Map one control/stack backing range"
     if (
@@ -4207,6 +4276,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         )[0]
         required_order = (
             "static_tls::is_ready()",
+            "reap_finished_detached_selected_workers()",
             "static_tls::allocate_thread()",
             "start_ready.store(1, Ordering::Release)",
             "__crabc_x86_pthread_clone(",
@@ -4284,6 +4354,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "src/thread/pthread_create.c::start_c11",
         "src/thread/thrd_join.c",
         "src/thread/thrd_exit.c",
+        "src/thread/thrd_detach.c",
         "C11StartRoutine",
         "SelectedWorkerStart::C11",
         "THRD_SUCCESS",
@@ -4292,6 +4363,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "fn thrd_create(",
         "fn thrd_join(",
         "fn thrd_exit(",
+        "fn thrd_detach(",
+        "detach_selected_worker",
         "exit_selected_c11_worker",
         "SelectedWorkerResultKind::C11",
         "decode_c11_result",
@@ -4311,13 +4384,17 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             c11_thread_lifecycle_text,
         )
     )
-    if c11_thread_lifecycle_exports != {"thrd_create", "thrd_join", "thrd_exit"}:
+    if c11_thread_lifecycle_exports != {
+        "thrd_create",
+        "thrd_join",
+        "thrd_exit",
+        "thrd_detach",
+    }:
         errors.append(
             "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs: bounded static C11 "
-            "leaf must export only thrd_create, thrd_join, and thrd_exit"
+            "leaf must export only thrd_create, thrd_join, thrd_exit, and thrd_detach"
         )
     for forbidden in (
-        "fn thrd_detach(",
         "fn thrd_sleep(",
         "fn thrd_yield(",
         "fn call_once(",
@@ -5948,9 +6025,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigwaitinfo",
         "sigwait",
         "pthread_create",
+        "pthread_detach",
         "pthread_exit",
         "pthread_join",
         "thrd_create",
+        "thrd_detach",
         "thrd_exit",
         "thrd_join",
         "pthread_self",
@@ -6130,7 +6209,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join initial-TLS worker, its typed C11 create/exit/join sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "

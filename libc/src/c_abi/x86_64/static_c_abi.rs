@@ -6,8 +6,8 @@
 //! classification/sign, and basic complex accessor/conjugation primitives as a
 //! real C bootstrap block, plus deliberately narrow simple signal action/mask
 //! and bounded process-signal execution, one default-attribute
-//! create/explicit-exit/join worker and its typed C11
-//! `thrd_create`/`thrd_exit`/`thrd_join` sibling, both backed by the private
+//! create/explicit-exit/join/detach worker and its typed C11
+//! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach` sibling, both backed by the private
 //! Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! termios-control, selected process-context, child-reaping, selected
@@ -29,9 +29,10 @@
 //! only bounded no-allocation `atexit` callbacks; it is not stdio flushing,
 //! C++/DSO destruction, or a concurrent process-exit protocol. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
-//! use their selected explicit-exit path, plus opaque current/equality
-//! identity. The C11 lifecycle sibling likewise remains a static-only typed
-//! worker slice; neither is a claim for broader pthread/C11 header support.
+//! use their selected explicit-exit path, plus prompt detach with later
+//! clear-child-tid reaping and opaque current/equality identity. The C11
+//! lifecycle sibling likewise remains a static-only typed worker slice;
+//! neither is a claim for broader pthread/C11 header support.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
 //! artifact evidence. The shared result translator is intentionally smaller

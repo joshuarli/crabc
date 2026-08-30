@@ -133,10 +133,12 @@ _Static_assert(mtx_plain == 0 && mtx_recursive == 1 && mtx_timed == 2,
 
 typedef int (*crabc_pthread_create_signature)(
 	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+typedef int (*crabc_pthread_detach_signature)(pthread_t);
 typedef int (*crabc_pthread_equal_signature)(pthread_t, pthread_t);
 typedef int (*crabc_pthread_getcpuclockid_signature)(pthread_t, clockid_t *);
 typedef int (*crabc_pthread_sigmask_signature)(int, const sigset_t *, sigset_t *);
 typedef int (*crabc_thrd_create_signature)(thrd_t *, thrd_start_t, void *);
+typedef int (*crabc_thrd_detach_signature)(thrd_t);
 typedef int (*crabc_thrd_join_signature)(thrd_t, int *);
 typedef void (*crabc_thrd_exit_signature)(int) __attribute__((noreturn));
 typedef thrd_t (*crabc_thrd_current_signature)(void);
@@ -148,6 +150,8 @@ typedef int (*crabc_tss_create_signature)(tss_t *, tss_dtor_t);
 
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_create), crabc_pthread_create_signature),
 	"pthread_create signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_detach), crabc_pthread_detach_signature),
+	"pthread_detach signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_equal), crabc_pthread_equal_signature),
 	"pthread_equal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getcpuclockid),
@@ -158,6 +162,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_sigmask),
 #endif
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_create), crabc_thrd_create_signature),
 	"thrd_create signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_detach), crabc_thrd_detach_signature),
+	"thrd_detach signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_join), crabc_thrd_join_signature),
 	"thrd_join signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_exit), crabc_thrd_exit_signature),

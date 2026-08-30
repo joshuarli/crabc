@@ -67,6 +67,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "string-copy-header-abi",
             "random-entropy-header-abi",
             "libc-pthread-identity",
+            "libc-pthread-detach",
             "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
         )
         self.assertEqual(actual_groups, expected_groups)
@@ -96,6 +97,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-static-tls-v1", source)
         self.assertIn("libc-crt-static-tls", source)
         self.assertIn("libc-pthread-create-join-tls", source)
+        self.assertIn("libc-pthread-detach", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("libc-process-context", source)
         self.assertIn("libc-descriptor-io", source)
@@ -2771,6 +2773,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/thread/pthread_create.c::__pthread_exit",
             "src/thread/x86_64/clone.s::__clone",
             "src/thread/pthread_join.c",
+            "src/thread/pthread_detach.c",
             "struct ThreadControl",
             "PTHREAD_CLONE_FLAGS",
             "CLONE_SETTLS",
@@ -2794,6 +2797,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "claim_selected_worker_by_thread_pointer",
             "publish_current_selected_worker_result",
             "release_selected_worker",
+            "release_selected_worker_locked",
+            "reclaim_withdrawn_selected_worker",
+            "reap_finished_detached_selected_workers",
+            "SelectedWorkerLifecycleState",
             "pthread_identity::current_thread_pointer",
             "current_linux_thread_id",
             "raw_syscall::SYS_GETTID",
@@ -2803,11 +2810,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn pthread_create(",
             "fn pthread_exit(",
             "fn pthread_join(",
+            "fn pthread_detach(",
             "tls_block.thread_pointer().cast()",
         ):
             self.assertIn(required, pthread_create_join)
         for forbidden in (
-            "fn pthread_detach(",
             "fn pthread_self(",
             "fn pthread_cancel(",
             "fn pthread_key_create(",
@@ -2886,7 +2893,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_exit lacks thread exit syscall number 60",
             "pthread_join lacks futex syscall number 202",
             "pthread_join lacks munmap syscall number 11",
-            "pthread_detach",
             "__tls_get_addr",
         ):
             self.assertIn(required, artifact_runner)
@@ -2894,27 +2900,19 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         selected_join_body = pthread_create_join.split(
             "pub(super) unsafe fn join_selected_worker", 1
         )[1].split("/// Join one normal-returning", 1)[0]
-        self.assertIn(
-            "let Some(control) = claim_selected_worker_by_thread_pointer(thread)",
-            selected_join_body,
-        )
+        self.assertIn("claim_selected_worker_by_thread_pointer(", selected_join_body)
+        self.assertIn("SelectedWorkerLifecycleState::JoinClaimed", selected_join_body)
         self.assertLess(
-            selected_join_body.index(
-                "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
-            ),
+            selected_join_body.index("claim_selected_worker_by_thread_pointer("),
             selected_join_body.index("(*control)"),
         )
         self.assertLess(
             selected_join_body.index("release_selected_worker"),
-            selected_join_body.index("unmap_worker"),
+            selected_join_body.index("reclaim_withdrawn_selected_worker(control)"),
         )
-        self.assertLess(
-            selected_join_body.index("static_tls::release_thread(tls_block)"),
-            selected_join_body.index("unmap_worker"),
-        )
-        tls_reclamation = selected_join_body.split("let tls_block", 1)[1].split(
-            "let mapping", 1
-        )[0]
+        tls_reclamation = pthread_create_join.split(
+            "unsafe fn reclaim_withdrawn_selected_worker", 1
+        )[1].split("/// Reap every detached selected worker", 1)[0]
         self.assertIn("tls_released.load(Ordering::Acquire)", tls_reclamation)
         self.assertLess(
             tls_reclamation.index("static_tls::release_thread(tls_block)"),
@@ -2942,6 +2940,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )[1].split("/// Exit a selected worker", 1)[0]
         self.assertLess(
             selected_create_body.index("static_tls::is_ready()"),
+            selected_create_body.index("reap_finished_detached_selected_workers()"),
+        )
+        self.assertLess(
+            selected_create_body.index("reap_finished_detached_selected_workers()"),
             selected_create_body.index("static_tls::allocate_thread()"),
         )
         self.assertLess(
@@ -2961,10 +2963,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             clone_failure.index("if !release_selected_worker"),
             clone_failure.index("unmap_worker"),
         )
-        for symbol in ("pthread_create", "pthread_exit", "pthread_join"):
+        for symbol in ("pthread_create", "pthread_exit", "pthread_join", "pthread_detach"):
             self.assertIn(symbol, static_export_names)
         for forbidden in (
-            "pthread_detach",
             "pthread_cancel",
             "pthread_mutex_init",
         ):
@@ -3045,9 +3046,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pub(super) unsafe fn join_selected_worker", 1
         )[1].split("/// Join one normal-returning", 1)[0]
         self.assertLess(
-            selected_join_body.index(
-                "let Some(control) = claim_selected_worker_by_thread_pointer(thread)"
-            ),
+            selected_join_body.index("claim_selected_worker_by_thread_pointer("),
             selected_join_body.index("(*control)"),
         )
 
@@ -3146,12 +3145,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/thread/pthread_create.c::start_c11",
             "src/thread/thrd_join.c",
             "src/thread/thrd_exit.c",
+            "src/thread/thrd_detach.c",
             "C11StartRoutine",
             "SelectedWorkerStart::C11",
             "THRD_NOMEM",
             "fn thrd_create(",
             "fn thrd_join(",
             "fn thrd_exit(",
+            "fn thrd_detach(",
+            "detach_selected_worker",
             "exit_selected_c11_worker",
             "SelectedWorkerResultKind::C11",
             "INT_MIN",
@@ -3161,7 +3163,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, c11_lifecycle)
         for forbidden in (
-            "fn thrd_detach(",
             "fn thrd_sleep(",
             "fn thrd_yield(",
             "fn call_once(",
@@ -3183,6 +3184,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "exit_selected_pthread_worker",
             "exit_selected_c11_worker",
             "join_selected_worker",
+            "detach_selected_worker",
             "result_kind: AtomicU8",
             "pthread_exit(void *)",
             "decode_c11_result",
@@ -3255,12 +3257,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "crabc_thrd_exit_signature",
             "thrd_exit noreturn signature",
+            "crabc_thrd_detach_signature",
+            "thrd_detach signature",
         ):
             self.assertIn(required, c_header_probe)
             self.assertIn(required, cxx_header_probe)
         for required in (
-            "thrd_create thrd_join thrd_exit thrd_current thrd_equal",
-            "thrd_create|thrd_join|thrd_exit|thrd_current|thrd_equal",
+            "thrd_create thrd_detach thrd_join thrd_exit thrd_current thrd_equal",
+            "thrd_create|thrd_detach|thrd_join|thrd_exit|thrd_current|thrd_equal",
         ):
             self.assertIn(required, header_runner)
 
@@ -3282,9 +3286,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
-        self.assertTrue({"thrd_create", "thrd_join", "thrd_exit"} <= static_exports)
         self.assertTrue(
-            {"thrd_detach", "thrd_sleep", "thrd_yield", "mtx_init", "cnd_init", "tss_create"}
+            {"thrd_create", "thrd_detach", "thrd_join", "thrd_exit"} <= static_exports
+        )
+        self.assertTrue(
+            {"thrd_sleep", "thrd_yield", "mtx_init", "cnd_init", "tss_create"}
             .isdisjoint(static_exports)
         )
         self.assertIn("run_libc_c11_lifecycle_probe()", runner)
@@ -3293,6 +3299,153 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-c11-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-c11-lifecycle takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_detach_artifact_stays_private_and_prompt(
+        self,
+    ) -> None:
+        """Keep selected detach ownership distinct from pthread/C11 promotion."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        c11_lifecycle = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_thread_lifecycle.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_detach_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_detach_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_detach.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn("create/explicit-exit/join/detach worker", static_root)
+        for required in (
+            "src/thread/pthread_detach.c",
+            "enum SelectedWorkerLifecycleState",
+            "Joinable",
+            "JoinClaimed",
+            "Detached",
+            "DetachedReclaiming",
+            "fn claim_finished_detached_selected_worker",
+            "unsafe fn reclaim_withdrawn_selected_worker",
+            "fn reap_finished_detached_selected_workers",
+            "pub(super) unsafe fn detach_selected_worker",
+            "pub unsafe extern \"C\" fn pthread_detach",
+            "CLONE_CHILD_CLEARTID",
+        ):
+            self.assertIn(required, pthread_create_join)
+        detach_body = pthread_create_join.split(
+            "pub(super) unsafe fn detach_selected_worker", 1
+        )[1].split("/// Detach one selected static pthread/C11 worker", 1)[0]
+        self.assertIn("SelectedWorkerLifecycleState::Detached", detach_body)
+        self.assertIn("claim_selected_worker_by_thread_pointer", detach_body)
+        for forbidden in (
+            "reap_finished_detached_selected_workers",
+            "reclaim_withdrawn_selected_worker",
+            "raw_syscall",
+            "unmap_worker",
+            "static_tls::",
+        ):
+            self.assertNotIn(forbidden, detach_body)
+        self.assertEqual(
+            pthread_create_join.count("reap_finished_detached_selected_workers();"),
+            2,
+        )
+        detached_claim = pthread_create_join.split(
+            "fn claim_finished_detached_selected_worker", 1
+        )[1].split("/// Release mappings for a registry-withdrawn", 1)[0]
+        for earlier, later in (
+            (
+                "SelectedWorkerLifecycleState::Detached.encode()",
+                "child_tid.load(Ordering::Acquire)",
+            ),
+            (
+                "child_tid.load(Ordering::Acquire)",
+                "SelectedWorkerLifecycleState::DetachedReclaiming.encode()",
+            ),
+            (
+                "SelectedWorkerLifecycleState::DetachedReclaiming.encode()",
+                "release_selected_worker_locked",
+            ),
+        ):
+            self.assertLess(detached_claim.index(earlier), detached_claim.index(later))
+
+        self.assertIn("src/thread/thrd_detach.c", c11_lifecycle)
+        c11_detach = c11_lifecycle.split("pub unsafe extern \"C\" fn thrd_detach", 1)[1].split(
+            "/// End the current selected C11 worker", 1
+        )[0]
+        self.assertIn("detach_selected_worker", c11_detach)
+        self.assertIn("THRD_SUCCESS", c11_detach)
+        self.assertIn("THRD_ERROR", c11_detach)
+
+        for required in (
+            "run_pthread_round",
+            "run_thrd_round",
+            "run_double_detach_round",
+            "run_thrd_double_detach_round",
+            "run_candidate_self_detach_completion_round",
+            "run_candidate_null_detach_rejection_round",
+            "run_candidate_detach_race_round",
+            "run_candidate_join_detach_race_round",
+            "run_candidate_join_after_detach_diagnostic",
+            "run_detached_completion_reuse_round",
+            "pthread_detach(pthread_self())",
+            "pthread_join(pthread_thread, 0) == 0",
+            "thrd_join(thrd_thread, 0) == thrd_success",
+            "CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertIn("crabc_x86_64_pthread_detach_probe", start)
+        self.assertNotIn("arch_prctl", start.lower())
+        self.assertNotIn("mov %rsi, %fs:0", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_pthread_c11_header_abi.sh",
+            "-pthread",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "pthread_create pthread_exit pthread_join pthread_detach",
+            "thrd_create thrd_exit thrd_join thrd_detach",
+            "detach must be a prompt state transition, not a wait or reaper",
+            "selected detach source must remain state-only without a wait or reaper",
+            "selected detached reaping must occur only at later create/join boundaries",
+            "CLONE_CHILD_CLEARTID",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {"pthread_detach", "thrd_detach", "pthread_create", "thrd_create"}
+            <= static_exports
+        )
+        self.assertTrue(
+            {"pthread_cancel", "thrd_sleep", "mtx_init", "tss_create"}.isdisjoint(
+                static_exports
+            )
+        )
+        self.assertIn("run_libc_pthread_detach_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_detach.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-detach)\n        [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"',
             runner,
         )
 

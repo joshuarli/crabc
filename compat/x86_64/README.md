@@ -333,6 +333,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh libc-pthread-identity
 ./scripts/dev-x86_64.sh libc-c11-lifecycle
+./scripts/dev-x86_64.sh libc-pthread-detach
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1803,8 +1804,9 @@ post-exit TLS plus control/stack munmap=11 reclamation. A fixed private
 64-worker registry validates the explicit-exit caller's `%fs:0`, kernel
 `gettid`, and still-live clear-child-tid word, serializes publication with join
 withdrawal, and is exhausted/reused by a candidate-only capacity route. It does
-not select attributes, detach, pthread-exit cleanup/TSD/main-thread behavior,
-any self/equal behavior beyond the separately recorded identity artifact,
+not select attributes or detached-at-create behavior, pthread-exit
+cleanup/TSD/main-thread behavior, any self/equal behavior beyond the separately
+recorded identity artifact,
 cancellation, synchronization objects, dynamic TLS/DTV, loader or CRT TLS,
 broader C11 threads, or public x86 support.
 
@@ -1819,8 +1821,9 @@ The main thread, two concurrently live normal workers, and one selected
 explicit-exit worker prove that `pthread_create` returns the child's TP and
 that one join resolves it through the private registry before mapping
 reclamation. It does not select a dereferenceable TCB, broader C11
-lifecycle/locks or TSD, detach, cancellation, dynamic or loader TLS, CRT,
-sysroot, general pthread behavior, or public x86 support.
+lifecycle/locks or TSD, detachment beyond the separately recorded artifact,
+cancellation, dynamic or loader TLS, CRT, sysroot, general pthread behavior,
+or public x86 support.
 
 `libc-c11-lifecycle` is a separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
@@ -1836,9 +1839,25 @@ two simultaneously live workers, and 64-slot exhaustion/reuse. Pinned musl
 covers only standard normal and `thrd_exit` paths. Candidate-only null-start
 and unsupported C11-to-`pthread_exit` / pthread-to-`thrd_exit` routes fail
 closed after safe reclamation without exposing an incompatible result. It does
-not select detach, sleep/yield, once, mutexes/conditions, TSS, cancellation,
-dynamic/loader TLS, broader pthread/C11 behavior, CRT, sysroot, or public x86
-support.
+not select detachment beyond the separately recorded artifact, sleep/yield,
+once, mutexes/conditions, TSS, cancellation, dynamic/loader TLS, broader
+pthread/C11 behavior, CRT, sysroot, or public x86 support.
+
+`libc-pthread-detach` is a seventh separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
+project-header C body first runs ordinary external pthread/C11 detach routes
+against pinned musl and then through a `-nostdlib -static` candidate. It
+selects only prompt state-only `pthread_detach`/`thrd_detach` ownership of the
+already selected workers: a successful detach neither waits nor releases an
+active stack/TLS mapping. A later selected create/join boundary may reclaim a
+detached worker only after `CLONE_CHILD_CLEARTID` clears the child TID, then
+withdraws its private registry entry. The comparable routes run before and
+after the fixture's callback-completion signal, not after kernel exit.
+Self-detach, null/repeated/racing ownership attempts, join-after-detach, and
+64-slot delayed reuse are candidate-only diagnostics rather than musl parity
+or portable post-detach-handle behavior. This does not select detached-at-create
+attributes, general pthread/C11 or detached-thread behavior, cancellation,
+TSS, synchronization, dynamic/loader TLS, CRT, sysroot, or public x86 support.
 
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
@@ -2305,14 +2324,15 @@ initial-TLS errno datum and installs the x86 Variant-II `%fs:0` self pointer;
 the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
-`libc-pthread-create-join-tls`, `libc-pthread-identity`, or
-`libc-c11-lifecycle`: their start shims
+`libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
+or `libc-pthread-detach`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. All candidates have no
 interpreter, `DT_NEEDED`, unresolved symbols, dynamic TLS resolver, allocator,
 or ambient C runtime. Apart from the bounded child mapping established by
-`libc-pthread-create-join-tls`, their fixture setup is not a CRT, general TLS
-lifecycle, pthread runtime, dynamic-loader, sysroot, `libc.so`, or
+`libc-pthread-create-join-tls` and its separately recorded detach sibling,
+their fixture setup is not a CRT, general TLS lifecycle, pthread runtime,
+dynamic-loader, sysroot, `libc.so`, or
 public-x86-support claim.
 
 `libc-thread-pointer` compiles only the private
@@ -2613,6 +2633,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-bootstrap-primitives`, `libc-signal-control`, `libc-signal-execution`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
+`libc-pthread-detach`,
 `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,

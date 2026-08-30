@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 45)
+        self.assertEqual(report["verified_artifact_count"], 46)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4316,7 +4316,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 6)
+        self.assertEqual(len(artifacts), 7)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4327,6 +4327,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-explicit-exit-tls",
                 "static-c-pthread-identity",
                 "static-c-c11-lifecycle",
+                "static-c-pthread-c11-detach",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4335,6 +4336,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         explicit_exit = by_id["static-c-pthread-explicit-exit-tls"]
         identity = by_id["static-c-pthread-identity"]
         c11_lifecycle = by_id["static-c-c11-lifecycle"]
+        detach = by_id["static-c-pthread-c11-detach"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4484,6 +4486,73 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, c11_scope)
+        self.assertEqual(
+            detach["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-detach",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "prompt `pthread_detach`/`thrd_detach`",
+            "Joinable",
+            "Detached",
+            "CLONE_CHILD_CLEARTID",
+            "Candidate-only",
+            "not musl parity evidence",
+            "detached-at-create attributes",
+            "general pthread/C11 runtime",
+            "thread.pthread-c11",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, detach["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "include/pthread.h",
+            "include/threads.h",
+            "compat/x86_64/libc_pthread_detach_probe.c",
+            "compat/x86_64/libc_pthread_detach_start.S",
+            "compat/x86_64/run_libc_pthread_detach.sh",
+            "compat/x86_64/run_libc_static_tls_v1.sh",
+            "compat/x86_64/run_libc_pthread_create_join_tls.sh",
+            "compat/x86_64/run_libc_c11_lifecycle.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, detach["source_owners"])
+        detach_abi = " ".join(detach["x86_abi_prerequisites"])
+        for phrase in (
+            "pthread_detach.c",
+            "thrd_detach.c",
+            "Joinable",
+            "DetachedReclaiming",
+            "registry lock",
+            "clone=56",
+            "CLONE_SETTLS",
+            "CLONE_CHILD_CLEARTID",
+            "state-only",
+            "futex=202",
+            "munmap=11",
+        ):
+            self.assertIn(phrase, detach_abi)
+        detach_scope = detach["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "pthread_exit/thrd_exit",
+            "parent errno",
+            "Candidate-only",
+            "self-detach",
+            "null-handle",
+            "double-detach",
+            "join-vs-detach/detach-vs-detach",
+            "64-slot reuse",
+            "CLONE_CHILD_CLEARTID",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "no-syscall state transition",
+            "general pthread/C11 behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, detach_scope)
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -4607,6 +4676,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-c11-lifecycle must use the closed libc-c11-lifecycle command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_detach = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-c11-detach"
+        )
+        changed_detach["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-c11-detach must use the closed libc-pthread-detach command",
         ):
             ledger.validate_ledger(changed)
 

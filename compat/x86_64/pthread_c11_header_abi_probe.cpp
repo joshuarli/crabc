@@ -114,11 +114,13 @@ static_assert(mtx_plain == 0 && mtx_recursive == 1 && mtx_timed == 2,
 
 using crabc_pthread_create_signature = int (*)(
 	pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+using crabc_pthread_detach_signature = int (*)(pthread_t);
 using crabc_pthread_self_signature = pthread_t (*)();
 using crabc_pthread_equal_signature = int (*)(pthread_t, pthread_t);
 using crabc_pthread_getcpuclockid_signature = int (*)(pthread_t, clockid_t *);
 using crabc_pthread_sigmask_signature = int (*)(int, const sigset_t *, sigset_t *);
 using crabc_thrd_create_signature = int (*)(thrd_t *, thrd_start_t, void *);
+using crabc_thrd_detach_signature = int (*)(thrd_t);
 using crabc_thrd_join_signature = int (*)(thrd_t, int *);
 using crabc_thrd_exit_signature = void (*)(int);
 using crabc_thrd_current_signature = thrd_t (*)();
@@ -129,6 +131,8 @@ using crabc_tss_create_signature = int (*)(tss_t *, tss_dtor_t);
 
 static_assert(__is_same(decltype(&pthread_create), crabc_pthread_create_signature),
 	"pthread_create signature");
+static_assert(__is_same(decltype(&pthread_detach), crabc_pthread_detach_signature),
+	"pthread_detach signature");
 static_assert(__is_same(decltype(&pthread_self), crabc_pthread_self_signature),
 	"pthread_self signature");
 static_assert(__is_same(decltype(&pthread_equal), crabc_pthread_equal_signature),
@@ -141,6 +145,8 @@ static_assert(__is_same(decltype(&pthread_sigmask),
 #endif
 static_assert(__is_same(decltype(&thrd_create), crabc_thrd_create_signature),
 	"thrd_create signature");
+static_assert(__is_same(decltype(&thrd_detach), crabc_thrd_detach_signature),
+	"thrd_detach signature");
 static_assert(__is_same(decltype(&thrd_join), crabc_thrd_join_signature),
 	"thrd_join signature");
 static_assert(__is_same(decltype(&thrd_exit), crabc_thrd_exit_signature),
@@ -165,12 +171,16 @@ static once_flag crabc_c11_once = ONCE_FLAG_INIT;
 /* `used` keeps the declaration-linkage evidence in the otherwise unlinked object. */
 static crabc_pthread_create_signature const crabc_force_pthread_create
 	__attribute__((used)) = &pthread_create;
+static crabc_pthread_detach_signature const crabc_force_pthread_detach
+	__attribute__((used)) = &pthread_detach;
 static crabc_pthread_self_signature const crabc_force_pthread_self
 	__attribute__((used)) = &pthread_self;
 static crabc_pthread_equal_signature const crabc_force_pthread_equal
 	__attribute__((used)) = &pthread_equal;
 static crabc_thrd_create_signature const crabc_force_thrd_create
 	__attribute__((used)) = &thrd_create;
+static crabc_thrd_detach_signature const crabc_force_thrd_detach
+	__attribute__((used)) = &thrd_detach;
 static crabc_thrd_join_signature const crabc_force_thrd_join
 	__attribute__((used)) = &thrd_join;
 static crabc_thrd_exit_signature const crabc_force_thrd_exit
