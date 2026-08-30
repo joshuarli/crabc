@@ -237,7 +237,7 @@ for symbol in __errno_location fcntl; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-for unselected in fcntl64 lockf lockf64 flock fchmod fchown readv writev \
+for unselected in fcntl64 lockf lockf64 flock fchown readv writev \
     preadv pwritev preadv2 pwritev2 openat2 open_by_handle_at close_range \
     fork _Fork vfork clone execve gettid syscall setfsuid setfsgid \
     malloc free calloc realloc; do

@@ -56,6 +56,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "uapi-wrapper-matrix",
             "epoll-header-abi",
             "event-descriptors-header-abi",
+            "pathname-lifecycle-header-abi",
             "timeval-transitive-header-abi",
             "sys-time-direct-header-abi",
             "access-header-abi",
@@ -70,6 +71,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sysv-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
             "libc-event-descriptors",
+            "libc-pathname-lifecycle",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-readiness-waits|libc-system-observation|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
@@ -117,6 +119,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-sysv-semaphore", source)
         self.assertIn("libc-sysv-message-shared-memory", source)
         self.assertIn("libc-event-descriptors", source)
+        self.assertIn("libc-pathname-lifecycle", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -139,6 +142,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('run_event_descriptors_header_abi()', source)
         self.assertIn(
             'compat/x86_64/run_event_descriptors_header_abi.sh', source
+        )
+        self.assertIn('run_pathname_lifecycle_header_abi()', source)
+        self.assertIn(
+            'compat/x86_64/run_pathname_lifecycle_header_abi.sh', source
         )
         self.assertIn('run_timeval_transitive_header_abi()', source)
         self.assertIn('compat/x86_64/run_timeval_transitive_header_abi.sh', source)
@@ -9161,6 +9168,275 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-event-descriptors)\n        [ "$#" -eq 0 ] || fail "libc-event-descriptors takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pathname_lifecycle_artifact_stays_bounded(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pathname_lifecycle.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "pathname_lifecycle_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "pathname_lifecycle_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pathname_lifecycle_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pathname_lifecycle_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pathname_lifecycle_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pathname_lifecycle.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pathname_lifecycle.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 pathname-mutation C boundary",
+            "musl 1.2.6 release commit",
+            "src/unistd/chdir.c",
+            "src/stat/chmod.c",
+            "src/stdio/remove.c",
+            "src/internal/procfdname.c",
+            "PROC_FD_PREFIX",
+            "PROC_FD_NAME_SIZE",
+            "procfdname",
+            "EISDIR",
+            "EBADF",
+            "F_GETFD",
+            "null-buffer extension",
+            "no C allocator boundary",
+            "Linux 5.10",
+            "raw_syscall::SYS_CHDIR",
+            "raw_syscall::SYS_GETCWD",
+            "raw_syscall::SYS_MKDIR",
+            "raw_syscall::SYS_UNLINK",
+            "raw_syscall::SYS_RMDIR",
+            "raw_syscall::SYS_RENAME",
+            "raw_syscall::SYS_LINK",
+            "raw_syscall::SYS_SYMLINK",
+            "raw_syscall::SYS_READLINK",
+            "raw_syscall::SYS_CHMOD",
+            "raw_syscall::SYS_FCHMOD",
+            "raw_syscall::SYS_TRUNCATE",
+            "raw_syscall::SYS_FCNTL",
+        ):
+            self.assertIn(required, implementation)
+        for symbol in (
+            "chdir",
+            "getcwd",
+            "mkdir",
+            "unlink",
+            "rmdir",
+            "remove",
+            "rename",
+            "link",
+            "symlink",
+            "readlink",
+            "chmod",
+            "fchmod",
+            "truncate",
+        ):
+            self.assertIn(f"fn {symbol}(", implementation)
+        for forbidden in (
+            "fn fchdir(",
+            "fn chroot(",
+            "fn realpath(",
+            "fn renameat(",
+            "fn renameat2(",
+            "fn unlinkat(",
+            "fn linkat(",
+            "fn symlinkat(",
+            "fn readlinkat(",
+            "fn mkdirat(",
+            "fn fchmodat(",
+            "fn lchmod(",
+            "fn opendir(",
+            "fn readdir(",
+            "fn scandir(",
+            "fn getdents(",
+            "fn malloc(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "fcntl.h",
+                "stdio.h",
+                "sys/stat.h",
+                "sys/types.h",
+                "unistd.h",
+                "size_t",
+                "ssize_t",
+                "off_t",
+                "mode_t",
+                "F_GETFD",
+                "O_PATH",
+                "S_IFREG",
+                "chdir",
+                "getcwd",
+                "mkdir",
+                "unlink",
+                "rmdir",
+                "remove",
+                "rename",
+                "link",
+                "symlink",
+                "readlink",
+                "chmod",
+                "fchmod",
+                "truncate",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "c-default c11-gnu cxx17-gnu",
+            "CXX_SYMBOLS=(chdir getcwd mkdir unlink rmdir remove rename link",
+            "-nostdinc",
+            "-nostdinc++",
+            "check_cxx_symbols",
+            "mangled pathname-lifecycle reference",
+            "run_musl_oracle.sh",
+            "fcntl.h stdio.h sys/stat.h sys/types.h unistd.h",
+            "compile-only",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <fcntl.h>",
+            "#include <stdio.h>",
+            "#include <sys/stat.h>",
+            "#include <sys/syscall.h>",
+            "#include <sys/types.h>",
+            "#include <unistd.h>",
+            "check_getcwd_extension",
+            "CRABC_PATHNAME_LIFECYCLE_FREESTANDING",
+            "getcwd(0, 0) == 0 && errno == EINVAL",
+            "allocated = getcwd(0, 0)",
+            "mkdir(root, 0700)",
+            "readlink(symbolic, 0, 0)",
+            "link(file, hard)",
+            "symlink(file, symbolic)",
+            "rename(file, renamed)",
+            "O_PATH | O_CLOEXEC",
+            "fchmod(path_only, 0644)",
+            "truncate(renamed, 7)",
+            "remove(empty_directory)",
+            "remove's EISDIR retry",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pathname_lifecycle_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pathname_lifecycle_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall chdir 50",
+            "assert_named_syscall getcwd 4f",
+            "assert_named_syscall mkdir 53",
+            "assert_named_syscall unlink 57",
+            "assert_named_syscall rmdir 54",
+            "assert_remove_retry_path",
+            "assert_named_syscall rename 52",
+            "assert_named_syscall link 56",
+            "assert_named_syscall symlink 58",
+            "assert_named_syscall readlink 59",
+            "assert_named_syscall chmod 5a",
+            "assert_fchmod_fallback_path",
+            "assert_named_syscall truncate 4c",
+            "for unselected in fchdir",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        expected_symbols = {
+            "chdir",
+            "getcwd",
+            "mkdir",
+            "unlink",
+            "rmdir",
+            "remove",
+            "rename",
+            "link",
+            "symlink",
+            "readlink",
+            "chmod",
+            "fchmod",
+            "truncate",
+        }
+        self.assertTrue(expected_symbols <= static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {
+                "fchdir",
+                "chroot",
+                "realpath",
+                "renameat",
+                "renameat2",
+                "unlinkat",
+                "linkat",
+                "symlinkat",
+                "readlinkat",
+                "mkdirat",
+                "fchmodat",
+                "lchmod",
+                "opendir",
+                "readdir",
+                "scandir",
+                "getdents",
+            }
+        )
+        self.assertIn('id = "static-c-pathname-lifecycle"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pathname-lifecycle"',
+            parity_ledger,
+        )
+        self.assertIn("run_pathname_lifecycle_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_pathname_lifecycle_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_pathname_lifecycle()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pathname_lifecycle.sh",
+            runner,
+        )
+        self.assertIn(
+            '    pathname-lifecycle-header-abi)\n        [ "$#" -eq 0 ] || fail "pathname-lifecycle-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-pathname-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-pathname-lifecycle takes no arguments"',
             runner,
         )
 

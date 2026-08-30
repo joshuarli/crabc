@@ -52,6 +52,8 @@ cfmakeraw
 cfsetispeed
 cfsetospeed
 cfsetspeed
+chdir
+chmod
 cimag
 cimagf
 cimagl
@@ -88,6 +90,7 @@ eventfd_read
 eventfd_write
 exit
 faccessat
+fchmod
 fcntl
 fdatasync
 feclearexcept
@@ -113,6 +116,7 @@ ftruncate
 futimens
 futimes
 futimesat
+getcwd
 getdomainname
 getdtablesize
 getegid
@@ -161,6 +165,7 @@ kill
 killpg
 labs
 ldiv
+link
 listen
 llabs
 lldiv
@@ -177,6 +182,7 @@ memmove
 memrchr
 memset
 mincore
+mkdir
 mmap
 mprotect
 msgctl
@@ -229,9 +235,13 @@ qsort
 qsort_r
 raise
 read
+readlink
 recv
 recvfrom
+remove
+rename
 rindex
+rmdir
 rust_eh_personality
 select
 semctl
@@ -306,6 +316,7 @@ strtoll
 strtoul
 strtoull
 strtoumax
+symlink
 sysconf
 sysinfo
 tcflow
@@ -325,12 +336,14 @@ thrd_sleep
 toascii
 tolower
 toupper
+truncate
 tss_create
 tss_delete
 tss_get
 tss_set
 umask
 uname
+unlink
 utime
 utimensat
 utimes

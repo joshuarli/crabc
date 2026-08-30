@@ -294,6 +294,22 @@ event-descriptor-family closure: `epoll_pwait2`, timerfd, signalfd, fanotify,
 AIO, watcher policy, libc.so, startup, allocator, loader, sysroot, family or
 platform parity, and public x86 support remain unselected.
 
+`./scripts/dev-x86_64.sh pathname-lifecycle-header-abi` adds an artifact-local
+eight-profile C11/C++17 project-header/pinned-musl matrix for `fcntl.h`,
+`stdio.h`, `sys/stat.h`, and `unistd.h` pathname declarations, LP64 types,
+selected mode/`O_PATH` constants, and unmangled C++ references. The paired
+`./scripts/dev-x86_64.sh libc-pathname-lifecycle` command records a separate
+private `static-c-pathname-lifecycle` artifact in planned
+`libc.posix-runtime`. Its pinned-musl and freestanding-static C fixture selects
+only `chdir`, caller-buffer `getcwd`, `mkdir`, `unlink`, `rmdir`, `remove`,
+`rename`, `link`, `symlink`, `readlink`, `chmod`, `fchmod`, and `truncate`.
+It proves direct x86 syscall paths, `remove`'s raw-`EISDIR` retry,
+zero-capacity `readlink`, and a live-`O_PATH` `fchmod` procfs fallback. The
+no-allocation candidate intentionally rejects musl's null-buffer `getcwd`
+extension with `EINVAL`. This remains a bounded private ABI/archive vertical,
+not general pathname/canonicalization, directory, xattr/ACL, mount/namespace,
+filesystem-family, C-runtime, AArch64-parity, or public-x86-support evidence.
+
 `./scripts/dev-x86_64.sh libc-header-layouts-baseline` now adds one private
 `static-c-header-layouts-baseline` artifact within still-planned
 `libc.headers-layouts`. It composes the existing selected archive through a

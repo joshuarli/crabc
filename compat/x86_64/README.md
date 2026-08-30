@@ -242,6 +242,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh socket-header-abi
 ./scripts/dev-x86_64.sh sysv-semaphore-header-abi
 ./scripts/dev-x86_64.sh sysv-message-shared-memory-header-abi
+./scripts/dev-x86_64.sh pathname-lifecycle-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh mlock-reference
 ./scripts/dev-x86_64.sh msync-reference
@@ -363,6 +364,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
 ./scripts/dev-x86_64.sh libc-event-descriptors
+./scripts/dev-x86_64.sh libc-pathname-lifecycle
 ./scripts/dev-x86_64.sh libc-descriptor-io
 ./scripts/dev-x86_64.sh libc-descriptor-lifecycle
 ./scripts/dev-x86_64.sh libc-timestamp-updates
@@ -2390,6 +2392,24 @@ omits pthread cancellation and pre-Linux-5.10 `ENOSYS` fallbacks. It excludes
 runtime, header/runtime family completion, promotion, full x86-64 parity, and
 public x86 support.
 
+`pathname-lifecycle-header-abi` is a separate eight-profile C11/C++17
+project-header/pinned-musl matrix for the selected `fcntl.h`, `stdio.h`,
+`sys/stat.h`, `sys/types.h`, and `unistd.h` C surface: exact LP64
+`size_t`/`ssize_t`/`off_t`/`mode_t` spellings, mode and `O_PATH` constants,
+and unmangled C++ references. Its paired `libc-pathname-lifecycle` private
+`static-c-pathname-lifecycle` `verified_artifact` runs the same project-header
+C body through pinned musl and then through a `-nostdlib -static` candidate.
+It selects exactly `chdir`, `getcwd`, `mkdir`, `unlink`, `rmdir`, `remove`,
+`rename`, `link`, `symlink`, `readlink`, `chmod`, `fchmod`, and `truncate`.
+The fixture proves caller-buffer absolute `getcwd`, zero-capacity `readlink`,
+`remove`'s raw-`EISDIR` rmdir retry, direct errors, link/rename/mode/truncate
+lifecycle, and musl's live-`O_PATH` `fchmod` `/proc/self/fd` fallback. The
+allocation-free candidate intentionally returns `EINVAL` instead of musl's
+null-buffer `getcwd` allocation extension. It excludes allocation, pathname
+canonicalization, directory streams, xattr/ACL, mount/namespace policy,
+cancellation, dynamic runtime, header/runtime family completion, promotion,
+full x86-64 parity, and public x86 support.
+
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a
 promotion of the Rust-subsumed text capabilities. Its project-header C body
@@ -2853,6 +2873,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,
 `libc-event-descriptors`,
+`libc-pathname-lifecycle`,
 `libc-descriptor-io`,
 `libc-descriptor-lifecycle`,
 `libc-timestamp-updates`,

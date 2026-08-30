@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 55)
+        self.assertEqual(report["verified_artifact_count"], 56)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1154,7 +1154,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 37
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 38
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -7165,6 +7165,229 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "pinned-musl event source mapping"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_pathname_lifecycle_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathname-lifecycle"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/fcntl.h",
+            "include/stdio.h",
+            "include/sys/stat.h",
+            "include/unistd.h",
+            "compat/x86_64/pathname_lifecycle_header_abi_probe.c",
+            "compat/x86_64/pathname_lifecycle_header_abi_probe.cpp",
+            "compat/x86_64/run_pathname_lifecycle_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_pathname_lifecycle_probe.c",
+            "compat/x86_64/libc_pathname_lifecycle_start.S",
+            "compat/x86_64/run_libc_pathname_lifecycle.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-pathname-lifecycle"},
+        )
+        for phrase in (
+            "pathname-mutation/lifecycle block",
+            "`chdir`",
+            "`getcwd`",
+            "`mkdir`",
+            "`unlink`",
+            "`rmdir`",
+            "`remove`",
+            "`rename`",
+            "`link`",
+            "`symlink`",
+            "`readlink`",
+            "`chmod`",
+            "`fchmod`",
+            "`truncate`",
+            "caller-buffer",
+            "O_PATH",
+            "null-buffer getcwd extension",
+            "general pathname parsing",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        for symbol in (
+            "chdir",
+            "getcwd",
+            "mkdir",
+            "unlink",
+            "rmdir",
+            "remove",
+            "rename",
+            "link",
+            "symlink",
+            "readlink",
+            "chmod",
+            "fchmod",
+            "truncate",
+        ):
+            self.assertIn(symbol, static_exports)
+        for symbol in (
+            "chroot",
+            "fchdir",
+            "fchmodat",
+            "getdents",
+            "lchmod",
+            "linkat",
+            "mkdirat",
+            "opendir",
+            "readdir",
+            "realpath",
+            "renameat",
+            "renameat2",
+            "scandir",
+            "symlinkat",
+            "unlinkat",
+        ):
+            self.assertNotIn(symbol, static_exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "chdir=80" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in (
+            "getcwd=79",
+            "rename=82",
+            "mkdir=83",
+            "rmdir=84",
+            "link=86",
+            "unlink=87",
+            "symlink=88",
+            "readlink=89",
+            "chmod=90",
+            "fchmod=91",
+            "truncate=76",
+            "fcntl=72",
+            "rdi/rsi/rdx",
+        ):
+            self.assertIn(phrase, syscall_abi)
+        lp64 = next(item for item in prerequisites if "size_t/ssize_t/off_t" in item)
+        assert isinstance(lp64, str)
+        for phrase in ("mode_t", "caller-owned", "readlink", "getcwd"):
+            self.assertIn(phrase, lp64)
+        special_behavior = next(item for item in prerequisites if "null-buffer extension" in item)
+        assert isinstance(special_behavior, str)
+        for phrase in (
+            "EINVAL",
+            "dummy",
+            "zero capacity",
+            "raw EISDIR",
+            "F_GETFD=1",
+            "O_PATH",
+            "/proc/self/fd",
+        ):
+            self.assertIn(phrase, special_behavior)
+        source_mapping = next(
+            item for item in prerequisites if "src/unistd/chdir.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "getcwd.c",
+            "readlink.c",
+            "src/stat/chmod.c",
+            "fchmod.c",
+            "src/stdio/remove.c",
+            "rename.c",
+            "src/internal/procfdname.c",
+            "Linux 5.10",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        headers = artifact["x86_header_prerequisites"]
+        assert isinstance(headers, list) and isinstance(headers[0], str)
+        for phrase in (
+            "eight-profile",
+            "fcntl.h",
+            "stdio.h",
+            "sys/stat.h",
+            "unistd.h",
+            "O_PATH",
+            "unmangled C++",
+        ):
+            self.assertIn(phrase, headers[0])
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        scope = evidence[0]["scope"]
+        assert isinstance(scope, str)
+        for phrase in (
+            "`-nostdlib -static` candidate",
+            "getcwd=79",
+            "chdir=80",
+            "rename=82",
+            "mkdir=83",
+            "rmdir=84",
+            "link=86",
+            "unlink=87",
+            "symlink=88",
+            "readlink=89",
+            "chmod=90",
+            "fchmod=91",
+            "truncate=76",
+            "fcntl=72",
+            "caller-buffer getcwd",
+            "EINVAL null-buffer",
+            "readlink zero-capacity",
+            "remove EISDIR retry",
+            "O_PATH fchmod fallback",
+            "cancellation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, scope)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathname-lifecycle"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        index = next(index for index, item in enumerate(prerequisites) if "fchmod=91" in item)
+        prerequisites[index] = prerequisites[index].replace("fchmod=91", "fchmod=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "Linux syscall register ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-pathname-lifecycle"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "O_PATH fchmod fallback", "missing descriptor fallback regression"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact static pathname runtime regression"
         ):
             ledger.validate_ledger(data)
 

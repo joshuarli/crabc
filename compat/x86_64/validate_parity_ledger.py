@@ -972,6 +972,40 @@ EVENT_DESCRIPTOR_UNSELECTED_SYMBOLS = (
     "timerfd_settime",
 )
 
+PATHNAME_LIFECYCLE_SYMBOLS = (
+    "chdir",
+    "getcwd",
+    "mkdir",
+    "unlink",
+    "rmdir",
+    "remove",
+    "rename",
+    "link",
+    "symlink",
+    "readlink",
+    "chmod",
+    "fchmod",
+    "truncate",
+)
+
+PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
+    "chroot",
+    "fchdir",
+    "fchmodat",
+    "getdents",
+    "lchmod",
+    "linkat",
+    "mkdirat",
+    "opendir",
+    "readdir",
+    "realpath",
+    "renameat",
+    "renameat2",
+    "scandir",
+    "symlinkat",
+    "unlinkat",
+)
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -7692,6 +7726,271 @@ def require_event_descriptors_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_pathname_lifecycle_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected static pathname boundary private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pathname-lifecycle"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-pathname-lifecycle artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pathname-lifecycle must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in PATHNAME_LIFECYCLE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-pathname-lifecycle description omits {symbol}",
+        )
+    for phrase in (
+        "pathname-mutation/lifecycle block",
+        "caller-buffer",
+        "O_PATH",
+        "null-buffer getcwd extension",
+        "general pathname parsing",
+        "cancellation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pathname-lifecycle description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-pathname-lifecycle.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pathname_lifecycle.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stddef.h",
+        "include/stdio.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/pathname_lifecycle_header_abi_probe.c",
+        "compat/x86_64/pathname_lifecycle_header_abi_probe.cpp",
+        "compat/x86_64/run_pathname_lifecycle_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pathname_lifecycle_probe.c",
+        "compat/x86_64/libc_pathname_lifecycle_start.S",
+        "compat/x86_64/run_libc_pathname_lifecycle.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-pathname-lifecycle source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-pathname-lifecycle.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "chdir=80" in item
+            and "getcwd=79" in item
+            and "rename=82" in item
+            and "mkdir=83" in item
+            and "rmdir=84" in item
+            and "link=86" in item
+            and "unlink=87" in item
+            and "symlink=88" in item
+            and "readlink=89" in item
+            and "chmod=90" in item
+            and "fchmod=91" in item
+            and "truncate=76" in item
+            and "fcntl=72" in item
+            and "rdi/rsi/rdx" in item
+            for item in prerequisites
+        ),
+        "static-c-pathname-lifecycle must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "size_t/ssize_t/off_t" in item
+            and "mode_t" in item
+            and "caller-owned" in item
+            and "readlink" in item
+            and "getcwd" in item
+            for item in prerequisites
+        ),
+        "static-c-pathname-lifecycle must record its LP64 pathname ABI",
+    )
+    require(
+        any(
+            "null-buffer extension" in item
+            and "EINVAL" in item
+            and "dummy" in item
+            and "zero capacity" in item
+            and "raw EISDIR" in item
+            and "F_GETFD=1" in item
+            and "O_PATH" in item
+            and "/proc/self/fd" in item
+            for item in prerequisites
+        ),
+        "static-c-pathname-lifecycle must record its getcwd/readlink/remove/fchmod behavior",
+    )
+    require(
+        any(
+            "src/unistd/chdir.c" in item
+            and "getcwd.c" in item
+            and "readlink.c" in item
+            and "src/stat/chmod.c" in item
+            and "fchmod.c" in item
+            and "src/stdio/remove.c" in item
+            and "rename.c" in item
+            and "src/internal/procfdname.c" in item
+            and "Linux 5.10" in item
+            for item in prerequisites
+        ),
+        "static-c-pathname-lifecycle must record its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-pathname-lifecycle must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-pathname-lifecycle.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "fcntl.h" in item
+            and "stdio.h" in item
+            and "sys/stat.h" in item
+            and "unistd.h" in item
+            and "O_PATH" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-pathname-lifecycle must record its direct pathname header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(PATHNAME_LIFECYCLE_SYMBOLS) <= static_exports,
+        "static-c-pathname-lifecycle must retain its thirteen selected exports",
+    )
+    require(
+        not (static_exports & set(PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS)),
+        "static-c-pathname-lifecycle must not add unselected pathname exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "pathname_lifecycle.rs"]\nmod pathname_lifecycle;' in static_root,
+        "x86 static C ABI must compose the pathname_lifecycle leaf",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/unistd/chdir.c",
+                    "getcwd.c",
+                    "readlink.c",
+                    "src/stat/chmod.c",
+                    "fchmod.c",
+                    "src/stdio/remove.c",
+                    "rename.c",
+                    "src/internal/procfdname.c",
+                )
+            )
+            and "null-buffer getcwd extension" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-pathname-lifecycle must retain its pinned-musl pathname source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pathname-lifecycle"},
+        "static-c-pathname-lifecycle must use the closed libc-pathname-lifecycle command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static` candidate",
+                "getcwd=79",
+                "chdir=80",
+                "rename=82",
+                "mkdir=83",
+                "rmdir=84",
+                "link=86",
+                "unlink=87",
+                "symlink=88",
+                "readlink=89",
+                "chmod=90",
+                "fchmod=91",
+                "truncate=76",
+                "fcntl=72",
+                "caller-buffer getcwd",
+                "EINVAL null-buffer",
+                "readlink zero-capacity",
+                "remove EISDIR retry",
+                "O_PATH fchmod fallback",
+                "public x86 support",
+            )
+        ),
+        "static-c-pathname-lifecycle evidence must retain its exact static pathname runtime regression",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -8505,6 +8804,7 @@ def validate_ledger(
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
+    require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])

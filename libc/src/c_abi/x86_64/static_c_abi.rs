@@ -25,7 +25,7 @@
 //! startup/ordinary-exit lifecycle, callback-algorithms, and POSIX
 //! `nanosleep` and `clock_nanosleep` artifacts, plus one bounded System V
 //! message-queue/shared-memory artifact and one bounded event-descriptor
-//! artifact.
+//! artifact, plus one bounded pathname-mutation/lifecycle artifact.
 //! It deliberately shares only the raw
 //! Linux syscall register boundary, one initial-TLS C `errno` slot, and the
 //! private Static Initial TLS v1 owner. The
@@ -163,6 +163,8 @@ mod memory_mapping;
 mod readiness_waits;
 #[path = "event_descriptors.rs"]
 mod event_descriptors;
+#[path = "pathname_lifecycle.rs"]
+mod pathname_lifecycle;
 #[path = "system_observation.rs"]
 mod system_observation;
 #[path = "uts_identity.rs"]
