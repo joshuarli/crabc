@@ -1052,4 +1052,79 @@ mod tests {
         };
         assert_eq!(result, Err(TheapCollectAbandonError::QueueInvariant));
     }
+
+    #[test]
+    fn generic_collect_direct_cache_updates_the_rounded_small_bin_aliases() {
+        let mut theap = Theap::empty();
+        // Pinned `mi_bin` rounds the three-word size in queue 3 into queue
+        // 4. Therefore `mi_theap_queue_first_update(&pages[4])` must refresh
+        // both direct entries 3 and 4, skipping back over the alias rather
+        // than starting at `pages[4]`'s own rounded size alone.
+        let bin = 4;
+        let block_size = theap.queue(bin).unwrap().block_size();
+        assert_eq!(invariants::word_count(block_size), Some(4));
+        assert_eq!(crate::size_class::bin(block_size), Some(bin));
+        assert_eq!(
+            crate::size_class::bin(theap.queue(bin - 1).unwrap().block_size()),
+            Some(bin),
+            "the immediately preceding source queue aliases this rounded small bin"
+        );
+        assert_ne!(
+            crate::size_class::bin(theap.queue(bin - 2).unwrap().block_size()),
+            Some(bin),
+            "the next predecessor establishes the source direct-cache boundary"
+        );
+
+        let mut page = page(block_size);
+        let page = NonNull::from(&mut page);
+        // SAFETY: the local page begins detached and this focused test owns
+        // the complete one-member source queue image.
+        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), page.as_ptr()) };
+
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+        assert_eq!(theap.direct_page(2), Some(EMPTY_PAGE.as_ptr()));
+        assert_eq!(theap.direct_page(3), Some(page.as_ptr()));
+        assert_eq!(theap.direct_page(4), Some(page.as_ptr()));
+        assert_eq!(theap.direct_page(5), Some(EMPTY_PAGE.as_ptr()));
+    }
+
+    #[test]
+    fn generic_collect_direct_cache_stops_at_the_predecessor_bin_boundary() {
+        let mut theap = Theap::empty();
+        // At queue 9, the direct table's index is ten words. The preceding
+        // queue has the eight-word size and belongs to bin 8, so the pinned
+        // source starts the update at direct index 9. It must retain the
+        // predecessor's entries 7 and 8 rather than overwriting from zero.
+        let previous_bin = 8;
+        let bin = 9;
+        let previous_size = theap.queue(previous_bin).unwrap().block_size();
+        let block_size = theap.queue(bin).unwrap().block_size();
+        assert_eq!(invariants::word_count(previous_size), Some(8));
+        assert_eq!(invariants::word_count(block_size), Some(10));
+        assert_eq!(crate::size_class::bin(previous_size), Some(previous_bin));
+        assert_eq!(crate::size_class::bin(block_size), Some(bin));
+
+        let mut previous = page(previous_size);
+        let mut page = page(block_size);
+        let previous = NonNull::from(&mut previous);
+        let page = NonNull::from(&mut page);
+        // SAFETY: both pages are detached and each queue has one local,
+        // exclusively owned member for this direct-cache source test.
+        unsafe {
+            page_queue_push_at_end_metadata(
+                theap.queue_mut(previous_bin).unwrap(),
+                previous.as_ptr(),
+            );
+            page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), page.as_ptr());
+        }
+
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, previous_bin));
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+        assert_eq!(theap.direct_page(6), Some(EMPTY_PAGE.as_ptr()));
+        assert_eq!(theap.direct_page(7), Some(previous.as_ptr()));
+        assert_eq!(theap.direct_page(8), Some(previous.as_ptr()));
+        assert_eq!(theap.direct_page(9), Some(page.as_ptr()));
+        assert_eq!(theap.direct_page(10), Some(page.as_ptr()));
+        assert_eq!(theap.direct_page(11), Some(EMPTY_PAGE.as_ptr()));
+    }
 }
