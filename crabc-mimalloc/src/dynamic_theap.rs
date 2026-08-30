@@ -75,7 +75,7 @@
 extern crate std;
 
 use core::cell::Cell;
-use core::marker::PhantomData;
+use core::marker::{PhantomData, PhantomPinned};
 use core::mem::size_of;
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -100,7 +100,8 @@ use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner, Thre
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
     DynamicTheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
-    Theap, TheapDynamicInitError, TheapOwner, ThreadLocalTheapListError,
+    LiveThreadId, Theap, TheapDynamicInitError, TheapOwner, ThreadLocalData,
+    ThreadLocalTheapListError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -280,6 +281,299 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     thread: crate::types::LiveThreadId,
     state: DynamicAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// In-place, later-worker storage for one persistent source TLD/Theap pair.
+///
+/// Pinned `mi_thread_init_with_heap` creates its TLD and Theap once, publishes
+/// the Theap through the regular TLS slot, and then leaves that source image
+/// installed for arbitrary local allocator work.  This storage is the narrow
+/// Rust owner for that same shape: it pins the lifecycle authority in the
+/// worker-owned runtime record while [`DynamicTheapAttachment`] keeps the
+/// actual metadata-backed TLD/Theap and regular compiler-TLS slot alive.
+///
+/// It deliberately does not discover a worker through a process registry or
+/// resume/park an allocation engine around [`Self::with_local`].  A runtime
+/// that owns thread creation must allocate this storage before entering the
+/// worker, pin it for the worker's complete allocator lifetime, and call
+/// [`Self::teardown`] after user destructors.  The only integration seam is
+/// that runtime-owned pinned storage plus the pinned local `Heap` image; no
+/// global owner table is involved.
+#[must_use = "a persistent worker TLD/Theap storage must be explicitly torn down or retained"]
+pub(crate) struct PersistentWorkerTheapStorage<'heap> {
+    attachment: Option<DynamicTheapAttachment<'heap>>,
+    thread: Option<LiveThreadId>,
+    state: PersistentWorkerTheapStorageState,
+    _pinned: PhantomPinned,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PersistentWorkerTheapStorageState {
+    Vacant,
+    Attached,
+    TornDown,
+    /// The inner attachment retained source state after an incomplete
+    /// construction. It must stay pinned and is intentionally not reusable.
+    Retained,
+}
+
+/// One refusal or retained-source-state result from the persistent worker
+/// attachment boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentWorkerTheapStorageError {
+    InvalidCurrentThread,
+    NotAttached,
+    AlreadyAttached,
+    TornDown,
+    Retained,
+    /// The current native thread does not own this pinned storage record.
+    WrongThread,
+    Attachment(DynamicTheapError),
+}
+
+/// A short direct-local projection of one persistent worker attachment.
+///
+/// This carries only the source-local Heap, TLD, and Theap. It cannot detach
+/// either list, clear the regular TLS slot, or release metadata; those
+/// transitions remain exclusive to [`PersistentWorkerTheapStorage::teardown`].
+/// A future allocator hot path can operate through this projection without
+/// moving a session out of TLS or acquiring a process-wide lifecycle lock.
+pub(crate) struct PersistentWorkerTheapLocal<'local> {
+    heap: &'local mut Heap,
+    tld: &'local mut ThreadLocalData,
+    theap: &'local mut Theap,
+    thread: LiveThreadId,
+}
+
+impl PersistentWorkerTheapLocal<'_> {
+    #[inline]
+    pub(crate) const fn thread(&self) -> LiveThreadId {
+        self.thread
+    }
+
+    #[inline]
+    pub(crate) fn heap(&mut self) -> &mut Heap {
+        self.heap
+    }
+
+    #[inline]
+    pub(crate) fn tld(&mut self) -> &mut ThreadLocalData {
+        self.tld
+    }
+
+    #[inline]
+    pub(crate) fn theap(&mut self) -> &mut Theap {
+        self.theap
+    }
+}
+
+impl<'heap> PersistentWorkerTheapStorage<'heap> {
+    /// Creates vacant worker-owned storage. It becomes address-stable only
+    /// after the caller pins it and passes it to [`Self::attach_in_place`].
+    #[inline]
+    pub(crate) const fn new() -> Self {
+        Self {
+            attachment: None,
+            thread: None,
+            state: PersistentWorkerTheapStorageState::Vacant,
+            _pinned: PhantomPinned,
+            _not_send_or_sync: PhantomData,
+        }
+    }
+
+    /// Attaches one later worker to a caller-pinned source Heap and stores the
+    /// resulting TLD/Theap authority in this exact pinned worker record.
+    ///
+    /// # Safety
+    ///
+    /// The caller owns the current worker's complete allocator lifecycle.
+    /// `self` and `heap` must remain pinned and live until successful
+    /// [`Self::teardown`], or until an incomplete source owner is deliberately
+    /// retained. The process must already have selected ticket-zero through
+    /// the main-thread path. No competing owner may mutate this worker's
+    /// compiler-TLS roots, regular key, TLD, or Theap.
+    pub(crate) unsafe fn attach_in_place(
+        self: Pin<&mut Self>,
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        self.as_ref().get_ref().ensure_vacant()?;
+        // SAFETY: the caller forwards the exact exclusive worker/heap proof
+        // required by the source-shaped dynamic attachment constructor.
+        let attachment = unsafe { DynamicTheapAttachment::begin(config, heap) };
+        // SAFETY: `self` remains pinned for this call and every stored
+        // attachment borrows only the separately pinned Heap image.
+        unsafe { self.install_attachment(attachment) }
+    }
+
+    /// Projects the same persistent TLD/Theap for one direct local operation.
+    ///
+    /// The closure is synchronous and receives only source-local mutable
+    /// state. Returning ends the projection but leaves the attachment, its
+    /// regular TLS entry, and its metadata allocations installed unchanged.
+    /// In particular, repeated calls do not move, park, or resume the owner.
+    pub(crate) fn with_local<R>(
+        self: Pin<&mut Self>,
+        operation: impl FnOnce(PersistentWorkerTheapLocal<'_>) -> R,
+    ) -> Result<R, PersistentWorkerTheapStorageError> {
+        // SAFETY: this method never moves the pinned storage or its optional
+        // attachment. Its only mutation is borrowed through the attachment.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        storage.ensure_attached_current()?;
+        let attachment = storage
+            .attachment
+            .as_mut()
+            .ok_or(PersistentWorkerTheapStorageError::Retained)?;
+        let local = attachment
+            .local_parts()
+            .map_err(PersistentWorkerTheapStorageError::Attachment)?;
+        Ok(operation(local))
+    }
+
+    /// Performs source thread teardown after user destructors and after every
+    /// source page has become releasable or been handed to the owner-exit
+    /// coordinator.
+    ///
+    /// `DynamicTheapAttachment::teardown` is the hard precondition judge: it
+    /// refuses a nonzero page count before clearing the regular slot or
+    /// detaching either list. On every error this pinned storage retains the
+    /// exact inner owner for diagnosis or its one source-permitted retry; it
+    /// is never reset into a fresh worker record.
+    pub(crate) fn teardown(
+        self: Pin<&mut Self>,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        // SAFETY: as in `with_local`, the field is not moved while borrowed.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        storage.ensure_attached_current()?;
+        let attachment = storage
+            .attachment
+            .as_mut()
+            .ok_or(PersistentWorkerTheapStorageError::Retained)?;
+        attachment
+            .teardown()
+            .map_err(PersistentWorkerTheapStorageError::Attachment)?;
+        storage.attachment = None;
+        storage.thread = None;
+        storage.state = PersistentWorkerTheapStorageState::TornDown;
+        Ok(())
+    }
+
+    /// Returns the captured source identity while the worker remains attached.
+    #[inline]
+    pub(crate) fn thread(
+        self: Pin<&mut Self>,
+    ) -> Result<LiveThreadId, PersistentWorkerTheapStorageError> {
+        // SAFETY: immutable access does not move the pinned storage.
+        let storage = unsafe { self.get_unchecked_mut() };
+        storage.ensure_attached_current()?;
+        storage
+            .thread
+            .ok_or(PersistentWorkerTheapStorageError::Retained)
+    }
+
+    /// Test-only isolated-component constructor. It keeps the production seam
+    /// at [`Self::attach_in_place`] while allowing focused tests to prove the
+    /// persistent worker shape without using any process-global registry.
+    #[cfg(test)]
+    unsafe fn attach_in_place_with_components(
+        self: Pin<&mut Self>,
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        self.as_ref().get_ref().ensure_vacant()?;
+        // SAFETY: the isolated fixtures carry the same process-lifetime
+        // component and current-worker exclusivity proof as production.
+        let attachment = unsafe {
+            DynamicTheapAttachment::begin_with_components(
+                config, heap, subprocess, metadata, registry,
+            )
+        };
+        // SAFETY: this preserves the caller's pin while installing only the
+        // source attachment returned by the constructor above.
+        unsafe { self.install_attachment(attachment) }
+    }
+
+    unsafe fn install_attachment(
+        self: Pin<&mut Self>,
+        result: Result<DynamicTheapAttachment<'heap>, DynamicTheapBeginError<'heap>>,
+    ) -> Result<(), PersistentWorkerTheapStorageError> {
+        // SAFETY: this private constructor path is the only mutation before
+        // `Attached`; it does not move an already installed attachment.
+        let storage = unsafe { Pin::get_unchecked_mut(self) };
+        match storage.state {
+            PersistentWorkerTheapStorageState::Vacant => {}
+            PersistentWorkerTheapStorageState::Attached => {
+                return Err(PersistentWorkerTheapStorageError::AlreadyAttached);
+            }
+            PersistentWorkerTheapStorageState::TornDown => {
+                return Err(PersistentWorkerTheapStorageError::TornDown);
+            }
+            PersistentWorkerTheapStorageState::Retained => {
+                return Err(PersistentWorkerTheapStorageError::Retained);
+            }
+        }
+
+        let thread = current_thread_identity()
+            .ok_or(PersistentWorkerTheapStorageError::InvalidCurrentThread)?;
+        match result {
+            Ok(attachment) => {
+                storage.attachment = Some(attachment);
+                storage.thread = Some(thread);
+                storage.state = PersistentWorkerTheapStorageState::Attached;
+                Ok(())
+            }
+            Err(DynamicTheapBeginError::Rejected(error)) => {
+                Err(PersistentWorkerTheapStorageError::Attachment(error))
+            }
+            Err(DynamicTheapBeginError::Retained { error, attachment }) => {
+                storage.attachment = Some(attachment);
+                storage.thread = Some(thread);
+                storage.state = PersistentWorkerTheapStorageState::Retained;
+                Err(PersistentWorkerTheapStorageError::Attachment(error))
+            }
+        }
+    }
+
+    fn ensure_attached_current(&self) -> Result<(), PersistentWorkerTheapStorageError> {
+        match self.state {
+            PersistentWorkerTheapStorageState::Vacant => {
+                Err(PersistentWorkerTheapStorageError::NotAttached)
+            }
+            PersistentWorkerTheapStorageState::TornDown => {
+                Err(PersistentWorkerTheapStorageError::TornDown)
+            }
+            PersistentWorkerTheapStorageState::Retained => {
+                Err(PersistentWorkerTheapStorageError::Retained)
+            }
+            PersistentWorkerTheapStorageState::Attached => match (
+                self.thread,
+                current_thread_identity(),
+            ) {
+                (Some(expected), Some(current)) if expected == current => Ok(()),
+                (_, Some(_)) => Err(PersistentWorkerTheapStorageError::WrongThread),
+                (_, None) => Err(PersistentWorkerTheapStorageError::InvalidCurrentThread),
+            },
+        }
+    }
+
+    fn ensure_vacant(&self) -> Result<(), PersistentWorkerTheapStorageError> {
+        match self.state {
+            PersistentWorkerTheapStorageState::Vacant => Ok(()),
+            PersistentWorkerTheapStorageState::Attached => {
+                Err(PersistentWorkerTheapStorageError::AlreadyAttached)
+            }
+            PersistentWorkerTheapStorageState::TornDown => {
+                Err(PersistentWorkerTheapStorageError::TornDown)
+            }
+            PersistentWorkerTheapStorageState::Retained => {
+                Err(PersistentWorkerTheapStorageError::Retained)
+            }
+        }
+    }
 }
 
 /// The only heap-local capability that may outlive a dynamic attachment's
@@ -620,6 +914,31 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .as_ref()
             .map(DynamicHeapBinding::key)
             .ok_or(DynamicTheapError::Poisoned)
+    }
+
+    /// Borrows the source-local state already retained by this live later
+    /// worker. This is the direct hot-path seam: it validates the exact
+    /// regular TLS slot, cached root/reference, intrusive memberships, and
+    /// current identity, then returns only the local Heap/TLD/Theap image.
+    ///
+    /// No page-map mutation lease, process scheduler, registry lookup, or
+    /// session transition occurs here. The caller may perform local source
+    /// work and must return before attachment teardown can begin.
+    fn local_parts(
+        &mut self,
+    ) -> Result<PersistentWorkerTheapLocal<'_>, DynamicTheapError> {
+        self.prevalidate_attached_page_drain(false)?;
+        let thread = self.thread;
+        let (heap, tld, allocation) = self.heap_tld_theap_mut()?;
+        let theap = allocation
+            .dynamic_theap_mut()
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        Ok(PersistentWorkerTheapLocal {
+            heap,
+            tld,
+            theap,
+            thread,
+        })
     }
 
     /// Borrows this exact attachment as one non-abandoning page lifecycle.
@@ -2312,6 +2631,7 @@ mod tests {
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::boxed::Box;
+    use std::sync::{Barrier, mpsc};
     use std::thread;
     use std::vec::Vec;
 
@@ -22337,5 +22657,158 @@ mod tests {
             assert!(valid, "dynamic full-large exit trace diverged from pinned C");
             DynamicPageFixtureOutcome::TearDown
         });
+    }
+
+    #[test]
+    fn persistent_worker_storage_keeps_one_theap_across_local_operations() {
+        #[derive(Clone, Copy, Debug)]
+        struct Observation {
+            thread: LiveThreadId,
+            heap: usize,
+            tld: usize,
+            theap: usize,
+        }
+
+        let workers = 2;
+        let barrier = std::sync::Arc::new(Barrier::new(workers));
+        let (sender, receiver) = mpsc::channel();
+        let mut joins = std::vec::Vec::new();
+
+        for _ in 0..workers {
+            let barrier = barrier.clone();
+            let sender = sender.clone();
+            joins.push(thread::spawn(move || {
+                let (subprocess, metadata, registry) = fixture();
+                consume_static_ticket(subprocess, metadata);
+                let mut storage = Box::pin(PersistentWorkerTheapStorage::new());
+                unsafe {
+                    storage
+                        .as_mut()
+                        .attach_in_place_with_components(
+                            memory_config(),
+                            pinned_empty_heap(),
+                            subprocess,
+                            metadata,
+                            registry,
+                        )
+                }
+                .expect("the prepared worker attaches one persistent TLD/Theap");
+
+                let first = storage
+                    .as_mut()
+                    .with_local(|mut local| {
+                        let observation = Observation {
+                            thread: local.thread(),
+                            heap: local.heap() as *mut Heap as usize,
+                            tld: local.tld() as *mut ThreadLocalData as usize,
+                            theap: local.theap() as *mut Theap as usize,
+                        };
+                        assert_eq!(local.theap().page_count(), 0);
+                        local.theap().note_page_added();
+                        assert_eq!(local.theap().page_count(), 1);
+                        assert!(local.theap().note_page_removed());
+                        observation
+                    })
+                    .expect("the first local operation projects the attached source image");
+                let second = storage
+                    .as_mut()
+                    .with_local(|mut local| Observation {
+                        thread: local.thread(),
+                        heap: local.heap() as *mut Heap as usize,
+                        tld: local.tld() as *mut ThreadLocalData as usize,
+                        theap: local.theap() as *mut Theap as usize,
+                    })
+                    .expect("the second local operation keeps the same source image installed");
+                let third = storage
+                    .as_mut()
+                    .with_local(|mut local| Observation {
+                        thread: local.thread(),
+                        heap: local.heap() as *mut Heap as usize,
+                        tld: local.tld() as *mut ThreadLocalData as usize,
+                        theap: local.theap() as *mut Theap as usize,
+                    })
+                    .expect("the third local operation does not park or replace the attachment");
+                assert_eq!(first.heap, second.heap);
+                assert_eq!(first.tld, second.tld);
+                assert_eq!(first.theap, second.theap);
+                assert_eq!(second.heap, third.heap);
+                assert_eq!(second.tld, third.tld);
+                assert_eq!(second.theap, third.theap);
+                assert_eq!(first.thread, second.thread);
+                assert_eq!(second.thread, third.thread);
+
+                barrier.wait();
+                storage
+                    .as_mut()
+                    .teardown()
+                    .expect("the quiescent persistent worker tears down in source order");
+                sender
+                    .send(first)
+                    .expect("the parent receives the completed worker observation");
+            }));
+        }
+        drop(sender);
+
+        let first = receiver
+            .recv()
+            .expect("the first overlapping worker completes");
+        let second = receiver
+            .recv()
+            .expect("the second overlapping worker completes");
+        for join in joins {
+            join.join()
+                .expect("the worker-local persistence check does not panic");
+        }
+
+        assert_ne!(first.thread, second.thread);
+        assert_ne!(first.heap, second.heap);
+        assert_ne!(first.tld, second.tld);
+        assert_ne!(first.theap, second.theap);
+    }
+
+    #[test]
+    fn persistent_worker_storage_rejects_teardown_until_local_pages_are_quiescent() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut storage = Box::pin(PersistentWorkerTheapStorage::new());
+            unsafe {
+                storage
+                    .as_mut()
+                    .attach_in_place_with_components(
+                        memory_config(),
+                        pinned_empty_heap(),
+                        subprocess,
+                        metadata,
+                        registry,
+                    )
+            }
+            .expect("the prepared worker attaches one persistent TLD/Theap");
+
+            storage
+                .as_mut()
+                .with_local(|mut local| local.theap().note_page_added())
+                .expect("the source-local operation records its live page before teardown");
+            assert_eq!(
+                storage.as_mut().teardown(),
+                Err(PersistentWorkerTheapStorageError::Attachment(
+                    DynamicTheapError::PageCountNonZero
+                )),
+                "teardown must retain the TLS/TLD/Theap owner before clearing a live page"
+            );
+            storage
+                .as_mut()
+                .with_local(|mut local| {
+                    assert_eq!(local.theap().page_count(), 1);
+                    assert!(local.theap().note_page_removed());
+                })
+                .expect("a rejected preflight leaves the persistent owner installed");
+            storage
+                .as_mut()
+                .teardown()
+                .expect("the same worker tears down only after the local page is quiescent");
+        })
+        .join()
+        .expect("the teardown-precondition worker remains on its native identity");
     }
 }
