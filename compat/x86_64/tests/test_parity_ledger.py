@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 62)
+        self.assertEqual(report["verified_artifact_count"], 63)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1313,7 +1313,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 41
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 42
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -2331,6 +2331,46 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("src/linux/flock.c", flock["oracle"][0]["role"])
         self.assertIn(
             "libc/src/c_abi/x86_64/flock.rs", posix_runtime["source_owners"]
+        )
+        sendfile = artifacts_by_id["static-c-sendfile"]
+        assert isinstance(sendfile, dict)
+        self.assertNotIn("capabilities", sendfile)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/sendfile.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sys/sendfile.h",
+            "include/unistd.h",
+            "compat/x86_64/sendfile_header_abi_probe.c",
+            "compat/x86_64/sendfile_header_abi_probe.cpp",
+            "compat/x86_64/run_sendfile_header_abi.sh",
+            "compat/x86_64/run_x86_sendfile_reference.sh",
+            "compat/x86_64/x86_sendfile_reference_probe.c",
+            "compat/x86_64/libc_sendfile_probe.c",
+            "compat/x86_64/libc_sendfile_start.S",
+            "compat/x86_64/run_libc_sendfile.sh",
+        ):
+            self.assertIn(owner, sendfile["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in sendfile["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sendfile"},
+        )
+        for phrase in (
+            "regular-file sendfile transfer block",
+            "sendfile=40",
+            "rdi/rsi/rdx/r10",
+            "explicit signed `off_t`",
+            "input open-file-description position remains unchanged",
+            "null offset advances the shared input position",
+            "copy_file_range",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, sendfile["description"])
+        self.assertIn("src/linux/sendfile.c", sendfile["oracle"][0]["role"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/sendfile.rs", posix_runtime["source_owners"]
         )
         ffs = artifacts_by_id["static-c-ffs"]
         assert isinstance(ffs, dict)
@@ -6815,6 +6855,35 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh flock-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-flock command"):
+            ledger.validate_ledger(data)
+
+    def test_sendfile_artifact_keeps_its_offset_pointer_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sendfile"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("sendfile=40", "sendfile=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "four-word syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sendfile"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh sendfile-reference"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sendfile command"):
             ledger.validate_ledger(data)
 
     def test_generic_ioctl_artifact_keeps_its_safe_no_vararg_boundary(self) -> None:

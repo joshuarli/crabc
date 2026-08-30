@@ -254,6 +254,7 @@ semget
 semop
 semtimedop
 send
+sendfile
 sendto
 setdomainname
 setegid

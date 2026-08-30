@@ -7518,6 +7518,100 @@ def require_flock_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_sendfile_artifact(family: Mapping[str, Any]) -> None:
+    """Keep direct C sendfile scoped to its offset-pointer transfer contract."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-sendfile"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sendfile artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "regular-file sendfile transfer block",
+        "sendfile=40",
+        "rdi/rsi/rdx/r10",
+        "explicit signed `off_t`",
+        "input open-file-description position remains unchanged",
+        "null offset advances the shared input position",
+        "copy_file_range",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sendfile description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sendfile.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/sys/sendfile.h",
+        "compat/x86_64/sendfile_header_abi_probe.c",
+        "compat/x86_64/sendfile_header_abi_probe.cpp",
+        "compat/x86_64/run_sendfile_header_abi.sh",
+        "compat/x86_64/run_x86_sendfile_reference.sh",
+        "compat/x86_64/x86_sendfile_reference_probe.c",
+        "compat/x86_64/libc_sendfile_probe.c",
+        "compat/x86_64/libc_sendfile_start.S",
+        "compat/x86_64/run_libc_sendfile.sh",
+    ):
+        require(owner in owners, f"static-c-sendfile must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "sendfile=40" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            for item in prerequisites
+        ),
+        "static-c-sendfile must record its four-word syscall ABI",
+    )
+    require(
+        any(
+            "non-null offset pointer" in item
+            and "input open-file-description position unchanged" in item
+            and "null offset" in item
+            and "short at EOF" in item
+            for item in prerequisites
+        ),
+        "static-c-sendfile must record its offset and EOF boundary",
+    )
+    require(
+        any("src/linux/sendfile.c" in item and "cancellation" in item for item in prerequisites),
+        "static-c-sendfile must record musl's direct non-cancellation path",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sendfile"},
+        "static-c-sendfile must use the closed libc-sendfile command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "sendfile=40",
+        "rdi/rsi/rdx/r10",
+        "explicit-offset advance",
+        "null-offset short transfer",
+        "EOF zero",
+        "copy_file_range",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-sendfile evidence scope omits {phrase}",
+        )
+
+
 def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     """Keep the generic ioctl ABI forwarder bounded despite its broad spelling."""
     artifacts = require_verified_artifacts(
@@ -9452,6 +9546,7 @@ def validate_ledger(
     require_fcntl_status_control_artifact(by_id["libc.posix-runtime"])
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
     require_flock_artifact(by_id["libc.posix-runtime"])
+    require_sendfile_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])

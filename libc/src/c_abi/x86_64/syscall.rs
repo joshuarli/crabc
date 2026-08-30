@@ -18,7 +18,8 @@
 //! system-information leaf uses `sysinfo` and the fixed-size
 //! `sched_getaffinity` CPU mask here; its public processor helper deliberately
 //! ignores a raw affinity failure in the musl-defined CPU-0 fallback case.
-//! The separately selected bounded `flock` leaf uses direct `flock=73`.
+//! The separately selected bounded `flock` leaf uses direct `flock=73`, and
+//! the regular-file transfer leaf uses direct `sendfile=40`.
 //! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
@@ -315,6 +316,8 @@ pub(crate) const SYS_MSGSND: i64 = 69;
 pub(crate) const SYS_MSGRCV: i64 = 70;
 pub(crate) const SYS_MSGCTL: i64 = 71;
 pub(crate) const SYS_FCNTL: i64 = 72;
+/// Linux x86-64 `sendfile` uses `rdi/rsi/rdx/r10` for its four arguments.
+pub(crate) const SYS_SENDFILE: i64 = 40;
 pub(crate) const SYS_FSYNC: i64 = 74;
 pub(crate) const SYS_TRUNCATE: i64 = 76;
 pub(crate) const SYS_FTRUNCATE: i64 = 77;

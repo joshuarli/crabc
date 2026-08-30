@@ -243,6 +243,16 @@ does not select `fcntl` record-lock interaction, `lockf`, descriptor/pathname
 policy, network/distributed-filesystem semantics, family/platform parity, or
 public x86 support.
 
+`./scripts/dev-x86_64.sh libc-sendfile` is a separate private
+`static-c-sendfile` artifact inside planned `libc.posix-runtime`. Its
+project-header C/C++ gate and pinned-musl/freestanding-static fixture prove
+only direct regular-file `sendfile`: an explicit signed `off_t` advances while
+leaving the input position unchanged, a null offset advances that shared
+position through short-transfer and EOF-zero cases, and stale `errno`,
+`EINVAL`, and `EBADF` are translated directly. It does not select pathname,
+socket/pipe, splice, copy-file-range, vector-I/O, durability, cancellation,
+family/platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak
