@@ -166,7 +166,9 @@ bounded source route, not an iterable or general pointer registry: detached
 it supports only the typed B allocation/copy/free transition above. Once that
 transition terminally releases A and stores its proof in B TLS, B's subsequent
 local `realloc` is unavailable and leaves B's existing client intact until its
-exact free and normal finish. Usable-size
+exact free and normal finish. The selected C witness keeps that client in B's
+TSD value, whose destructor repeats the refusal and releases the client before
+the following native all-free finish settles A's proof. Usable-size
 outside the exact detached route or parked live owner, cross-thread
 reallocation outside that exact post-exit transition, and
 cross-thread exit/abandoned-page routing remain unavailable; the ticket-zero

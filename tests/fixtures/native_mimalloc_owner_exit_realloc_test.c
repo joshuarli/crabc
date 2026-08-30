@@ -16,6 +16,53 @@
 
 static unsigned char *shared_medium;
 static size_t replacement_size;
+static pthread_key_t terminal_proof_destructor_key;
+static unsigned char *terminal_proof_replacement;
+static unsigned int terminal_proof_destructor_calls;
+static int terminal_proof_destructor_failed;
+
+/* This destructor runs after B has terminally freed A's route client, but
+ * before libc calls the native owner finish. It therefore exercises the
+ * proof-gated allocator boundary at the exact pthread TSD ordering point:
+ * B may release its already-live local client, but cannot manufacture a
+ * replacement before its own source teardown settles A's proof. */
+static void terminal_proof_destructor(void *value)
+{
+    unsigned char *replacement = terminal_proof_replacement;
+    unsigned char *resized;
+
+    if (value == NULL || replacement == NULL) {
+        terminal_proof_destructor_failed = 1;
+    } else {
+        errno = 0;
+        resized = realloc(replacement, 4096);
+        if (resized != NULL) {
+            /* Preserve an explicit cleanup path even for a broken boundary,
+             * so the failing fixture does not conceal its own lifecycle
+             * result behind a leaked B-local client. */
+            terminal_proof_destructor_failed = 1;
+            free(resized);
+        } else {
+            if (errno != ENOMEM)
+                terminal_proof_destructor_failed = 1;
+            if (replacement_size == 0) {
+                if (replacement[0] != 0)
+                    terminal_proof_destructor_failed = 1;
+            } else {
+                if (replacement[0] != 0x61)
+                    terminal_proof_destructor_failed = 1;
+                if (replacement_size >= 4096 && replacement[4095] != 0x62)
+                    terminal_proof_destructor_failed = 1;
+                if (replacement_size >= 64 * 1024
+                        && replacement[64 * 1024 - 1] != 0x63)
+                    terminal_proof_destructor_failed = 1;
+            }
+            free(replacement);
+        }
+    }
+    terminal_proof_replacement = NULL;
+    terminal_proof_destructor_calls += 1;
+}
 
 static void *owner_worker(void *opaque)
 {
@@ -85,8 +132,13 @@ static void *release_worker(void *opaque)
                 && replacement[64 * 1024 - 1] != 0x63)
             return (void *)(uintptr_t)16;
     }
-    free(replacement);
     shared_medium = NULL;
+    terminal_proof_replacement = replacement;
+    if (pthread_setspecific(terminal_proof_destructor_key, (void *)(uintptr_t)1) != 0) {
+        terminal_proof_replacement = NULL;
+        free(replacement);
+        return (void *)(uintptr_t)17;
+    }
     return NULL;
 }
 
@@ -103,8 +155,14 @@ int main(void)
         0,
     };
 
+    if (pthread_key_create(&terminal_proof_destructor_key,
+            terminal_proof_destructor) != 0)
+        return 1;
     for (unsigned int round = 0; round < 3; ++round) {
         replacement_size = replacement_sizes[round];
+        terminal_proof_replacement = NULL;
+        terminal_proof_destructor_calls = 0;
+        terminal_proof_destructor_failed = 0;
         if (pthread_create(&owner, NULL, owner_worker, NULL) != 0)
             return 1;
         if (pthread_join(owner, &result) != 0 || result != NULL)
@@ -114,15 +172,21 @@ int main(void)
         result = (void *)(uintptr_t)6;
         if (pthread_join(releaser, &result) != 0 || result != NULL)
             return 4;
+        if (terminal_proof_destructor_calls != 1
+                || terminal_proof_destructor_failed
+                || terminal_proof_replacement != NULL)
+            return 5;
     }
 
+    if (pthread_key_delete(terminal_proof_destructor_key) != 0)
+        return 6;
     after = malloc(53);
     if (after == NULL)
-        return 5;
+        return 7;
     after[0] = 0x63;
     after[52] = 0x64;
     if (after[0] != 0x63 || after[52] != 0x64)
-        return 6;
+        return 8;
     free(after);
 
     puts("native mimalloc owner exit realloc ok");

@@ -1134,7 +1134,9 @@ local-session regression preserves sentinel bytes across the refused
 replacement before it proves the later successor or all-free completion.
 The selected C route-replacement fixture verifies the same valid-request
 refusal maps to `ENOMEM` while preserving B's source-copied replacement until
-its exact free and normal finish.
+its exact free and normal finish. Its B TSD destructor repeats that refusal,
+frees the existing client, and must complete before B's native all-free finish
+can settle A's proof.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

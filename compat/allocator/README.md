@@ -2221,7 +2221,9 @@ replacement when requested, then frees it through B's local ledger. An invalid
 replacement size returns `ENOMEM` while preserving A's exact client. After
 the successful terminal route replacement stores A's proof in B TLS, a valid
 B-local replacement also returns `ENOMEM` and preserves B's client until its
-exact free and normal finish. It does
+exact free and normal finish. The fixture retains that client in B's TSD value,
+whose destructor repeats the refusal and frees it before B's native all-free
+finish can settle A's proof. It does
 not yet cover general cross-thread routing beyond that exact-live ticket-zero
 free, general single-page adoption/reclaim exits, foreign worker `realloc`
 beyond the exact detached-owner transition, usable-size outside the exact

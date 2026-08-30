@@ -1284,7 +1284,9 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   `realloc` return unavailable, preserving B's existing client for its exact
   free and source-defined finish. The selected
   `native_mimalloc_owner_exit_realloc` C witness proves the ABI maps that
-  valid-request refusal to `ENOMEM` without changing B's client. The
+  valid-request refusal to `ENOMEM` without changing B's client, including
+  from B's TSD destructor before its native all-free finish settles A's
+  proof. The
   `native_post_exit_registry_terminal_close_waits_for_an_inflight_installation`
   unit regression proves that terminal retention waits for an in-flight
   detached-owner installation to complete, then permanently rejects a later

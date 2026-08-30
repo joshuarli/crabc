@@ -2816,7 +2816,9 @@ manufacture another local client before B finishes. An exact local `free`
 remains available to discharge B's already-recorded client in source order.
 The selected `native_mimalloc_owner_exit_realloc` C fixture drives the same
 boundary through `realloc`: a valid B-local request returns `ENOMEM` and
-leaves the source-copied B replacement intact until its exact free.
+leaves the source-copied B replacement intact until its exact free. B's TSD
+destructor repeats that refusal, frees the existing client, and precedes the
+native all-free finish that settles A's proof.
 For the one detached `realloc` transition, the entry stays private and BUSY
 while B records a normal-alignment replacement in that parked session, copies
 `min(A's recorded usable extent, requested size)`, and only then calls the
