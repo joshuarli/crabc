@@ -1139,6 +1139,8 @@ frees the existing client, and must complete before B's native all-free finish
 can settle A's proof. B exits through `pthread_exit`: its cleanup handler first
 receives `ENOMEM` for a new local allocation, then the TSD destructor receives
 `ENOMEM` for the existing client's valid `realloc` before freeing that client.
+The same selected fixture repeats that exact user-phase ordering through
+deferred cancellation at a real cancellation point.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

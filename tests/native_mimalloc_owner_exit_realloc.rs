@@ -34,7 +34,7 @@ fn run(binary: &std::path::Path) -> Output {
 }
 
 #[test]
-fn native_mimalloc_owner_exit_realloc_freezes_b_client_through_cleanup_and_tsd() {
+fn native_mimalloc_owner_exit_realloc_freezes_b_client_through_pthread_exit_and_cancellation() {
     let candidate = test_support::TempArtifact::new("native-mimalloc-owner-exit-realloc-candidate");
     compile_fixture(&candidate);
 

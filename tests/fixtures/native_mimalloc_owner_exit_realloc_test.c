@@ -18,6 +18,10 @@ static unsigned char *shared_medium;
 static size_t replacement_size;
 static pthread_key_t terminal_proof_destructor_key;
 static unsigned char *terminal_proof_replacement;
+static pthread_mutex_t terminal_proof_cancel_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t terminal_proof_cancel_cond = PTHREAD_COND_INITIALIZER;
+static int terminal_proof_cancel_mode;
+static int terminal_proof_cancel_ready;
 static unsigned int terminal_proof_cleanup_calls;
 static int terminal_proof_cleanup_failed;
 static unsigned int terminal_proof_destructor_calls;
@@ -42,6 +46,11 @@ static void terminal_proof_cleanup(void *opaque)
     terminal_proof_cleanup_calls += 1;
 }
 
+static void terminal_proof_cancel_unlock(void *opaque)
+{
+    (void)pthread_mutex_unlock((pthread_mutex_t *)opaque);
+}
+
 /* This destructor runs after B has terminally freed A's route client, but
  * before libc calls the native owner finish. It therefore exercises the
  * proof-gated allocator boundary at the exact pthread TSD ordering point:
@@ -52,7 +61,8 @@ static void terminal_proof_destructor(void *value)
     unsigned char *replacement = terminal_proof_replacement;
     unsigned char *resized;
 
-    if (value == NULL || replacement == NULL) {
+    if (value == NULL || replacement == NULL
+            || terminal_proof_cleanup_calls != 1) {
         terminal_proof_destructor_failed = 1;
     } else {
         errno = 0;
@@ -160,6 +170,29 @@ static void *release_worker(void *opaque)
         free(replacement);
         return (void *)(uintptr_t)17;
     }
+    if (terminal_proof_cancel_mode) {
+        /* Deferred cancellation is the third pthread exit entrance. Main
+         * cannot request it until both cleanup handlers are installed and B
+         * already holds A's terminal proof. The allocation cleanup must run
+         * first, then unlock, then the TSD destructor must reject `realloc`
+         * before the native finish can release A's admission. */
+        if (pthread_mutex_lock(&terminal_proof_cancel_mutex) != 0)
+            return (void *)(uintptr_t)18;
+        terminal_proof_cancel_ready = 1;
+        if (pthread_cond_signal(&terminal_proof_cancel_cond) != 0) {
+            (void)pthread_mutex_unlock(&terminal_proof_cancel_mutex);
+            return (void *)(uintptr_t)19;
+        }
+        pthread_cleanup_push(terminal_proof_cancel_unlock,
+                &terminal_proof_cancel_mutex);
+        pthread_cleanup_push(terminal_proof_cleanup, NULL);
+        while (terminal_proof_cancel_ready)
+            (void)pthread_cond_wait(&terminal_proof_cancel_cond,
+                    &terminal_proof_cancel_mutex);
+        pthread_cleanup_pop(0);
+        pthread_cleanup_pop(1);
+        return NULL;
+    }
     pthread_cleanup_push(terminal_proof_cleanup, NULL);
     pthread_exit(NULL);
     pthread_cleanup_pop(0);
@@ -177,14 +210,19 @@ int main(void)
         4096,
         128 * 1024,
         0,
+        4096,
     };
 
     if (pthread_key_create(&terminal_proof_destructor_key,
             terminal_proof_destructor) != 0)
         return 1;
-    for (unsigned int round = 0; round < 3; ++round) {
+    for (unsigned int round = 0;
+            round < sizeof(replacement_sizes) / sizeof(replacement_sizes[0]);
+            ++round) {
         replacement_size = replacement_sizes[round];
         terminal_proof_replacement = NULL;
+        terminal_proof_cancel_mode = round == 3;
+        terminal_proof_cancel_ready = 0;
         terminal_proof_cleanup_calls = 0;
         terminal_proof_cleanup_failed = 0;
         terminal_proof_destructor_calls = 0;
@@ -196,25 +234,43 @@ int main(void)
         if (pthread_create(&releaser, NULL, release_worker, NULL) != 0)
             return 3;
         result = (void *)(uintptr_t)6;
-        if (pthread_join(releaser, &result) != 0 || result != NULL)
-            return 4;
+        if (terminal_proof_cancel_mode) {
+            if (pthread_mutex_lock(&terminal_proof_cancel_mutex) != 0)
+                return 4;
+            while (!terminal_proof_cancel_ready) {
+                if (pthread_cond_wait(&terminal_proof_cancel_cond,
+                        &terminal_proof_cancel_mutex) != 0) {
+                    (void)pthread_mutex_unlock(&terminal_proof_cancel_mutex);
+                    return 5;
+                }
+            }
+            if (pthread_mutex_unlock(&terminal_proof_cancel_mutex) != 0)
+                return 6;
+            if (pthread_cancel(releaser) != 0)
+                return 7;
+            result = NULL;
+            if (pthread_join(releaser, &result) != 0 || result != PTHREAD_CANCELED)
+                return 8;
+        } else if (pthread_join(releaser, &result) != 0 || result != NULL) {
+            return 9;
+        }
         if (terminal_proof_destructor_calls != 1
                 || terminal_proof_destructor_failed
                 || terminal_proof_cleanup_calls != 1
                 || terminal_proof_cleanup_failed
                 || terminal_proof_replacement != NULL)
-            return 5;
+            return 10;
     }
 
     if (pthread_key_delete(terminal_proof_destructor_key) != 0)
-        return 6;
+        return 11;
     after = malloc(53);
     if (after == NULL)
-        return 7;
+        return 12;
     after[0] = 0x63;
     after[52] = 0x64;
     if (after[0] != 0x63 || after[52] != 0x64)
-        return 8;
+        return 13;
     free(after);
 
     puts("native mimalloc owner exit realloc ok");
