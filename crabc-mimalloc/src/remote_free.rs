@@ -49,13 +49,15 @@ const THREAD_FREE_BLOCK_MASK: ThreadFree = !THREAD_FREE_OWNED;
 // each admitted publisher adds `PUBLICATION_ONE` before it touches the source
 // `xthread_id` or `xthread_free` atomics. `OWNER_DRAINING` admits exactly the
 // source owner while it detaches `xthread_free`; it never blocks a producer.
-// An owner may close the lifetime only from `ACTIVE` with neither state held.
-// The high 32 bits distinguish a later reuse of the same metadata address from
-// the PageMap generation read by a producer. This is intentionally a
-// constant-size per-page state, not a client ledger or owner registry.
+// `TERMINALLY_RETAINED` records an irreversible post-detach source failure.
+// An owner may close the lifetime only from `ACTIVE` with none of these states
+// held. The high 32 bits distinguish a later reuse of the same metadata
+// address from the PageMap generation read by a producer. This is intentionally
+// a constant-size per-page state, not a client ledger or owner registry.
 const LIVE_REMOTE_PAGE_ACTIVE: usize = 1;
 const LIVE_REMOTE_PAGE_PUBLICATION_ONE: usize = 1 << 1;
-const LIVE_REMOTE_PAGE_PUBLICATION_MASK: usize = 0x7fff_fffe;
+const LIVE_REMOTE_PAGE_PUBLICATION_MASK: usize = 0x3fff_fffe;
+const LIVE_REMOTE_PAGE_TERMINALLY_RETAINED: usize = 1 << 30;
 const LIVE_REMOTE_PAGE_OWNER_DRAINING: usize = 1 << 31;
 const LIVE_REMOTE_PAGE_GENERATION_SHIFT: usize = 32;
 
@@ -91,6 +93,8 @@ pub(crate) enum LiveRemoteFreePagePublicationError {
     StaleGeneration,
     /// The page is retiring or already retired and accepts no new producer.
     Retired,
+    /// A prior post-detach source failure permanently retained this page.
+    TerminallyRetained,
     /// The page-local publication count cannot represent another producer.
     PublicationCountOverflow,
 }
@@ -104,6 +108,8 @@ pub(crate) enum LiveRemoteFreePageRetirementError {
     PublishersInFlight,
     /// The source owner is currently detaching `xthread_free` into `local_free`.
     OwnerCollectionInProgress,
+    /// An irreversible source collection failure retains this page/map owner.
+    TerminallyRetained,
     /// A prior owner already closed this exact lifetime.
     AlreadyRetired,
 }
@@ -119,6 +125,8 @@ pub(crate) enum LiveRemoteFreePageReinitializeError {
     PublishersInFlight,
     /// A malformed state retains an owner-side collector after the lifetime closed.
     OwnerCollectionInProgress,
+    /// An irreversible source collection failure forbids metadata reuse.
+    TerminallyRetained,
     /// Reusing this metadata address would repeat a PageMap generation.
     /// The caller must retain the closed page rather than permit ABA reuse.
     GenerationExhausted,
@@ -140,17 +148,26 @@ pub(crate) enum LiveRemoteFreePageOwnerCollectionError {
     StaleGeneration,
     /// The page is retiring or already retired.
     Retired,
+    /// A prior post-detach source failure permanently retained this page.
+    TerminallyRetained,
     /// The unique source page owner already has an active collector.
     OwnerCollectionInProgress,
 }
 
 /// A generic live-page collection failed before or during the source drain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum LiveRemoteFreePageCollectError {
+pub(crate) enum LiveRemoteFreePageCollectError<'page> {
     /// The page-local lifetime rejected the owner-side collector.
     Lifetime(LiveRemoteFreePageOwnerCollectionError),
-    /// The pinned `mi_page_thread_free_collect` path rejected the remote list.
+    /// A pre-detach source check rejected the collection; normal owner cleanup
+    /// remains available because no source head was irreversibly changed.
     Source(RemoteFreeError),
+    /// `mi_page_thread_free_collect` detached the source head and then
+    /// rejected its list/accounting. The returned terminal owner is the only
+    /// auditable retained lifetime; it permanently blocks retirement/reuse.
+    Terminal {
+        owner: LiveRemoteFreePageTerminal<'page>,
+        source: RemoteFreeError,
+    },
 }
 
 /// One admitted live remote publisher.
@@ -173,6 +190,18 @@ pub(crate) struct LiveRemoteFreePagePublication<'page> {
 /// consumed by this or a later source collection.
 #[must_use = "a live owner collector must finish before the page lifetime can retire"]
 pub(crate) struct LiveRemoteFreePageOwnerCollection<'page> {
+    state: &'page LiveRemoteFreePageState,
+    generation: LiveRemoteFreePageGeneration,
+}
+
+/// The unique retained owner after an irreversible owner-side source failure.
+///
+/// This type carries no PageMap, Theap, queue, or allocator capability. Its
+/// retained state bit is the durable ownership record: even if a caller drops
+/// this audit token, page retirement and metadata reuse remain refused rather
+/// than guessing how to reconstruct a detached remote list.
+#[must_use = "a terminal collection failure retains exactly one page-lifetime owner"]
+pub(crate) struct LiveRemoteFreePageTerminal<'page> {
     state: &'page LiveRemoteFreePageState,
     generation: LiveRemoteFreePageGeneration,
 }
@@ -266,7 +295,7 @@ impl Drop for LiveRemoteFreePagePublication<'_> {
     }
 }
 
-impl LiveRemoteFreePageOwnerCollection<'_> {
+impl<'page> LiveRemoteFreePageOwnerCollection<'page> {
     /// Detaches and merges the source `xthread_free` head exactly once.
     ///
     /// # Safety
@@ -277,10 +306,26 @@ impl LiveRemoteFreePageOwnerCollection<'_> {
     /// concurrently, but no path may abandon, detach, reuse, or release this
     /// page until this guard drops and the owner completes source collection.
     #[inline]
-    pub(crate) unsafe fn collect(&self, page: NonNull<Page>) -> Result<usize, RemoteFreeError> {
+    unsafe fn collect(&self, page: NonNull<Page>) -> Result<usize, RemoteFreeError> {
         // SAFETY: the caller supplies the same owner and page-lifetime proof
         // required by `collect`; this guard adds retirement exclusion only.
         unsafe { collect(page) }
+    }
+
+    /// Converts a post-detach source failure into the only retained page owner.
+    ///
+    /// This is intentionally private to the generic [`collect_live`] seam so
+    /// a caller cannot accidentally drop an owner guard after an irreversible
+    /// `mi_page_thread_free_collect` error and make the page reusable.
+    fn into_terminal(self) -> LiveRemoteFreePageTerminal<'page> {
+        retain_live_remote_page_terminal_with(&self.state.word, self.generation);
+        let state = self.state;
+        let generation = self.generation;
+        // The terminal transition above clears `OWNER_DRAINING` while setting
+        // `TERMINALLY_RETAINED`. Forgetting this guard is therefore confined
+        // to the explicit retained-error owner, never a normal success path.
+        core::mem::forget(self);
+        LiveRemoteFreePageTerminal { state, generation }
     }
 }
 
@@ -288,6 +333,22 @@ impl Drop for LiveRemoteFreePageOwnerCollection<'_> {
     #[inline]
     fn drop(&mut self) {
         finish_live_remote_page_owner_collection_with(&self.state.word, self.generation);
+    }
+}
+
+impl LiveRemoteFreePageTerminal<'_> {
+    /// Identifies the permanently retained page lifetime for test/state audit.
+    #[inline]
+    pub(crate) const fn generation(&self) -> LiveRemoteFreePageGeneration {
+        self.generation
+    }
+
+    /// Returns whether this token still names the retained lifetime.
+    #[inline]
+    pub(crate) fn is_retained(&self) -> bool {
+        let state = word_load_acquire(&self.state.word);
+        live_remote_page_generation(state) == self.generation
+            && state & LIVE_REMOTE_PAGE_TERMINALLY_RETAINED != 0
     }
 }
 
@@ -341,20 +402,31 @@ pub(crate) unsafe fn push_live(
 /// PageMap entry. The caller must be the sole source owner of the ordinary
 /// page fields and preserve the page/block-area lifetime while this function
 /// runs. It may race only with source-shaped [`push_live`] producers.
-pub(crate) unsafe fn collect_live(
-    lifetime: &LiveRemoteFreePageState,
+pub(crate) unsafe fn collect_live<'page>(
+    lifetime: &'page LiveRemoteFreePageState,
     generation: LiveRemoteFreePageGeneration,
     page: NonNull<Page>,
-) -> Result<usize, LiveRemoteFreePageCollectError> {
+) -> Result<usize, LiveRemoteFreePageCollectError<'page>> {
     let collection = lifetime
         .begin_owner_collection(generation)
         .map_err(LiveRemoteFreePageCollectError::Lifetime)?;
     // SAFETY: the caller's source owner proof plus the guard keep the page
     // metadata and ordinary fields stable while `collect` detaches one atomic
     // head. Producers may publish only to the successor head.
-    let result = unsafe { collection.collect(page) }.map_err(LiveRemoteFreePageCollectError::Source);
-    drop(collection);
-    result
+    match unsafe { collection.collect(page) } {
+        Ok(collected) => {
+            drop(collection);
+            Ok(collected)
+        }
+        Err(source) if collection_error_is_post_detach(source) => {
+            let owner = collection.into_terminal();
+            Err(LiveRemoteFreePageCollectError::Terminal { owner, source })
+        }
+        Err(source) => {
+            drop(collection);
+            Err(LiveRemoteFreePageCollectError::Source(source))
+        }
+    }
 }
 
 /// The bounded remote-free protocol encountered a state whose lifecycle is
@@ -381,6 +453,21 @@ pub(crate) enum RemoteFreeError {
     /// invalid caller/concurrent-lifetime state; collection must retain the
     /// page rather than detach an unrelated list.
     PartialHeadMismatch,
+}
+
+/// Distinguishes errors reached after the source remote-head detach.
+///
+/// `collect_state` can reject these two conditions only from
+/// `collect_detached_to_local`, after `detach_from_head` successfully changed
+/// `xthread_free` to its owned-empty form. They therefore require terminal
+/// retention; all other errors are pre-detach validation failures in the live
+/// owner collection path.
+#[inline]
+const fn collection_error_is_post_detach(error: RemoteFreeError) -> bool {
+    matches!(
+        error,
+        RemoteFreeError::TooManyRemoteBlocks | RemoteFreeError::UsedCountUnderflow
+    )
 }
 
 /// Result of `mi_free_block_mt(..., allow_collect=true)` on an abandoned page.
@@ -727,6 +814,9 @@ where
         if live_remote_page_generation(observed) != generation {
             return Err(LiveRemoteFreePagePublicationError::StaleGeneration);
         }
+        if observed & LIVE_REMOTE_PAGE_TERMINALLY_RETAINED != 0 {
+            return Err(LiveRemoteFreePagePublicationError::TerminallyRetained);
+        }
         if observed & LIVE_REMOTE_PAGE_ACTIVE == 0 {
             return Err(LiveRemoteFreePagePublicationError::Retired);
         }
@@ -772,6 +862,9 @@ where
         if live_remote_page_generation(observed) != generation {
             return Err(LiveRemoteFreePageOwnerCollectionError::StaleGeneration);
         }
+        if observed & LIVE_REMOTE_PAGE_TERMINALLY_RETAINED != 0 {
+            return Err(LiveRemoteFreePageOwnerCollectionError::TerminallyRetained);
+        }
         if observed & LIVE_REMOTE_PAGE_ACTIVE == 0 {
             return Err(LiveRemoteFreePageOwnerCollectionError::Retired);
         }
@@ -807,6 +900,32 @@ fn finish_live_remote_page_owner_collection_with<H>(
     }
 }
 
+/// Marks a post-detach collection failure terminally retained.
+///
+/// `collect_detached_to_local` may reject list accounting only after the
+/// source head CAS succeeded. Clearing the drain bit alone would make that
+/// detached/partially accounted page eligible for another lifecycle decision,
+/// so this single AcqRel transition preserves one auditable page owner and
+/// blocks every future publication, drain, retirement, and reuse attempt.
+fn retain_live_remote_page_terminal_with<H>(
+    word: &H,
+    generation: LiveRemoteFreePageGeneration,
+) where
+    H: LiveRemoteFreePageLifetimeWord + ?Sized,
+{
+    let mut observed = word.load_acquire();
+    loop {
+        debug_assert_eq!(live_remote_page_generation(observed), generation);
+        debug_assert_ne!(observed & LIVE_REMOTE_PAGE_ACTIVE, 0);
+        debug_assert_ne!(observed & LIVE_REMOTE_PAGE_OWNER_DRAINING, 0);
+        let replacement = (observed | LIVE_REMOTE_PAGE_TERMINALLY_RETAINED)
+            & !LIVE_REMOTE_PAGE_OWNER_DRAINING;
+        if word.cas_weak_acq_rel(&mut observed, replacement) {
+            return;
+        }
+    }
+}
+
 /// The source-independent owner close transition.
 ///
 /// Closing is intentionally a single compare/exchange from the active,
@@ -823,6 +942,9 @@ where
     loop {
         if live_remote_page_generation(observed) != generation {
             return Err(LiveRemoteFreePageRetirementError::StaleGeneration);
+        }
+        if observed & LIVE_REMOTE_PAGE_TERMINALLY_RETAINED != 0 {
+            return Err(LiveRemoteFreePageRetirementError::TerminallyRetained);
         }
         if observed & LIVE_REMOTE_PAGE_ACTIVE == 0 {
             return Err(LiveRemoteFreePageRetirementError::AlreadyRetired);
@@ -852,6 +974,9 @@ where
     loop {
         if live_remote_page_generation(observed) != generation {
             return Err(LiveRemoteFreePageReinitializeError::StaleGeneration);
+        }
+        if observed & LIVE_REMOTE_PAGE_TERMINALLY_RETAINED != 0 {
+            return Err(LiveRemoteFreePageReinitializeError::TerminallyRetained);
         }
         if observed & LIVE_REMOTE_PAGE_ACTIVE != 0 {
             return Err(LiveRemoteFreePageReinitializeError::StillLive);
@@ -1500,10 +1625,10 @@ mod tests {
         // SAFETY: all production-shaped source publishers joined, so this is
         // the exclusive owner collection that accounts their remote list
         // under the page-local retirement exclusion.
-        assert_eq!(
+        assert!(matches!(
             unsafe { collect_live(&lifetime, generation, page.page_pointer()) },
             Ok(BLOCKS)
-        );
+        ));
         assert_eq!(page.0.remote_free_test_head(), 1);
         assert_eq!(page.0.remote_free_test_used(), 0);
         assert_eq!(
@@ -1551,6 +1676,44 @@ mod tests {
             lifetime.begin_retirement(generation),
             Ok(()),
             "only the source-empty page may retire after the owner drain completes"
+        );
+    }
+
+    #[test]
+    fn post_detach_collection_error_terminally_retains_the_page_lifetime() {
+        let page = ConcurrentTestPage(Page::remote_free_test_page(1, 0));
+        let lifetime = LiveRemoteFreePageState::new();
+        let generation = lifetime.current_generation();
+        let mut block = TestBlock([0; 16]);
+
+        // SAFETY: this deliberately invalid accounting image keeps the source
+        // page/producer atomics live but has `used == 0` for one published
+        // block. The owner collector must detach before it observes the
+        // underflow, exercising the irreversible source error boundary.
+        assert_eq!(
+            unsafe { push_live(&lifetime, generation, page.page_pointer(), block.pointer()) },
+            Ok(())
+        );
+        let terminal = match unsafe { collect_live(&lifetime, generation, page.page_pointer()) } {
+            Err(LiveRemoteFreePageCollectError::Terminal { owner, source }) => {
+                assert_eq!(source, RemoteFreeError::UsedCountUnderflow);
+                owner
+            }
+            _ => panic!("expected a retained post-detach collection failure"),
+        };
+
+        assert_eq!(terminal.generation(), generation);
+        assert!(terminal.is_retained(), "the returned token audits retention");
+        assert_eq!(page.0.remote_free_test_head(), 1, "the source head stayed detached");
+        assert_eq!(
+            lifetime.begin_retirement(generation),
+            Err(LiveRemoteFreePageRetirementError::TerminallyRetained),
+            "the detached list error may not reopen PageMap retirement"
+        );
+        assert_eq!(
+            lifetime.reinitialize(generation),
+            Err(LiveRemoteFreePageReinitializeError::TerminallyRetained),
+            "the retained page metadata may not be reused under the old generation"
         );
     }
 
