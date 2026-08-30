@@ -13,6 +13,8 @@
 //! drift from this evidence. The compact lifetime-word models likewise call
 //! [`super::begin_live_remote_page_publication_with`],
 //! [`super::finish_live_remote_page_publication_with`],
+//! [`super::begin_live_remote_page_owner_collection_with`],
+//! [`super::retain_live_remote_page_terminal_with`],
 //! [`super::begin_live_remote_page_retirement_with`], and
 //! [`super::reinitialize_live_remote_page_with`] directly. This keeps their
 //! acquire/AcqRel publication, owner-close, and generation transitions tied to
@@ -38,13 +40,15 @@
 
 use super::{
     AbandonedExpectedHeadTransition, AbandonedOwnerClaim, AbandonedOwnerHeadTransition,
+    LiveRemoteFreePageOwnerCollectionError,
     LiveRemoteFreePagePublicationError, LiveRemoteFreePageReinitializeError,
-    LiveRemoteFreePageRetirementError,
-    THREAD_FREE_OWNED,
-    ThreadFree, begin_live_remote_page_publication_with,
+    LiveRemoteFreePageRetirementError, RemoteFreeError, ThreadFree, THREAD_FREE_OWNED,
+    begin_live_remote_page_owner_collection_with,
+    begin_live_remote_page_publication_with,
     begin_live_remote_page_retirement_with, claim_abandoned_owner_with,
     detach_from_head, finish_live_remote_page_publication_with, live_remote_page_word,
     publish_to_head, publish_to_head_with_owner, reinitialize_live_remote_page_with,
+    retain_live_remote_page_terminal_with,
     thread_free_block_address,
     try_unown_abandoned_expected_head_with, try_unown_abandoned_head_with,
 };
@@ -1094,6 +1098,73 @@ fn loom_lifetime_word_reinitialize_rejects_stale_generation() {
             begin_live_remote_page_retirement_with(&lifetime, next_generation),
             Ok(()),
             "the current generation still has one terminal owner-close transition"
+        );
+    });
+}
+
+#[test]
+fn loom_lifetime_word_post_detach_collection_failure_retains_the_terminal_lifetime() {
+    loom::model(|| {
+        let generation = 1;
+        let lifetime = AtomicUsize::new(live_remote_page_word(generation, true, 0));
+        let head = AtomicUsize::new(OWNER_EMPTY_HEAD);
+        let blocks = ModelBlocks::new();
+
+        // The source producer finishes its compact publication before the
+        // owner starts collection. This isolates the post-detach source
+        // failure from the ordinary publisher/owner race.
+        begin_live_remote_page_publication_with(&lifetime, generation)
+            .expect("the active lifetime admits the source producer");
+        blocks.publish(&head, 0);
+        finish_live_remote_page_publication_with(&lifetime, generation);
+        assert_eq!(
+            begin_live_remote_page_owner_collection_with(&lifetime, generation),
+            Ok(())
+        );
+
+        // This is the successful source `detach_from_head` inside
+        // `collect_state`. `UsedCountUnderflow` is detected only later by
+        // `collect_detached_to_local`, so the remote list cannot be treated as
+        // a normal, completed owner drain or reconstructed for another pass.
+        let detached = detach_from_head(&head)
+            .expect("the modeled source owner still holds the low-bit head");
+        assert_eq!(thread_free_block_address(detached), ModelBlocks::address(0));
+        assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        assert!(
+            !blocks.collected[0].load(Ordering::Acquire),
+            "the post-detach fault occurs before normal local-list accounting"
+        );
+        let source = RemoteFreeError::UsedCountUnderflow;
+        assert!(
+            super::collection_error_is_post_detach(source),
+            "the modeled source failure belongs to the irreversible post-detach class"
+        );
+
+        // This production transition replaces normal owner-collection finish:
+        // it clears the collection slot only while recording the durable
+        // terminal owner, preventing the detached list from becoming eligible
+        // for retirement or metadata reuse.
+        retain_live_remote_page_terminal_with(&lifetime, generation);
+
+        assert_eq!(
+            begin_live_remote_page_publication_with(&lifetime, generation),
+            Err(LiveRemoteFreePagePublicationError::TerminallyRetained),
+            "terminal retention rejects a guessed later producer"
+        );
+        assert_eq!(
+            begin_live_remote_page_owner_collection_with(&lifetime, generation),
+            Err(LiveRemoteFreePageOwnerCollectionError::TerminallyRetained),
+            "terminal retention does not turn the detached fault into a new drain"
+        );
+        assert_eq!(
+            begin_live_remote_page_retirement_with(&lifetime, generation),
+            Err(LiveRemoteFreePageRetirementError::TerminallyRetained),
+            "the detached collection fault cannot be retired as a completed drain"
+        );
+        assert_eq!(
+            reinitialize_live_remote_page_with(&lifetime, generation),
+            Err(LiveRemoteFreePageReinitializeError::TerminallyRetained),
+            "the retained lifetime cannot reuse the same page metadata"
         );
     });
 }
