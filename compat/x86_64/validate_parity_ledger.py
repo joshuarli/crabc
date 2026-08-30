@@ -40,6 +40,7 @@ EVENT_DESCRIPTORS_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_event_descriptors_header_abi.sh"
 )
 DIRENT_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_dirent_header_abi.sh"
+STDLIB_HEADER_ABI_RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_stdlib_header_abi.sh"
 TIMEVAL_TRANSITIVE_HEADER_ABI_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_timeval_transitive_header_abi.sh"
 )
@@ -149,6 +150,24 @@ EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_VERSIONSORT_VISIBLE_PROFILES = (
     "cxx17-gnu-largefile64",
 )
 EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ROW_COUNT = 11
+EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ID = "x86-stdlib-header-profile-matrix"
+EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND = "./scripts/dev-x86_64.sh stdlib-header-abi"
+EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_SUBJECT_HEADER = "stdlib.h"
+EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_PROFILES = (
+    "c11-strict",
+    "c11-posix-2008",
+    "c11-xopen-700",
+    "c11-gnu",
+    "c11-bsd",
+    "c11-lfs",
+    "cxx17-strict",
+    "cxx17-posix-2008",
+    "cxx17-xopen-700",
+    "cxx17-gnu",
+    "cxx17-bsd",
+    "cxx17-lfs",
+)
+EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ROW_COUNT = 12
 EXPECTED_TIMEVAL_TRANSITIVE_HEADER_PROFILE_MATRIX_ID = (
     "x86-timeval-transitive-header-profile-matrix"
 )
@@ -285,6 +304,7 @@ EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
         "epoll-header-profile-matrix",
         "event-descriptors-header-profile-matrix",
         "dirent-header-profile-matrix",
+        "stdlib-header-profile-matrix",
         "timeval-transitive-header-profile-matrix",
         "sys-time-direct-header-profile-matrix",
         "access-header-profile-matrix",
@@ -512,6 +532,12 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         "dirent.h selected declaration layout large-file alias feature gate and C++ requested C-linkage subset",
         "libc.headers-layouts",
         (EXPECTED_DIRENT_HEADER_PROFILE_MATRIX_ID,),
+    ),
+    "stdlib-header-profile-matrix": (
+        "partial-verified",
+        "stdlib.h selected declaration layout feature gate C++ requested C-linkage and NULL subset",
+        "libc.headers-layouts",
+        (EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ID,),
     ),
     "timeval-transitive-header-profile-matrix": (
         "partial-verified",
@@ -1563,6 +1589,7 @@ def validate_header_layout_foundation_manifest(
         "epoll_header_profile_matrix",
         "event_descriptors_header_profile_matrix",
         "dirent_header_profile_matrix",
+        "stdlib_header_profile_matrix",
         "timeval_transitive_header_profile_matrix",
         "sys_time_direct_header_profile_matrix",
         "access_header_profile_matrix",
@@ -1630,6 +1657,7 @@ def validate_header_layout_foundation_manifest(
             "epoll_header_profile_matrix_slice": True,
             "event_descriptors_header_profile_matrix_slice": True,
             "dirent_header_profile_matrix_slice": True,
+            "stdlib_header_profile_matrix_slice": True,
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
             "access_header_profile_matrix_slice": True,
@@ -1712,6 +1740,9 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/run_dirent_header_abi.sh",
         "compat/x86_64/dirent_header_abi_probe.c",
         "compat/x86_64/dirent_header_abi_probe.cpp",
+        "compat/x86_64/run_stdlib_header_abi.sh",
+        "compat/x86_64/stdlib_header_abi_probe.c",
+        "compat/x86_64/stdlib_header_abi_probe.cpp",
         "compat/x86_64/run_timeval_transitive_header_abi.sh",
         "compat/x86_64/timeval_transitive_header_abi_probe.c",
         "compat/x86_64/timeval_transitive_header_abi_probe.cpp",
@@ -2723,6 +2754,159 @@ def validate_header_layout_foundation_manifest(
         "libc.headers-layouts dirent header matrix evidence must retain its narrow non-completion boundary",
     )
 
+    stdlib_header_profile_matrix = manifest["stdlib_header_profile_matrix"]
+    require(
+        isinstance(stdlib_header_profile_matrix, Mapping),
+        "header-foundation stdlib header matrix must be a table",
+    )
+    require(
+        set(stdlib_header_profile_matrix)
+        == {
+            "id",
+            "state",
+            "command",
+            "required_result",
+            "header_class",
+            "subject_header",
+            "profiles",
+            "row_count",
+            "scope",
+            "row",
+        },
+        "header-foundation stdlib header matrix keys drifted",
+    )
+    require(
+        stdlib_header_profile_matrix["id"] == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ID,
+        "header-foundation stdlib header matrix id drifted",
+    )
+    require(
+        stdlib_header_profile_matrix["state"] == "partial-verified"
+        and stdlib_header_profile_matrix["required_result"] == "pass",
+        "header-foundation stdlib header matrix must remain partial verified evidence",
+    )
+    require(
+        stdlib_header_profile_matrix["command"] == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND,
+        "header-foundation stdlib header matrix command drifted",
+    )
+    require(
+        stdlib_header_profile_matrix["header_class"] == "pinned-non-uapi"
+        and stdlib_header_profile_matrix["subject_header"]
+        == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_SUBJECT_HEADER,
+        "header-foundation stdlib header matrix subject scope drifted",
+    )
+    stdlib_profiles = string_list(
+        stdlib_header_profile_matrix["profiles"],
+        "header-foundation stdlib profiles",
+    )
+    require(
+        tuple(stdlib_profiles) == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation stdlib header matrix profile roster drifted",
+    )
+    require(
+        stdlib_header_profile_matrix["row_count"]
+        == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ROW_COUNT
+        and stdlib_header_profile_matrix["row_count"] == len(stdlib_profiles),
+        "header-foundation stdlib header matrix row count drifted",
+    )
+    stdlib_scope = stdlib_header_profile_matrix["scope"]
+    require(
+        isinstance(stdlib_scope, str)
+        and all(
+            phrase in stdlib_scope
+            for phrase in (
+                "twelve isolated C11/C++17",
+                "POSIX.1-2008",
+                "_LARGEFILE64_SOURCE",
+                "negative hidden-name witnesses",
+                "unmangled C spellings",
+                "NULL/nullptr",
+                "stdio.h-first",
+                "string.h-first",
+                "actual callable artifact linkage",
+                "archive linkage",
+                "stdlib runtime/lifecycle behavior",
+                "all-header closure",
+                "runtime completion",
+                "family promotion",
+                "public support",
+            )
+        ),
+        "header-foundation stdlib header matrix scope must retain its narrow non-completion boundary",
+    )
+    stdlib_rows = stdlib_header_profile_matrix["row"]
+    require(
+        isinstance(stdlib_rows, list)
+        and len(stdlib_rows) == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_ROW_COUNT,
+        "header-foundation stdlib header matrix row roster drifted",
+    )
+    observed_stdlib_rows: list[str] = []
+    for index, row in enumerate(stdlib_rows):
+        location = f"header-foundation stdlib_header_profile_matrix.row[{index}]"
+        require(isinstance(row, Mapping), f"{location} must be a table")
+        require(
+            set(row) == {"profile", "reference", "candidate", "applicability"},
+            f"{location} keys drifted",
+        )
+        profile = row["profile"]
+        require(
+            isinstance(profile, str) and profile in EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_PROFILES,
+            f"{location} profile is not a declared stdlib header profile",
+        )
+        require(
+            row["reference"] == "compile-ok"
+            and row["candidate"] == "compile-ok"
+            and row["applicability"] == "applicable",
+            f"{location} must retain the resolved compile-only result",
+        )
+        observed_stdlib_rows.append(profile)
+    require(
+        tuple(observed_stdlib_rows) == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_PROFILES,
+        "header-foundation stdlib header matrix row order or roster drifted",
+    )
+    require(
+        STDLIB_HEADER_ABI_RUNNER_PATH.is_file(),
+        "header-foundation stdlib header matrix runner is missing",
+    )
+    require(
+        "stdlib-header-abi)" in dispatch_source,
+        "stdlib-header-abi is absent from the native dispatcher",
+    )
+    stdlib_matrix_evidence = [
+        entry
+        for entry in family_native_evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command") == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND
+    ]
+    require(
+        len(stdlib_matrix_evidence) == 1,
+        "libc.headers-layouts must retain exactly one stdlib header matrix evidence command",
+    )
+    require(
+        stdlib_matrix_evidence[0].get("state") == "required"
+        and isinstance(stdlib_matrix_evidence[0].get("scope"), str)
+        and all(
+            phrase in stdlib_matrix_evidence[0]["scope"]
+            for phrase in (
+                "12-row `stdlib.h` C/C++",
+                "strict/POSIX/XOPEN/GNU/BSD/LFS",
+                "hidden-name partitions",
+                "GNU/BSD temporary/allocation",
+                "GNU locale-conversion",
+                "LFS aliases",
+                "C++ unmangled C spellings",
+                "stdio.h/string.h",
+                "actual callable artifact linkage",
+                "stdlib runtime or lifecycle behavior",
+                "archive linkage",
+                "all-header closure",
+                "runtime completion",
+                "family completion",
+                "public support",
+            )
+        ),
+        "libc.headers-layouts stdlib header matrix evidence must retain its narrow non-completion boundary",
+    )
+
     ioctl_header_profile_matrix = manifest["ioctl_header_profile_matrix"]
     require(
         isinstance(ioctl_header_profile_matrix, Mapping),
@@ -3368,6 +3552,10 @@ def validate_header_layout_foundation_manifest(
         dirent_header_profile_matrix["subject_header"] in pinned_path_set - uapi_header_set,
         "header-foundation dirent subject must remain a pinned non-UAPI header",
     )
+    require(
+        stdlib_header_profile_matrix["subject_header"] in pinned_path_set - uapi_header_set,
+        "header-foundation stdlib subject must remain a pinned non-UAPI header",
+    )
     project_only_paths = tuple(sorted(EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY))
     project_only_set = set(project_only_paths)
     class_expected_paths = {
@@ -3672,6 +3860,7 @@ def validate_header_layout_foundation_manifest(
             observed_event_descriptor_rows
         ),
         "dirent_header_profile_matrix_row_count": len(observed_dirent_rows),
+        "stdlib_header_profile_matrix_row_count": len(observed_stdlib_rows),
         "timeval_transitive_header_profile_matrix_row_count": len(observed_timeval_rows),
         "sys_time_direct_header_profile_matrix_row_count": len(observed_sys_time_direct_rows),
         "access_header_profile_matrix_row_count": len(observed_access_header_rows),
@@ -4208,6 +4397,164 @@ def require_dirent_header_profile_matrix_artifact(family: Mapping[str, Any]) -> 
     require(
         "dirent-header-abi)" in dispatch_source,
         "dirent-header-abi is absent from the native dispatcher",
+    )
+
+
+def require_stdlib_header_profile_matrix_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the private stdlib declaration matrix below family promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "stdlib-header-profile-matrix"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one stdlib-header-profile-matrix artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.headers-layouts`",
+        "strict, POSIX.1-2008, X/Open 700, GNU, BSD, and `_LARGEFILE64_SOURCE` profiles",
+        "LP64 div-record layouts",
+        "POSIX/XOPEN/GNU/BSD declaration and hidden-name partitions",
+        "GNU/BSD temporary/allocation",
+        "GNU locale-conversion declarations",
+        "LFS aliases",
+        "unmangled C++ C spellings",
+        "C++17 `NULL` behavior",
+        "`stdio.h` or `string.h`",
+        "actual callable artifact linkage",
+        "stdlib runtime or lifecycle behavior",
+        "archive linkage",
+        "all-header closure",
+        "runtime completion",
+        "family promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"stdlib-header-profile-matrix description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/stdlib_header_abi_probe.c",
+        "compat/x86_64/stdlib_header_abi_probe.cpp",
+        "compat/x86_64/run_stdlib_header_abi.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "include/stdio.h",
+        "include/stdlib.h",
+        "include/string.h",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"stdlib-header-profile-matrix must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "eight-byte size_t" in item
+            and "div_t/ldiv_t/lldiv_t" in item
+            for item in prerequisites
+        ),
+        "stdlib-header-profile-matrix must retain its x86 LP64 div-record contract",
+    )
+    require(
+        any(
+            "Pinned musl 1.2.6" in item
+            and "Strict and LFS-only" in item
+            and "GNU/BSD" in item
+            and "LFS aliases" in item
+            for item in prerequisites
+        ),
+        "stdlib-header-profile-matrix must retain its feature-gate oracle contract",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any(
+            "-nostdinc" in item and "nm" in item and "hidden-witness" in item
+            for item in header_prerequisites
+        ),
+        "stdlib-header-profile-matrix must retain its isolated C++ spelling and hidden-name boundary",
+    )
+    require(
+        any(
+            "stdio.h or string.h" in item
+            and "stdlib runtime/lifecycle behavior" in item
+            and "family promotion" in item
+            for item in header_prerequisites
+        ),
+        "stdlib-header-profile-matrix must retain its NULL include-order and non-promotion boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        len(evidence) == 1
+        and evidence[0].get("state") == "verified"
+        and evidence[0].get("command") == EXPECTED_STDLIB_HEADER_PROFILE_MATRIX_COMMAND,
+        "stdlib-header-profile-matrix must use the closed verified stdlib-header-abi command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "12-profile stdlib.h C/C++ compile-only matrix",
+                "strict/POSIX/XOPEN/GNU/BSD/LFS",
+                "hidden-name witnesses",
+                "GNU/BSD temporary/allocation",
+                "GNU locale-conversion",
+                "LFS aliases",
+                "nm-requested unmangled C++ C spellings",
+                "stdio.h/string.h-first",
+                "candidate archive",
+                "callable linkage",
+                "stdlib runtime/lifecycle behavior",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "stdlib-header-profile-matrix evidence must retain its header-only boundary",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        len(oracle) == 1
+        and oracle[0].get("kind") == "c-posix"
+        and oracle[0].get("source") == "Pinned musl 1.2.6 x86 stdlib.h"
+        and isinstance(oracle[0].get("role"), str)
+        and "C++ NULL" in oracle[0]["role"],
+        "stdlib-header-profile-matrix must retain its pinned-musl oracle contract",
+    )
+    require(
+        STDLIB_HEADER_ABI_RUNNER_PATH.is_file(),
+        "stdlib-header-profile-matrix runner is missing",
+    )
+    runner = STDLIB_HEADER_ABI_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "-nostdinc",
+        "-nostdinc++",
+        "CRABC_STDLIB_REQUIRE_POSIX_HIDDEN",
+        "CRABC_STDLIB_REQUIRE_GNU_BSD_HIDDEN",
+        "nm --undefined-only",
+        "cxx-null-stdio-first",
+        "cxx-null-string-first",
+        "x86 remains unpromoted",
+    ):
+        require(phrase in runner, f"stdlib-header-profile-matrix runner omits {phrase}")
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "stdlib-header-abi)" in dispatch_source,
+        "stdlib-header-abi is absent from the native dispatcher",
     )
 
 
@@ -12685,6 +13032,7 @@ def validate_ledger(
         header_layout_foundation_manifest,
     )
     require_dirent_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
+    require_stdlib_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
@@ -12841,6 +13189,9 @@ def validate_ledger(
         ],
         "header_foundation_dirent_header_profile_matrix_row_count": header_layout_foundation_report[
             "dirent_header_profile_matrix_row_count"
+        ],
+        "header_foundation_stdlib_header_profile_matrix_row_count": header_layout_foundation_report[
+            "stdlib_header_profile_matrix_row_count"
         ],
         "header_foundation_timeval_transitive_header_profile_matrix_row_count": header_layout_foundation_report[
             "timeval_transitive_header_profile_matrix_row_count"

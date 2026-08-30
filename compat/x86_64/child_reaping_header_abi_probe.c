@@ -15,6 +15,19 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&wait), wait_signature),
     "wait declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&waitpid),
     waitpid_signature), "waitpid declaration");
+_Static_assert(WNOHANG == 1 && WUNTRACED == 2 && WEXITED == 4 &&
+    WCONTINUED == 8 && WNOWAIT == 0x01000000, "wait option values");
+_Static_assert(WEXITSTATUS(0x1234) == 0x12 && WTERMSIG(0x127f) == 0x7f &&
+    WSTOPSIG(0x137f) == 0x13, "wait-status extraction");
+_Static_assert(WIFEXITED(0x1200) && !WIFEXITED(0x127f),
+    "WIFEXITED status partition");
+_Static_assert(!WIFSTOPPED(0x007f) && WIFSTOPPED(0x137f),
+    "musl WIFSTOPPED status partition");
+_Static_assert(WIFSIGNALED(0x0009) && WIFSIGNALED(0x007f) &&
+    !WIFSIGNALED(0x137f),
+    "WIFSIGNALED status partition");
+_Static_assert(WCOREDUMP(0x80) && WIFCONTINUED(0xffff),
+    "GNU wait-status extensions");
 
 static wait_signature wait_function = wait;
 static waitpid_signature waitpid_function = waitpid;

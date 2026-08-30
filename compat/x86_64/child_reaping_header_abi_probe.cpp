@@ -14,6 +14,19 @@ using waitpid_signature = pid_t (*)(pid_t, int *, int);
 static_assert(__is_same(decltype(&wait), wait_signature), "wait declaration");
 static_assert(__is_same(decltype(&waitpid), waitpid_signature),
     "waitpid declaration");
+static_assert(WNOHANG == 1 && WUNTRACED == 2 && WEXITED == 4 &&
+    WCONTINUED == 8 && WNOWAIT == 0x01000000, "wait option values");
+static_assert(WEXITSTATUS(0x1234) == 0x12 && WTERMSIG(0x127f) == 0x7f &&
+    WSTOPSIG(0x137f) == 0x13, "wait-status extraction");
+static_assert(WIFEXITED(0x1200) && !WIFEXITED(0x127f),
+    "WIFEXITED status partition");
+static_assert(!WIFSTOPPED(0x007f) && WIFSTOPPED(0x137f),
+    "musl WIFSTOPPED status partition");
+static_assert(WIFSIGNALED(0x0009) && WIFSIGNALED(0x007f) &&
+    !WIFSIGNALED(0x137f),
+    "WIFSIGNALED status partition");
+static_assert(WCOREDUMP(0x80) && WIFCONTINUED(0xffff),
+    "GNU wait-status extensions");
 
 static wait_signature wait_function = wait;
 static waitpid_signature waitpid_function = waitpid;

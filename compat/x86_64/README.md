@@ -529,6 +529,19 @@ remains GNU-only. The C++ `nm` check proves only header-requested unmangled C
 names. It is compile-only evidence: it does not prove actual archive linkage,
 directory-stream runtime behavior, directory/header-family promotion, or
 public x86 support. Full x86-64 parity remains the separate promotion goal.
+
+The separate private `stdlib-header-abi` gate
+(`./scripts/dev-x86_64.sh stdlib-header-abi`) compares raw-GCC
+project-header-first and pinned-musl 1.2.6 `<stdlib.h>` across twelve C11/C++17
+strict, POSIX.1-2008, X/Open 700, GNU, BSD, and `_LARGEFILE64_SOURCE`
+profiles. It checks selected unconditional declarations and LP64 `div_t`
+records; named POSIX/X/Open/GNU/BSD/GNU-only/LFS visibility and negative hidden
+witnesses; requested unmangled C++ C spellings; and C++ `NULL`/`nullptr`
+behavior, including strict `stdio.h`-first and `string.h`-first include orders.
+It is compile-only header evidence: it does not prove callable/archive linkage,
+stdlib runtime or lifecycle behavior, all-header closure, family promotion, or
+public x86 support.
+
 `libc-directory-streams` is the separate private static C runtime artifact
 that follows that compile-only header evidence. One project-header fixture runs
 first through pinned musl 1.2.6 and then through a true `-nostdlib -static`

@@ -37,7 +37,11 @@ extern FILE *const stderr;
 #define stdout (stdout)
 #define stderr (stderr)
 
-#ifndef NULL
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#elif defined(__cplusplus)
+#define NULL 0L
+#else
 #define NULL ((void*)0)
 #endif
 #define EOF (-1)

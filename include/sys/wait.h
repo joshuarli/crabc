@@ -17,9 +17,9 @@ typedef enum { P_ALL = 0, P_PID = 1, P_PGID = 2 } idtype_t;
 #define WIFEXITED(s) (((s) & 0x7f) == 0)
 #endif
 #ifndef WIFSIGNALED
-#define WIFSIGNALED(s) (((s) & 0x7f) != 0 && (((s) & 0x7f) != 0x7f))
+#define WIFSIGNALED(s) (((s)&0xffff)-1U < 0xffu)
 #endif
-#define WIFSTOPPED(s) (((s) & 0xff) == 0x7f)
+#define WIFSTOPPED(s) ((short)((((s)&0xffff)*0x10001U)>>8) > 0x7f00)
 #define WSTOPSIG(s) WEXITSTATUS(s)
 #define WTERMSIG(s) ((s) & 0x7f)
 #define WCOREDUMP(s) ((s) & 0x80)
