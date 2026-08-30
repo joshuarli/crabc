@@ -97,6 +97,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sysv-message-shared-memory-header-abi  verify staged x86 SysV message/shared-memory C/C++ declarations/layouts
   libc-event-descriptors  run the static x86 crabc-libc epoll/eventfd/inotify slice
   libc-pathname-lifecycle  run the static x86 crabc-libc pathname-lifecycle slice
+  libc-directory-streams  run the static x86 crabc-libc directory-stream slice
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   mapping-reference  verify pinned-musl/raw x86 anonymous mapping lifecycle
   memory-vm-reference  verify pinned-musl/raw x86 raw-break and VM-policy seam
@@ -1701,6 +1702,10 @@ run_libc_pathname_lifecycle() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pathname_lifecycle.sh
 }
 
+run_libc_directory_streams() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_directory_streams.sh
+}
+
 run_ffs_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ffs_header_abi.sh
 }
@@ -2733,6 +2738,7 @@ case "$command" in
     sysv-message-shared-memory-header-abi) ;;
     libc-event-descriptors) ;;
     libc-pathname-lifecycle) ;;
+    libc-directory-streams) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
     libc-memory-sync) ;;
@@ -3843,6 +3849,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pathname-lifecycle takes no arguments"
         ensure_image
         run_libc_pathname_lifecycle
+        ;;
+    libc-directory-streams)
+        [ "$#" -eq 0 ] || fail "libc-directory-streams takes no arguments"
+        ensure_image
+        run_libc_directory_streams
         ;;
     libc-ffs)
         [ "$#" -eq 0 ] || fail "libc-ffs takes no arguments"

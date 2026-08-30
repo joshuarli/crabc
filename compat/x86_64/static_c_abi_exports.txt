@@ -38,6 +38,7 @@ abs
 accept
 accept4
 access
+alphasort
 atexit
 atoi
 atol
@@ -62,6 +63,7 @@ clock_getres
 clock_gettime
 clock_nanosleep
 close
+closedir
 cnd_broadcast
 cnd_destroy
 cnd_init
@@ -77,6 +79,7 @@ crealf
 creall
 creat
 difftime
+dirfd
 div
 dup
 dup2
@@ -96,6 +99,7 @@ faccessat
 fchmod
 fcntl
 fdatasync
+fdopendir
 feclearexcept
 fegetenv
 fegetexceptflag
@@ -127,6 +131,7 @@ get_nprocs
 get_nprocs_conf
 get_phys_pages
 getcwd
+getdents
 getdomainname
 getdtablesize
 getegid
@@ -216,6 +221,7 @@ nanosleep
 nice
 open
 openat
+opendir
 pathconf
 pause
 pipe
@@ -223,6 +229,7 @@ pipe2
 poll
 posix_fadvise
 posix_fallocate
+posix_getdents
 posix_madvise
 ppoll
 pread
@@ -257,6 +264,8 @@ qsort_r
 raise
 read
 readahead
+readdir
+readdir_r
 readlink
 readv
 recv
@@ -265,9 +274,11 @@ recvmmsg
 recvmsg
 remove
 rename
+rewinddir
 rindex
 rmdir
 rust_eh_personality
+seekdir
 select
 semctl
 semget
@@ -358,6 +369,7 @@ tcgetwinsize
 tcsendbreak
 tcsetattr
 tcsetwinsize
+telldir
 thrd_create
 thrd_current
 thrd_detach

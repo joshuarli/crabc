@@ -3996,6 +3996,57 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/chdir.c, getcwd.c, link.c, readlink.c, rmdir.c, symlink.c, truncate.c, and unlink.c; src/stat/chmod.c, fchmod.c, and mkdir.c; src/stdio/remove.c and rename.c; and src/internal/procfdname.c define this selected pathname boundary. The allocator-requiring null-buffer getcwd extension is explicitly omitted from the static candidate." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "chdir/getcwd/rename/mkdir/rmdir/link/unlink/symlink/readlink/chmod/fchmod/truncate/fcntl numbers, rdi/rsi/rdx order, raw errno, O_PATH descriptor, procfs, pathname, mode, and truncation behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pathname pointer, size/off/mode scalar, and static initial-exec TLS fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-directory-streams"
+description = "Private native x86 selected-static-archive directory-stream/raw-directory block. Its dependency-free `crabc-libc` fixture resolves exactly `opendir`, `fdopendir`, `closedir`, `dirfd`, `readdir`, `readdir_r`, `rewinddir`, `seekdir`, `telldir`, `alphasort`, `getdents`, and `posix_getdents` after an equivalent pinned-musl execution. The bounded lifecycle proves owned close-on-exec directory descriptors, opaque cursor rewind/seek behavior, stable-until-next-call records, legacy readdir_r copying, C-locale alphasort, and direct raw directory records. It uses one private anonymous mapping per DIR object rather than selecting any C allocator. It is not scandir, versionsort, directory walking, general locale/collation, C allocation, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/directory_streams.rs",
+  "libc/src/c_abi/x86_64/stat_compat.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/dirent.h",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/stat.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/unistd.h",
+  "include/bits/alltypes.h",
+  "include/bits/fcntl.h",
+  "include/bits/stat.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/dirent_header_abi_probe.c",
+  "compat/x86_64/dirent_header_abi_probe.cpp",
+  "compat/x86_64/run_dirent_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_directory_streams_probe.c",
+  "compat/x86_64/libc_directory_streams_start.S",
+  "compat/x86_64/run_libc_directory_streams.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 directory paths use openat=257 with pathname/flags/mode in rdi/rsi/rdx/r10; fstat=5 uses rdi/rsi; fcntl=72 uses rdi/rsi/rdx; mmap=9 uses rdi/rsi/rdx/r10/r8/r9; munmap=11, close=3, getdents64=217, and lseek=8 use their direct Linux words. Raw -4095 through -1 results alone publish selected initial-TLS errno.",
+  "The public x86 LP64 struct dirent is a 280-byte align-8 record with d_ino/d_off/d_reclen/d_type/d_name at 0/8/16/18/19. Linux linux_dirent64 records use the same 19-byte prefix, a NUL-terminated name no longer than 255 bytes, and opaque signed d_off cookies; the C DIR spelling remains opaque.",
+  "Pinned musl 1.2.6 maps src/dirent/opendir.c, fdopendir.c, closedir.c, dirfd.c, readdir.c, readdir_r.c, rewinddir.c, seekdir.c, telldir.c, alphasort.c, getdents.c, and posix_getdents.c to the selected behavior. Musl calloc/free stream storage is intentionally replaced by one private anonymous mmap/munmap page per stream because this static archive selects no C allocator; direct paths also omit cancellation machinery.",
+  "fdopendir rejects O_PATH=0x00200000 with EBADF and a non-directory descriptor with ENOTDIR, then makes FD_CLOEXEC=1 best effort. readdir preserves EOF errno, treats deleted-directory ENOENT as exhaustion, validates record length and NUL termination before exposing a record, and reports malformed framing as EIO. posix_getdents rejects a nonzero flags word with EOPNOTSUPP.",
+  "The selected locale profile is C/POSIX/C.UTF-8 byte collation for alphasort. scandir would return allocation-owned storage and versionsort requires unselected strverscmp, so neither enters the static archive.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup delegates to the archive Static Initial TLS v1 bootstrap without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The retained project-header/pinned-musl 11-profile dirent.h C/C++ matrix proves selected x86 LP64 dirent/posix_dent layout, GNU/BSD and GNU-only feature partitions, large-file aliases, and requested unmangled C++ C spellings. The freestanding runtime fixture then preprocesses project dirent.h, errno.h, fcntl.h, stddef.h, stdint.h, sys/stat.h, sys/syscall.h, sys/types.h, unistd.h, bits/alltypes.h, bits/fcntl.h, bits/stat.h, and bits/syscall.h; it selects no general installed-header or C ABI completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-directory-streams", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and `-nostdlib -static` candidate. The gate runs the retained 11-profile dirent header matrix; proves project-header provenance; exact crate-owned C object-member exports separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; emitted openat=257, fstat=5, fcntl=72, mmap=9, munmap=11, close=3, getdents64=217, and lseek=8 paths; owned close-on-exec opendir/fdopendir streams; readdir/telldir/seekdir/rewinddir opaque-cookie behavior; readdir_r copying; C-locale alphasort; 255-byte names, raw record framing, undersized-buffer EINVAL, ENOTDIR, and posix_getdents nonzero-flag EOPNOTSUPP behavior. It does not select scandir, versionsort, directory walking, general locale collation, allocation, cancellation, libc.so, general startup, allocator, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/dirent/opendir.c, fdopendir.c, closedir.c, dirfd.c, readdir.c, readdir_r.c, rewinddir.c, seekdir.c, telldir.c, alphasort.c, getdents.c, and posix_getdents.c define the selected C directory boundary. The private mmap/munmap DIR-storage substitution and direct-static cancellation omission are intentional differences; scandir and versionsort stay unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "openat/fstat/fcntl/mmap/munmap/close/getdents64/lseek numbers, rdi/rsi/rdx/r10/r8/r9 order, linux_dirent64 framing, descriptor, raw errno, and directory-cookie behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 dirent pointer/record layout and static initial-exec TLS fixture contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-byte-strings"
 description = "Private native x86 selected-static-archive byte-string block. One dependency-free `crabc-libc` archive resolves exactly `index`/`rindex`, `strchr`/`strchrnul`, `strcmp`, `strcspn`, `strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's public `index` and `rindex` forwarding wrappers map to `strchr` and `strrchr`, while private `__strchrnul`/`__memrchr` helpers remain internal and unexported; the selected implementation retains scalar fallback behavior as an intentional mapping boundary. This artifact is deliberately narrower than general string, locale, allocation, or stateful C text support; it does not select libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [

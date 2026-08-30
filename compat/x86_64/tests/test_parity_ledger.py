@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 77)
+        self.assertEqual(report["verified_artifact_count"], 78)
         self.assertEqual(report["header_layout_probe_count"], 40)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1733,7 +1733,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 51
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 52
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -8765,12 +8765,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "chroot",
             "fchdir",
             "fchmodat",
-            "getdents",
             "lchmod",
             "linkat",
             "mkdirat",
-            "opendir",
-            "readdir",
             "realpath",
             "renameat",
             "renameat2",
@@ -8904,6 +8901,123 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static pathname runtime regression"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_directory_streams_artifact_keeps_its_bounded_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-directory-streams"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/directory_streams.rs",
+            "libc/src/c_abi/x86_64/stat_compat.rs",
+            "compat/x86_64/libc_directory_streams_probe.c",
+            "compat/x86_64/libc_directory_streams_start.S",
+            "compat/x86_64/run_libc_directory_streams.sh",
+            "compat/x86_64/run_dirent_header_abi.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-directory-streams"},
+        )
+        for phrase in (
+            "directory-stream/raw-directory block",
+            "`opendir`",
+            "`fdopendir`",
+            "`closedir`",
+            "`dirfd`",
+            "`readdir`",
+            "`readdir_r`",
+            "`rewinddir`",
+            "`seekdir`",
+            "`telldir`",
+            "`alphasort`",
+            "`getdents`",
+            "`posix_getdents`",
+            "private anonymous mapping",
+            "scandir",
+            "versionsort",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertTrue(
+            {
+                "opendir",
+                "fdopendir",
+                "closedir",
+                "dirfd",
+                "readdir",
+                "readdir_r",
+                "rewinddir",
+                "seekdir",
+                "telldir",
+                "alphasort",
+                "getdents",
+                "posix_getdents",
+            }
+            <= exports
+        )
+        self.assertFalse(exports & {"scandir", "versionsort", "malloc", "free"})
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        syscall_abi = next(item for item in prerequisites if "openat=257" in item)
+        assert isinstance(syscall_abi, str)
+        for phrase in (
+            "fstat=5",
+            "fcntl=72",
+            "mmap=9",
+            "munmap=11",
+            "close=3",
+            "getdents64=217",
+            "lseek=8",
+            "rdi/rsi/rdx/r10/r8/r9",
+        ):
+            self.assertIn(phrase, syscall_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/dirent/opendir.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "fdopendir.c",
+            "readdir_r.c",
+            "posix_getdents.c",
+            "mmap/munmap",
+            "cancellation",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-directory-streams"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "posix_getdents nonzero-flag EOPNOTSUPP",
+            "missing POSIX directory flag regression",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "exact static directory runtime regression"
         ):
             ledger.validate_ledger(data)
 

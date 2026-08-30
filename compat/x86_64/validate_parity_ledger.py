@@ -1150,18 +1150,39 @@ PATHNAME_LIFECYCLE_UNSELECTED_SYMBOLS = (
     "chroot",
     "fchdir",
     "fchmodat",
-    "getdents",
     "lchmod",
     "linkat",
     "mkdirat",
-    "opendir",
-    "readdir",
     "realpath",
     "renameat",
     "renameat2",
     "scandir",
     "symlinkat",
     "unlinkat",
+)
+
+DIRECTORY_STREAM_SYMBOLS = (
+    "opendir",
+    "fdopendir",
+    "closedir",
+    "dirfd",
+    "readdir",
+    "readdir_r",
+    "rewinddir",
+    "seekdir",
+    "telldir",
+    "alphasort",
+    "getdents",
+    "posix_getdents",
+)
+
+DIRECTORY_STREAM_UNSELECTED_SYMBOLS = (
+    "calloc",
+    "free",
+    "malloc",
+    "realloc",
+    "scandir",
+    "versionsort",
 )
 
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
@@ -10929,6 +10950,282 @@ def require_pathname_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_directory_streams_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected static C directory boundary private and exact."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-directory-streams"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-directory-streams artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-directory-streams must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in DIRECTORY_STREAM_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-directory-streams description omits {symbol}",
+        )
+    for phrase in (
+        "directory-stream/raw-directory block",
+        "close-on-exec",
+        "opaque cursor",
+        "readdir_r",
+        "C-locale alphasort",
+        "private anonymous mapping",
+        "scandir",
+        "versionsort",
+        "C allocation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-directory-streams description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-directory-streams.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/directory_streams.rs",
+        "libc/src/c_abi/x86_64/stat_compat.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/dirent.h",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/stat.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/unistd.h",
+        "include/bits/alltypes.h",
+        "include/bits/fcntl.h",
+        "include/bits/stat.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/dirent_header_abi_probe.c",
+        "compat/x86_64/dirent_header_abi_probe.cpp",
+        "compat/x86_64/run_dirent_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_directory_streams_probe.c",
+        "compat/x86_64/libc_directory_streams_start.S",
+        "compat/x86_64/run_libc_directory_streams.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-directory-streams source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-directory-streams.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "openat=257" in item
+            and "fstat=5" in item
+            and "fcntl=72" in item
+            and "mmap=9" in item
+            and "munmap=11" in item
+            and "close=3" in item
+            and "getdents64=217" in item
+            and "lseek=8" in item
+            and "rdi/rsi/rdx/r10/r8/r9" in item
+            for item in prerequisites
+        ),
+        "static-c-directory-streams must record its Linux syscall register ABI",
+    )
+    require(
+        any(
+            "280-byte align-8" in item
+            and "0/8/16/18/19" in item
+            and "linux_dirent64" in item
+            and "opaque" in item
+            for item in prerequisites
+        ),
+        "static-c-directory-streams must record its x86 dirent ABI",
+    )
+    require(
+        any(
+            "src/dirent/opendir.c" in item
+            and "fdopendir.c" in item
+            and "readdir_r.c" in item
+            and "posix_getdents.c" in item
+            and "mmap/munmap" in item
+            and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-directory-streams must record its pinned-musl source mapping",
+    )
+    require(
+        any(
+            "O_PATH=0x00200000" in item
+            and "EBADF" in item
+            and "ENOTDIR" in item
+            and "FD_CLOEXEC=1" in item
+            and "ENOENT" in item
+            and "EIO" in item
+            and "EOPNOTSUPP" in item
+            for item in prerequisites
+        ),
+        "static-c-directory-streams must record its ownership and errno boundary",
+    )
+    require(
+        any(
+            "C/POSIX/C.UTF-8" in item
+            and "alphasort" in item
+            and "scandir" in item
+            and "versionsort" in item
+            for item in prerequisites
+        ),
+        "static-c-directory-streams must record its collation/allocation boundary",
+    )
+    require(
+        any(
+            "PT_TLS errno datum" in item
+            and "initial-exec TPOFF" in item
+            and "__tls_get_addr" in item
+            for item in prerequisites
+        ),
+        "static-c-directory-streams must record its static TLS boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-directory-streams.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "11-profile" in item
+            and "dirent.h" in item
+            and "posix_dent" in item
+            and "unmangled C++" in item
+            and "project dirent.h" in item
+            for item in headers
+        ),
+        "static-c-directory-streams must record its direct dirent header boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(DIRECTORY_STREAM_SYMBOLS) <= static_exports,
+        "static-c-directory-streams must retain its twelve selected exports",
+    )
+    require(
+        not (static_exports & set(DIRECTORY_STREAM_UNSELECTED_SYMBOLS)),
+        "static-c-directory-streams must not add unselected allocation/sort exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "directory_streams.rs"]\nmod directory_streams;' in static_root,
+        "x86 static C ABI must compose the directory_streams leaf",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/dirent/opendir.c",
+                    "fdopendir.c",
+                    "closedir.c",
+                    "dirfd.c",
+                    "readdir.c",
+                    "readdir_r.c",
+                    "rewinddir.c",
+                    "seekdir.c",
+                    "telldir.c",
+                    "alphasort.c",
+                    "getdents.c",
+                    "posix_getdents.c",
+                )
+            )
+            and "mmap/munmap" in entry["role"]
+            and "cancellation" in entry["role"]
+            and "scandir" in entry["role"]
+            and "versionsort" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-directory-streams must retain its pinned-musl directory source mapping",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-directory-streams"},
+        "static-c-directory-streams must use the closed libc-directory-streams command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "`-nostdlib -static` candidate",
+                "openat=257",
+                "fstat=5",
+                "fcntl=72",
+                "mmap=9",
+                "munmap=11",
+                "close=3",
+                "getdents64=217",
+                "lseek=8",
+                "close-on-exec opendir/fdopendir",
+                "readdir/telldir/seekdir/rewinddir",
+                "readdir_r copying",
+                "C-locale alphasort",
+                "255-byte names",
+                "undersized-buffer EINVAL",
+                "ENOTDIR",
+                "EOPNOTSUPP",
+                "scandir",
+                "versionsort",
+                "cancellation",
+                "public x86 support",
+            )
+        ),
+        "static-c-directory-streams evidence must retain its exact static directory runtime regression",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -11766,6 +12063,7 @@ def validate_ledger(
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])
     require_event_descriptors_artifact(by_id["libc.posix-runtime"])
     require_pathname_lifecycle_artifact(by_id["libc.posix-runtime"])
+    require_directory_streams_artifact(by_id["libc.posix-runtime"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])

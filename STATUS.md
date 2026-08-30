@@ -557,6 +557,20 @@ header-requested unmangled C names. This compile-only header slice excludes
 actual archive linkage, directory-stream runtime behavior, header-family
 completion or promotion, and public x86 support; full x86-64 parity remains
 the stated promotion goal.
+The separate private `libc-directory-streams` command
+(`./scripts/dev-x86_64.sh libc-directory-streams`) adds one actual static C
+runtime leaf after that header matrix: the same project-header C body runs
+through pinned musl and then a `-nostdlib -static` `crabc-libc` candidate. It
+checks only `opendir`/`fdopendir`/`closedir`/`dirfd`,
+`readdir`/`readdir_r`/cursor operations, C-locale `alphasort`, and
+`getdents`/`posix_getdents`, including 255-byte names, close-on-exec transfer,
+raw record framing, and the x86 `openat=257`, `fstat=5`, `fcntl=72`, `mmap=9`,
+`munmap=11`, `close=3`, `getdents64=217`, and `lseek=8` paths. The private
+`DIR` state uses one anonymous mapping rather than selecting a C allocator;
+`scandir`, `versionsort`, walking policy, broad collation, cancellation, and
+the rest of C directory/POSIX runtime parity remain out of this leaf. It does
+not complete either the header or POSIX-runtime family, change promotion
+status, or establish public x86 support.
 Its separate
 35-row `timeval-transitive-header-abi` matrix
 checks five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`, and

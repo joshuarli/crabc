@@ -431,6 +431,7 @@ pub(crate) const SYS_GETGID: i64 = 104;
 pub(crate) const SYS_GETEUID: i64 = 107;
 pub(crate) const SYS_GETEGID: i64 = 108;
 pub(crate) const SYS_GETTID: i64 = 186;
+pub(crate) const SYS_GETDENTS64: i64 = 217;
 pub(crate) const SYS_CLOCK_SETTIME: i64 = 227;
 pub(crate) const SYS_CLONE: i64 = 56;
 pub(crate) const SYS_PREAD64: i64 = 17;

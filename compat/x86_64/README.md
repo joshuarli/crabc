@@ -524,6 +524,19 @@ remains GNU-only. The C++ `nm` check proves only header-requested unmangled C
 names. It is compile-only evidence: it does not prove actual archive linkage,
 directory-stream runtime behavior, directory/header-family promotion, or
 public x86 support. Full x86-64 parity remains the separate promotion goal.
+`libc-directory-streams` is the separate private static C runtime artifact
+that follows that compile-only header evidence. One project-header fixture runs
+first through pinned musl 1.2.6 and then through a true `-nostdlib -static`
+candidate, covering only `opendir`, `fdopendir`, `closedir`, `dirfd`,
+`readdir`, `readdir_r`, `rewinddir`, `seekdir`, `telldir`, C-locale
+`alphasort`, `getdents`, and `posix_getdents`. It ratchets the x86
+`openat=257`, `fstat=5`, `fcntl=72`, `mmap=9`, `munmap=11`, `close=3`,
+`getdents64=217`, and `lseek=8` paths plus close-on-exec descriptor transfer,
+255-byte names, cursor/EOF behavior, raw record framing, `ENOTDIR`, and
+nonzero-flag `EOPNOTSUPP`. Its `DIR` state owns one private anonymous mapping,
+not a C allocator. `scandir`, `versionsort`, directory walking, broader locale
+collation, cancellation, full C runtime/POSIX parity, family promotion, and
+public x86 support remain excluded.
 The separate `timeval-transitive-header-abi` command resolves 35 compile-only
 rows for five fixed headers (`sys/time.h`, `utmpx.h`, `utmp.h`, `lastlog.h`,
 and `sys/timex.h`) across seven isolated C11/C++17 profiles, proving complete

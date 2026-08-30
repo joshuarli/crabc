@@ -172,6 +172,39 @@ pub unsafe extern "C" fn fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_i
     c_status(result)
 }
 
+/// Read only the private x86 `st_mode` word for a descriptor-owning sibling.
+///
+/// This keeps `Stat`'s exact x86 layout and field ownership in this module
+/// while allowing a selected C ABI leaf to validate a descriptor before it
+/// assumes ownership. Unlike [`fstat`], this helper returns the raw Linux
+/// errno to its sibling so that sibling can preserve its own C error boundary.
+///
+/// # Safety
+///
+/// `file_descriptor` must be a scalar descriptor value suitable for Linux
+/// `fstat(2)`. The kernel validates descriptor liveness; the helper's local
+/// output record is complete private writable storage for the syscall.
+#[inline(always)]
+pub(super) unsafe fn fstat_mode(file_descriptor: c_int) -> Result<u32, c_int> {
+    // SAFETY: zero is a valid initial representation for the private x86
+    // metadata record, which Linux fills on a successful fstat request.
+    let mut metadata: Stat = unsafe { core::mem::zeroed() };
+    // SAFETY: `metadata` is one complete private x86 output record and the
+    // caller supplies the scalar descriptor contract.
+    let result = unsafe {
+        raw_syscall::syscall2(
+            raw_syscall::SYS_FSTAT,
+            i64::from(file_descriptor),
+            (&mut metadata as *mut Stat) as usize as i64,
+        )
+    };
+    if result < 0 && result >= -4_095 {
+        Err(result.wrapping_neg() as c_int)
+    } else {
+        Ok(metadata.mode)
+    }
+}
+
 /// Fill the x86 `struct stat` record for a pathname relative to
 /// `directory_fd`.
 ///

@@ -670,6 +670,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sysv-message-shared-memory-header-abi",
             "libc-event-descriptors",
             "libc-pathname-lifecycle",
+            "libc-directory-streams",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-memory-sync",
@@ -722,6 +723,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-sysv-message-shared-memory", source)
         self.assertIn("libc-event-descriptors", source)
         self.assertIn("libc-pathname-lifecycle", source)
+        self.assertIn("libc-directory-streams", source)
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
@@ -11114,10 +11116,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "mkdirat",
                 "fchmodat",
                 "lchmod",
-                "opendir",
-                "readdir",
                 "scandir",
-                "getdents",
             }
         )
         self.assertIn('id = "static-c-pathname-lifecycle"', parity_ledger)
@@ -11141,6 +11140,131 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pathname-lifecycle)\n        [ "$#" -eq 0 ] || fail "libc-pathname-lifecycle takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_directory_streams_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "directory_streams.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_directory_streams_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_directory_streams_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_directory_streams.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "directory_streams.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C directory-stream boundary",
+            "musl 1.2.6 release commit",
+            "src/dirent/opendir.c",
+            "fdopendir.c",
+            "readdir_r.c",
+            "posix_getdents.c",
+            "private anonymous 4 KiB mapping",
+            "C.UTF-8",
+            "getdents64",
+            "ENOENT",
+            "EIO",
+            "EOPNOTSUPP",
+            "O_PATH",
+            "FD_CLOEXEC",
+        ):
+            self.assertIn(required, implementation)
+        for symbol in (
+            "opendir",
+            "fdopendir",
+            "closedir",
+            "dirfd",
+            "readdir",
+            "readdir_r",
+            "rewinddir",
+            "seekdir",
+            "telldir",
+            "alphasort",
+            "getdents",
+            "posix_getdents",
+        ):
+            self.assertIn(f"fn {symbol}", implementation)
+            self.assertIn(symbol, static_export_names)
+        for forbidden in ("fn scandir", "fn versionsort", "fn malloc", "fn free"):
+            self.assertNotIn(forbidden, implementation)
+        self.assertFalse(
+            static_export_names & {"scandir", "versionsort", "malloc", "free"}
+        )
+
+        for required in (
+            "#include <dirent.h>",
+            "SYS_getdents64 == 217",
+            "O_DIRECTORY == 0x00010000",
+            "check_readdir_stream",
+            "check_readdir_r",
+            "check_fdopendir",
+            "check_getdents",
+            "check_alphasort",
+            "CRABC_DIRECTORY_STREAMS_FREESTANDING",
+            "255",
+            "EOPNOTSUPP",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_directory_streams_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_dirent_header_abi.sh",
+            "-nostdlib -static",
+            "R_X86_64_TPOFF",
+            "assert_named_syscall opendir 101",
+            "assert_named_syscall fdopendir 5",
+            "assert_named_syscall fdopendir 48",
+            "assert_named_syscall fdopendir 9",
+            "assert_named_syscall closedir 3",
+            "assert_named_syscall closedir b",
+            "assert_named_syscall readdir d9",
+            "assert_named_syscall rewinddir 8",
+            "assert_named_syscall seekdir 8",
+            "assert_named_syscall getdents d9",
+            "assert_named_syscall posix_getdents d9",
+            "scandir versionsort malloc free calloc realloc",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn('id = "static-c-directory-streams"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-directory-streams"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_directory_streams()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_directory_streams.sh", runner
+        )
+        self.assertIn(
+            '    libc-directory-streams)\n        [ "$#" -eq 0 ] || fail "libc-directory-streams takes no arguments"',
             runner,
         )
 

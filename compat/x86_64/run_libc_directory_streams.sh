@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc pathname-lifecycle evidence.
+# Native Linux/x86-64 selected static crabc-libc directory-stream evidence.
 #
 # One project-header fixture first runs against pinned musl 1.2.6, then as a
 # true `-nostdlib -static` candidate linked only with the selected crabc
-# archive. It proves a bounded CWD/pathname/mode lifecycle, direct x86 syscall
-# forms, and fchmod's O_PATH procfs fallback. It does not prove general
-# filesystem policy, allocation, libc.so, CRT, loader, sysroot, family
-# completion, promotion, or public x86 support.
+# archive. It proves a bounded C DIR/dirent runtime slice and direct x86
+# syscall forms. It does not prove scandir, versionsort, allocation, libc.so,
+# a general C runtime, CRT, loader, sysroot, family completion, promotion, or
+# public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -15,7 +15,7 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
 
 fail() {
-    printf 'ERROR: x86 static libc pathname lifecycle: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc directory streams: %s\n' "$*" >&2
     exit 1
 }
 
@@ -67,30 +67,6 @@ assert_named_syscall() {
         fail "$symbol lacks its Linux syscall instruction"
 }
 
-assert_remove_retry_path() {
-    local disassembly="$work_dir/remove-disassembly"
-
-    objdump -d --disassemble=remove "$candidate" >"$disassembly"
-    grep -Eq '\$0x57(,|[[:space:]]|\$)' "$disassembly" ||
-        fail "remove lacks Linux unlink=87"
-    grep -Eq '\$0x54(,|[[:space:]]|\$)' "$disassembly" ||
-        fail "remove lacks Linux rmdir=84 retry"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "remove lacks its Linux syscall instruction"
-}
-
-assert_fchmod_fallback_path() {
-    local disassembly="$work_dir/fchmod-disassembly"
-
-    objdump -d --disassemble=fchmod "$candidate" >"$disassembly"
-    for syscall_word in 5b 48 5a; do
-        grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\\$)" "$disassembly" ||
-            fail "fchmod lacks Linux fallback syscall $syscall_word"
-    done
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "fchmod lacks its Linux syscall instruction"
-}
-
 require_native_linux_x86_64
 for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
     require_tool "$tool"
@@ -98,13 +74,13 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_pathname_lifecycle_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_dirent_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pathname-lifecycle.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-directory-streams.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-pathname-lifecycle-reference"
-candidate="$work_dir/crabc-static-pathname-lifecycle-candidate"
+reference="$work_dir/musl-directory-streams-reference"
+candidate="$work_dir/crabc-static-directory-streams-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference_work="$work_dir/reference-work"
 candidate_work="$work_dir/candidate-work"
@@ -125,15 +101,15 @@ errno_disassembly="$work_dir/errno-disassembly"
 mkdir "$reference_work" "$candidate_work"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_pathname_lifecycle_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h stddef.h stdio.h sys/stat.h sys/syscall.h \
+    compat/x86_64/libc_directory_streams_probe.c >/dev/null 2>"$header_trace"
+for header in dirent.h errno.h fcntl.h stddef.h stdint.h sys/stat.h sys/syscall.h \
     sys/types.h unistd.h bits/alltypes.h bits/fcntl.h bits/stat.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_pathname_lifecycle_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_directory_streams_probe.c \
     -o "$reference"
 if (cd "$reference_work" && timeout "$EXECUTION_TIMEOUT" "$reference"); then
     :
@@ -151,16 +127,15 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkdir \
-    unlink rmdir remove rename link symlink readlink chmod fchmod truncate; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap opendir fdopendir \
+    closedir dirfd readdir readdir_r rewinddir seekdir telldir alphasort getdents \
+    posix_getdents; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
 grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in fchdir chroot realpath renameat renameat2 unlinkat linkat symlinkat \
-    readlinkat mkdirat fchmodat lchmod scandir malloc free \
-    calloc realloc __tls_get_addr; do
+for unselected in scandir versionsort malloc free calloc realloc __tls_get_addr; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
@@ -174,19 +149,20 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PATHNAME_LIFECYCLE_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_DIRECTORY_STREAMS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_pathname_lifecycle_probe.c \
-    compat/x86_64/libc_pathname_lifecycle_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_directory_streams_probe.c \
+    compat/x86_64/libc_directory_streams_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkdir \
-    unlink rmdir remove rename link symlink readlink chmod fchmod truncate; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap opendir fdopendir \
+    closedir dirfd readdir readdir_r rewinddir seekdir telldir alphasort getdents \
+    posix_getdents; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
@@ -213,26 +189,24 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_pathname_lifecycle_start.S ||
+    compat/x86_64/libc_directory_streams_start.S ||
     fail "fixture start does not delegate first-thread TLS to libc"
 if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
-    compat/x86_64/libc_pathname_lifecycle_start.S; then
+    compat/x86_64/libc_directory_streams_start.S; then
     fail "fixture start must not install a private FS base"
 fi
 
-assert_named_syscall chdir 50
-assert_named_syscall getcwd 4f
-assert_named_syscall mkdir 53
-assert_named_syscall unlink 57
-assert_named_syscall rmdir 54
-assert_remove_retry_path
-assert_named_syscall rename 52
-assert_named_syscall link 56
-assert_named_syscall symlink 58
-assert_named_syscall readlink 59
-assert_named_syscall chmod 5a
-assert_fchmod_fallback_path
-assert_named_syscall truncate 4c
+assert_named_syscall opendir 101
+assert_named_syscall fdopendir 5
+assert_named_syscall fdopendir 48
+assert_named_syscall fdopendir 9
+assert_named_syscall closedir 3
+assert_named_syscall closedir b
+assert_named_syscall readdir d9
+assert_named_syscall rewinddir 8
+assert_named_syscall seekdir 8
+assert_named_syscall getdents d9
+assert_named_syscall posix_getdents d9
 
 if (cd "$candidate_work" && timeout "$EXECUTION_TIMEOUT" "$candidate"); then
     :
@@ -241,4 +215,4 @@ else
     fail "candidate execution exited $candidate_status"
 fi
 
-printf 'x86 static crabc-libc pathname lifecycle: PASS\n'
+printf 'x86 static crabc-libc directory streams: PASS\n'
