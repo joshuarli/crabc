@@ -31,9 +31,10 @@
 //! installs one final-executable TLS image before C TLS exists; its distinct
 //! private musl-shaped assembly boundary owns clone and normal-return child
 //! exit so this generic register module does not become a public clone API.
-//! The separately selected per-range memory-locking leaf uses direct mlock,
-//! munlock, and mlock2 syscalls here. All other public C wrappers remain
-//! unintegrated until their own ABI
+//! The separately selected per-range memory-locking, no-cancellation mapping
+//! synchronization, and anonymous-memory-descriptor leaves use their named
+//! direct syscalls here. All other public C wrappers remain unintegrated until
+//! their own ABI
 //! boundaries have evidence.
 //!
 //! Linux/x86-64 enters the kernel with `syscall`: `rax` holds the syscall
@@ -279,6 +280,7 @@ pub(crate) const SYS_LSEEK: i64 = 8;
 pub(crate) const SYS_MMAP: i64 = 9;
 pub(crate) const SYS_MPROTECT: i64 = 10;
 pub(crate) const SYS_MUNMAP: i64 = 11;
+pub(crate) const SYS_MSYNC: i64 = 26;
 pub(crate) const SYS_RT_SIGACTION: i64 = 13;
 pub(crate) const SYS_RT_SIGPROCMASK: i64 = 14;
 pub(crate) const SYS_IOCTL: i64 = 16;
@@ -413,6 +415,7 @@ pub(crate) const SYS_SYNCFS: i64 = 306;
 pub(crate) const SYS_SENDMMSG: i64 = 307;
 pub(crate) const SYS_RENAMEAT2: i64 = 316;
 pub(crate) const SYS_GETRANDOM: i64 = 318;
+pub(crate) const SYS_MEMFD_CREATE: i64 = 319;
 pub(crate) const SYS_MLOCK2: i64 = 325;
 pub(crate) const SYS_STATFS: i64 = 137;
 pub(crate) const SYS_FSTATFS: i64 = 138;

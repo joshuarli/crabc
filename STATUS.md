@@ -221,8 +221,22 @@ It preserves the selected musl mapping prechecks/fallback, page-rounded
 site is deliberately local/no-op because the archive does not own loader or
 allocator VM state. This is a bounded `static-c-mman-mapping-core` artifact
 inside planned `libc.posix-runtime`, not full `sys/mman.h`, C-runtime,
-family/platform parity, or public x86 support; `msync`, `mremap`, `mlock*`,
-shared-memory, and process-wide VM synchronization remain unselected.
+family/platform parity, or public x86 support; its separate direct `msync`
+sibling still excludes musl cancellation, while `mremap`, shared memory, and
+process-wide VM synchronization remain unselected.
+
+The same archive separately has a private planned mapping-synchronization
+evidence artifact: `./scripts/dev-x86_64.sh memory-sync-header-abi` and
+`./scripts/dev-x86_64.sh libc-memory-sync` compare unconditional C/C++
+`msync`/`MS_*` declarations across eight project-header/pinned-musl profiles,
+then run one pinned-musl/freestanding-static candidate. It proves only the
+direct no-cancellation x86 `msync=26` route, stale-`errno` success, and Linux
+5.10's flag and page-alignment validation before a zero-length success on a
+disposable private anonymous mapping. Pinned musl's `syscall_cp` cancellation
+path is deliberately absent. This bounded `static-c-memory-sync` artifact is
+not full musl `msync`, file-backed shared-map writeback or invalidation,
+persistence or durability, complete `sys/mman.h`, C-runtime/family/platform
+parity, promotion, or public x86 support.
 
 The same archive separately has a private per-range memory-locking artifact:
 `./scripts/dev-x86_64.sh memory-locking-header-abi` and
@@ -235,8 +249,22 @@ pinned-musl/freestanding-static candidate. It retains musl's `flags=0`
 environment-dependent `EPERM`/`EAGAIN`/`ENOMEM` memlock outcome. This is a
 bounded `static-c-memory-locking` artifact inside planned
 `libc.posix-runtime`, not full `sys/mman.h`, C-runtime, family/platform parity,
-or public x86 support; `mlockall`/`munlockall`, `msync`, `mremap`, cancellation,
-and mapping policy remain unselected.
+or public x86 support; `mlockall`/`munlockall`, the separate direct `msync`
+sibling, `mremap`, cancellation, and mapping policy remain unselected here.
+
+The same archive also has a private planned GNU memory-file-descriptor
+creation evidence artifact: `./scripts/dev-x86_64.sh memfd-create-header-abi`
+and `./scripts/dev-x86_64.sh libc-memfd-create` compare the GNU-only
+`memfd_create`/`MFD_*` C/C++ surface across eight project-header/pinned-musl
+profiles, including non-GNU hiding and unmangled C++ linkage, then run one
+pinned-musl/freestanding-static candidate. It proves only direct x86
+`memfd_create=319`, the selected initial-TLS `errno` boundary, ordinary and
+249-byte labels, creation-flag forwarding, and Linux's 250-byte/all-ones flag
+word `EINVAL` and invalid-pointer `EFAULT` outcomes. This bounded
+`static-c-memfd-create` artifact does not establish sealing or C `fcntl`
+behavior, `memfd_secret`, huge-page resource/page-size policy, descriptor
+lifecycle or close ownership, broad filesystem behavior, C-runtime/family/
+platform parity, promotion, or public x86 support.
 
 The same archive has a private direct time-observation artifact:
 `./scripts/dev-x86_64.sh libc-time-observation` proves only `clock`, `time`,

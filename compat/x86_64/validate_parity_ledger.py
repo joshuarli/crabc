@@ -958,6 +958,10 @@ TIME_OBSERVATION_SYMBOLS = (
     "gettimeofday",
 )
 
+MEMORY_SYNC_SYMBOLS = ("msync",)
+
+MEMFD_CREATE_SYMBOLS = ("memfd_create",)
+
 FILESYSTEM_ACCESS_SYMBOLS = ("access", "faccessat", "euidaccess", "eaccess")
 
 FFS_SYMBOLS = ("ffs", "ffsl", "ffsll")
@@ -7410,6 +7414,8 @@ def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
         "page-rounded",
         "__vm_wait",
         "`msync`",
+        "separately owned no-cancellation",
+        "pthread-cancellation semantics",
         "`mremap`",
         "`mlock*`",
         "planned `libc.posix-runtime`",
@@ -7471,6 +7477,327 @@ def require_mapping_core_artifact(family: Mapping[str, Any]) -> None:
         {entry["command"] for entry in evidence}
         == {"./scripts/dev-x86_64.sh libc-mapping-core"},
         "static-c-mman-mapping-core must use the closed libc-mapping-core command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "separately owned no-cancellation msync sibling",
+        "full cancellation semantics",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-mman-mapping-core evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "separately owned no-cancellation msync sibling" in entry.get("role", "")
+            and "full cancellation" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-mman-mapping-core must distinguish its msync sibling from full cancellation",
+    )
+
+
+def require_memory_sync_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the direct no-cancellation C msync artifact concrete and bounded."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-memory-sync"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-memory-sync artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MEMORY_SYNC_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-memory-sync description omits {symbol}",
+        )
+    for phrase in (
+        "direct mapping-synchronization block",
+        "`msync=26`",
+        "`syscall_cp`",
+        "no-cancellation direct Linux path",
+        "full musl `msync` parity",
+        "private anonymous mapping",
+        "invalid-flag-before-zero-length",
+        "unaligned-address-before-zero-length",
+        "file-backed shared-map writeback",
+        "persistence or durability",
+        "pthread cancellation",
+        "VM-wide synchronization",
+        "`mremap`",
+        "`mlock*`",
+        "planned `libc.posix-runtime`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-memory-sync description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/memory_sync.rs",
+        "compat/x86_64/memory_sync_header_abi_probe.c",
+        "compat/x86_64/memory_sync_header_abi_probe.cpp",
+        "compat/x86_64/run_memory_sync_header_abi.sh",
+        "compat/x86_64/x86_msync_reference_probe.c",
+        "compat/x86_64/run_x86_msync_reference.sh",
+        "compat/x86_64/libc_memory_sync_probe.c",
+        "compat/x86_64/libc_memory_sync_start.S",
+        "compat/x86_64/run_libc_memory_sync.sh",
+        "compat/x86_64/tests/test_memory_sync.py",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(
+            owner in owners,
+            f"static-c-memory-sync must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "msync=26" in item and "rdi/rsi/rdx" in item
+            for item in prerequisites
+        ),
+        "static-c-memory-sync must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "src/mman/msync.c" in item
+            and "src/thread/x86_64/syscall_cp.s" in item
+            and "__syscall_cp" in item
+            for item in prerequisites
+        ),
+        "static-c-memory-sync must record musl's intentional cancellation boundary",
+    )
+    require(
+        any(
+            "MS_ASYNC=1" in item
+            and "MS_INVALIDATE=2" in item
+            and "MS_SYNC=4" in item
+            and "MS_ASYNC|MS_SYNC=5" in item
+            and "unaligned address" in item
+            for item in prerequisites
+        ),
+        "static-c-memory-sync must record its Linux 5.10 flag and ordering cases",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any(
+            "eight-profile" in item
+            and "unconditional `msync(void *, size_t, int)`" in item
+            and "MS_ASYNC/MS_INVALIDATE/MS_SYNC=1/2/4" in item
+            and "unmangled C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-memory-sync must record its bounded C/C++ header ABI",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-memory-sync"},
+        "static-c-memory-sync must use the closed libc-memory-sync command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "unconditional msync header proof",
+        "msync=26",
+        "__syscall_cp/pthread cancellation",
+        "accepted flags 0/1/2/3/4/6",
+        "conflicting flags 5/7 EINVAL",
+        "unaligned-address EINVAL",
+        "private and anonymous",
+        "file-backed shared-map writeback",
+        "persistence, or durability",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-memory-sync evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "src/mman/msync.c" in entry.get("role", "")
+            and "src/thread/x86_64/syscall_cp.s" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-memory-sync must retain its musl source and cancellation mapping",
+    )
+    require(
+        any(
+            entry.get("kind") == "kernel-abi"
+            and "msync=26" in entry.get("role", "")
+            and "MS_ASYNC/MS_INVALIDATE/MS_SYNC" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-memory-sync must retain its Linux syscall oracle",
+    )
+
+
+def require_memfd_create_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the GNU direct memfd creation artifact concrete and bounded."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-memfd-create"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-memfd-create artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in MEMFD_CREATE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-memfd-create description omits {symbol}",
+        )
+    for phrase in (
+        "GNU memory-file-descriptor creation block",
+        "`memfd_create=319`",
+        "249-byte",
+        "`MFD_CLOEXEC|MFD_ALLOW_SEALING`",
+        "250-byte-label EINVAL",
+        "UINT_MAX flag EINVAL",
+        "inaccessible non-null label-pointer EFAULT",
+        "fixture-locally raw-closes",
+        "C `fcntl`",
+        "MFD_HUGETLB resource/page-size policy",
+        "memfd_secret",
+        "planned `libc.posix-runtime`",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-memfd-create description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/memfd_create.rs",
+        "compat/x86_64/memfd_create_header_abi_probe.c",
+        "compat/x86_64/memfd_create_header_abi_probe.cpp",
+        "compat/x86_64/run_memfd_create_header_abi.sh",
+        "compat/x86_64/libc_memfd_create_probe.c",
+        "compat/x86_64/libc_memfd_create_start.S",
+        "compat/x86_64/run_libc_memfd_create.sh",
+        "compat/x86_64/tests/test_memfd_create_c_abi.py",
+        "compat/x86_64/static_c_abi_exports.txt",
+    ):
+        require(
+            owner in owners,
+            f"static-c-memfd-create must own {owner}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "memfd_create=319" in item and "rdi/rsi" in item
+            for item in prerequisites
+        ),
+        "static-c-memfd-create must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "src/linux/memfd_create.c" in item
+            and "249-content-byte" in item
+            and "250-content-byte" in item
+            and "UINT_MAX" in item
+            and "EFAULT" in item
+            for item in prerequisites
+        ),
+        "static-c-memfd-create must record its selected Linux validation cases",
+    )
+    require(
+        any(
+            "MFD_CLOEXEC=1" in item
+            and "MFD_ALLOW_SEALING=2" in item
+            and "MFD_HUGETLB=4" in item
+            and "no C fcntl or seal operation" in item
+            for item in prerequisites
+        ),
+        "static-c-memfd-create must retain its creation-only boundary",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any(
+            "eight-profile" in item
+            and "GNU-only `memfd_create(const char *, unsigned)`" in item
+            and "MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB=1/2/4" in item
+            and "six default/strict/POSIX/XOPEN/BSD/macro-free-C++ selections" in item
+            and "unmangled GNU C++ linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-memfd-create must record its bounded GNU C/C++ header ABI",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-memfd-create"},
+        "static-c-memfd-create must use the closed libc-memfd-create command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "GNU memfd_create header proof",
+        "memfd_create=319",
+        "ordinary/249-byte-label creation",
+        "MFD_CLOEXEC|MFD_ALLOW_SEALING",
+        "250-byte-label EINVAL",
+        "UINT_MAX EINVAL",
+        "inaccessible-pointer EFAULT",
+        "memfd_secret",
+        "C fcntl/seal exports",
+        "MFD_HUGETLB resource/page-size policy",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-memfd-create evidence scope omits {phrase}",
+        )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "src/linux/memfd_create.c" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-memfd-create must retain its musl source mapping",
+    )
+    require(
+        any(
+            entry.get("kind") == "kernel-abi"
+            and "memfd_create=319" in entry.get("role", "")
+            and "NUL-terminated label" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-memfd-create must retain its Linux syscall oracle",
     )
 
 
@@ -7621,6 +7948,91 @@ def require_memory_locking_artifact(family: Mapping[str, Any]) -> None:
         ),
         "static-c-memory-locking must retain its Linux syscall oracle",
     )
+
+
+def require_memory_sync_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the artifact-local unconditional msync declaration gate explicit."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matching = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command")
+        == "./scripts/dev-x86_64.sh memory-sync-header-abi"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must retain exactly one memory-sync-header-abi evidence command",
+    )
+    entry = matching[0]
+    scope = entry.get("scope")
+    require(
+        entry.get("state") == "required" and isinstance(scope, str),
+        "memory-sync-header-abi evidence must remain required text",
+    )
+    for phrase in (
+        "eight-profile C/C++",
+        "`msync(void *, size_t, int)`",
+        "MS_ASYNC/MS_INVALIDATE/MS_SYNC=1/2/4",
+        "unmangled C++ linkage",
+        "archive linkage",
+        "runtime behavior",
+        "cancellation",
+        "installed-header completion",
+        "public support",
+    ):
+        require(
+            phrase in scope,
+            f"memory-sync-header-abi evidence scope omits {phrase}",
+        )
+
+
+def require_memfd_create_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the artifact-local GNU memfd declaration gate explicit."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matching = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command")
+        == "./scripts/dev-x86_64.sh memfd-create-header-abi"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must retain exactly one memfd-create-header-abi evidence command",
+    )
+    entry = matching[0]
+    scope = entry.get("scope")
+    require(
+        entry.get("state") == "required" and isinstance(scope, str),
+        "memfd-create-header-abi evidence must remain required text",
+    )
+    for phrase in (
+        "eight-profile C/C++",
+        "GNU `memfd_create(const char *, unsigned)`",
+        "MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB=1/2/4",
+        "GNU visibility",
+        "default/strict/POSIX/XOPEN/BSD",
+        "macro-free C++",
+        "unmangled GNU C++ linkage",
+        "archive linkage",
+        "runtime behavior",
+        "seals/fcntl",
+        "installed-header completion",
+        "public support",
+    ):
+        require(
+            phrase in scope,
+            f"memfd-create-header-abi evidence scope omits {phrase}",
+        )
 
 
 def require_memory_locking_header_evidence(family: Mapping[str, Any]) -> None:
@@ -10759,7 +11171,9 @@ def validate_ledger(
         header_layout_foundation_manifest,
     )
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
+    require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
+    require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
@@ -10794,7 +11208,9 @@ def validate_ledger(
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
+    require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])
+    require_memfd_create_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])

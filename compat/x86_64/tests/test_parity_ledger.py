@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 73)
+        self.assertEqual(report["verified_artifact_count"], 75)
         self.assertEqual(report["header_layout_probe_count"], 39)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1566,7 +1566,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 49
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 51
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -2344,6 +2344,100 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         self.assertIn(
             "libc/src/c_abi/x86_64/system_configuration.rs",
+            posix_runtime["source_owners"],
+        )
+        memory_sync = artifacts_by_id["static-c-memory-sync"]
+        assert isinstance(memory_sync, dict)
+        self.assertNotIn("capabilities", memory_sync)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/memory_sync.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sys/mman.h",
+            "include/bits/mman.h",
+            "compat/x86_64/memory_sync_header_abi_probe.c",
+            "compat/x86_64/memory_sync_header_abi_probe.cpp",
+            "compat/x86_64/run_memory_sync_header_abi.sh",
+            "compat/x86_64/x86_msync_reference_probe.c",
+            "compat/x86_64/run_x86_msync_reference.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_memory_sync_probe.c",
+            "compat/x86_64/libc_memory_sync_start.S",
+            "compat/x86_64/run_libc_memory_sync.sh",
+            "compat/x86_64/tests/test_memory_sync.py",
+        ):
+            self.assertIn(owner, memory_sync["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in memory_sync["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-memory-sync"},
+        )
+        for phrase in (
+            "mapping-synchronization block",
+            "`msync=26`",
+            "syscall_cp",
+            "no-cancellation direct Linux path",
+            "full musl `msync` parity",
+            "private anonymous mapping",
+            "invalid-flag-before-zero-length",
+            "unaligned-address-before-zero-length",
+            "file-backed shared-map writeback",
+            "persistence or durability",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, memory_sync["description"])
+        self.assertIn("src/mman/msync.c", memory_sync["oracle"][0]["role"])
+        self.assertIn(
+            "src/thread/x86_64/syscall_cp.s", memory_sync["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/memory_sync.rs",
+            posix_runtime["source_owners"],
+        )
+        memfd_create = artifacts_by_id["static-c-memfd-create"]
+        assert isinstance(memfd_create, dict)
+        self.assertNotIn("capabilities", memfd_create)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/memfd_create.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sys/mman.h",
+            "include/bits/mman.h",
+            "compat/x86_64/memfd_create_header_abi_probe.c",
+            "compat/x86_64/memfd_create_header_abi_probe.cpp",
+            "compat/x86_64/run_memfd_create_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_memfd_create_probe.c",
+            "compat/x86_64/libc_memfd_create_start.S",
+            "compat/x86_64/run_libc_memfd_create.sh",
+            "compat/x86_64/tests/test_memfd_create_c_abi.py",
+        ):
+            self.assertIn(owner, memfd_create["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in memfd_create["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-memfd-create"},
+        )
+        for phrase in (
+            "GNU memory-file-descriptor creation block",
+            "`memfd_create=319`",
+            "249-byte",
+            "250-byte-label EINVAL",
+            "UINT_MAX flag EINVAL",
+            "inaccessible non-null label-pointer EFAULT",
+            "C `fcntl`",
+            "MFD_HUGETLB resource/page-size policy",
+            "memfd_secret",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, memfd_create["description"])
+        self.assertIn(
+            "src/linux/memfd_create.c", memfd_create["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/memfd_create.rs",
             posix_runtime["source_owners"],
         )
         mapping_core = artifacts_by_id["static-c-mman-mapping-core"]
@@ -6803,6 +6897,106 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "memory-locking-header-abi evidence command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_memory_sync_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memory-sync"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("msync=26", "msync=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memory-sync"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh msync-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-memory-sync command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        evidence = headers["native_evidence"]
+        assert isinstance(evidence, list)
+        header_evidence = next(
+            entry
+            for entry in evidence
+            if isinstance(entry, dict)
+            and entry["command"] == "./scripts/dev-x86_64.sh memory-sync-header-abi"
+        )
+        header_evidence["command"] = (
+            "./scripts/dev-x86_64.sh memory-sync-header-abi-broken"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "memory-sync-header-abi evidence command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_memfd_create_artifact_keeps_its_closed_mapping_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memfd-create"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace(
+            "memfd_create=319", "memfd_create=999"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-memfd-create"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh memfd-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-memfd-create command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        evidence = headers["native_evidence"]
+        assert isinstance(evidence, list)
+        header_evidence = next(
+            entry
+            for entry in evidence
+            if isinstance(entry, dict)
+            and entry["command"] == "./scripts/dev-x86_64.sh memfd-create-header-abi"
+        )
+        header_evidence["command"] = (
+            "./scripts/dev-x86_64.sh memfd-create-header-abi-broken"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "memfd-create-header-abi evidence command"
         ):
             ledger.validate_ledger(data)
 

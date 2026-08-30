@@ -125,7 +125,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
 # locale ctype, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
-# observation, nanosleep, and clock_nanosleep, descriptor entry, selected
+# observation, no-cancellation mapping synchronization, direct anonymous-memory
+# descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
 # filesystem access, bounded fcntl
 # status control, bounded generic ioctl, and the
 # basic x87 classification/sign plus complex accessor/conjugation foundation.
@@ -157,6 +158,8 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/intmax_arithmetic.rs"),
     Path("libc/src/c_abi/x86_64/math_complex.rs"),
     Path("libc/src/c_abi/x86_64/memory_search.rs"),
+    Path("libc/src/c_abi/x86_64/memory_sync.rs"),
+    Path("libc/src/c_abi/x86_64/memfd_create.rs"),
     Path("libc/src/c_abi/x86_64/fenv.rs"),
     Path("libc/src/c_abi/x86_64/foundation.rs"),
     Path("libc/src/c_abi/x86_64/memory.rs"),
@@ -3569,7 +3572,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "descriptor_io.rs"]',
         '#[path = "process_resources.rs"]',
         '#[path = "memory_mapping.rs"]',
+        '#[path = "memory_sync.rs"]',
         '#[path = "memory_locking.rs"]',
+        '#[path = "memfd_create.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
         '#[path = "socket_messages.rs"]',
@@ -5410,6 +5415,42 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary is missing {required!r}"
             )
 
+    memory_sync_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_sync.rs"
+    memory_sync_text = memory_sync_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/mman/msync.c",
+        "src/thread/x86_64/syscall_cp.s",
+        "syscall_cp(SYS_msync",
+        "raw_syscall::SYS_MSYNC",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+        "no-cancellation direct",
+        "full musl `msync` parity",
+        "file-backed shared-map writeback",
+    ):
+        if required not in memory_sync_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memory_sync.rs: selected static "
+                f"mapping-synchronization boundary is missing {required!r}"
+            )
+    memory_sync_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            memory_sync_text,
+        )
+    )
+    if memory_sync_exports != {"msync"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/memory_sync.rs: selected static artifact "
+            "must export only msync"
+        )
+    if "pub(crate) const SYS_MSYNC: i64 = 26;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static mapping "
+            "synchronization boundary requires SYS_MSYNC=26"
+        )
+
     memory_locking_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memory_locking.rs"
     )
@@ -5458,6 +5499,42 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/syscall.rs: selected static per-range "
                 f"locking boundary is missing {required!r}"
             )
+
+    memfd_create_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memfd_create.rs"
+    memfd_create_text = memfd_create_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/memfd_create.c",
+        "memfd_create=319",
+        "raw_syscall::SYS_MEMFD_CREATE",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        "initial-TLS C `errno`",
+        "MFD_HUGETLB",
+        "memfd_secret",
+        "fcntl",
+    ):
+        if required not in memfd_create_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/memfd_create.rs: selected static "
+                f"anonymous-memory-descriptor boundary is missing {required!r}"
+            )
+    memfd_create_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            memfd_create_text,
+        )
+    )
+    if memfd_create_exports != {"memfd_create"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/memfd_create.rs: selected static artifact "
+            "must export only memfd_create"
+        )
+    if "pub(crate) const SYS_MEMFD_CREATE: i64 = 319;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static anonymous-memory "
+            "descriptor boundary requires SYS_MEMFD_CREATE=319"
+        )
 
     signal_execution_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_execution.rs"
@@ -6631,7 +6708,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         clock_gettime_text,
         clock_nanosleep_text,
         memory_mapping_text,
+        memory_sync_text,
         memory_locking_text,
+        memfd_create_text,
         nanosleep_text,
         descriptor_entry_text,
         filesystem_access_text,
@@ -6846,9 +6925,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "madvise",
         "posix_madvise",
         "mincore",
+        "msync",
         "mlock",
         "munlock",
         "mlock2",
+        "memfd_create",
         "nanosleep",
         "open",
         "openat",
@@ -6992,7 +7073,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -7030,7 +7111,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),
+        ("memory_sync.rs", memory_sync_text),
         ("memory_locking.rs", memory_locking_text),
+        ("memfd_create.rs", memfd_create_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),
         ("filesystem_access.rs", filesystem_access_text),

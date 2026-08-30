@@ -28,10 +28,11 @@
 //! wait for, so [`selected_static_vm_wait`] is deliberately local and a no-op;
 //! it does not claim the full shared-VM synchronization contract.
 //!
-//! `msync` remains deferred because musl routes it through the cancellation
-//! boundary. `mremap` (variadic fixed-address form plus VM wait), `mlock*`,
+//! A separate private direct `msync` artifact now owns only a no-cancellation
+//! Linux request path; musl's cancellation-point semantics remain deferred.
+//! `mremap` (variadic fixed-address form plus VM wait), `mlock*`,
 //! `remap_file_pages`, `shm_*`, and `memfd_create` are likewise deliberately
-//! outside this private artifact.
+//! outside this mapping-core artifact.
 
 use core::ffi::{c_int, c_long, c_void};
 

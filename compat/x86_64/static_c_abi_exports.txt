@@ -189,6 +189,7 @@ madvise
 memchr
 memcmp
 memcpy
+memfd_create
 memmem
 memmove
 memrchr
@@ -203,6 +204,7 @@ msgctl
 msgget
 msgrcv
 msgsnd
+msync
 mtx_destroy
 mtx_init
 mtx_lock

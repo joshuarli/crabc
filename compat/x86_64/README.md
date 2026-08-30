@@ -243,7 +243,9 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
 ./scripts/dev-x86_64.sh mman-header-abi
+./scripts/dev-x86_64.sh memory-sync-header-abi
 ./scripts/dev-x86_64.sh memory-locking-header-abi
+./scripts/dev-x86_64.sh memfd-create-header-abi
 ./scripts/dev-x86_64.sh resource-header-abi
 ./scripts/dev-x86_64.sh socket-header-abi
 ./scripts/dev-x86_64.sh socket-messages-header-abi
@@ -363,7 +365,9 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-mapping-core
+./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
+./scripts/dev-x86_64.sh libc-memfd-create
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
 ./scripts/dev-x86_64.sh libc-nanosleep
 ./scripts/dev-x86_64.sh libc-clock-nanosleep
@@ -779,11 +783,24 @@ evidence, not a general C terminal/runtime claim.
 and selected Linux/x86 mapping values, including `MAP_32BIT`, against pinned
 musl. It is source-only and does not select mapping behavior or `crabc-libc`.
 
+`memory-sync-header-abi` separately compares project-first and pinned-musl C
+and C++ `<sys/mman.h>` profiles for unconditional `msync` and its three
+`MS_*` values, including unmangled C++ linkage. It is compile-only evidence;
+it does not select runtime behavior, musl's cancellation-point semantics,
+complete `sys/mman.h`, family completion, promotion, or public x86 support.
+
 `memory-locking-header-abi` separately compares project-first and pinned-musl
 strict/POSIX/GNU C/C++ `<sys/mman.h>` profiles for exactly `mlock`, `munlock`,
 and GNU `mlock2`/`MLOCK_ONFAULT`, including GNU hiding and unmangled C++
 linkage. It is compile-only evidence, not archive linkage, locking behavior,
 complete `sys/mman.h`, family completion, or public x86 support.
+
+`memfd-create-header-abi` separately compares project-first and pinned-musl
+eight-profile C/C++ `<sys/mman.h>` GNU visibility for exactly
+`memfd_create` and `MFD_CLOEXEC`/`MFD_ALLOW_SEALING`/`MFD_HUGETLB`: visible
+only under GNU feature selection, hidden otherwise, and unmangled from C++.
+It is compile-only evidence, not archive linkage, descriptor or filesystem
+behavior, family completion, promotion, or public x86 support.
 
 `resource-header-abi` compile-checks strict and GNU/LFS C and C++
 `<sys/resource.h>` records, selectors, priorities, declarations, and aliases
@@ -2252,10 +2269,28 @@ then through a `-nostdlib -static` candidate, while the paired C/C++
 POSIX `DONTNEED` no-op/direct-positive-error behavior, and full/partial
 residency vectors. The archive's explicit local no-op `__vm_wait` site records
 that it has no musl loader/allocator process-wide VM synchronization contract.
-It excludes `msync` cancellation, `mremap`, `mlock*`, remap/shared-memory and
+It excludes its separate direct no-cancellation `msync` sibling, full musl
+`msync` cancellation semantics, `mremap`, `mlock*`, remap/shared-memory and
 memfd paths, mapping policy, allocator, libc.so, CRT, loader, sysroot, and
 public x86 support. This is one artifact within planned `libc.posix-runtime`,
 not full `<sys/mman.h>`, family, C-runtime, or platform completion.
+
+`libc-memory-sync` is a separately recorded private planned
+`static-c-memory-sync` evidence artifact over that archive, not a general C
+mapping or runtime capability. Its project-header C body first executes
+through pinned musl and then through a `-nostdlib -static` candidate, after the
+eight-profile C/C++ declaration gate. It selects only caller-owned direct
+no-cancellation `msync`: x86 `msync=26`, all three public `MS_*` bits,
+stale-`errno` success, and Linux 5.10's flag-first and
+alignment-before-zero-length validation order over a disposable private
+anonymous mapping. Pinned musl uses `syscall_cp`; this candidate deliberately
+has no cancellation state machine, so it does not establish musl cancellation
+semantics or full C ABI parity. It also does not prove file-backed shared-map
+writeback or invalidation, persistence, durability, VM-wide synchronization,
+`mremap`, mapping policy, allocator, libc.so, CRT, loader, sysroot, promotion,
+or public x86 support. This is one planned evidence artifact within
+`libc.posix-runtime`, not full `<sys/mman.h>`, family, C-runtime, or platform
+completion.
 
 `libc-memory-locking` is a separately recorded
 `static-c-memory-locking` `verified_artifact` gate over that archive, not a
@@ -2267,10 +2302,25 @@ selects exactly `mlock`, `munlock`, and GNU `mlock2(MLOCK_ONFAULT)`: musl's
 `mlock2=325`, stale-errno success, first-fault locking, invalid-flag `EINVAL`,
 and overflow-range `EINVAL`. Linux's `EPERM`/`EAGAIN`/`ENOMEM` memlock result
 is accepted where locking is not available. It excludes cancellation,
-`mlockall`/`munlockall`, `msync`, `mremap`, mapping policy, allocator, libc.so,
-CRT, loader, sysroot, and public x86 support. This is one artifact within
-planned `libc.posix-runtime`, not full `<sys/mman.h>`, family, C-runtime, or
-platform completion.
+`mlockall`/`munlockall`, the separate direct `msync` sibling, `mremap`, mapping
+policy, allocator, libc.so, CRT, loader, sysroot, and public x86 support. This
+is one artifact within planned `libc.posix-runtime`, not full `<sys/mman.h>`,
+family, C-runtime, or platform completion.
+
+`libc-memfd-create` is a separately recorded private planned
+`static-c-memfd-create` evidence artifact over that archive, not a descriptor,
+filesystem, or C-runtime capability. Its GNU project-header C body first
+executes through pinned musl and then through a `-nostdlib -static` candidate,
+after the eight-profile GNU-only C/C++ declaration gate. It selects only
+direct x86 `memfd_create=319`, the selected initial-TLS `errno` boundary,
+ordinary and 249-byte labels, creation-flag forwarding, stale `errno` on
+success, and Linux's 250-byte/all-ones-flag-word `EINVAL` and bad-pointer
+`EFAULT` results; fixture-local raw close cleanup does not select a C close API. It
+does not establish seals or C `fcntl`, `memfd_secret`, huge-page resource or
+page-size policy, descriptor lifecycle, broad filesystem behavior, libc.so,
+CRT, loader, sysroot, family/platform parity, promotion, or public x86
+support. This is one planned evidence artifact within `libc.posix-runtime`,
+not full `<sys/mman.h>`, family, C-runtime, or platform completion.
 
 `libc-header-layouts-baseline` is a separately recorded
 `static-c-header-layouts-baseline` artifact within planned
@@ -3146,7 +3196,9 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-time-observation`,
 `libc-system-configuration`,
 `libc-mapping-core`,
+`libc-memory-sync`,
 `libc-memory-locking`,
+`libc-memfd-create`,
 `libc-header-layouts-baseline`,
 `libc-nanosleep`,
 `libc-clock-nanosleep`,
