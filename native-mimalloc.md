@@ -1407,6 +1407,13 @@ client and one distinct live medium client. B's source drain consumes the
 small client privately, B's finish settles A's proof only after B teardown,
 and fresh C can free and normally finish only B's successor medium before
 ticket zero reactivates.
+The selected
+`tests/fixtures/native_mimalloc_post_exit_source_published_all_free_proof_test.c`
+fixture covers the complementary composition with no B successor: D
+source-publishes B's only direct-small client, B terminally frees A's routed
+medium, and B makes no further allocator call. B's typed all-free source drain
+and B's attachment teardown complete before B settles A's proof; no B client
+becomes a new route input.
 `crabc-mimalloc/tests/native_two_live_remote_owners.rs` and
 `tests/fixtures/native_mimalloc_two_live_remote_owners_test.c` then park A1
 before A2 enters its own setup transition, leaving two registry entries active

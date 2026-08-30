@@ -984,6 +984,12 @@ small client remains source-only and B's distinct live medium becomes B's
 successor route. B's destructor must collect the small client and finish B
 before settling A's proof; fresh C can receive only B's medium and must finish
 normally before ticket zero resumes.
+The selected-C `native_mimalloc_post_exit_source_published_all_free_proof`
+companion covers the complementary no-successor composition. B's only local
+small client is source-published, B terminally frees A's routed medium, and B
+makes no further allocator operation. B's all-free source drain and attachment
+teardown must complete before B settles A's proof; no B client enters a new
+post-exit route.
 For the two source-valid post-exit B/C/D interleavings, the same session can
 move exactly three generation-checked opaque ledger keys into either its
 direct-small group or its separately typed mapped, non-full medium group.

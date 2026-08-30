@@ -1120,6 +1120,13 @@ medium client enters B's successor route. B's teardown then settles A's proof;
 fresh C must terminally free and normally finish B's medium route before
 ticket zero resumes. It remains a serialized exact-address witness, not a
 general route chain.
+The selected-C
+`native_mimalloc_post_exit_source_published_all_free_proof_test.c` covers the
+complementary no-successor composition: D source-publishes B's only small
+client, B terminally frees A's routed medium, and B makes no further allocator
+operation. B's typed all-free drain and own teardown complete before it
+settles A's proof, after which ticket zero can resume. No B client is exposed
+through another route.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

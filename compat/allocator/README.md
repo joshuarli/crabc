@@ -2125,6 +2125,12 @@ medium client into a successor route. B's finished teardown settles A's proof;
 fresh C terminally frees and normally finishes B's route before ticket zero can
 reactivate. The fixture gives no worker a route-selection or general pointer
 capability.
+The selected-C `native_mimalloc_post_exit_source_published_all_free_proof`
+fixture covers the complementary no-successor lifecycle. D source-publishes
+B's only small client before B terminally frees A's routed medium; B then makes
+no further allocator operation. B must complete its typed all-free drain and
+its own attachment teardown before settling A's proof, with no B client moving
+into a new route.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The
