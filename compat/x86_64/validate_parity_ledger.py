@@ -5884,6 +5884,84 @@ def require_ldso_owned_crt_handoff_publication_artifact(family: Mapping[str, Any
     )
 
 
+def require_ldso_dynamic_admission_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the consumed fixed-graph loader inventory explicit and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "ldso-dynamic-fixed-graph-admission"]
+    require(
+        len(matching) == 1,
+        "ldso.dynamic-runtime needs exactly one ldso-dynamic-fixed-graph-admission artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "ldso-dynamic-fixed-graph-admission must not promote ldso.dynamic-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "three fixed private interpreter graphs",
+        "R_X86_64_RELATIVE/GLOB_DAT/JUMP_SLOT",
+        "bounded leaf `DT_RELR`",
+        "R_X86_64_DTPMOD64/DTPOFF64",
+        "R_X86_64_TPOFF64",
+        "weak `R_X86_64_GLOB_DAT`",
+        "DT_TEXTREL",
+        "DF_STATIC_TLS",
+        "status 127",
+        "general loader",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"ldso-dynamic-fixed-graph-admission description omits {phrase}",
+        )
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/run_ldso_initial_graph.sh",
+        "compat/x86_64/run_ldso_initial_tls.sh",
+        "compat/x86_64/run_ldso_owned_crt_handoff.sh",
+        "compat/x86_64/run_ldso_dynamic_admission.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "ldso dynamic admission source owners"))
+        == expected_sources,
+        "ldso-dynamic-fixed-graph-admission source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh ldso-dynamic-admission"},
+        "ldso-dynamic-fixed-graph-admission must use the dedicated native command",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_dynamic_admission.sh").read_text()
+    for phrase in (
+        "run_ldso_initial_graph.sh",
+        "run_ldso_initial_tls.sh",
+        "run_ldso_owned_crt_handoff.sh",
+        "R_X86_64_COPY",
+        "R_X86_64_TPOFF64",
+        "DT_TEXTREL",
+        "STATIC_TLS",
+        "x86 dynamic-loader fixed-graph admission inventory: PASS",
+    ):
+        require(
+            phrase in runner,
+            f"ldso-dynamic-fixed-graph-admission runner omits {phrase}",
+        )
+    require(
+        "run_ldso_dynamic_admission.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-dynamic-admission dispatcher binding is missing",
+    )
+
+
 def require_static_initial_tls_v1_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the private real-PT_TLS foundation without promoting pthreads."""
     artifacts = require_verified_artifacts(
@@ -15340,6 +15418,7 @@ def validate_ledger(
     require_ldso_initial_exec_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
     require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
+    require_ldso_dynamic_admission_artifact(by_id["ldso.dynamic-runtime"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
     require_static_pie_rust_builtins_bundle_artifact(by_id["crt.static-pie"])
     require_dynamic_pie_link_contract_artifact(by_id["crt.dynamic-startup"])

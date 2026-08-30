@@ -440,6 +440,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-initial-tls
 ./scripts/dev-x86_64.sh ldso-initial-exec-tls
 ./scripts/dev-x86_64.sh ldso-owned-crt-handoff
+./scripts/dev-x86_64.sh ldso-dynamic-admission
 ```
 
 The runner rejects non-Linux and non-x86_64 hosts before Docker, requests
@@ -3351,6 +3352,15 @@ main after relocation. Its fixture-local no-libc lifecycle proves
 malformed records and an early finalizer fail closed. It uses neither `%rdx`
 nor an ambient loader/libc contract, and does not select a generic loader,
 DSO finalization, dynamic CRT/sysroot, or public x86 support.
+
+`ldso-dynamic-admission` is the consumed aggregate admission gate for those
+three real-ELF private transactions. It runs each fixture afresh, so its
+positive inventory is limited to the no-TLS RELATIVE/GLOB_DAT/JUMP_SLOT plus
+bounded leaf RELR graph, the GNU-Dynamic DTPMOD/DTPOFF graph, and the
+owned-CRT weak-GLOB_DAT record graph. Their in-place malformed inputs retain
+the fail-closed PT_TLS, COPY, malformed RELA/RELR, TEXTREL/static-TLS, TPOFF,
+and malformed/early-handoff negatives. It is not a generated report or a
+general loader/dlfcn/dynamic-CRT/sysroot/public-support claim.
 
 `ldso-initial-graph` is one separately built private ET_DYN interpreter
 artifact within still-planned `ldso.dynamic-runtime`, not the `crabc-ldso`
