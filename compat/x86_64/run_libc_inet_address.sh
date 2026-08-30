@@ -140,7 +140,7 @@ for symbol in __errno_location __inet_aton inet_addr inet_aton inet_ntop inet_pt
         fail "archive does not define ${symbol}"
 done
 for unselected in inet_ntoa inet_network inet_makeaddr inet_lnaof inet_netof \
-    getaddrinfo freeaddrinfo getnameinfo gethostbyname gethostbyaddr \
+    gethostbyname gethostbyaddr \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"

@@ -416,6 +416,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
 ./scripts/dev-x86_64.sh libc-inet-address
+./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-random-entropy
 ./scripts/dev-x86_64.sh libc-memory-search
 ./scripts/dev-x86_64.sh libc-string-copy
@@ -994,6 +995,21 @@ different short-buffer behavior for AF_INET and AF_INET6 `inet_ntop`. It does
 not select DNS/resolver state, netdb, interface lookup, `inet_ntoa` scratch
 storage, allocation, stdio, libc.so, CRT, loader, sysroot, resolver-network
 behavior, family promotion, or public x86 support.
+
+`libc-numeric-netdb` is a separate private static C `netdb.h` result-record
+artifact under still-planned `libc.resolver`. Its project-header C body first
+executes through pinned musl 1.2.6 and then through a true
+`-nostdlib -static` candidate. It selects exactly numeric `getaddrinfo`,
+`freeaddrinfo`, numeric-fallback `getnameinfo`, and `gai_strerror`: IPv4,
+IPv6, mapped-v4, and null-node passive/loopback records; numeric services;
+opaque result-list lifetime; numeric host/service rendering; and selected EAI
+errors/text. The fixture ratchets the x86 LP64 `struct addrinfo` and socket
+layouts, function declarations, and public AI/NI/EAI constants. Result nodes
+use one private anonymous page and are released only through `freeaddrinfo`;
+this is not a general allocator. It does not read `/etc/hosts` or
+`/etc/resolv.conf`, inspect interfaces, consult service databases, send DNS,
+keep resolver state/cache, perform reverse lookup, add NSS/plugins/DoH/DoT/
+mDNS, or promote `libc.resolver`, x86 support, or any public platform claim.
 
 `socket-messages-header-abi` compile-checks project-first and pinned-musl
 POSIX/GNU/BSD C/C++ `<sys/socket.h>` message/options declarations. It covers

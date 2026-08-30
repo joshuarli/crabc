@@ -130,8 +130,7 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in if_nametoindex if_indextoname getaddrinfo freeaddrinfo \
-    getnameinfo \
+for unselected in if_nametoindex if_indextoname \
     gethostbyname gethostbyaddr fork _Fork vfork clone execve \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then

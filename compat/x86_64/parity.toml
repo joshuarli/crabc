@@ -5699,7 +5699,7 @@ id = "libc.resolver"
 order = 100
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
 category = "c-abi"
-description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec is a private static C artifact only; it does not promote resolver-network behavior, this family, or public x86 support."
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec and deterministic numeric netdb result-lifetime slices are private static C artifacts only; neither promotes resolver-network behavior, this family, or public x86 support."
 aarch64_gates = ["resolver-network", "libc-test"]
 source_owners = ["libc/src/c_abi.rs", "compat/resolver-network"]
 x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
@@ -5759,6 +5759,53 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/network/inet_pton.c, inet_ntop.c, inet_aton.c, and inet_addr.c, including partial writes, errno, textual compression, and inet_aton hidden/weak alias intent; DNS/resolver and netdb behavior are unselected." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/scalar C calling convention and ELF hidden-global helper plus weak-default same-address alias contract used by the static candidate." },
 ]
+
+[[family.verified_artifact]]
+id = "static-c-numeric-netdb"
+description = "Private native x86 deterministic numeric `netdb.h` artifact inside still-planned `libc.resolver`. A project-header C fixture first executes through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate linked only with the selected crabc archive. It exposes exactly `getaddrinfo`, `freeaddrinfo`, `getnameinfo`, and `gai_strerror`: AF_INET/AF_INET6 numeric nodes and numeric services, null-node loopback/passive defaults, v4-mapped numeric output, opaque result-list ownership, numeric host/service rendering, selected EAI result codes and stable EAI text. Its C fixture pins the SysV AMD64 LP64 `struct addrinfo`, sockaddr, socket/protocol/AI/NI/EAI constants, and public function types before both reference and candidate links. One anonymous page per result node is private C-result lifetime storage released only by `freeaddrinfo`; it is not a general allocator. This artifact performs no `/etc/hosts` or `/etc/resolv.conf` parsing, interface inspection, NSS/plugin lookup, service database lookup, DNS packet I/O, cache, resolver state, reverse DNS, DoH, DoT, mDNS, libc.so, CRT, loader, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/numeric_netdb.rs",
+  "libc/src/c_abi/x86_64/inet_address.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/arpa/inet.h",
+  "include/errno.h",
+  "include/netdb.h",
+  "include/netinet/in.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/socket.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_numeric_netdb_probe.c",
+  "compat/x86_64/libc_numeric_netdb_start.S",
+  "compat/x86_64/run_libc_numeric_netdb.sh",
+  "compat/x86_64/run_libc_inet_address.sh",
+  "compat/x86_64/run_libc_socket_transport.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected public C boundary is SysV AMD64 LP64: `struct addrinfo` is 48-byte/align-8 with int fields at 0/4/8/12, socklen_t at 16, and pointers at 24/32/40; sockaddr_in and sockaddr_in6 are 16 and 28 bytes respectively. The selected constants retain AF_INET=2, AF_INET6=10, SOCK_STREAM=1, SOCK_DGRAM=2, IPPROTO_TCP=6, IPPROTO_UDP=17, the public AI/NI masks, and EAI values through EAI_OVERFLOW=-12.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/network/getaddrinfo.c, freeaddrinfo.c, getnameinfo.c, and gai_strerror.c to this selected numeric result-record slice. Numeric nodes/services, AF_INET6 v4-mapping, null-node passive/loopback defaults, numeric getnameinfo output, EAI_NONAME/EAI_SERVICE/EAI_FAMILY/EAI_OVERFLOW, and stable selected error text are compared with the pinned implementation.",
+  "The candidate uses Linux 5.10 x86-64 mmap=9 and munmap=11 only for opaque one-page result nodes. `freeaddrinfo` validates the private node ownership word before release. It imports neither a general allocator nor resolver socket/file state; selected initial TLS remains only the already-owned errno datum and there is no dynamic TLS resolver.",
+]
+x86_header_prerequisites = [
+  "The project-header C fixture directly preprocesses netdb.h, netinet/in.h, arpa/inet.h, sys/socket.h, errno.h, stddef.h, stdint.h, sys/types.h, and bits/alltypes.h before the pinned-musl reference and the static candidate. It ratchets the selected netdb declarations plus exact addrinfo/socket layout and flag/error constants; this is not broad installed-header or C++ closure evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-numeric-netdb", scope = "Pinned-musl project-header C execution followed by a true x86 `-nostdlib -static` candidate. The gate ratchets the aggregate static C export surface; direct project netdb/socket header provenance and SysV AMD64 addrinfo layout/types; exact `getaddrinfo`/`freeaddrinfo`/`getnameinfo`/`gai_strerror` candidate linkage; no interpreter/DT_NEEDED/unresolved or dynamic TLS; private mmap=9 result allocation and munmap=11 release; numeric IPv4/IPv6/v4-mapped/passive address and numeric host/service result behavior; selected EAI outcomes and strings; and absence of host/service/resolver state. It excludes hosts/resolv.conf, DNS UDP/TCP/retry/failover, NSS/plugins, reverse lookup, caches, general allocation, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX oracle for src/network/getaddrinfo.c, freeaddrinfo.c, getnameinfo.c, and gai_strerror.c, restricted to deterministic numeric/local-only result and error behavior; DNS and conventional-file resolver behavior remain unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Anonymous private mmap=9/munmap=11 page lifetime for opaque selected C result nodes." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 addrinfo/socket record and C-call ABI used by the freestanding static candidate." }]
 
 [[family]]
 id = "libc.c-abi-compat"

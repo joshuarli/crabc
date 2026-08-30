@@ -139,6 +139,7 @@ flock
 fpathconf
 fputc
 fread
+freeaddrinfo
 fremovexattr
 fsetxattr
 fstat
@@ -152,10 +153,12 @@ futimens
 futimes
 futimesat
 fwrite
+gai_strerror
 get_avphys_pages
 get_nprocs
 get_nprocs_conf
 get_phys_pages
+getaddrinfo
 getc
 getchar
 getcwd
@@ -168,6 +171,7 @@ geteuid
 getgid
 getgroups
 gethostname
+getnameinfo
 getpagesize
 getpeername
 getpgid

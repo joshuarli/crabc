@@ -28,6 +28,8 @@
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! padded socket messages/options,
+//! deterministic numeric `netdb.h` address/service translation and result
+//! ownership without resolver configuration, hosts, or DNS,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
 //! C-locale binary32/binary64/x87-binary80 floating parsing, bounded permanent
 //! stdin/stdout/stderr byte/block I/O with explicit flushing, intmax-arithmetic,
@@ -233,6 +235,8 @@ mod uts_identity;
 mod socket_transport;
 #[path = "inet_address.rs"]
 mod inet_address;
+#[path = "numeric_netdb.rs"]
+mod numeric_netdb;
 #[path = "socket_messages.rs"]
 mod socket_messages;
 #[path = "sysv_semaphore.rs"]

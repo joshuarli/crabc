@@ -1335,14 +1335,18 @@ INET_ADDRESS_SYMBOLS = (
     "inet_pton",
 )
 
+NUMERIC_NETDB_SYMBOLS = (
+    "freeaddrinfo",
+    "gai_strerror",
+    "getaddrinfo",
+    "getnameinfo",
+)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
-    "freeaddrinfo",
-    "getaddrinfo",
     "gethostbyaddr",
     "gethostbyname",
-    "getnameinfo",
     "inet_lnaof",
     "inet_makeaddr",
     "inet_netof",
@@ -13768,6 +13772,89 @@ def require_inet_address_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_numeric_netdb_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the deterministic numeric netdb seam private and self-contained."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-numeric-netdb"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-numeric-netdb artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-numeric-netdb must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-numeric-netdb needs a description")
+    for phrase in (
+        "Private native x86 deterministic numeric `netdb.h` artifact",
+        "`getaddrinfo`",
+        "`freeaddrinfo`",
+        "`getnameinfo`",
+        "`gai_strerror`",
+        "`/etc/hosts`",
+        "`/etc/resolv.conf`",
+        "DNS packet I/O",
+        "NSS/plugin",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-numeric-netdb description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-numeric-netdb.source_owners"
+        )
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/numeric_netdb.rs",
+        "include/netdb.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_numeric_netdb_probe.c",
+        "compat/x86_64/libc_numeric_netdb_start.S",
+        "compat/x86_64/run_libc_numeric_netdb.sh",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-numeric-netdb source owners omit {owner}")
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(NUMERIC_NETDB_SYMBOLS) <= exports,
+        "static-c-numeric-netdb must retain its four selected exports",
+    )
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-numeric-netdb needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-numeric-netdb"},
+        "static-c-numeric-netdb must use the closed libc-numeric-netdb command",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "numeric_netdb.rs"]\nmod numeric_netdb;' in static_root,
+        "x86 static C ABI must compose the numeric_netdb leaf",
+    )
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-numeric-netdb)" in dispatch,
+        "libc-numeric-netdb is absent from the native dispatcher",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -15873,6 +15960,7 @@ def validate_ledger(
     require_directory_streams_artifact(by_id["libc.posix-runtime"])
     require_extended_attributes_artifact(by_id["libc.posix-runtime"])
     require_inet_address_artifact(by_id["libc.resolver"])
+    require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])

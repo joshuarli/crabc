@@ -6518,7 +6518,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "-Wl,-e,_start",
         "static_c_abi_exports.txt",
         "inet_ntoa",
-        "getaddrinfo",
+        "gethostbyname",
         "__tls_get_addr",
     ):
         if required not in inet_address_runner:
