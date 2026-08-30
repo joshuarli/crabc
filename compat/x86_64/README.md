@@ -366,6 +366,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fcntl-record-locks
 ./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sendfile
+./scripts/dev-x86_64.sh libc-posix-fallocate
 ./scripts/dev-x86_64.sh libc-sysv-semaphore
 ./scripts/dev-x86_64.sh libc-sysv-message-shared-memory
 ./scripts/dev-x86_64.sh event-descriptors-header-abi
@@ -679,9 +680,10 @@ signal-wait behavior or select `crabc-libc`.
 
 `fcntl-header-abi` compiles project and pinned-musl C/C++ `<fcntl.h>`
 declarations, including x86 open/fcntl flags, `flock`, GNU owner/file-handle
-records, selected extensions, and large-file aliases including `lockf64`. It
-is source-only header evidence; it does not provide descriptor behavior or
-select `crabc-libc`.
+records, selected extensions, large-file aliases including `lockf64`, and
+the unconditional base `posix_fallocate` declaration together with its
+`_LARGEFILE64_SOURCE`-only alias spelling. It is source-only header evidence;
+it does not provide descriptor behavior or select `crabc-libc`.
 
 `flock-header-abi` compiles project and pinned-musl C/C++ `<sys/file.h>`
 declarations, including the direct `flock` signature, x86 operation bits, and
@@ -2305,6 +2307,18 @@ EOF zero, stale errno on success, and `EINVAL`/`EBADF` errors. It does not
 select pathname, socket/pipe, splice, copy-file-range, vector-I/O, durability,
 cancellation, general runtime, or public x86 support.
 
+`libc-posix-fallocate` is a separately recorded
+`static-c-posix-fallocate` `verified_artifact` gate over the same archive, not
+a general allocation or descriptor capability. Its strict/no-feature and
+large-file-only C/C++ `<fcntl.h>` profiles run before a pinned-musl and
+`-nostdlib -static` candidate fixture for direct mode-zero range allocation.
+It proves `fallocate=285` forwarding with signed LP64 offsets, an unlinked
+range [4096, 8192) with retained prefix, zero-fill, and stable file
+position, and the POSIX direct positive `EINVAL`/`EBADF` returns without
+changing `errno`. It does not select general `fallocate` flags, pathname or
+filesystem policy, durability, cancellation, general runtime, or public x86
+support.
+
 `libc-ioctl` is a separately recorded `static-c-generic-ioctl`
 `verified_artifact` gate over the same archive, not generic device support.
 After the direct `sys/ioctl.h` C/C++ matrix and a pinned-musl execution, its
@@ -2976,6 +2990,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-fcntl-record-locks`,
 `libc-flock`,
 `libc-sendfile`,
+`libc-posix-fallocate`,
 `libc-ioctl`,
 `libc-sysv-semaphore`,
 `libc-sysv-message-shared-memory`,

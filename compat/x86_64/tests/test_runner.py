@@ -18,6 +18,94 @@ RUNNER = ROOT / "scripts" / "dev-x86_64.sh"
 
 
 class X86_64CoreRunnerTests(unittest.TestCase):
+    def test_fcntl_header_posix_fallocate_declarations_stay_explicit(self) -> None:
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_probe = (
+            ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        strict_c_probe = (
+            ROOT / "compat" / "x86_64" / "fcntl_posix_fallocate_strict_probe.c"
+        ).read_text(encoding="utf-8")
+        strict_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "fcntl_posix_fallocate_strict_probe.cpp"
+        ).read_text(encoding="utf-8")
+        largefile_c_probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "fcntl_posix_fallocate_largefile64_probe.c"
+        ).read_text(encoding="utf-8")
+        largefile_cxx_probe = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "fcntl_posix_fallocate_largefile64_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_fcntl_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "static int (*posix_fallocate_signature)(int, off_t, off_t) = posix_fallocate;",
+            "static int (*posix_fallocate64_signature)(int, off64_t, off64_t) = posix_fallocate64;",
+            "(void)posix_fallocate_signature;",
+            "(void)posix_fallocate64_signature;",
+        ):
+            self.assertIn(required, c_probe)
+        for required in (
+            "using posix_fallocate_function = int (*)(int, off_t, off_t);",
+            "using posix_fallocate64_function = int (*)(int, off64_t, off64_t);",
+            "decltype(&posix_fallocate)",
+            "decltype(&posix_fallocate64)",
+        ):
+            self.assertIn(required, cxx_probe)
+        for probe in (strict_c_probe, strict_cxx_probe):
+            self.assertIn("#ifdef _GNU_SOURCE", probe)
+            self.assertIn("#ifdef _LARGEFILE64_SOURCE", probe)
+            self.assertIn("#ifdef posix_fallocate64", probe)
+            self.assertIn("posix_fallocate", probe)
+        for probe in (largefile_c_probe, largefile_cxx_probe):
+            self.assertIn("#define _LARGEFILE64_SOURCE 1", probe)
+            self.assertIn("#ifdef _GNU_SOURCE", probe)
+            self.assertIn("#ifndef posix_fallocate64", probe)
+            self.assertIn("posix_fallocate64", probe)
+        for probe in (strict_c_probe, largefile_c_probe):
+            self.assertIn("static int (*posix_fallocate", probe)
+        for probe in (strict_cxx_probe, largefile_cxx_probe):
+            self.assertIn("decltype(&posix_fallocate", probe)
+        for probe in (
+            strict_c_probe,
+            strict_cxx_probe,
+            largefile_c_probe,
+            largefile_cxx_probe,
+        ):
+            self.assertIn("sizeof(off_t) == 8", probe)
+            self.assertIn("signed 64-bit off_t", probe)
+        for probe in (largefile_c_probe, largefile_cxx_probe):
+            self.assertIn("sizeof(off64_t) == 8", probe)
+        self.assertIn("return posix_fallocate(-1, 0, 0);", strict_cxx_probe)
+        self.assertIn(
+            "return posix_fallocate64(-1, (off64_t)0, (off64_t)0);",
+            largefile_cxx_probe,
+        )
+        for required in (
+            "fcntl_posix_fallocate_strict_probe.c",
+            "fcntl_posix_fallocate_strict_probe.cpp",
+            "fcntl_posix_fallocate_largefile64_probe.c",
+            "fcntl_posix_fallocate_largefile64_probe.cpp",
+            '-std=c11 -U_GNU_SOURCE -fsyntax-only "$strict_c_probe"',
+            '-std=c11 -U_GNU_SOURCE -fsyntax-only "$largefile_c_probe"',
+            "assert_cxx_posix_fallocate_linkage",
+            "strict_cxx_oracle_object",
+            "largefile_cxx_project_object",
+            "does not retain C linkage for posix_fallocate",
+            "retains a mangled posix_fallocate reference",
+            '"$ROOT_DIR/include/features.h"',
+        ):
+            self.assertIn(required, header_runner)
+
     def test_script_is_valid_and_has_a_closed_command_set(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER)],
@@ -75,7 +163,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-pthread-identity",
             "libc-pthread-detach",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",
         )
@@ -9108,6 +9196,124 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sendfile)\n        [ "$#" -eq 0 ] || fail "libc-sendfile takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_posix_fallocate_artifact_stays_narrow(self) -> None:
+        """POSIX range allocation returns errors directly without touching errno."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "posix_fallocate.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "fcntl_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_fcntl_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_posix_fallocate_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_posix_fallocate_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_posix_fallocate.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "posix_fallocate.rs"]', static_root)
+        self.assertIn("SYS_FALLOCATE: i64 = 285", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/fcntl/posix_fallocate.c",
+            "#[no_mangle]",
+            'extern "C" fn posix_fallocate',
+            "raw_syscall::SYS_FALLOCATE",
+            "raw_syscall::syscall4(",
+            "posix_status(result)",
+            "i64::from(offset)",
+            "i64::from(length)",
+            "rdi/rsi/rdx/r10",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("errno::set_errno", "fn fallocate(", "crabc_core", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "posix_fallocate_signature",
+            "posix_fallocate64_signature",
+            "_LARGEFILE64_SOURCE",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "posix_fallocate_function",
+            "posix_fallocate64_function",
+            "decltype(&posix_fallocate)",
+        ):
+            self.assertIn(required, header_cpp)
+        self.assertIn("pinned-musl C/C++ <fcntl.h> ABI", header_runner)
+        for required in (
+            "#include <fcntl.h>",
+            "posix_fallocate",
+            "RANGE_OFFSET = 4096",
+            "RANGE_LENGTH = 4096",
+            "8192",
+            "errno != ERANGE",
+            "EINVAL",
+            "EBADF",
+            "file_owned = 1",
+            "if (file_owned && raw1(SYS_unlink",
+            "CRABC_POSIX_FALLOCATE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_posix_fallocate_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_fcntl_header_abi.sh",
+            "run_x86_posix_fallocate_reference.sh",
+            "features.h",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_posix_fallocate_syscall_path",
+            "posix_fallocate lacks Linux fallocate syscall 285",
+            "assert_fixture_tls_capacity",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("posix_fallocate", static_export_names)
+        self.assertIn('id = "static-c-posix-fallocate"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-posix-fallocate"', parity_ledger
+        )
+        self.assertIn("run_libc_posix_fallocate_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_posix_fallocate.sh", runner
+        )
+        self.assertIn(
+            '    libc-posix-fallocate)\n        [ "$#" -eq 0 ] || fail "libc-posix-fallocate takes no arguments"',
             runner,
         )
 

@@ -209,6 +209,7 @@ pause
 pipe
 pipe2
 poll
+posix_fallocate
 posix_madvise
 ppoll
 pread

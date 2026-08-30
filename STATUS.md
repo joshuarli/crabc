@@ -253,6 +253,17 @@ position through short-transfer and EOF-zero cases, and stale `errno`,
 socket/pipe, splice, copy-file-range, vector-I/O, durability, cancellation,
 family/platform parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-posix-fallocate` is a separate private
+`static-c-posix-fallocate` artifact inside planned `libc.posix-runtime`. Its
+strict and large-file-only project-header C/C++ profiles, plus its
+pinned-musl/freestanding-static fixture, prove only mode-zero C
+`posix_fallocate`: signed LP64 offset/length forwarding, an unlinked regular
+file range [4096, 8192) with retained prefix, zero-filled extension,
+and stable position, plus direct positive `EINVAL`/`EBADF` returns that leave
+stale `errno` unchanged. It does not select general `fallocate` flags,
+pathname allocation, filesystem fallback/policy, durability, cancellation,
+family/platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-access` is another private
 `static-c-filesystem-access` artifact inside planned `libc.posix-runtime`.
 It proves only static C `access`, `faccessat`, `euidaccess`, and weak

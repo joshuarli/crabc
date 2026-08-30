@@ -9,7 +9,8 @@
 # system configuration,
 # nanosleep, and clock_nanosleep,
 # selected descriptor entry, selected filesystem access, selected fcntl status control,
-# nonblocking record locks, advisory flock, and bounded regular-file sendfile,
+# nonblocking record locks, advisory flock, bounded regular-file sendfile, and
+# mode-zero POSIX range allocation,
 # selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # SysV semaphore operations,
@@ -211,6 +212,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-fcntl-record-locks  run the static x86 crabc-libc fcntl record-lock slice
   libc-flock  run the static x86 crabc-libc advisory flock slice
   libc-sendfile  run the static x86 crabc-libc regular-file sendfile slice
+  libc-posix-fallocate  run the static x86 crabc-libc mode-zero POSIX range-allocation slice
   libc-ioctl  run the static x86 crabc-libc generic ioctl slice
   libc-sysv-semaphore  run the static x86 crabc-libc SysV semaphore slice
   libc-sysv-message-shared-memory  run the static x86 crabc-libc SysV message/shared-memory slice
@@ -449,6 +451,13 @@ null-offset short-transfer and EOF-zero behavior, stale `errno`, and direct
 kernel errors. It does not select pathname, socket/pipe, splice,
 copy-file-range, vector-I/O, durability, cancellation, dynamic libc, or
 application startup.
+`libc-posix-fallocate` exercises a separate freestanding project-header C
+fixture after its equivalent pinned-musl run. It selects only mode-zero
+`posix_fallocate`: regular-file extension with preserved file position, a
+retained prefix and zero-filled extension, direct positive POSIX errors, and
+unchanged `errno`. It does not select general fallocate flags, pathname or
+filesystem policy, durability, cancellation, dynamic libc, or application
+startup.
 `libc-uts-identity` exercises the same archive through a freestanding
 project-header C fixture after an equivalent pinned-musl run. Each fixture arm
 creates a fresh UTS namespace before it mutates hostname/domain-name state; the
@@ -1159,6 +1168,13 @@ mutation, null-offset short transfer and EOF zero, stale `errno`, and direct
 kernel errors. It does not provide pathname, socket/pipe, splice,
 copy-file-range, vector-I/O, durability, cancellation, dynamic libc, CRT/TLS
 lifecycle, loader, sysroot, or public x86 support.
+`libc-posix-fallocate` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+mode-zero `posix_fallocate`: an unlinked regular-file extension with retained
+prefix, zero-filled range, stable position, positive direct error returns, and
+unchanged `errno`. It does not provide general fallocate flags, pathname or
+filesystem policy, durability, cancellation, dynamic libc, CRT/TLS lifecycle,
+loader, sysroot, or public x86 support.
 `libc-thread-pointer` compiles only the private musl-shaped `%fs:0` identity
 leaf and a pinned-musl C fixture. It establishes neither a C runtime artifact,
 public C ABI, pthread/TLS lifecycle, loader TLS, nor an FS-base setup path.
@@ -2400,6 +2416,10 @@ run_libc_sendfile_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sendfile.sh
 }
 
+run_libc_posix_fallocate_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_posix_fallocate.sh
+}
+
 run_libc_uts_identity_probe() {
     run_in_uts_cap_container bash /workspace/compat/x86_64/run_libc_uts_identity.sh
 }
@@ -2495,7 +2515,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-pthread-identity) ;;
     libc-pthread-detach) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
     *)
@@ -3389,6 +3409,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sendfile takes no arguments"
         ensure_image
         run_libc_sendfile_probe
+        ;;
+    libc-posix-fallocate)
+        [ "$#" -eq 0 ] || fail "libc-posix-fallocate takes no arguments"
+        ensure_image
+        run_libc_posix_fallocate_probe
         ;;
     libc-uts-identity)
         [ "$#" -eq 0 ] || fail "libc-uts-identity takes no arguments"

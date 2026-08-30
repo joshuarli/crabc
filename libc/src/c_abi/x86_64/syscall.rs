@@ -318,6 +318,8 @@ pub(crate) const SYS_MSGCTL: i64 = 71;
 pub(crate) const SYS_FCNTL: i64 = 72;
 /// Linux x86-64 `sendfile` uses `rdi/rsi/rdx/r10` for its four arguments.
 pub(crate) const SYS_SENDFILE: i64 = 40;
+/// Linux x86-64 `fallocate` uses `rdi/rsi/rdx/r10` for its four arguments.
+pub(crate) const SYS_FALLOCATE: i64 = 285;
 pub(crate) const SYS_FSYNC: i64 = 74;
 pub(crate) const SYS_TRUNCATE: i64 = 76;
 pub(crate) const SYS_FTRUNCATE: i64 = 77;

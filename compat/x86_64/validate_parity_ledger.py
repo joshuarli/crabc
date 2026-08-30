@@ -7612,6 +7612,142 @@ def require_sendfile_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_posix_fallocate_artifact(family: Mapping[str, Any]) -> None:
+    """Keep C POSIX range allocation on its direct-error, mode-zero boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-posix-fallocate"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-posix-fallocate artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "mode-zero POSIX range-allocation block",
+        "fallocate=285",
+        "rdi/rsi/rdx/r10",
+        "literal mode zero",
+        "positive `int` error directly",
+        "never changing `errno`",
+        "8192 bytes",
+        "general `fallocate` flags",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-posix-fallocate description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/posix_fallocate.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "include/features.h",
+        "include/bits/fcntl.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "compat/x86_64/fcntl_header_abi_probe.c",
+        "compat/x86_64/fcntl_header_abi_probe.cpp",
+        "compat/x86_64/fcntl_posix_fallocate_strict_probe.c",
+        "compat/x86_64/fcntl_posix_fallocate_strict_probe.cpp",
+        "compat/x86_64/fcntl_posix_fallocate_largefile64_probe.c",
+        "compat/x86_64/fcntl_posix_fallocate_largefile64_probe.cpp",
+        "compat/x86_64/run_fcntl_header_abi.sh",
+        "compat/x86_64/run_x86_posix_fallocate_reference.sh",
+        "compat/x86_64/x86_posix_fallocate_reference_probe.c",
+        "compat/x86_64/libc_posix_fallocate_probe.c",
+        "compat/x86_64/libc_posix_fallocate_start.S",
+        "compat/x86_64/run_libc_posix_fallocate.sh",
+    ):
+        require(owner in owners, f"static-c-posix-fallocate must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "fallocate=285" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            and "literal zero mode" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-fallocate must record its four-word syscall ABI",
+    )
+    require(
+        any(
+            "positive direct int error" in item
+            and "does not write" in item
+            and "errno" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-fallocate must record direct errors without errno",
+    )
+    require(
+        any(
+            "unlinked file" in item
+            and "zero-filled" in item
+            and "position unchanged" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-fallocate must record its regular-file range boundary",
+    )
+    require(
+        any(
+            "src/fcntl/posix_fallocate.c" in item
+            and "errno publication" in item
+            and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-posix-fallocate must record musl's direct no-errno path",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list) and isinstance(
+        header_prerequisites[0], str
+    )
+    for phrase in (
+        "unconditional",
+        "neither `_GNU_SOURCE` nor `_LARGEFILE64_SOURCE`",
+        "`_LARGEFILE64_SOURCE`-only",
+        "posix_fallocate64",
+    ):
+        require(
+            phrase in header_prerequisites[0],
+            f"static-c-posix-fallocate header contract omits {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-posix-fallocate"},
+        "static-c-posix-fallocate must use the closed libc-posix-fallocate command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "fallocate=285",
+        "rdi/rsi/rdx/r10",
+        "positive direct POSIX EINVAL/EBADF",
+        "errno unchanged",
+        "8192 bytes",
+        "general fallocate flags",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-posix-fallocate evidence scope omits {phrase}",
+        )
+
+
 def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     """Keep the generic ioctl ABI forwarder bounded despite its broad spelling."""
     artifacts = require_verified_artifacts(
@@ -9547,6 +9683,7 @@ def validate_ledger(
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
     require_flock_artifact(by_id["libc.posix-runtime"])
     require_sendfile_artifact(by_id["libc.posix-runtime"])
+    require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_sysv_message_shared_memory_artifact(by_id["libc.posix-runtime"])

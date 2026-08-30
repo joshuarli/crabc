@@ -34,6 +34,8 @@ using openat_function = int (*)(int, const char *, int, ...);
 using creat_function = int (*)(const char *, mode_t);
 using fcntl_function = int (*)(int, int, ...);
 using lockf_function = int (*)(int, int, off64_t);
+using posix_fallocate_function = int (*)(int, off_t, off_t);
+using posix_fallocate64_function = int (*)(int, off64_t, off64_t);
 static_assert(__is_same(decltype(&open), open_function),
     "x86 C++ open declaration");
 static_assert(__is_same(decltype(&openat), openat_function),
@@ -44,6 +46,10 @@ static_assert(__is_same(decltype(&fcntl), fcntl_function),
     "x86 C++ fcntl declaration");
 static_assert(__is_same(decltype(&lockf64), lockf_function),
     "x86 C++ lockf64 declaration");
+static_assert(__is_same(decltype(&posix_fallocate), posix_fallocate_function),
+    "x86 C++ posix_fallocate declaration");
+static_assert(__is_same(decltype(&posix_fallocate64), posix_fallocate64_function),
+    "x86 C++ posix_fallocate64 declaration");
 
 int crabc_x86_64_fcntl_header_abi_probe_cpp()
 {

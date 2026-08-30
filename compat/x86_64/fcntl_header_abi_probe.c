@@ -61,6 +61,8 @@ static int (*fcntl_signature)(int, int, ...) = fcntl;
 static int (*lockf_signature)(int, int, off_t) = lockf;
 static int (*lockf64_signature)(int, int, off64_t) = lockf64;
 static int (*fallocate_signature)(int, int, off_t, off_t) = fallocate;
+static int (*posix_fallocate_signature)(int, off_t, off_t) = posix_fallocate;
+static int (*posix_fallocate64_signature)(int, off64_t, off64_t) = posix_fallocate64;
 
 int crabc_x86_64_fcntl_header_abi_probe(void)
 {
@@ -72,5 +74,7 @@ int crabc_x86_64_fcntl_header_abi_probe(void)
     (void)lockf_signature;
     (void)lockf64_signature;
     (void)fallocate_signature;
+    (void)posix_fallocate_signature;
+    (void)posix_fallocate64_signature;
     return value.l_type;
 }
