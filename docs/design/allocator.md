@@ -101,9 +101,9 @@ admission claim. Empty entries are reused, while a new process-lived entry is
 appended only when every existing entry is occupied. A focused direct
 regression holds one B completion in TLS after its entry has become empty,
 then admits a later A and proves that only the held B finish may release its
-admission or ticket zero. A fresh attached B, or a B with one independently
-parked local session, may query an exact source-recorded usable extent, present
-an exact C address for free, or use the one exact detached `realloc`
+admission or ticket zero. Fresh attached B workers, including one with an
+independently parked local session, may query an exact source-recorded usable
+extent, present an exact C address for free, or use the one exact detached `realloc`
 transition. For that last operation the entry remains private and `BUSY` while
 it records a normally aligned replacement in B's parked local session, copies
 `min(A's recorded usable extent, new size)`, and then consumes A only through
@@ -126,7 +126,14 @@ proof and route-specific parked scheduler token in B TLS; B's own normal
 attachment finish settles that token and releases A's admission. The registry
 never contains a client address, page, or allocator; its exact frees take only
 short serialized PageMap access, and a sibling route blocks any consuming
-long-lease adoption. Before a retained entry publishes, it closes the same
+long-lease adoption. Four fresh B workers may offer disjoint exact clients of
+one mixed detached aggregate together: the entry's private `ACTIVE -> BUSY`
+move serializes complete source frees while contenders wait, and only the B
+that frees the final client receives A's proof in TLS. The selected C fixture
+repeats that boundary across eight epochs and requires ticket zero to allocate
+only after all four B workers finish. This is concurrent caller contention,
+not concurrent PageMap mutation, a worker allocator, or general pointer
+routing. Before a retained entry publishes, it closes the same
 short registry mutation boundary that installs detached owners: an in-flight A
 finishes its complete installation before that closure, while a later A cannot
 publish beside the terminal route. Metadata-growth or terminal-route failure
@@ -850,7 +857,8 @@ session for tracked local C allocations and either finish through the all-free
 page drain or move one mixed aggregate containing direct-small,
 non-direct-small, medium, regular-large, arena-singleton, and OS-aligned
 singleton clients into a private `NativePostExitRouteRegistry` entry for exact
-frees by a fresh B or by a B with one independently parked local session. Each route retains its route-specific parked
+frees by one or more fresh B workers, including a B with one independently
+parked local session. Each route retains its route-specific parked
 scheduler count and A's admission proof until B completes its own normal
 attachment finish. Separately, independently parked live native A sessions
 publish private `NativeLiveRemoteOwnerRegistry` entries for exact source

@@ -2065,7 +2065,15 @@ requires the one aggregate traversal to account for a full direct-small page,
 a later nonfull page in that same source bin, and the other regular source
 classes across eight owner-exit epochs. It remains an exact-address,
 pointer-private B free witness rather than a general cross-thread allocator
-route. The
+route. The `native_mimalloc_concurrent_post_exit_release` fixture adds the
+OS-aligned singleton tail and releases that same mixed aggregate from four
+fresh B workers that begin together. Each worker receives only a disjoint exact
+subset of A's C inputs. The route entry serializes one complete `ACTIVE -> BUSY`
+operation at a time; the B that consumes the final input alone keeps the typed
+completion until its normal finish, while the others finish independently.
+After all B workers join, ticket zero must allocate and free again. This is
+bounded concurrent caller contention, not concurrent PageMap mutation, a
+general pointer registry, or a worker allocation route. The
 OS singleton must finish its private static-main-list and clipped-mapping tail
 before the route can complete. The same fixture also exercises the
 source-produced sole mapped-regular result: A returns one local medium client
@@ -2162,7 +2170,13 @@ different order; the selected C fixture releases all three in non-FIFO order.
 The routes take short serialized PageMap access, and neither may consume that
 access into a long engine while a sibling route remains live. Metadata-growth
 or terminal-route failure retains the exact source owner rather than publishing
-an untyped fallback.
+an untyped fallback. The selected `native_mimalloc_concurrent_post_exit_release`
+fixture instead has four fresh B workers contend on one detached mixed
+aggregate. Each offers only disjoint exact inputs; one `ACTIVE -> BUSY` entry
+transition serializes the source operation, and the final B carries the
+completion until its own normal finish. It establishes concurrent callers with
+serialized route mutation, not general concurrent route traversal or PageMap
+mutation.
 The separate direct registry-reuse regression pauses B1 after B1 has terminally
 freed A1, then lets A3 publish beside A2 before B1 finishes. It proves that an
 empty entry is reusable while B1's route-specific completion remains in B1 TLS,

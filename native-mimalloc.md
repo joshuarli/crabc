@@ -1163,8 +1163,21 @@ direct-small and mapped-medium producer types prevent a callback for one shape
 from consuming the other. A missing or mismatched publisher retains the route
 and A's admission claim instead of falling through B's ordinary no-page
 finalizer; the mapped-medium missing-publisher regression observes ticket zero
-remain retained after B finishes. Neither path claims general concurrent
-post-exit free routing.
+remain retained after B finishes. Neither source-publication path claims
+general concurrent post-exit free routing.
+
+The selected `native_mimalloc_concurrent_post_exit_release` fixture covers a
+separate, bounded caller-contention boundary. A leaves one mixed aggregate
+with 80 direct-small clients (spanning its first full direct page and a second
+same-bin page), non-direct-small, medium, large, arena-singleton, and
+OS-aligned-singleton tails. Four fresh B workers begin together and offer only
+disjoint exact addresses; the route entry's private `ACTIVE -> BUSY` move
+serializes each complete source free while a contender waits. The worker that
+releases the final client alone receives the typed completion in TLS, and all
+four workers must complete their normal pthread finish before ticket zero can
+allocate again. This proves bounded concurrent callers of one pointer-private
+route, not concurrent PageMap mutation, a worker allocator, generic pointer
+routing, or concurrent `realloc`.
 
 The direct Rust mixed-page regression additionally covers scenario 8 after
 the aggregate has been reduced to its final mapped regular member: its fresh
@@ -1269,8 +1282,9 @@ Status: in progress. `./scripts/dev.sh allocator-shadow` builds the ordinary
 owned sysroot, then rebuilds only `crabc-libc` with
 `native-mimalloc-shadow` and runs the allocator ABI fixture, the pthread
 TSD-destructor local-allocation fixture, a pthread owner-exit fixture, and a
-pthread live-owner remote-free fixture, plus the exact initial-thread remote
-free fixture. It proves `malloc`, `calloc`,
+pthread live-owner remote-free fixture, the four-worker post-exit exact-release
+fixture, and the exact initial-thread remote-free fixture. It proves `malloc`,
+`calloc`,
 `realloc`, `free`, aligned allocation, and usable-size behavior on the initial
 thread; one exact still-live initial-thread normal/aligned client freed by an
 attached worker through the source atomic remote head and then collected by
@@ -1359,6 +1373,16 @@ admission. The selected-C
 `tests/fixtures/native_mimalloc_post_exit_split_releaser_test.c` fixture
 repeats that B-then-C exact-free sequence through the shadow ABI. It is a
 serialized exact-free proof, not concurrent pointer routing.
+The selected
+`tests/fixtures/native_mimalloc_concurrent_post_exit_release_test.c` fixture
+starts four fresh B workers together after one A has detached the mixed
+direct-small through OS-singleton aggregate. Each worker owns only a disjoint
+set of exact C inputs; `NativePostExitRouteStorage` serializes their complete
+route operations, and only the worker that releases the final client carries
+A's proof until its normal pthread finish. The fixture repeats eight epochs
+and requires a later ticket-zero allocation/free after all B joins. This is
+concurrent entry contention with serialized source mutation, not general
+concurrent post-exit pointer routing.
 `crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs` proves the same
 ordering for the source-produced sole mapped-regular result.
 `crabc-mimalloc/tests/native_two_post_exit_lifecycle.rs` keeps the original

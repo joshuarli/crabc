@@ -147,6 +147,10 @@ name = "native_mimalloc_many_owner_exit_allocations"
 path = "../tests/native_mimalloc_many_owner_exit_allocations.rs"
 
 [[test]]
+name = "native_mimalloc_concurrent_post_exit_release"
+path = "../tests/native_mimalloc_concurrent_post_exit_release.rs"
+
+[[test]]
 name = "native_mimalloc_live_remote_owner_exit"
 path = "../tests/native_mimalloc_live_remote_owner_exit.rs"
 
