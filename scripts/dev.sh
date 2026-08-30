@@ -536,6 +536,7 @@ case "$command" in
             --test native_mimalloc_initial_remote_free \
             --test native_mimalloc_parallel_local_workers \
             --test native_mimalloc_many_local_allocations \
+            --test native_mimalloc_initial_live_local_worker \
             --test native_mimalloc_many_owner_exit_allocations \
             --test native_mimalloc_live_remote_owner_exit \
             --test pthread_atfork \

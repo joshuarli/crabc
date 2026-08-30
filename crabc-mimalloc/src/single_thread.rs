@@ -35266,6 +35266,40 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 }
 
 impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
+    /// Separates one live ticket-zero engine from its process-lifetime static
+    /// session without collecting, abandoning, or releasing any source page.
+    ///
+    /// The only consumer is the private runtime's creating-thread handoff.
+    /// It keeps the static session on ticket zero beside the complete engine
+    /// state while another fully serialized later-main operation temporarily
+    /// owns the plain PageMap lifecycle.  It is deliberately distinct from
+    /// the later-thread persistent split: ticket zero has no borrowed pthread
+    /// attachment marker to transfer.
+    #[inline]
+    pub(crate) fn suspend_runtime_ticket_zero(
+        self,
+    ) -> (
+        MainStaticProcessPageSession,
+        PageAllocatorEngineState<'static, 'static>,
+    ) {
+        self.into_session_and_state()
+    }
+
+    /// Reassembles the exact ticket-zero engine separated by
+    /// [`Self::suspend_runtime_ticket_zero`].
+    ///
+    /// This sibling-private constructor accepts only the permanent static
+    /// session and its matching engine state.  A new ticket-zero page session
+    /// cannot claim an arbitrary suspended engine, and a later-thread
+    /// attachment has the wrong session type.
+    #[inline]
+    pub(crate) fn resume_runtime_ticket_zero(
+        session: MainStaticProcessPageSession,
+        state: PageAllocatorEngineState<'static, 'static>,
+    ) -> Self {
+        Self::from_session_and_state(session, state)
+    }
+
     /// Returns the permanent ticket-zero session after its active engine is
     /// completely empty.
     ///

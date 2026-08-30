@@ -873,6 +873,21 @@ After the engine proves its full local image empty, it returns only that
 Rust-side aliasing lease while retaining the permanent session and
 already-published first arena; a later ticket-zero request may reactivate
 sequentially through that same arena without a new reservation. Separately,
+when the selected initial thread is about to create a later pthread with one
+of its own native clients still live, `c_abi::pthread_create` asks
+`prepare_native_initial_owner_for_later_thread` to park that exact
+ticket-zero engine before `clone`. `MainStaticRuntimeParkedEngine` retains the
+static session, complete engine state, and the matching
+`ProcessPageMapSuspendedEngineAccess`; it releases only the long PageMap
+exclusion. The child receives the ordinary immutable process pair for a
+separately serialized local engine operation, never a ticket-zero engine,
+session, or client address. Ticket zero reclaims its matching long lease
+before an allocation, reallocation, usable-size query, or free; its all-free
+finish returns to the existing dormant first-arena state. The selected
+`native_mimalloc_initial_live_local_worker` C regression proves one
+initial-live/local-worker/initial-reuse sequence. It does not admit concurrent
+initial/worker mutation, a general worker scheduler, or pointer handoff.
+Separately,
 the lower later-main engine boundary has a Rust-only persistent storage form:
 `MainHeapThreadProcessPageAllocator::suspend_persistent` splits the exact
 engine from its attachment borrow, records an attachment-local suspended
@@ -896,14 +911,15 @@ public worker API. The fork gate may preserve that permanent owner only after
 it has excluded every later admission and verified that its `READY` engine is
 `AwaitingFreshPage` or `DormantExistingArena`; an active engine, live native
 client, parked worker, or retained route remains non-preserving. This is a
-copied quiescent initial-thread image, not inherited-lock or page repair. When
-the permanent owner is `READY`, it may lend only
-the already-published map/arena pair to one fresh test worker that has entered
-the existing later-main attachment: the worker owns one scoped engine, must
-return it empty, and then completes the normal no-page attachment teardown
-before ticket zero may reactivate. The seam is not called by libc, admits no
-concurrent or general later-worker page engine, and does not alter the C
-backend or repair a fork child. A separate `no_std` evidence staticlib,
+copied quiescent initial-thread image, not inherited-lock or page repair. A
+source-dormant permanent owner may lend only the already-published map/arena
+pair to one fresh test worker that has entered the existing later-main
+attachment. A selected live initial owner instead uses the distinct
+pre-`clone` parked-engine handoff above. In both cases the worker owns one
+scoped engine, must return it empty, and then completes the normal no-page
+attachment teardown before ticket zero may reactivate. Neither seam admits a
+concurrent or general later-worker page engine, alters the C backend, or
+repairs a fork child. A separate `no_std` evidence staticlib,
 `compat/allocator/runtime-ticket-zero-adapter`, exposes eleven prefixed C calls
 to a fresh test process: init with `AT_PAGESZ`, a scalar lifecycle audit, malloc, zalloc, realloc, free,
 a retained narrow worker round trip, and a pointer-private persistent

@@ -2981,6 +2981,7 @@ impl RuntimeProcessStorage {
         ) {
             Ok(_) => {}
             Err(PAGE_OWNER_READY) => return true,
+            Err(observed) if page_owner_parked_count(observed).is_some() => return true,
             Err(PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _) => return false,
         }
 
@@ -3048,29 +3049,54 @@ impl RuntimeProcessStorage {
         if !self.start_ticket_zero_page_owner_with_storage(arena_storage) {
             return None;
         }
-        if self
-            .page_owner_state
-            .compare_exchange(
-                PAGE_OWNER_READY,
-                PAGE_OWNER_BUSY,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_err()
-        {
+        let observed = loop {
+            let observed = self.page_owner_state.load(Ordering::Acquire);
+            if observed != PAGE_OWNER_READY && observed != PAGE_OWNER_PARKED {
+                return None;
+            }
+            if self
+                .page_owner_state
+                .compare_exchange_weak(
+                    observed,
+                    PAGE_OWNER_BUSY,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                break observed;
+            }
+        };
+        // SAFETY: READY/PARKED -> BUSY serializes every mutable engine
+        // operation; `start_ticket_zero_page_owner` wrote this final slot
+        // before its first Release publication, and the current TPIDR check
+        // prevents a pthread worker from borrowing the ticket-zero engine.
+        let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
+        if observed == PAGE_OWNER_PARKED && !owner.has_parked_live_engine() {
+            // A later worker may have the only parked token while ticket zero
+            // itself is source-dormant. Preserve that exact worker state;
+            // this bounded initial-owner handoff may resume only its own
+            // parked engine, never a generic parked scheduler slot.
+            self.page_owner_state.store(observed, Ordering::Release);
             return None;
         }
-        // SAFETY: READY -> BUSY serializes every mutable engine operation;
-        // `start_ticket_zero_page_owner` wrote this final slot before its
-        // READY Release publication, and the current TPIDR check prevents a
-        // pthread worker from borrowing the ticket-zero engine.
-        let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
         let result = operation(owner);
         if owner.is_retained() {
             self.retain();
             self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
         } else {
-            self.page_owner_state.store(PAGE_OWNER_READY, Ordering::Release);
+            let next_state = if owner.has_parked_live_engine() {
+                if observed == PAGE_OWNER_READY {
+                    PAGE_OWNER_PARKED
+                } else {
+                    observed
+                }
+            } else if observed == PAGE_OWNER_PARKED {
+                PAGE_OWNER_READY
+            } else {
+                PAGE_OWNER_READY
+            };
+            self.page_owner_state.store(next_state, Ordering::Release);
         }
         Some(result)
     }
@@ -3104,7 +3130,7 @@ impl RuntimeProcessStorage {
         // ticket zero. The final slot was written before READY's Release
         // publication and is never moved or replaced.
         let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
-        match owner.with_dormant_page_pair(operation) {
+        match owner.with_later_thread_page_pair(operation) {
             Ok(result) => {
                 self.page_owner_state.store(PAGE_OWNER_READY, Ordering::Release);
                 Some(result)
@@ -3149,11 +3175,12 @@ impl RuntimeProcessStorage {
         }
 
         // SAFETY: expected -> BUSY serializes every mutable access to the
-        // final permanent owner. `with_dormant_page_pair` itself restores its
-        // immutable dormant source state before this method returns; the
-        // operation below owns only whether ticket zero may enter again.
+        // final permanent owner. `with_later_thread_page_pair` restores the
+        // exact dormant or ticket-zero-parked source state before this method
+        // returns; the operation below owns only whether ticket zero may
+        // enter again.
         let owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
-        match owner.with_dormant_page_pair(Ok) {
+        match owner.with_later_thread_page_pair(Ok) {
             Ok(pair) => Some(RuntimeDormantPageOperation {
                 runtime: self,
                 pair: Some(pair),
@@ -5781,6 +5808,9 @@ pub unsafe fn ticket_zero_free(block: core::ptr::NonNull<u8>) -> TicketZeroPageF
         unsafe { owner.free(block) }
     }) {
         Some(Ok(())) => TicketZeroPageFreeResult::Freed,
+        Some(Err(
+            crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError::Busy,
+        )) => TicketZeroPageFreeResult::Unavailable,
         Some(Err(crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocatorFreeError::Free(
             crate::single_thread::FreeError::Unmapped
             | crate::single_thread::FreeError::ForeignPage
@@ -5866,6 +5896,28 @@ pub fn prepare_native_later_thread_arena() -> bool {
         RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| owner.prepare_dormant_page_pair()),
         Some(true)
     ) && RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_READY
+}
+
+/// Prepares a live ticket-zero native owner before its creating initial thread
+/// publishes a later pthread.
+///
+/// The creator alone may move its permanent engine into the typed suspended
+/// state: it keeps every initial client and source engine field private while
+/// making only the immutable process pair available to one serialized worker
+/// operation.  This does not attach the child, route a pointer, or change the
+/// C backend. A cold owner remains cold, a dormant owner stays on its existing
+/// pair path, and a retained/busy owner remains unavailable rather than
+/// manufacturing a lifecycle repair.
+#[doc(hidden)]
+pub fn prepare_native_initial_owner_for_later_thread() {
+    if !RUNTIME_PROCESS.is_on_initial_thread()
+        || RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire) == PAGE_OWNER_COLD
+    {
+        return;
+    }
+    let _ = RUNTIME_PROCESS.with_ticket_zero_page_owner(|owner| {
+        owner.prepare_live_engine_for_later_thread()
+    });
 }
 
 /// Allocates one C-facing native-shadow block on the current thread.

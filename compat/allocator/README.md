@@ -2027,6 +2027,14 @@ attached worker can return exact still-live initial-thread normal and aligned
 clients through the source atomic remote head. The client itself pins its page;
 the worker takes no page engine, scheduler claim, or stored pointer capability,
 and ticket zero collects the head during its next ordinary operation. In the
+separate `native_mimalloc_initial_live_local_worker` fixture, the initial
+thread instead keeps its own ordinary client: immediately before `clone`, it
+parks the exact ticket-zero engine and releases only its long PageMap
+exclusion. The child receives the immutable process pair for one local
+allocation/free operation, not the initial engine, session, or address. After
+the child returns all-free, the initial thread resumes to validate, free, and
+reuse its client. This is a serialized initial-live/local-worker witness, not
+a concurrent allocator or general pointer handoff. In the
 owner-exit fixture A leaves a
 direct-small block, a non-direct-small block, a medium block, a regular-large
 block, an unaligned arena singleton, and an OS-aligned singleton live; a fresh

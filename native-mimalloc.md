@@ -173,6 +173,16 @@ At this checkpoint:
   initial-thread normal or aligned client to its page's atomic remote head,
   without receiving a page engine, scheduler claim, or stored client
   capability; it has no C-backend fallback;
+* when the creating initial thread has a live selected native allocation,
+  `pthread_create` parks that exact ticket-zero engine before `clone` by
+  retaining its static session and complete engine state beside a typed
+  suspended PageMap capability. A child receives only the established
+  process map/arena pair for its own serialized local operation, never the
+  initial engine or client address. After the child returns all-free, ticket
+  zero resumes its own engine to inspect, free, or reallocate its client. The
+  selected `native_mimalloc_initial_live_local_worker` fixture proves this
+  initial-live/local-worker/initial-reuse sequence; it is not a concurrent
+  worker allocator or a pointer handoff;
 * Gates 5A and 5B use one private typed A-side runtime operation, and the private scheduler now admits distinct independently parked normal engines while serializing each PageMap mutation. The selected shadow proves both that a second C worker can retain a local private session while a live A route is active and that two independently parked A routes can each accept an exact B-side query/free; neither witness gives later workers a public, cross-pointer, or general persistent allocator route;
 * the worker runtime seam deliberately prevents client pointers from crossing its bounded witnesses: the Gate 5B B/C threads receive only opaque publication capabilities, and Gate 5C gives B/C/D only a scoped same-page atomic producer pair plus an opaque B-side route;
 * native-shadow worker pointers remain local to their parked owner session
@@ -1250,7 +1260,10 @@ free fixture. It proves `malloc`, `calloc`,
 `realloc`, `free`, aligned allocation, and usable-size behavior on the initial
 thread; one exact still-live initial-thread normal/aligned client freed by an
 attached worker through the source atomic remote head and then collected by
-ticket zero; bounded worker-local allocation/free with all-free post-destructor
+ticket zero; one initial-thread local client kept live while its creating
+thread parks only its own PageMap exclusion before a child performs and frees
+one local allocation, then resumes to validate, free, and reuse that initial
+client; bounded worker-local allocation/free with all-free post-destructor
 finish; one live-C-block aggregate where A exits with direct-small and
 non-direct-small blocks, a medium block, a regular-large block, an unaligned
 arena singleton, and an OS-aligned singleton, and B frees each exact address;
