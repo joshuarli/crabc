@@ -215,7 +215,7 @@
     ],
     "required_header": "crabc-mimalloc-test-adapter.h",
     "rust_staticlib": "target/aarch64-unknown-linux-musl/release/libcrabc_mimalloc_test_adapter.a",
-    "link_command_shape": "musl-gcc test-api-m4.o <rust-staticlib> -L/usr/lib -lgcc_s -lc -o test-api-m4",
+    "link_command_shape": "musl-gcc test-api-selected.o <rust-staticlib> -L/usr/lib -lgcc_s -lc -o test-api-selected",
     "link_order": "fixture object, adapter staticlib, then musl/system libraries",
     "adapter_feature": "test-adapter",
     "expected_dynamic_dependencies": [

@@ -5277,7 +5277,7 @@ def run_test_adapter_fixtures(
             f"stderr={fixture_run['stderr']!r}"
         )
 
-    adapted_binary = artifact_root / "upstream-test-api-m4-rust"
+    adapted_binary = artifact_root / "upstream-test-api-selected-rust"
     adapted_source = source / str(source_contract["adapted_source"]["path"])
     adapted_command = [
         compiler,
@@ -5371,7 +5371,7 @@ def run_adapted_stress_fixture(
     assert isinstance(compile_flags, list)
     assert isinstance(native_search_paths, list)
     native_search_flags = [f"-L{path}" for path in native_search_paths]
-    fixture_binary = artifact_root / "upstream-test-stress-m5-rust"
+    fixture_binary = artifact_root / "upstream-test-stress-creating-thread-rust"
     adapted_source = source / str(adapted_source_contract["path"])
     fixture_command = [
         compiler,
