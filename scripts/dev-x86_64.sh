@@ -16,8 +16,8 @@
 # and signal waits, system observation, UTS identity, base socket transport,
 # padded socket messages/options,
 # SysV semaphore operations,
-# byte strings, random entropy, memory search, C-string copy, and fixed-C-locale
-# ctype, integer arithmetic, integer parsing, intmax arithmetic, credential
+# byte strings, random entropy, memory search, C-string copy, fixed-C-locale
+# ctype, named C/POSIX/C.UTF-8 locale/multibyte conversion, integer arithmetic, integer parsing, intmax arithmetic, credential
 # observation, find-first-set, and the x87 long-double/complex foundation);
 # it does not select a general libc, ldso artifact, CRT, sysroot, or allocator
 # build.
@@ -61,6 +61,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   pthread-c11-header-abi  verify staged x86 pthread/C11-thread C/C++ header ABI profiles
   stdlib-header-abi  compare x86 <stdlib.h> strict/POSIX/XOPEN/GNU/BSD/LFS profiles with musl
   ctype-header-abi  compile the staged x86 C/C++ ctype declarations
+  locale-multibyte-header-abi  verify x86 named-locale/multibyte C/C++ declarations and linkage
   integer-arithmetic-header-abi  compile the staged x86 C/C++ stdlib integer-arithmetic declarations
   integer-parse-header-abi  compile the staged x86 C/C++ integer-parsing declarations
   intmax-arithmetic-header-abi  compile the staged x86 C/C++ inttypes intmax-arithmetic declarations
@@ -247,6 +248,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-system-information  run the static x86 crabc-libc processor/page slice
   libc-uts-identity  run the static x86 crabc-libc hostname/domain identity slice
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
+  libc-locale-multibyte  run the static x86 crabc-libc named locale/multibyte slice
   libc-integer-arithmetic  run the static x86 crabc-libc integer-arithmetic slice
   libc-integer-parse  run the static x86 crabc-libc integer-parsing slice
   libc-intmax-arithmetic  run the static x86 crabc-libc intmax-arithmetic slice
@@ -1590,6 +1592,10 @@ run_ctype_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ctype_header_abi.sh
 }
 
+run_locale_multibyte_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_locale_multibyte_header_abi.sh
+}
+
 run_integer_arithmetic_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_integer_arithmetic_header_abi.sh
 }
@@ -2744,7 +2750,7 @@ case "$command" in
     sys-time-direct-header-abi) ;;
     access-header-abi) ;;
     madvise-reference) ;;
-    ctype-header-abi) ;;
+    ctype-header-abi|locale-multibyte-header-abi) ;;
     integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -2761,7 +2767,7 @@ case "$command" in
     libc-memory-sync) ;;
     libc-memory-locking) ;;
     libc-memfd-create) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-vector-io) ;;
     libc-sysv-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -2902,6 +2908,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ctype-header-abi takes no arguments"
         ensure_image
         run_ctype_header_abi
+        ;;
+    locale-multibyte-header-abi)
+        [ "$#" -eq 0 ] || fail "locale-multibyte-header-abi takes no arguments"
+        ensure_image
+        run_locale_multibyte_header_abi
         ;;
     integer-arithmetic-header-abi)
         [ "$#" -eq 0 ] || fail "integer-arithmetic-header-abi takes no arguments"
@@ -3761,6 +3772,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-ctype takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_ctype.sh
+        ;;
+    libc-locale-multibyte)
+        [ "$#" -eq 0 ] || fail "libc-locale-multibyte takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_locale_multibyte.sh
         ;;
     libc-integer-arithmetic)
         [ "$#" -eq 0 ] || fail "libc-integer-arithmetic takes no arguments"

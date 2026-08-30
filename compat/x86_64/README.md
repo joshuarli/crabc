@@ -219,6 +219,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh utime-header-abi
 ./scripts/dev-x86_64.sh pthread-c11-header-abi
 ./scripts/dev-x86_64.sh ctype-header-abi
+./scripts/dev-x86_64.sh locale-multibyte-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh intmax-arithmetic-header-abi
@@ -413,6 +414,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-foundation
 ./scripts/dev-x86_64.sh libc-fenv
 ./scripts/dev-x86_64.sh libc-math-complex
+./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -2999,6 +3001,23 @@ ambient `libm`, unselected `cabs*`/`carg*`/`cproj*`, powers, and
 transcendentals. It is only a classification/sign and x87 long-double/complex
 foundation, not scalar/complex math completion, `libc.so`, CRT/TLS lifecycle,
 loader, sysroot, or public x86 support.
+
+`locale-multibyte-header-abi` and `libc-locale-multibyte` are one separate,
+non-promoting named-locale/text artifact. The strict C11/C++17 header matrix
+checks selected `<locale.h>`, `<stdlib.h>`, and `<wchar.h>` declarations,
+x86 `mbstate_t`/`lconv` layout, and C++ C linkage. Its static C fixture first
+runs against pinned musl and then against the selected archive. It admits only
+direct named `C`, `POSIX`, and `C.UTF-8` categories: musl's built-in UTF-8 map
+affects `LC_CTYPE` alone, so the exact returned mixed `LC_ALL` serialization
+is `C.UTF-8;C;C;C;C;C`. It covers C byte code units, ordinary UTF-8
+conversion paths, and one caller-owned positive-capacity UTF-8 resume. A
+candidate-only check rejects non-returned POSIX-component,
+non-CTYPE-UTF-8-component, and uniform six-component `LC_ALL` forms without
+changing state; noninitial `mbsrtowcs` resume with zero output capacity is
+deliberately not selected. Locale objects,
+environment lookup, collation, iconv, wide streams/stdio, general locale/text
+completion, `libc.so`, CRT, loader, sysroot, promotion, and public x86 support
+remain outside this artifact.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project

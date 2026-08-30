@@ -265,6 +265,116 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("stdlib-header-abi", runner)
 
+    def test_named_locale_multibyte_static_artifact_stays_closed(self) -> None:
+        """One named-locale/multibyte archive artifact remains below parity."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_multibyte.rs"
+        ).read_text(encoding="utf-8")
+        c_probe = (
+            ROOT / "compat" / "x86_64" / "locale_multibyte_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cpp_probe = (
+            ROOT / "compat" / "x86_64" / "locale_multibyte_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_locale_multibyte_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "libc_locale_multibyte_probe.c"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_locale_multibyte.sh"
+        ).read_text(encoding="utf-8")
+        exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        limits = (ROOT / "include" / "limits.h").read_text(encoding="utf-8")
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "locale_multibyte.rs"]', static_root)
+        for symbol in (
+            "setlocale",
+            "localeconv",
+            "__ctype_get_mb_cur_max",
+            "mbrtowc",
+            "mbrlen",
+            "mbsinit",
+            "wcrtomb",
+            "mblen",
+            "mbtowc",
+            "wctomb",
+            "mbsrtowcs",
+            "wcsrtombs",
+            "mbstowcs",
+            "wcstombs",
+            "btowc",
+            "wctob",
+        ):
+            self.assertIn(f"fn {symbol}(", implementation)
+            self.assertIn(f"\n{symbol}\n", exports)
+        for snippet in (
+            "[(false, &C_NAME[..]), (true, &UTF8_NAME[..])]",
+            "LC_CTYPE_UTF8_MASK",
+            "category != LC_CTYPE as usize && utf8",
+            "(state == LC_CTYPE_UTF8_MASK).then_some(state)",
+            "MBRTOWC_INTERNAL_STATE",
+            "MBRLEN_INTERNAL_STATE",
+            "noninitial UTF-8 resume with positive output capacity",
+            "noninitial `mbsrtowcs` state with zero output capacity",
+        ):
+            self.assertIn(snippet, implementation)
+        for probe in (c_probe, cpp_probe):
+            for snippet in (
+                "#include <limits.h>",
+                "CHAR_MAX == 127 && CHAR_MIN == -128",
+                "sizeof(mbstate_t) == 8",
+                "sizeof(struct lconv) == 96",
+                "__ctype_get_mb_cur_max",
+                "mbrtowc",
+                "wcsrtombs",
+            ):
+                self.assertIn(snippet, probe)
+        for snippet in (
+            "C11/C++17",
+            "check_cxx_c_linkage",
+            "locale_t",
+            "limits.h",
+            "unmangled C spellings",
+        ):
+            self.assertIn(snippet, header_runner)
+        for snippet in (
+            "CRABC_LOCALE_MULTIBYTE_FREESTANDING",
+            "POSIX;C;C;C;C;C",
+            "C;C;C;C;C;C",
+            "C;C.UTF-8;C;C;C;C",
+            "C.UTF-8;C;C;C;C;C",
+            "C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8",
+            "MB_CUR_MAX != 1",
+            "mbstate_t split_state",
+            "mbrtowc(&decoded[0], euro_lead, 1, &split_state)",
+            "mbsrtowcs(decoded, &source, 1, &split_state)",
+            "source != euro_tail + 2",
+        ):
+            self.assertIn(snippet, fixture)
+        for snippet in (
+            "run_locale_multibyte_header_abi.sh",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+            "newlocale",
+            "wide-stream",
+        ):
+            self.assertIn(snippet, runner)
+        self.assertIn("locale-multibyte-header-abi)", dispatcher)
+        self.assertIn("libc-locale-multibyte)", dispatcher)
+        self.assertIn("run_locale_multibyte_header_abi()", dispatcher)
+        self.assertIn("#if '\\xff' > 0", limits)
+        self.assertIn("#define CHAR_MAX 127", limits)
+
     def test_filesystem_capacity_header_and_static_c_abi_stay_explicit(
         self,
     ) -> None:
@@ -726,7 +836,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn("    madvise-reference) ;;", source)
-        self.assertIn("    ctype-header-abi) ;;", source)
+        self.assertIn("    ctype-header-abi|locale-multibyte-header-abi) ;;", source)
         self.assertIn("    ffs-header-abi) ;;", source)
         self.assertIn("    byte-strings-header-abi) ;;", source)
         self.assertIn("    memory-search-header-abi) ;;", source)
@@ -768,7 +878,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sys-time-direct-header-abi",
             "access-header-abi",
             "madvise-reference",
-            "ctype-header-abi",
+            "ctype-header-abi|locale-multibyte-header-abi",
             "integer-arithmetic-header-abi|integer-parse-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|child-reaping-header-abi|immediate-termination-header-abi|callback-algorithms-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -785,7 +895,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-sync",
             "libc-memory-locking",
             "libc-memfd-create",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy",
             "libc-vector-io",
             "libc-sysv-semaphore",
             "libc-sysv-message-shared-memory",

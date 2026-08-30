@@ -3,7 +3,7 @@
 
 #include <features.h>
 
-/* musl 1.2.6 AArch64 limits used by the strict public-header contract. */
+/* musl 1.2.6 limits used by the strict public-header contract. */
 #define BC_BASE_MAX 99
 #define BC_DIM_MAX 2048
 #define BC_SCALE_MAX 99
@@ -81,8 +81,13 @@
 #define TZNAME_MAX 6
 
 #define CHAR_BIT 8
+#if '\xff' > 0
 #define CHAR_MAX 255
 #define CHAR_MIN 0
+#else
+#define CHAR_MAX 127
+#define CHAR_MIN (-128)
+#endif
 #define INT_MAX 0x7fffffff
 #define INT_MIN (-1-0x7fffffff)
 #define LLONG_MAX 0x7fffffffffffffffLL

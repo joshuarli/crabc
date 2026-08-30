@@ -123,7 +123,8 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
 # selected process resources,
 # selected readiness/signal waits, selected system observation, selected
 # UTS-namespace identity, selected C-string copy/concatenation, fixed-C-
-# locale ctype, scalar integer arithmetic, complete integer parsing, intmax
+# locale ctype and the separately bounded named-locale/multibyte conversion
+# artifact, scalar integer arithmetic, complete integer parsing, intmax
 # arithmetic, and find-first-set, direct POSIX clock_gettime, bounded clock
 # observation, no-cancellation mapping synchronization, direct anonymous-memory
 # descriptor creation, nanosleep, and clock_nanosleep, descriptor entry, selected
@@ -151,6 +152,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
+    Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
     Path("libc/src/c_abi/x86_64/descriptor_io.rs"),
     Path("libc/src/c_abi/x86_64/ffs.rs"),
     Path("libc/src/c_abi/x86_64/integer_arithmetic.rs"),
@@ -3703,6 +3705,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory_search.rs"]',
         '#[path = "string_copy.rs"]',
         '#[path = "ctype.rs"]',
+        '#[path = "locale_multibyte.rs"]',
         '#[path = "integer_arithmetic.rs"]',
         '#[path = "integer_parse.rs"]',
         '#[path = "intmax_arithmetic.rs"]',

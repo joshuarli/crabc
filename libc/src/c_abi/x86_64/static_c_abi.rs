@@ -103,6 +103,8 @@ mod byte_strings;
 mod string_copy;
 #[path = "ctype.rs"]
 mod ctype;
+#[path = "locale_multibyte.rs"]
+mod locale_multibyte;
 #[path = "integer_arithmetic.rs"]
 mod integer_arithmetic;
 #[path = "integer_parse.rs"]

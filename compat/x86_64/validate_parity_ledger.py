@@ -1261,6 +1261,25 @@ MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "conjl",
 )
 
+NAMED_LOCALE_MULTIBYTE_SYMBOLS = (
+    "__ctype_get_mb_cur_max",
+    "btowc",
+    "localeconv",
+    "mblen",
+    "mbrlen",
+    "mbrtowc",
+    "mbsinit",
+    "mbsrtowcs",
+    "mbstowcs",
+    "mbtowc",
+    "setlocale",
+    "wcrtomb",
+    "wcsrtombs",
+    "wcstombs",
+    "wctob",
+    "wctomb",
+)
+
 
 class LedgerError(ValueError):
     """The parity ledger does not describe a reviewable closed contract."""
@@ -10303,6 +10322,7 @@ def require_descriptor_advice_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
+        "scripts/check_structure.py",
         "scripts/dev-x86_64.sh",
         "scripts/check_structure.py",
     ):
@@ -12827,6 +12847,241 @@ def require_math_complex_foundation_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the named-locale/text archive slice below locale-family completion.
+
+    The static artifact owns a deliberately closed subset of musl's ordinary
+    locale and multibyte entries. It is not a locale database, object API, or
+    wide-stdio claim, so the validator pins its named states, exact mixed-form
+    parser, ABI layout, static link boundary, and non-promotion wording.
+    """
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-named-locale-multibyte"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-named-locale-multibyte artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in NAMED_LOCALE_MULTIBYTE_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-named-locale-multibyte description omits {symbol}",
+        )
+    for phrase in (
+        "named C locale/multibyte core",
+        "C.UTF-8",
+        "POSIX",
+        "six-component mixed `LC_ALL` serialization",
+        "LC_CTYPE",
+        "C code units",
+        "UTF-8",
+        "positive-capacity UTF-8 resume",
+        "lconv",
+        "EILSEQ",
+        "locale objects",
+        "per-thread locale overrides",
+        "wide streams",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-named-locale-multibyte description omits {phrase}",
+        )
+
+    owners = nonempty_strings(
+        artifact["source_owners"], "static-c-named-locale-multibyte.source_owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/locale_multibyte.rs",
+        "include/bits/alltypes.h",
+        "include/limits.h",
+        "include/locale.h",
+        "include/stdlib.h",
+        "include/wchar.h",
+        "compat/x86_64/locale_multibyte_header_abi_probe.c",
+        "compat/x86_64/locale_multibyte_header_abi_probe.cpp",
+        "compat/x86_64/run_locale_multibyte_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_locale_multibyte_probe.c",
+        "compat/x86_64/libc_locale_multibyte_start.S",
+        "compat/x86_64/run_libc_locale_multibyte.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-named-locale-multibyte omits {owner}",
+        )
+
+    abi_prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-named-locale-multibyte.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "signed 32-bit wchar_t" in item
+            and "unsigned 32-bit wint_t" in item
+            and "8-byte/align-4 mbstate_t" in item
+            and "96-byte/align-8" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-named-locale-multibyte must record the x86 public layouts",
+    )
+    require(
+        any(
+            "CODEUNIT" in item
+            and "BITTAB/OOB" in item
+            and "mbrtowc/mbrlen" in item
+            and "locale_map.c" in item
+            for item in abi_prerequisites
+        ),
+        "static-c-named-locale-multibyte must record its musl state machine boundary",
+    )
+    require(
+        any("initial-exec errno" in item for item in abi_prerequisites),
+        "static-c-named-locale-multibyte must record its selected errno seam",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-named-locale-multibyte.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item and "unmangled C++" in item and "locale_t" in item
+            for item in header_prerequisites
+        ),
+        "static-c-named-locale-multibyte must record the strict C/C++ header boundary",
+    )
+    require(
+        any(
+            "distinct null conversion states" in item
+            and "source/destination pointer/count behavior" in item
+            and "positive-capacity UTF-8 mbsrtowcs resume" in item
+            and "candidate-only mixed-parser rejection" in item
+            and "CTYPE-only built-in UTF-8" in item
+            for item in header_prerequisites
+        ),
+        "static-c-named-locale-multibyte must record its selected runtime boundary",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-multibyte"},
+        "static-c-named-locale-multibyte must use the closed libc-locale-multibyte command",
+    )
+
+    static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        '#[path = "locale_multibyte.rs"]\nmod locale_multibyte;' in static_root,
+        "x86 static C ABI must compose the locale_multibyte leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_multibyte.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in NAMED_LOCALE_MULTIBYTE_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation,
+            f"locale_multibyte leaf omits {symbol}",
+        )
+    for snippet in (
+        "[(false, &C_NAME[..]), (true, &UTF8_NAME[..])]",
+        "LC_CTYPE_UTF8_MASK",
+        "category != LC_CTYPE as usize && utf8",
+        "(state == LC_CTYPE_UTF8_MASK).then_some(state)",
+        "MBRTOWC_INTERNAL_STATE",
+        "MBRLEN_INTERNAL_STATE",
+        "noninitial UTF-8 resume with positive output capacity",
+    ):
+        require(
+            snippet in implementation,
+            f"locale_multibyte leaf omits its closed {snippet} boundary",
+        )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in NAMED_LOCALE_MULTIBYTE_SYMBOLS:
+        require(
+            symbol in exports,
+            f"static C ABI export contract omits {symbol}",
+        )
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_locale_multibyte_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in ("C11/C++17", "check_cxx_c_linkage", "locale_t", "unmangled"):
+        require(
+            snippet in header_runner,
+            f"locale/multibyte header runner omits {snippet}",
+        )
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_locale_multibyte.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_locale_multibyte_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "R_X86_64_TPOFF",
+        "__errno_location",
+        "newlocale",
+        "C.UTF-8",
+    ):
+        require(
+            snippet in runner,
+            f"libc-locale-multibyte runner omits {snippet}",
+        )
+    fixture = (ROOT / "compat" / "x86_64" / "libc_locale_multibyte_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "CRABC_LOCALE_MULTIBYTE_FREESTANDING",
+        "POSIX;C;C;C;C;C",
+        "C;C;C;C;C;C",
+        "C;C.UTF-8;C;C;C;C",
+        "C.UTF-8;C;C;C;C;C",
+        "C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8;C.UTF-8",
+        "MB_CUR_MAX != 1",
+        "mbstate_t split_state",
+        "mbrtowc(&decoded[0], euro_lead, 1, &split_state)",
+        "mbsrtowcs(decoded, &source, 1, &split_state)",
+        "source != euro_tail + 2",
+    ):
+        require(
+            snippet in fixture,
+            f"locale/multibyte fixture omits closed-parser regression {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "locale-multibyte-header-abi)",
+        "libc-locale-multibyte)",
+        "run_locale_multibyte_header_abi()",
+    ):
+        require(
+            snippet in dispatcher,
+            f"x86 dispatcher omits {snippet}",
+        )
+
+
 def baseline_capability_ids(path: Path) -> set[str]:
     """Load the checked-in baseline ledger instead of freezing its ID count here."""
     baseline = load_toml(path)
@@ -13099,6 +13354,7 @@ def validate_ledger(
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_math_complex_foundation_artifact(by_id["libc.text-math-locale-stdio"])
+    require_named_locale_multibyte_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

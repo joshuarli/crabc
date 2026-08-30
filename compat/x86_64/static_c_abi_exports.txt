@@ -8,6 +8,7 @@
 # glue, uninstalled and not a stable public C API.
 _Exit
 __crabc_x86_static_tls_bootstrap
+__ctype_get_mb_cur_max
 __cxa_atexit
 __cxa_finalize
 __errno_location
@@ -54,6 +55,7 @@ atoll
 bcmp
 bind
 bsearch
+btowc
 call_once
 cfgetispeed
 cfgetospeed
@@ -198,11 +200,19 @@ link
 listen
 llabs
 lldiv
+localeconv
 longjmp
 lseek
 lstat
 lutimes
 madvise
+mblen
+mbrlen
+mbrtowc
+mbsinit
+mbsrtowcs
+mbstowcs
+mbtowc
 memchr
 memcmp
 memcpy
@@ -321,6 +331,7 @@ setgid
 setgroups
 sethostname
 setjmp
+setlocale
 setpgid
 setpgrp
 setpriority
@@ -423,5 +434,10 @@ versionsort
 wait
 waitid
 waitpid
+wcrtomb
+wcsrtombs
+wcstombs
+wctob
+wctomb
 write
 writev

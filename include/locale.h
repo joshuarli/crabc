@@ -1,6 +1,10 @@
 #ifndef _LOCALE_H
 #define _LOCALE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 
 #if __cplusplus >= 201103L
@@ -65,6 +69,10 @@ locale_t newlocale(int, const char *, locale_t);
 void freelocale(locale_t);
 locale_t uselocale(locale_t);
 locale_t duplocale(locale_t);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

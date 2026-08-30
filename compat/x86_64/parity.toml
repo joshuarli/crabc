@@ -5244,6 +5244,48 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-complex", scope = "Pinned-musl C reference plus one true dependency-free x86 crabc-libc static archive and freestanding C candidate. The gate proves project-header provenance; exact closed archive exports; selected function-pointer ABI calls for binary32/binary64/x87 zero/subnormal/normal/infinity/NaN and signed zero plus float/double/long-double real/imaginary access and conjugation; no interpreter/DT_NEEDED/unresolved symbol or TLS/dynamic-TLS resolver; no libm or unowned runtime dependency; and generated x87 fldt/fchs instructions. It rejects unselected cabs/carg/cproj, complex power/transcendental, and scalar-math exports. It does not select libc.so, a general libc/libm, CRT startup, pthreads, allocator, loader, sysroot, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for the selected src/math binary32/binary64/x87 classifiers/sign predicates and src/complex accessors/conjugation leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "x87 long-double and complex-long-double storage/calling/return convention plus float/double complex SSE register contract." }]
 
+[[family.verified_artifact]]
+id = "static-c-named-locale-multibyte"
+description = "Private native x86 selected-static-archive named C locale/multibyte core. One dependency-free `crabc-libc` archive lets its freestanding C fixture resolve the sixteen selected entries `setlocale`, `localeconv`, `__ctype_get_mb_cur_max`, `mbrtowc`, `mbrlen`, `mbsinit`, `wcrtomb`, `mblen`, `mbtowc`, `wctomb`, `mbsrtowcs`, `wcsrtombs`, `mbstowcs`, `wcstombs`, `btowc`, and `wctob` after equivalent pinned-musl execution; the archive-wide selected C ABI remains separately ratcheted. It admits only named global `C`, `POSIX`, and `C.UTF-8` category selection plus its exact six-component mixed `LC_ALL` serialization. Musl's built-in `C.UTF-8` map changes only `LC_CTYPE`, so global `C.UTF-8` and the returned mixed state are exactly `C.UTF-8;C;C;C;C;C`; direct `POSIX` and non-CTYPE `C.UTF-8` normalize to `C`. A candidate-only regression rejects POSIX components, non-CTYPE UTF-8 components, or redundant uniform six-component forms without changing state. `C`/`POSIX` retain musl's private C code units while CTYPE `C.UTF-8` retains the bounded UTF-8 state machine, split-state/error/reset behavior, legacy conversion results, initial-state C string source/destination updates, and one caller-owned positive-capacity UTF-8 resume. The immutable POSIX `lconv` record carries `CHAR_MAX` monetary fields, while EILSEQ uses the already selected x86 initial-TLS errno seam. The separate C/C++ header gate proves the six-category values, x86 `wchar_t`/`wint_t`/8-byte `mbstate_t` and 96-byte `lconv` layouts, selected signatures, MB_CUR_MAX type, and unmangled C++ names. This artifact intentionally excludes noninitial `mbsrtowcs` resume with zero output capacity, `setlocale(category, \"\")` environment lookup, arbitrary locale names/maps, locale objects and `_l` APIs, per-thread locale overrides, collation, iconv, wide streams, general stdio, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "include/bits/alltypes.h",
+  "include/limits.h",
+  "include/locale.h",
+  "include/stddef.h",
+  "include/stdio.h",
+  "include/stdlib.h",
+  "include/wchar.h",
+  "compat/x86_64/locale_multibyte_header_abi_probe.c",
+  "compat/x86_64/locale_multibyte_header_abi_probe.cpp",
+  "compat/x86_64/run_locale_multibyte_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_locale_multibyte_probe.c",
+  "compat/x86_64/libc_locale_multibyte_start.S",
+  "compat/x86_64/run_libc_locale_multibyte.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 uses a signed 32-bit wchar_t, unsigned 32-bit wint_t, and the public 8-byte/align-4 mbstate_t whose first unsigned word carries musl's multibyte state; struct lconv is 96-byte/align-8 LP64 storage with ten pointers followed by fourteen char fields.",
+  "Pinned musl 1.2.6 src/locale/setlocale.c and locale_map.c make built-in C.UTF-8 active only in LC_CTYPE; src/multibyte/internal.h represents non-UTF-8 bytes as CODEUNIT(c) in the 0xdf80..0xdfff range; its BITTAB/OOB state machine validates UTF-8 continuation intervals and preserves the distinct mbrtowc/mbrlen null-state channels.",
+  "The selected static candidate may use only its existing direct x86 initial-exec errno TLS slot for EILSEQ. It has no locale-object allocation, dynamic TLS resolver, syscall, or ambient runtime dependency.",
+]
+x86_header_prerequisites = [
+  "The strict project-first/pinned-musl C11/C++17 gate covers locale.h, stdlib.h, wchar.h, bits/alltypes.h, and their direct dependencies. It checks selected base declarations and unmangled C++ linkage only; locale_t, newlocale/uselocale/duplocale/freelocale, `_l` APIs, collation, iconv, and wide stdio remain deliberately absent from this artifact.",
+  "The freestanding C fixture uses project headers before the pinned-musl and candidate links, ratchets C/POSIX/C.UTF-8 named selection, CTYPE-only built-in UTF-8 LC_ALL serialization, lconv data, C code units, UTF-8 valid/split/invalid/reset paths, legacy adapters, distinct null conversion states, initial-state source/destination pointer/count behavior, and one caller-owned positive-capacity UTF-8 mbsrtowcs resume. A candidate-only mixed-parser rejection checks that POSIX components, non-CTYPE UTF-8 components, and redundant uniform six-component forms are not accepted or allowed to change state; noninitial mbsrtowcs resume with zero output capacity remains deliberately unselected.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-multibyte", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and -nostdlib/static candidate. The gate requires the separate C/C++ named-locale/multibyte header ABI/linkage matrix; the sixteen selected entry points alongside the aggregate static C ABI export ratchet; archive and final-ELF purity; direct fs initial-TLS errno with no dynamic TLS resolver; no interpreter, DT_NEEDED, unresolved symbols, locale-object, iconv, wide-stream, allocator, or ambient runtime dependency; and matching C/POSIX/C.UTF-8 named-state with CTYPE-only built-in UTF-8, lconv, UTF-8/code-unit, error/reset, initial-state string-conversion behavior, and one caller-owned positive-capacity UTF-8 mbsrtowcs resume. Its candidate-only parser regression enforces the narrower returned-mixed-form input boundary. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not locale/text/stdio family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/locale/setlocale.c, locale_map.c, localeconv.c, src/ctype/__ctype_get_mb_cur_max.c, and the selected src/multibyte internal/state/conversion leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/size_t convention plus wchar_t, wint_t, mbstate_t, lconv, C/C++ linkage, and initial-exec errno TLS fixture contract." }]
+
 [[family]]
 id = "libc.resolver"
 order = 100
