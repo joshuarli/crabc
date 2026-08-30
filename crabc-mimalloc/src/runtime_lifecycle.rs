@@ -2250,6 +2250,13 @@ struct RuntimeProcessStorage {
     /// ticket zero while any B still owes the terminal lifecycle that releases
     /// its exact A-side worker-admission claim.
     pending_post_exit_completion_count: AtomicUsize,
+    /// Counts routes whose source transition has become terminally retained.
+    /// Such a route keeps its scheduler token and A-side admission forever,
+    /// but has no matched B completion that could consume it. It must stop
+    /// ticket zero even if a separate route remains source-active; otherwise
+    /// that live sibling would accidentally turn a retained terminal owner
+    /// back into a private-operation admission.
+    retained_post_exit_route_count: AtomicUsize,
     page_owner: UnsafeCell<MaybeUninit<MainStaticRuntimeFirstArenaPageAllocator>>,
 }
 
@@ -2298,6 +2305,10 @@ struct RuntimeParkedPostExitRoute {
     /// now belongs to a matched B no-page completion. Ticket zero remains
     /// unavailable until that B finishes and consumes this exact token.
     terminal_completion_pending: bool,
+    /// The source route has reached an unrecoverable terminal state instead
+    /// of minting a B completion. Its scheduler token remains permanently
+    /// represented, so ticket zero cannot borrow beside a live sibling route.
+    terminal_retained: bool,
     active: bool,
 }
 
@@ -2462,6 +2473,7 @@ impl RuntimeDormantPageOperation {
                 runtime,
                 source_route_active: true,
                 terminal_completion_pending: false,
+                terminal_retained: false,
                 active: true,
             }),
             Err(operation) => {
@@ -2515,6 +2527,7 @@ impl RuntimeParkedPostExitRoute {
     /// source route remains to justify that narrower exception.
     fn finish_source_route(mut self) -> Result<Self, Self> {
         if !self.source_route_active
+            || self.terminal_retained
             || !self.runtime.register_pending_post_exit_completion()
             || !self.runtime.unregister_active_post_exit_route()
         {
@@ -2526,6 +2539,26 @@ impl RuntimeParkedPostExitRoute {
         Ok(self)
     }
 
+    /// Converts a source-active route into a permanent terminal blocker when
+    /// its exact source transition cannot be retried or completed. This is
+    /// distinct from [`Self::finish_source_route`]: there is no B completion
+    /// capable of consuming this token, but a still-live sibling route must
+    /// not make ticket zero treat it as an ordinary source-active token.
+    fn retain_source_route(mut self) -> Result<Self, Self> {
+        if !self.source_route_active
+            || self.terminal_completion_pending
+            || self.terminal_retained
+            || !self.runtime.register_retained_post_exit_route()
+            || !self.runtime.unregister_active_post_exit_route()
+        {
+            self.runtime.retain_page_owner();
+            return Err(self);
+        }
+        self.source_route_active = false;
+        self.terminal_retained = true;
+        Ok(self)
+    }
+
     /// Removes this exact detached route from the scheduler only after its
     /// matched B worker has completed ordinary no-page teardown.
     ///
@@ -2534,7 +2567,7 @@ impl RuntimeParkedPostExitRoute {
     /// created the B-side completion. A direct parked-count transition keeps
     /// other detached routes and independently parked normal engines intact.
     fn finish_after_b(mut self) -> Result<(), Self> {
-        if self.source_route_active || !self.terminal_completion_pending {
+        if self.source_route_active || self.terminal_retained || !self.terminal_completion_pending {
             // Only a terminal exact free can convert a source route into a
             // B completion. Removing the scheduler token before that proof
             // would make ticket zero appear reusable over live A clients.
@@ -2907,6 +2940,7 @@ impl RuntimeProcessStorage {
             page_owner_state: AtomicUsize::new(PAGE_OWNER_COLD),
             active_post_exit_route_count: AtomicUsize::new(0),
             pending_post_exit_completion_count: AtomicUsize::new(0),
+            retained_post_exit_route_count: AtomicUsize::new(0),
             page_owner: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
@@ -3013,6 +3047,33 @@ impl RuntimeProcessStorage {
     #[inline]
     fn has_pending_post_exit_completion(&self) -> bool {
         self.pending_post_exit_completion_count.load(Ordering::Acquire) != 0
+    }
+
+    /// Registers one terminally retained route before it drops its
+    /// source-active capability. There is deliberately no matching decrement:
+    /// the route owns source state that no normal B finalizer may release.
+    fn register_retained_post_exit_route(&self) -> bool {
+        let mut observed = self.retained_post_exit_route_count.load(Ordering::Acquire);
+        loop {
+            let Some(next) = observed.checked_add(1) else {
+                self.retain_page_owner();
+                return false;
+            };
+            match self.retained_post_exit_route_count.compare_exchange_weak(
+                observed,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(next_observed) => observed = next_observed,
+            }
+        }
+    }
+
+    #[inline]
+    fn has_retained_post_exit_route(&self) -> bool {
+        self.retained_post_exit_route_count.load(Ordering::Acquire) != 0
     }
 
     #[inline]
@@ -3268,6 +3329,7 @@ impl RuntimeProcessStorage {
             .expect("the ticket-zero scheduler admitted only ready or parked states");
         let ticket_zero_was_parked = owner.has_parked_live_engine();
         if self.has_pending_post_exit_completion()
+            || self.has_retained_post_exit_route()
             || (observed != PAGE_OWNER_READY
                 && !ticket_zero_was_parked
                 && !self.has_active_post_exit_route())
@@ -4025,6 +4087,16 @@ impl NativePostExitRouteStorage {
     /// an operation can no longer prove a retryable source state.
     #[inline]
     fn retain_route(&self, parked: RuntimeParkedPostExitRoute, route: NativePostExitFreeRoute) {
+        let parked = match parked.retain_source_route() {
+            Ok(parked) => parked,
+            Err(parked) => {
+                // The failed conversion has already retained the page-owner
+                // scheduler. Keep the exact source route in the terminal
+                // registry image as well; no later normal finalizer may
+                // reconstruct or release its admission.
+                parked
+            }
+        };
         // SAFETY: see `restore_active`; retained entries are never moved back
         // through an active route operation.
         unsafe {
@@ -4126,6 +4198,13 @@ impl NativePostExitRouteStorage {
             NativePostExitFreeStep::Poisoned(proof) => {
                 // SAFETY: the lower route has no retryable source state, but
                 // its scheduler claim and exact admission must remain owned.
+                // Remove its source-active interleaving capability before
+                // publishing the retained entry, so a live sibling cannot
+                // reopen ticket zero over this terminal owner.
+                let parked = match parked.retain_source_route() {
+                    Ok(parked) => parked,
+                    Err(parked) => parked,
+                };
                 unsafe {
                     (*self.entry.get()).write(NativePostExitRouteEntry::RetainedPoisoned {
                         parked,
@@ -14208,12 +14287,14 @@ mod tests {
                 runtime,
                 source_route_active: true,
                 terminal_completion_pending: false,
+                terminal_retained: false,
                 active: true,
             };
             let second_route = RuntimeParkedPostExitRoute {
                 runtime,
                 source_route_active: true,
                 terminal_completion_pending: false,
+                terminal_retained: false,
                 active: true,
             };
 
