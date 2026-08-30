@@ -120,6 +120,12 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("B establishes its own parked local native session"),
         };
+        // SAFETY: this exact B-local client remains live in B's private
+        // ledger until its later successor-route handoff.
+        unsafe {
+            local.as_ptr().write(0x71);
+            local.as_ptr().add(52).write(0x72);
+        }
 
         // SAFETY: A supplied this exact still-live aggregate address before
         // its typed route detached. The route must keep its own short access
@@ -172,6 +178,23 @@ fn native_post_exit_free_preserves_a_preexisting_b_session() {
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             2,
             "A's terminal proof stays admitted beside B's parked local session before B exits"
+        );
+        assert!(
+            matches!(
+                unsafe { native_reallocate(Some(local), 4096) },
+                NativePageAllocationResult::Unavailable
+            ),
+            "B cannot manufacture a local replacement after A's terminal proof requires B to finish"
+        );
+        assert_eq!(
+            unsafe { local.as_ptr().read() },
+            0x71,
+            "the refused local reallocation leaves B's exact successor client intact"
+        );
+        assert_eq!(
+            unsafe { local.as_ptr().add(52).read() },
+            0x72,
+            "the refused local reallocation preserves B's successor client contents"
         );
         local_sender
             .send(local.as_ptr().addr())

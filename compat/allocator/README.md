@@ -2131,6 +2131,11 @@ B's only small client before B terminally frees A's routed medium; B then makes
 no further allocator operation. B must complete its typed all-free drain and
 its own attachment teardown before settling A's proof, with no B client moving
 into a new route.
+While B holds a terminal proof, the selected native boundary freezes B's local
+client set: new allocation and local `realloc` replacement return unavailable,
+but an exact local `free` remains available to complete B's source-defined
+exit. The direct local-session regression preserves sentinel bytes across the
+refused replacement before it proves the later successor or all-free finish.
 The separate `native_two_live_remote_owners` direct and selected-C fixtures
 park A1 before A2 enters its own setup transition, then leave both entries
 active while B1/B2 query and free only their matching exact addresses. The

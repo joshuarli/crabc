@@ -990,6 +990,12 @@ small client is source-published, B terminally frees A's routed medium, and B
 makes no further allocator operation. B's all-free source drain and attachment
 teardown must complete before B settles A's proof; no B client enters a new
 post-exit route.
+Once B holds A's terminal proof, the C-facing native boundary freezes B's
+local client set: new allocation and local `realloc` replacement return
+unavailable, while exact local `free` remains available to complete B's
+source-defined exit. `native_post_exit_with_local_session` preserves sentinel
+bytes across the refused replacement before it verifies B's later successor
+or all-free completion.
 For the two source-valid post-exit B/C/D interleavings, the same session can
 move exactly three generation-checked opaque ledger keys into either its
 direct-small group or its separately typed mapped, non-full medium group.

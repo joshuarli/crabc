@@ -1127,6 +1127,11 @@ client, B terminally frees A's routed medium, and B makes no further allocator
 operation. B's typed all-free drain and own teardown complete before it
 settles A's proof, after which ticket zero can resume. No B client is exposed
 through another route.
+While B holds that proof, its local client set is frozen: native allocation
+and local `realloc` replacement return unavailable, while an exact local
+`free` remains available to complete B's source-defined exit. The direct
+local-session regression preserves sentinel bytes across the refused
+replacement before it proves the later successor or all-free completion.
 The retired-page session regression separately leaves a normal direct-small page
 locally free and retired while one medium client stays live in another source
 bin. Its prepared aggregate route releases that retired span before B receives

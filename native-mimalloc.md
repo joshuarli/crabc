@@ -1414,6 +1414,12 @@ source-publishes B's only direct-small client, B terminally frees A's routed
 medium, and B makes no further allocator call. B's typed all-free source drain
 and B's attachment teardown complete before B settles A's proof; no B client
 becomes a new route input.
+While B holds that terminal proof, the native boundary freezes B's local
+client set: a new allocation and a local `realloc` replacement are unavailable.
+Exact local `free` remains available so B can discharge a pre-existing client
+through its source-defined exit. The direct
+`native_post_exit_with_local_session` regression writes sentinels into such a
+client and proves that a refused replacement preserves it until B finishes.
 `crabc-mimalloc/tests/native_two_live_remote_owners.rs` and
 `tests/fixtures/native_mimalloc_two_live_remote_owners_test.c` then park A1
 before A2 enters its own setup transition, leaving two registry entries active

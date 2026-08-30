@@ -6040,6 +6040,15 @@ pub unsafe fn native_reallocate(
             ticket_zero_reallocate(Some(block), new_size)
         });
     }
+    // A final B-side route free may already have placed A's terminal
+    // admission proof in this thread's TLS. At that point B must not resume
+    // its parked local engine to manufacture a replacement: that would create
+    // a new local client between A's terminal route release and B's required
+    // attachment finish. B may still free an already-live local client below,
+    // so its ordinary teardown can consume the proof in source order.
+    if current_thread_slot().post_exit_route_proof.is_some() {
+        return NativePageAllocationResult::Unavailable;
+    }
     if current_thread_can_access_native_post_exit_route() {
         match NATIVE_POST_EXIT_ROUTE.reallocate_exact(block, new_size) {
             NativePostExitRouteReallocateResult::Allocated(block) => {
