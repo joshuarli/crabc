@@ -2079,7 +2079,11 @@ the route never exposes a page, allocator, scan, or general reclaim authority.
 Genuinely over-aligned requests remain sequential-free-only. The read-only query leaves the route and its
 scheduler claim intact. Its terminal completion keeps its route-specific
 dormant-pair scheduler count parked until B finishes, and ticket zero allocates again only
-afterward. The owner-exit releaser also creates one local B allocation before
+afterward. The selected `native_mimalloc_post_exit_split_releaser` fixture
+repeats the same route through two C worker lifecycles: nonterminal B frees
+the OS, arena, and large tails and exits, then fresh C frees the remaining
+medium and small clients before its normal finish returns A's completion. The
+owner-exit releaser also creates one local B allocation before
 it offers any A address, then keeps that parked session through A's terminal
 free and frees its own client before pthread teardown. This proves the route
 can transfer A's completion beside one independently parked B session without

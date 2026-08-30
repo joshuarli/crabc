@@ -529,6 +529,7 @@ case "$command" in
             --test native_mimalloc_owner_exit \
             --test native_mimalloc_two_owner_exit \
             --test native_mimalloc_three_owner_exit \
+            --test native_mimalloc_post_exit_split_releaser \
             --test native_mimalloc_aggregate_reclaim \
             --test native_mimalloc_owner_exit_realloc \
             --test native_mimalloc_live_remote_free \

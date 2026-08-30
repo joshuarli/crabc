@@ -1335,7 +1335,10 @@ same route may cross two sequential later-worker lifecycles: nonterminal B
 frees the OS, arena, and large tails then completes its own no-page teardown;
 fresh C frees the remaining medium and small clients, pauses after the terminal
 source free, and only C's normal finish releases A's parked scheduler token and
-admission. It is a serialized exact-free proof, not concurrent pointer routing.
+admission. The selected-C
+`tests/fixtures/native_mimalloc_post_exit_split_releaser_test.c` fixture
+repeats that B-then-C exact-free sequence through the shadow ABI. It is a
+serialized exact-free proof, not concurrent pointer routing.
 `crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs` proves the same
 ordering for the source-produced sole mapped-regular result.
 `crabc-mimalloc/tests/native_two_post_exit_lifecycle.rs` keeps the original

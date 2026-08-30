@@ -1495,7 +1495,12 @@ rejected. The direct `native_post_exit_with_local_session` regression proves
 the query/free/replacement coexistence boundary and, under its scalar audit,
 the `A + B -> B-successor -> none` admission sequence; the selected owner-exit
 C fixture proves the query/free boundary without exposing a route address,
-ledger, page, or allocator capability.
+ledger, page, or allocator capability. Its
+`native_mimalloc_post_exit_split_releaser` companion proves the same existing
+aggregate can cross B then C: B finishes after a nonterminal exact subset, C
+performs the terminal exact frees, and only C's normal finish returns A's
+admission. It introduces neither concurrent route frees nor a pointer
+capability.
 
 The direct `native_post_exit_registry_high_water` regression enables a
 test-only scalar audit, establishes three simultaneously detached routes, and
