@@ -5778,10 +5778,13 @@ depends_on = ["oracle.musl-toolchain", "libc.c-abi-compat", "sysroot.owned-artif
 category = "compatibility-gate"
 description = "Pinned musl ABI inventory, symbol ratchet, and controlled C differential against selected x86 runtime artifacts."
 aarch64_gates = ["abi-probe", "symbols", "compat", "differential"]
-source_owners = ["compat/abi", "compat/differential", "scripts/check_compat_ratchet.py"]
+source_owners = ["compat/abi", "compat/differential", "compat/upstreams.toml", "compat/x86_64/static_c_abi_differential_memfd_probe.c", "compat/x86_64/static_c_abi_differential_start.S", "compat/x86_64/run_static_c_abi_differential.sh", "compat/x86_64/run_libc_static_c_abi_differential.sh", "scripts/dev-x86_64.sh", "scripts/check_compat_ratchet.py"]
 x86_abi_prerequisites = ["x86 ELF dynamic symbols and ABI inventory", "same-object musl/candidate link and execution lanes"]
 x86_header_prerequisites = ["Pinned musl headers compile the shared differential workload; candidate links through the owned x86 headers and runtime only."]
-native_evidence = [{ state = "required", command = "Define native x86 ABI inventory, ratchet, and same-object musl differential gates", scope = "Measurements must be separately labeled and never become a symbol-count definition of parity." }]
+native_evidence = [
+  { state = "required", command = "./scripts/dev-x86_64.sh libc-static-c-abi-differential", scope = "Private bootstrap only: a shared `memfd_create` workload compiles against pinned-musl headers/runtime and separately against project headers plus one explicitly built selected `libc.a`. Both executions run under `env -i` with fixed C locale/timezone, normalize only CRLF-to-LF, require empty stderr and an exact semantic record, and ratchet equality. It proves only the bounded static `memfd_create` success/stale-errno/invalid-flag/bad-pointer boundary; it is neither an ABI inventory, symbol-count claim, same-object closure, dynamic runtime test, nor promotion evidence." },
+  { state = "required", command = "Define native x86 ABI inventory, symbol ratchet, same-object musl differential, and broader selected-runtime gates", scope = "Measurements must stay separately labeled and never become a symbol-count definition of parity. The runnable private bootstrap is intentionally insufficient for family completion or promotion." },
+]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX ABI and behavioral oracle." }]
 capabilities = []
 status = "planned"

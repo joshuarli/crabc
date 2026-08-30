@@ -232,6 +232,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-sync  run the static x86 crabc-libc no-cancellation msync slice
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
   libc-memfd-create  run the static x86 crabc-libc memfd_create slice
+  libc-static-c-abi-differential  run the private static-C ABI musl differential bootstrap
   libc-header-layouts-baseline  run the static x86 crabc-libc C/C++ header/layout baseline
   libc-nanosleep  run the static x86 crabc-libc nanosleep slice
   libc-clock-nanosleep  run the static x86 crabc-libc clock_nanosleep slice
@@ -1717,6 +1718,10 @@ run_libc_memfd_create() {
     run_in_container bash /workspace/compat/x86_64/run_libc_memfd_create.sh
 }
 
+run_libc_static_c_abi_differential() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_static_c_abi_differential.sh
+}
+
 run_libc_header_layouts_baseline() {
     run_in_container bash /workspace/compat/x86_64/run_libc_header_layouts_baseline.sh
 }
@@ -2838,6 +2843,7 @@ case "$command" in
     libc-memory-sync) ;;
     libc-memory-locking) ;;
     libc-memfd-create) ;;
+    libc-static-c-abi-differential) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-inet-address|libc-random-entropy|libc-memory-search|libc-string-copy) ;;
     libc-vector-io) ;;
     libc-sysv-semaphore) ;;
@@ -3963,6 +3969,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-memfd-create takes no arguments"
         ensure_image
         run_libc_memfd_create
+        ;;
+    libc-static-c-abi-differential)
+        [ "$#" -eq 0 ] || fail "libc-static-c-abi-differential takes no arguments"
+        ensure_image
+        run_libc_static_c_abi_differential
         ;;
     libc-header-layouts-baseline)
         [ "$#" -eq 0 ] || fail "libc-header-layouts-baseline takes no arguments"

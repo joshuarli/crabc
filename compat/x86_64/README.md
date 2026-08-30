@@ -462,6 +462,19 @@ toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
 which the future target-split crabc headers must meet. It deliberately does
 not compile crabc headers and is not public x86 C-header support.
 
+`libc-static-c-abi-differential` is the private bootstrap for the still-planned
+`compat.abi-differential` family. It builds one explicit selected x86
+`crabc-libc` archive, then supplies that path to a reusable comparator. The
+shared `memfd_create` workload compiles once against pinned musl headers/runtime
+and once against project headers plus the freestanding archive. Both lanes run
+under a fixed empty environment; the workload reports stable semantic booleans
+and errno constants rather than nondeterministic descriptor numbers. The
+comparator performs only CRLF-to-LF normalization, requires exact output and
+empty stderr from both lanes, and fails on any difference. This is real
+selected-static-archive evidence for the narrow memfd/errno boundary, not an
+ABI inventory, same-object closure, dynamic-runtime test, family completion,
+promotion, or public x86 support.
+
 `headers-layouts.toml` is the checked-in contract for the forty-four selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
