@@ -7303,10 +7303,11 @@ mod tests {
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
     use crate::types::{
-        BIN_BLOCK_SIZES, EMPTY_PAGE, Page, Theap, ThreadLocalData, THREAD_ID_ABANDONED_MAPPED,
+        BIN_BLOCK_SIZES, EMPTY_PAGE, MemoryKind, Page, PageKind, Theap, ThreadLocalData,
+        THREAD_ID_ABANDONED_MAPPED,
     };
     #[cfg(target_arch = "x86_64")]
-    use crate::types::{MemoryKind, PageKind, THREAD_ID_ABANDONED};
+    use crate::types::THREAD_ID_ABANDONED;
     use crabc_core::Errno;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};

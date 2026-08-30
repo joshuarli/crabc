@@ -4,24 +4,24 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/page-queue.c:40-55,147-172,252-423`
-// (predicates, the test-only validity oracle, and intrusive queue membership
-// operations). The source's direct-page cache and `mi_theap_t` accounting
-// require the absent theap lifecycle state and remain outside this bounded
-// metadata-only slice. The mutating Rust names therefore end in `_metadata`:
-// they are the exact intrusive link/count/flag kernels, not yet the complete
-// live allocator operations named by the corresponding C functions.
+// Source map: pinned mimalloc v3.5.0 `src/page-queue.c:40-55,147-172,204-274,
+// 252-423` (predicates, the test-only validity oracle, intrusive queue
+// membership, and the direct-cache-before-page-count queue-removal order).
+// The generic owner-exit coordinator below owns only this source queue half;
+// deferred-free, retired-page, page-local collection, abandonment publication,
+// PageMap/backing release, and TLD/Theap detach stay at their respective
+// lifecycle boundaries.
 
-use core::ptr::null_mut;
+use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::Ordering;
 
-use crate::config::{LARGE_MAX_OBJ_WSIZE, WORD_SIZE};
+use crate::config::{BIN_FULL, LARGE_MAX_OBJ_WSIZE, PAGES_DIRECT, SMALL_SIZE_MAX, WORD_SIZE};
+use crate::invariants;
+use crate::size_class;
 #[cfg(test)]
 use crate::config::LARGE_MAX_OBJ_SIZE;
 
-use super::{Page, PageQueue, PAGE_IN_FULL_QUEUE};
-#[cfg(test)]
-use super::Theap;
+use super::{EMPTY_PAGE, Page, PageQueue, Theap, PAGE_IN_FULL_QUEUE};
 
 /// Port of `mi_page_queue_is_huge`.
 #[inline]
@@ -45,6 +45,214 @@ pub(crate) const fn page_queue_is_special(queue: &PageQueue) -> bool {
 #[inline]
 pub(crate) const fn page_queue_count(queue: &PageQueue) -> usize {
     queue.count
+}
+
+/// The page-local conclusion of one source `_mi_theap_page_collect` visit.
+///
+/// The callback passed to [`theap_collect_abandon_queues`] chooses only this
+/// source lifetime branch after force/false free collection. It does not name
+/// a page kind, size bin, mapping kind, or test fixture geometry: an empty
+/// page is released and every other page is detached for its source-specific
+/// abandonment publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TheapCollectAbandonPageAction {
+    /// The collectors proved the page all free, so the post-detach hook must
+    /// perform its ordinary PageMap/backing release.
+    Release,
+    /// The page still has live blocks, so the post-detach hook must publish
+    /// its source abandonment ownership before the old Theap/TLD can detach.
+    Abandon,
+}
+
+/// Failure from the generic queue half of `_mi_theap_collect_abandon`.
+///
+/// A callback failure can occur after a one-way queue detach. The caller owns
+/// the corresponding terminal-retention policy; this helper never retries a
+/// different queue, invents a fresh page, or reattaches the former owner.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum TheapCollectAbandonError<E> {
+    /// A page-local collector or post-detach source transition failed.
+    Page(E),
+    /// The caller violated the exclusive complete-queue invariant.
+    QueueInvariant,
+}
+
+/// Visits the actual source queues for `MI_ABANDON` in pinned order.
+///
+/// This is the queue coordinator seam for a future complete
+/// `_mi_theap_collect_abandon` owner-exit path. Its caller performs deferred
+/// free processing and retired-page collection first, then supplies the two
+/// page-local source transitions: force/false collection before detachment,
+/// followed by exact release or abandonment publication. The helper covers
+/// every queue through `BIN_FULL`, saves the successor before either callback
+/// can detach the current page, and performs the source queue mutation in the
+/// required order: intrusive removal, direct-small cache repair, then Theap
+/// page-count decrement.
+///
+/// This is intentionally not a public allocator entry point and does not
+/// detach the Theap/TLD, choose a page geometry, publish an abandonment
+/// bitmap, or release PageMap/mapping state. Those source-specific lifetimes
+/// remain in the owner-exit layer that calls this seam.
+///
+/// # Safety
+///
+/// `theap` must be initialized and exclusively owned for the whole call. Its
+/// queues must be complete, acyclic, and contain exactly `page_count` live
+/// initialized pages. Both callbacks may mutate only the current page's
+/// page-local source state; they must not alter queue links, queue membership,
+/// direct-cache entries, or `theap.page_count`. `finish_page` may release the
+/// current page only after this helper has detached it. No producer may race
+/// any non-atomic page field or queue transition.
+pub(crate) unsafe fn theap_collect_abandon_queues<E>(
+    theap: &mut Theap,
+    mut collect_page: impl FnMut(usize, NonNull<Page>) -> Result<TheapCollectAbandonPageAction, E>,
+    mut finish_page: impl FnMut(
+        &Theap,
+        usize,
+        NonNull<Page>,
+        TheapCollectAbandonPageAction,
+    ) -> Result<(), E>,
+) -> Result<(), TheapCollectAbandonError<E>> {
+    // This is the source `mi_theap_visit_pages` fast empty case. A live
+    // Theap with zero pages has no queue transition to make.
+    if theap.page_count == 0 {
+        return Ok(());
+    }
+
+    let expected_page_count = theap.page_count;
+    let mut visited_page_count = 0usize;
+
+    // `MI_ABANDON` passes `include_full = true`, unlike ordinary collection.
+    for bin in 0..=BIN_FULL {
+        let mut remaining = theap
+            .pages
+            .get(bin)
+            .ok_or(TheapCollectAbandonError::QueueInvariant)?
+            .count;
+        let mut current = theap
+            .pages
+            .get(bin)
+            .ok_or(TheapCollectAbandonError::QueueInvariant)?
+            .first;
+
+        while remaining != 0 {
+            let page = NonNull::new(current).ok_or(TheapCollectAbandonError::QueueInvariant)?;
+            // SAFETY: the caller's queue-completeness and exclusive-owner
+            // proof keeps the current page and its successor link valid.
+            // Saving this edge is the source visitor's required protection
+            // against either post-detach callback retiring current metadata.
+            let next = unsafe { page.as_ref().next };
+            let action = collect_page(bin, page).map_err(TheapCollectAbandonError::Page)?;
+
+            // SAFETY: the caller proves `page` remains a current member of
+            // this exact complete queue; the callback contract forbids it
+            // from changing links or membership before this source removal.
+            unsafe { theap_collect_abandon_detach_page(theap, bin, page)? };
+            finish_page(theap, bin, page, action).map_err(TheapCollectAbandonError::Page)?;
+
+            visited_page_count = visited_page_count
+                .checked_add(1)
+                .ok_or(TheapCollectAbandonError::QueueInvariant)?;
+            current = next;
+            remaining -= 1;
+        }
+
+        if !current.is_null() {
+            return Err(TheapCollectAbandonError::QueueInvariant);
+        }
+    }
+
+    if visited_page_count != expected_page_count || theap.page_count != 0 {
+        return Err(TheapCollectAbandonError::QueueInvariant);
+    }
+    Ok(())
+}
+
+/// Removes one current queue member as the common queue half of source
+/// `_mi_page_free` or `_mi_page_abandon` during Theap owner exit.
+///
+/// The direct cache must reflect the new queue head before `page_count`
+/// changes. Keeping those operations together prevents a caller-selected
+/// page-shape wrapper from accidentally repairing only direct-small paths.
+unsafe fn theap_collect_abandon_detach_page<E>(
+    theap: &mut Theap,
+    bin: usize,
+    page: NonNull<Page>,
+) -> Result<(), TheapCollectAbandonError<E>> {
+    let queue = theap
+        .pages
+        .get_mut(bin)
+        .ok_or(TheapCollectAbandonError::QueueInvariant)? as *mut PageQueue;
+    // SAFETY: the caller proves this is a valid exclusive current membership.
+    unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+    if !theap_collect_abandon_update_direct_cache(theap, bin) {
+        return Err(TheapCollectAbandonError::QueueInvariant);
+    }
+    if !theap.note_page_removed() {
+        return Err(TheapCollectAbandonError::QueueInvariant);
+    }
+    Ok(())
+}
+
+/// Ports `mi_theap_queue_first_update` for the owner-exit detach path.
+///
+/// It is deliberately local to the generic coordinator: source queue removal
+/// repairs the direct cache even when the next owner-exit action is an arena,
+/// OS, regular, full, or singleton release. Non-small queues are a source
+/// no-op.
+fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: usize) -> bool {
+    let Some(queue) = theap.pages.get(bin) else {
+        return false;
+    };
+    let block_size = queue.block_size;
+    if block_size > SMALL_SIZE_MAX {
+        return true;
+    }
+    let Some(index) = invariants::word_count(block_size) else {
+        return false;
+    };
+    if index >= PAGES_DIRECT || size_class::bin(block_size) != Some(bin) {
+        return false;
+    }
+    let replacement = if queue.first.is_null() {
+        EMPTY_PAGE.as_ptr()
+    } else {
+        queue.first
+    };
+    if theap.pages_free_direct[index] == replacement {
+        return true;
+    }
+
+    let start = if index <= 1 {
+        0
+    } else {
+        let Some(mut previous) = bin.checked_sub(1) else {
+            return false;
+        };
+        while previous > 0
+            && theap
+                .pages
+                .get(previous)
+                .is_some_and(|queue| size_class::bin(queue.block_size) == Some(bin))
+        {
+            previous -= 1;
+        }
+        let Some(previous_size) = theap.pages.get(previous).map(|queue| queue.block_size) else {
+            return false;
+        };
+        let Some(previous_index) = invariants::word_count(previous_size) else {
+            return false;
+        };
+        match previous_index.checked_add(1) {
+            Some(start) => start.min(index),
+            None => return false,
+        }
+    };
+
+    for direct in start..=index {
+        theap.pages_free_direct[direct] = replacement;
+    }
+    true
 }
 
 /// Reads the `MI_PAGE_IN_FULL_QUEUE` membership bit.
@@ -704,5 +912,142 @@ mod tests {
             assert_queue(&regular, &[&mut page as *mut Page]);
             assert_queue(&full, &[]);
         }
+    }
+
+    #[test]
+    fn generic_collect_abandon_visits_mixed_queues_in_source_order() {
+        let mut theap = Theap::empty();
+        let small_bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let medium_bin = crate::size_class::bin(LARGE_MAX_OBJ_SIZE / 2)
+            .expect("medium size has a regular bin");
+        assert!(small_bin < medium_bin && medium_bin < BIN_FULL);
+
+        let small_size = theap.queue(small_bin).unwrap().block_size();
+        let medium_size = theap.queue(medium_bin).unwrap().block_size();
+        let mut small_first = page(small_size);
+        let mut small_second = page(small_size);
+        let mut medium = page(medium_size);
+        let mut full = page(medium_size);
+        let small_first = NonNull::from(&mut small_first);
+        let small_second = NonNull::from(&mut small_second);
+        let medium = NonNull::from(&mut medium);
+        let full = NonNull::from(&mut full);
+
+        // SAFETY: the four local pages begin detached and the test owns the
+        // complete source queue image while it assembles it.
+        unsafe {
+            page_queue_push_at_end_metadata(theap.queue_mut(small_bin).unwrap(), small_first.as_ptr());
+            page_queue_push_at_end_metadata(theap.queue_mut(small_bin).unwrap(), small_second.as_ptr());
+            page_queue_push_at_end_metadata(theap.queue_mut(medium_bin).unwrap(), medium.as_ptr());
+            page_queue_push_at_end_metadata(theap.queue_mut(BIN_FULL).unwrap(), full.as_ptr());
+        }
+        for _ in 0..4 {
+            theap.note_page_added();
+        }
+        assert!(theap_collect_abandon_update_direct_cache(&mut theap, small_bin));
+        let small_direct = invariants::word_count(small_size).unwrap();
+        assert_eq!(theap.direct_page(small_direct), Some(small_first.as_ptr()));
+
+        let mut visits = std::vec::Vec::new();
+        let mut finished = std::vec::Vec::new();
+        // SAFETY: the test has exclusive access to the complete, acyclic
+        // mixed queue image and the callbacks alter neither membership nor
+        // links. They only record the exact source sequence.
+        unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                |bin, page| {
+                    visits.push((bin, page));
+                    Ok::<_, ()>(if page == small_second {
+                        TheapCollectAbandonPageAction::Abandon
+                    } else {
+                        TheapCollectAbandonPageAction::Release
+                    })
+                },
+                |theap, bin, page, action| {
+                    finished.push((bin, page, action, theap.page_count(), theap.direct_page(small_direct)));
+                    Ok::<_, ()>(())
+                },
+            )
+            .expect("the valid mixed Theap completes its source queue traversal");
+        }
+
+        assert_eq!(
+            visits,
+            std::vec![
+                (small_bin, small_first),
+                (small_bin, small_second),
+                (medium_bin, medium),
+                (BIN_FULL, full),
+            ],
+            "regular bins precede BIN_FULL and the saved small successor remains visitable"
+        );
+        assert_eq!(
+            finished,
+            std::vec![
+                (
+                    small_bin,
+                    small_first,
+                    TheapCollectAbandonPageAction::Release,
+                    3,
+                    Some(small_second.as_ptr()),
+                ),
+                (
+                    small_bin,
+                    small_second,
+                    TheapCollectAbandonPageAction::Abandon,
+                    2,
+                    Some(EMPTY_PAGE.as_ptr()),
+                ),
+                (
+                    medium_bin,
+                    medium,
+                    TheapCollectAbandonPageAction::Release,
+                    1,
+                    Some(EMPTY_PAGE.as_ptr()),
+                ),
+                (
+                    BIN_FULL,
+                    full,
+                    TheapCollectAbandonPageAction::Release,
+                    0,
+                    Some(EMPTY_PAGE.as_ptr()),
+                ),
+            ],
+            "each post-detach action observes the source direct-cache repair before page-count decrement"
+        );
+        assert!(theap.queue(small_bin).unwrap().is_empty());
+        assert!(theap.queue(medium_bin).unwrap().is_empty());
+        assert!(theap.queue(BIN_FULL).unwrap().is_empty());
+        assert_eq!(theap.page_count(), 0);
+        assert!(!page_is_in_full(unsafe { full.as_ref() }));
+    }
+
+    #[test]
+    fn generic_collect_abandon_rejects_a_queue_count_mismatch() {
+        let mut theap = Theap::empty();
+        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let block_size = theap.queue(bin).unwrap().block_size();
+        let mut only = page(block_size);
+        let only = NonNull::from(&mut only);
+
+        // SAFETY: the page is initially detached and locally owned. The
+        // subsequent manually paired Theap count makes only the queue's
+        // source count malformed for this rejection test.
+        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
+        theap.note_page_added();
+        theap.queue_mut(bin).unwrap().count += 1;
+
+        // SAFETY: links themselves remain valid and exclusive; the primitive
+        // must reject the count/image disagreement rather than following a
+        // nonexistent successor.
+        let result = unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                |_bin, _page| Ok::<_, ()>(TheapCollectAbandonPageAction::Release),
+                |_theap, _bin, _page, _action| Ok::<_, ()>(()),
+            )
+        };
+        assert_eq!(result, Err(TheapCollectAbandonError::QueueInvariant));
     }
 }
