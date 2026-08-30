@@ -173,6 +173,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_mutex.rs"),
     Path("libc/src/c_abi/x86_64/pthread_cond.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_rwlock.rs"),
     Path("libc/src/c_abi/x86_64/readiness_waits.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
@@ -3671,6 +3672,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_tsd.rs"]',
         '#[path = "pthread_mutex.rs"]',
         '#[path = "pthread_cond.rs"]',
+        '#[path = "pthread_rwlock.rs"]',
         '#[path = "c11_thread_lifecycle.rs"]',
         '#[path = "c11_sync.rs"]',
         '#[path = "pthread_once.rs"]',
@@ -4861,6 +4863,111 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/pthread_cond.rs: selected private condition "
                 f"leaf must not select {forbidden!r}"
+            )
+
+    pthread_rwlock_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_rwlock.rs"
+    )
+    pthread_rwlock_text = pthread_rwlock_source.read_text(errors="replace")
+    for required in (
+        "1.2.6 release commit",
+        "src/thread/pthread_rwlock_init.c",
+        "src/thread/pthread_rwlock_destroy.c",
+        "src/thread/pthread_rwlock_{tryrdlock,timedrdlock,rdlock}.c",
+        "src/thread/pthread_rwlock_{trywrlock,timedwrlock,wrlock}.c",
+        "src/thread/pthread_rwlock_unlock.c",
+        "src/thread/pthread_rwlockattr_{init,destroy,setpshared}.c",
+        "src/thread/pthread_attr_get.c::pthread_rwlockattr_getpshared",
+        "src/thread/__timedwait.c",
+        "struct PublicPthreadRwlock",
+        "struct PublicPthreadRwlockAttr",
+        "RWLOCK_LOCK_WORD: usize = 0",
+        "RWLOCK_WAITERS_WORD: usize = 1",
+        "RWLOCK_SHARED_WORD: usize = 2",
+        "RWLOCK_WORD_COUNT: usize = 14",
+        "RWLOCK_WRITER: c_int = 0x7fff_ffff",
+        "RWLOCK_READER_MAX: c_int = 0x7fff_fffe",
+        "RWLOCK_WAITER_BIT: c_int = c_int::MIN",
+        "size_of::<PublicPthreadRwlock>() == 56",
+        "align_of::<PublicPthreadRwlock>() == 8",
+        "size_of::<PublicPthreadRwlockAttr>() == 8",
+        "align_of::<PublicPthreadRwlockAttr>() == 4",
+        "timed_futex_wait",
+        "futex_private_flag",
+        "FUTEX_PRIVATE_FLAG",
+        "raw_syscall::SYS_CLOCK_GETTIME",
+        "raw_syscall::SYS_FUTEX",
+        "raw_syscall::syscall2(",
+        "raw_syscall::syscall4(",
+        "x86_64_compare_exchange_acqrel_i32",
+        "x86_64_fetch_add_acqrel_i32",
+        "x86_64_fetch_sub_acqrel_i32",
+        "public x86 support",
+    ):
+        if required not in pthread_rwlock_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_rwlock.rs: selected static rwlock "
+                f"artifact is missing {required!r}"
+            )
+    pthread_rwlock_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_rwlock_text,
+        )
+    )
+    expected_pthread_rwlock_exports = {
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_setpshared",
+        "pthread_rwlockattr_getpshared",
+        "pthread_rwlock_init",
+        "pthread_rwlock_destroy",
+        "__pthread_rwlock_rdlock",
+        "__pthread_rwlock_tryrdlock",
+        "__pthread_rwlock_timedrdlock",
+        "__pthread_rwlock_wrlock",
+        "__pthread_rwlock_trywrlock",
+        "__pthread_rwlock_timedwrlock",
+        "__pthread_rwlock_unlock",
+    }
+    if pthread_rwlock_exports != expected_pthread_rwlock_exports:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_rwlock.rs: selected static rwlock "
+            "artifact must export its six direct APIs and seven hidden lock aliases"
+        )
+    pthread_rwlock_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(pthread_rwlock_\w+)\s*,\s*(__pthread_rwlock_\w+)",\s*$',
+            pthread_rwlock_text,
+        )
+    )
+    expected_pthread_rwlock_aliases = {
+        ("pthread_rwlock_rdlock", "__pthread_rwlock_rdlock"),
+        ("pthread_rwlock_tryrdlock", "__pthread_rwlock_tryrdlock"),
+        ("pthread_rwlock_timedrdlock", "__pthread_rwlock_timedrdlock"),
+        ("pthread_rwlock_wrlock", "__pthread_rwlock_wrlock"),
+        ("pthread_rwlock_trywrlock", "__pthread_rwlock_trywrlock"),
+        ("pthread_rwlock_timedwrlock", "__pthread_rwlock_timedwrlock"),
+        ("pthread_rwlock_unlock", "__pthread_rwlock_unlock"),
+    }
+    if pthread_rwlock_aliases != expected_pthread_rwlock_aliases:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_rwlock.rs: selected static rwlock "
+            "artifact must retain all seven musl same-address assembler aliases"
+        )
+    for forbidden in (
+        "errno::",
+        "c_status(",
+        "pthread_mutex::",
+        "pthread_cond::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "__tls_get_addr",
+    ):
+        if forbidden in pthread_rwlock_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_rwlock.rs: selected static rwlock "
+                f"artifact must not select {forbidden!r}"
             )
 
     c11_sync_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_sync.rs"
@@ -6957,6 +7064,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_create_join_text,
         pthread_mutex_text,
         pthread_cond_text,
+        pthread_rwlock_text,
         c11_thread_lifecycle_text,
         c11_sync_text,
         pthread_once_text,
@@ -7024,6 +7132,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/timestamp_updates.rs: selected static artifact "
             "must retain futimesat as the musl same-address assembler alias"
         )
+    pthread_rwlock_public_aliases = {public for public, _hidden in pthread_rwlock_aliases}
     exports = (
         rust_exports
         | assembly_exports
@@ -7031,6 +7140,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | filesystem_access_aliases
         | inet_address_aliases
         | timestamp_aliases
+        | pthread_rwlock_public_aliases
         | pthread_identity_exports
     )
     expected_exports = {
@@ -7121,6 +7231,26 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_mutex_lock",
         "pthread_mutex_trylock",
         "pthread_mutex_unlock",
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_setpshared",
+        "pthread_rwlockattr_getpshared",
+        "pthread_rwlock_init",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_rdlock",
+        "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_timedrdlock",
+        "pthread_rwlock_wrlock",
+        "pthread_rwlock_trywrlock",
+        "pthread_rwlock_timedwrlock",
+        "pthread_rwlock_unlock",
+        "__pthread_rwlock_rdlock",
+        "__pthread_rwlock_tryrdlock",
+        "__pthread_rwlock_timedrdlock",
+        "__pthread_rwlock_wrlock",
+        "__pthread_rwlock_trywrlock",
+        "__pthread_rwlock_timedwrlock",
+        "__pthread_rwlock_unlock",
         "pthread_once",
         "pthread_cond_broadcast",
         "pthread_cond_destroy",
@@ -7342,7 +7472,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -7368,6 +7498,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_create_join.rs", pthread_create_join_text),
         ("pthread_mutex.rs", pthread_mutex_text),
         ("pthread_cond.rs", pthread_cond_text),
+        ("pthread_rwlock.rs", pthread_rwlock_text),
         ("c11_thread_lifecycle.rs", c11_thread_lifecycle_text),
         ("c11_sync.rs", c11_sync_text),
         ("pthread_once.rs", pthread_once_text),

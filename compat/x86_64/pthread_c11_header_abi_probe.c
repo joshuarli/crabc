@@ -154,6 +154,24 @@ typedef int (*crabc_pthread_cond_destroy_signature)(pthread_cond_t *);
 typedef int (*crabc_pthread_cond_wait_signature)(pthread_cond_t *, pthread_mutex_t *);
 typedef int (*crabc_pthread_cond_signal_signature)(pthread_cond_t *);
 typedef int (*crabc_pthread_cond_broadcast_signature)(pthread_cond_t *);
+typedef int (*crabc_pthread_rwlock_init_signature)(
+	pthread_rwlock_t *, const pthread_rwlockattr_t *);
+typedef int (*crabc_pthread_rwlock_destroy_signature)(pthread_rwlock_t *);
+typedef int (*crabc_pthread_rwlock_rdlock_signature)(pthread_rwlock_t *);
+typedef int (*crabc_pthread_rwlock_tryrdlock_signature)(pthread_rwlock_t *);
+typedef int (*crabc_pthread_rwlock_timedrdlock_signature)(
+	pthread_rwlock_t *, const struct timespec *);
+typedef int (*crabc_pthread_rwlock_wrlock_signature)(pthread_rwlock_t *);
+typedef int (*crabc_pthread_rwlock_trywrlock_signature)(pthread_rwlock_t *);
+typedef int (*crabc_pthread_rwlock_timedwrlock_signature)(
+	pthread_rwlock_t *, const struct timespec *);
+typedef int (*crabc_pthread_rwlock_unlock_signature)(pthread_rwlock_t *);
+typedef int (*crabc_pthread_rwlockattr_init_signature)(pthread_rwlockattr_t *);
+typedef int (*crabc_pthread_rwlockattr_destroy_signature)(pthread_rwlockattr_t *);
+typedef int (*crabc_pthread_rwlockattr_setpshared_signature)(
+	pthread_rwlockattr_t *, int);
+typedef int (*crabc_pthread_rwlockattr_getpshared_signature)(
+	const pthread_rwlockattr_t *, int *);
 typedef void (*crabc_once_init_signature)(void);
 typedef int (*crabc_pthread_once_signature)(
 	pthread_once_t *, crabc_once_init_signature);
@@ -220,6 +238,32 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_signal),
 	crabc_pthread_cond_signal_signature), "pthread_cond_signal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_broadcast),
 	crabc_pthread_cond_broadcast_signature), "pthread_cond_broadcast signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_init),
+	crabc_pthread_rwlock_init_signature), "pthread_rwlock_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_destroy),
+	crabc_pthread_rwlock_destroy_signature), "pthread_rwlock_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_rdlock),
+	crabc_pthread_rwlock_rdlock_signature), "pthread_rwlock_rdlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_tryrdlock),
+	crabc_pthread_rwlock_tryrdlock_signature), "pthread_rwlock_tryrdlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_timedrdlock),
+	crabc_pthread_rwlock_timedrdlock_signature), "pthread_rwlock_timedrdlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_wrlock),
+	crabc_pthread_rwlock_wrlock_signature), "pthread_rwlock_wrlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_trywrlock),
+	crabc_pthread_rwlock_trywrlock_signature), "pthread_rwlock_trywrlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_timedwrlock),
+	crabc_pthread_rwlock_timedwrlock_signature), "pthread_rwlock_timedwrlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlock_unlock),
+	crabc_pthread_rwlock_unlock_signature), "pthread_rwlock_unlock signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlockattr_init),
+	crabc_pthread_rwlockattr_init_signature), "pthread_rwlockattr_init signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlockattr_destroy),
+	crabc_pthread_rwlockattr_destroy_signature), "pthread_rwlockattr_destroy signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlockattr_setpshared),
+	crabc_pthread_rwlockattr_setpshared_signature), "pthread_rwlockattr_setpshared signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_rwlockattr_getpshared),
+	crabc_pthread_rwlockattr_getpshared_signature), "pthread_rwlockattr_getpshared signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_once), crabc_pthread_once_signature),
 	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)

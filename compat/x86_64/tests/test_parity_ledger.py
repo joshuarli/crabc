@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 79)
+        self.assertEqual(report["verified_artifact_count"], 80)
         self.assertEqual(report["header_layout_probe_count"], 41)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5405,7 +5405,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_tsd.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Fourteen separately verified static artifacts", pthread_tls["description"]
+            "Fifteen separately verified static artifacts", pthread_tls["description"]
         )
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
@@ -5423,7 +5423,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 14)
+        self.assertEqual(len(artifacts), 15)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -5438,6 +5438,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-c11-detach",
                 "static-c-thrd-sleep",
                 "static-c-pthread-normal-mutex",
+                "static-c-pthread-rwlock",
                 "static-c-pthread-cond-private",
                 "static-c-c11-plain-sync",
                 "static-c-pthread-c11-once",
@@ -5454,6 +5455,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         detach = by_id["static-c-pthread-c11-detach"]
         thrd_sleep = by_id["static-c-thrd-sleep"]
         normal_mutex = by_id["static-c-pthread-normal-mutex"]
+        rwlock = by_id["static-c-pthread-rwlock"]
         private_condition = by_id["static-c-pthread-cond-private"]
         c11_plain_sync = by_id["static-c-c11-plain-sync"]
         once = by_id["static-c-pthread-c11-once"]
@@ -5893,6 +5895,130 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, normal_mutex_scope)
+        self.assertEqual(
+            rwlock["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-rwlock",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "complete installed `pthread_rwlock_*` and `pthread_rwlockattr_*` family",
+            "56-byte, eight-byte-aligned rwlock",
+            "eight-byte, four-byte-aligned attribute record",
+            "weak same-address aliases of hidden `__pthread_rwlock_*` definitions",
+            "concurrent readers",
+            "reader/writer exclusion",
+            "absolute `CLOCK_REALTIME` timeout status",
+            "initial-try ordering",
+            "wake-before-deadline handoff",
+            "caller-`errno` preservation",
+            "cross-process shared-futex reader and writer wakeups",
+            "cancellation",
+            "priority or fairness guarantees",
+            "C11 synchronization",
+            "general pthread synchronization or runtime ownership",
+            "dynamic/loader TLS",
+            "CRT/sysroot integration",
+            "full pthread/TLS or x86-64 parity",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, rwlock["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/atomic.rs",
+            "libc/src/c_abi/x86_64/pthread_rwlock.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "libc/src/c_abi/x86_64/pthread_create_join.rs",
+            "include/pthread.h",
+            "include/time.h",
+            "compat/x86_64/libc_pthread_rwlock_probe.c",
+            "compat/x86_64/libc_pthread_rwlock_start.S",
+            "compat/x86_64/run_libc_pthread_rwlock.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/run_types_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, rwlock["source_owners"])
+        rwlock_abi = " ".join(rwlock["x86_abi_prerequisites"])
+        for phrase in (
+            "pthread_rwlock_init.c",
+            "pthread_rwlock_destroy.c",
+            "pthread_rwlock_{tryrdlock,timedrdlock,rdlock}.c",
+            "pthread_rwlock_{trywrlock,timedwrlock,wrlock}.c",
+            "pthread_rwlock_unlock.c",
+            "pthread_rwlockattr_{init,destroy,setpshared}.c",
+            "pthread_attr_get.c::pthread_rwlockattr_getpshared",
+            "__timedwait.c",
+            "56 bytes",
+            "8-byte alignment",
+            "offsets 0/4/8",
+            "0x7fffffff",
+            "8 bytes",
+            "4-byte alignment",
+            "PTHREAD_PROCESS_PRIVATE=0",
+            "PTHREAD_PROCESS_SHARED=1",
+            "pshared*128",
+            "EAGAIN",
+            "EBUSY",
+            "weak same-address aliases",
+            "futex=202",
+            "`_rw_shared ^ 128`",
+            "r10",
+            "CLOCK_REALTIME",
+            "clock_gettime=228",
+            "initial try",
+            "without mutating C errno",
+            "fork=57",
+            "wait4=61",
+            "exit=60",
+            "general pthread runtime",
+        ):
+            self.assertIn(phrase, rwlock_abi)
+        rwlock_headers = " ".join(rwlock["x86_header_prerequisites"])
+        for phrase in (
+            "pthread.h",
+            "time.h",
+            "errno.h",
+            "stdint.h",
+            "sys/mman.h",
+            "sys/syscall.h",
+            "56-byte align-8 pthread_rwlock_t",
+            "8-byte align-4 pthread_rwlockattr_t",
+            "PTHREAD_RWLOCK_INITIALIZER",
+            "all thirteen exact rwlock/rwlockattr function-pointer declarations",
+            "28-context C/C++",
+            "every pthread_rwlock_* and pthread_rwlockattr_* signature",
+            "unmangled C linkage",
+            "compile-only partial evidence",
+            "does not claim broad installed-header, pthread/TLS, or C runtime completion",
+        ):
+            self.assertIn(phrase, rwlock_headers)
+        rwlock_scope = rwlock["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "static/private and process-shared initialization",
+            "all attribute get/set status rules",
+            "concurrent readers",
+            "reader/writer exclusion",
+            "expired and invalid absolute CLOCK_REALTIME timed-lock statuses",
+            "initial-try-before-deadline-validation rule",
+            "wake-before-deadline handoff",
+            "stale errno preservation",
+            "cross-process shared-futex reader and writer wakeups",
+            "all thirteen public rwlock/rwlockattr APIs plus seven hidden __pthread_rwlock_* definitions",
+            "weak default same-address alias",
+            "lock cmpxchg",
+            "futex=202",
+            "clock_gettime=228",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "dynamic TLS resolver",
+            "allocator",
+            "ambient runtime",
+            "priority/fairness guarantees",
+            "general pthread synchronization or runtime ownership",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, rwlock_scope)
         self.assertEqual(
             private_condition["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-cond-private",
@@ -6562,6 +6688,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-pthread-normal-mutex must use the closed libc-pthread-mutex-normal command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_rwlock = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-rwlock"
+        )
+        changed_rwlock["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-rwlock must use the closed libc-pthread-rwlock command",
         ):
             ledger.validate_ledger(changed)
 

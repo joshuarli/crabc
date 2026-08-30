@@ -6125,6 +6125,292 @@ def require_static_pthread_normal_mutex_artifact(family: Mapping[str, Any]) -> N
     )
 
 
+def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the complete private rwlock ABI block without promotion.
+
+    This is deliberately a bounded static C artifact even though it covers the
+    installed rwlock and rwlock-attribute spelling as one coherent state
+    machine.  Keep its public storage, shared-futex route, timed ordering, and
+    weak alias graph durable without mistaking that evidence for pthread/TLS
+    or platform completion.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-rwlock"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
+    )
+    require(
+        len(artifacts) == 15,
+        "libc.pthread-tls must retain exactly fifteen private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-rwlock must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Fifteen separately verified static artifacts",
+        "complete private rwlock/rwlockattr block with private and process-shared futex waits",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after the rwlock artifact",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "complete installed `pthread_rwlock_*` and `pthread_rwlockattr_*` family",
+        "56-byte, eight-byte-aligned rwlock",
+        "eight-byte, four-byte-aligned attribute record",
+        "weak same-address aliases of hidden `__pthread_rwlock_*` definitions",
+        "concurrent readers",
+        "reader/writer exclusion",
+        "absolute `CLOCK_REALTIME` timeout status",
+        "initial-try ordering",
+        "wake-before-deadline handoff",
+        "caller-`errno` preservation",
+        "cross-process shared-futex reader and writer wakeups",
+        "Fixture-local raw time, mapping, fork, wait, and exit plumbing",
+        "cancellation",
+        "priority or fairness guarantees",
+        "C11 synchronization",
+        "general pthread synchronization or runtime ownership",
+        "dynamic/loader TLS",
+        "CRT/sysroot integration",
+        "thread.pthread-c11",
+        "full pthread/TLS or x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-rwlock description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/atomic.rs",
+        "libc/src/c_abi/x86_64/pthread_rwlock.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/mman.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "include/stdint.h",
+        "include/sys/mman.h",
+        "include/sys/syscall.h",
+        "include/sys/types.h",
+        "include/time.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/run_types_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_rwlock_probe.c",
+        "compat/x86_64/libc_pthread_rwlock_start.S",
+        "compat/x86_64/run_libc_pthread_rwlock.sh",
+        "compat/x86_64/run_libc_static_tls_v1.sh",
+        "compat/x86_64/run_libc_pthread_create_join_tls.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "static-c-pthread-rwlock source owners",
+            )
+        )
+        == expected_sources,
+        "static-c-pthread-rwlock source owners drifted",
+    )
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "pthread_rwlock_init.c",
+        "pthread_rwlock_destroy.c",
+        "pthread_rwlock_{tryrdlock,timedrdlock,rdlock}.c",
+        "pthread_rwlock_{trywrlock,timedwrlock,wrlock}.c",
+        "pthread_rwlock_unlock.c",
+        "pthread_rwlockattr_{init,destroy,setpshared}.c",
+        "pthread_attr_get.c::pthread_rwlockattr_getpshared",
+        "__timedwait.c",
+        "56 bytes",
+        "8-byte alignment",
+        "offsets 0/4/8",
+        "0x7fffffff",
+        "8 bytes",
+        "4-byte alignment",
+        "PTHREAD_PROCESS_PRIVATE=0",
+        "PTHREAD_PROCESS_SHARED=1",
+        "pshared*128",
+        "EAGAIN",
+        "EBUSY",
+        "weak same-address aliases",
+        "futex=202",
+        "`_rw_shared ^ 128`",
+        "r10",
+        "CLOCK_REALTIME",
+        "clock_gettime=228",
+        "initial try",
+        "without mutating C errno",
+        "fork=57",
+        "wait4=61",
+        "exit=60",
+        "general pthread runtime",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-rwlock ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "pthread.h",
+        "time.h",
+        "errno.h",
+        "stdint.h",
+        "sys/mman.h",
+        "sys/syscall.h",
+        "bits/alltypes.h",
+        "bits/mman.h",
+        "bits/syscall.h",
+        "56-byte align-8 pthread_rwlock_t",
+        "8-byte align-4 pthread_rwlockattr_t",
+        "PTHREAD_RWLOCK_INITIALIZER",
+        "all thirteen exact rwlock/rwlockattr function-pointer declarations",
+        "28-context C/C++",
+        "every pthread_rwlock_* and pthread_rwlockattr_* signature",
+        "unmangled C linkage",
+        "compile-only partial evidence",
+        "does not claim broad installed-header, pthread/TLS, or C runtime completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-pthread-rwlock header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-rwlock"},
+        "static-c-pthread-rwlock must use the closed libc-pthread-rwlock command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "static/private and process-shared initialization",
+        "all attribute get/set status rules",
+        "concurrent readers",
+        "reader/writer exclusion",
+        "expired and invalid absolute CLOCK_REALTIME timed-lock statuses",
+        "initial-try-before-deadline-validation rule",
+        "wake-before-deadline handoff",
+        "stale errno preservation",
+        "cross-process shared-futex reader and writer wakeups",
+        "all thirteen public rwlock/rwlockattr APIs plus seven hidden __pthread_rwlock_* definitions",
+        "weak default same-address alias",
+        "lock cmpxchg",
+        "futex=202",
+        "clock_gettime=228",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "dynamic TLS resolver",
+        "allocator",
+        "ambient runtime",
+        "priority/fairness guarantees",
+        "general pthread synchronization or runtime ownership",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-rwlock evidence scope omits {phrase}",
+        )
+
+    static_exports = {
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    selected_public_exports = {
+        "pthread_rwlock_init",
+        "pthread_rwlock_destroy",
+        "pthread_rwlock_rdlock",
+        "pthread_rwlock_tryrdlock",
+        "pthread_rwlock_timedrdlock",
+        "pthread_rwlock_wrlock",
+        "pthread_rwlock_trywrlock",
+        "pthread_rwlock_timedwrlock",
+        "pthread_rwlock_unlock",
+        "pthread_rwlockattr_init",
+        "pthread_rwlockattr_destroy",
+        "pthread_rwlockattr_setpshared",
+        "pthread_rwlockattr_getpshared",
+    }
+    selected_hidden_exports = {
+        "__pthread_rwlock_rdlock",
+        "__pthread_rwlock_tryrdlock",
+        "__pthread_rwlock_timedrdlock",
+        "__pthread_rwlock_wrlock",
+        "__pthread_rwlock_trywrlock",
+        "__pthread_rwlock_timedwrlock",
+        "__pthread_rwlock_unlock",
+    }
+    require(
+        {symbol for symbol in static_exports if symbol.startswith("pthread_rwlock")}
+        == selected_public_exports,
+        "static-c-pthread-rwlock must expose exactly its thirteen public rwlock symbols",
+    )
+    require(
+        {symbol for symbol in static_exports if symbol.startswith("__pthread_rwlock")}
+        == selected_hidden_exports,
+        "static-c-pthread-rwlock must expose exactly its seven hidden rwlock symbols",
+    )
+    require(
+        "run_libc_pthread_rwlock.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-pthread-rwlock dispatcher binding is missing",
+    )
+
+
 def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet one private waiter/barrier/requeue block without promotion.
 
@@ -6608,8 +6894,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 14,
-        "libc.pthread-tls must retain exactly fourteen private verified artifacts",
+        len(artifacts) == 15,
+        "libc.pthread-tls must retain exactly fifteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -6619,7 +6905,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Fourteen separately verified static artifacts",
+        "Fifteen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -6935,8 +7221,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 14,
-        "libc.pthread-tls must retain exactly fourteen private verified artifacts",
+        len(artifacts) == 15,
+        "libc.pthread-tls must retain exactly fifteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -6946,7 +7232,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Fourteen separately verified static artifacts",
+        "Fifteen separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -12417,6 +12703,7 @@ def validate_ledger(
     require_static_pthread_c11_detach_artifact(by_id["libc.pthread-tls"])
     require_static_thrd_sleep_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_normal_mutex_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_rwlock_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_private_cond_artifact(by_id["libc.pthread-tls"])
     require_static_c11_plain_sync_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_once_artifact(by_id["libc.pthread-tls"])

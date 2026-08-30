@@ -9,8 +9,10 @@
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! process-private normal `pthread_mutex_*` block and its paired private
-//! process-private condition-variable handoff, plus a distinct C11 plain
-//! mutex/condition adapter, a private 128-key pthread/C11 TSD lifecycle for
+//! process-private condition-variable handoff, a complete selected
+//! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
+//! process-shared futex operation, plus a distinct C11 plain mutex/condition
+//! adapter, a private 128-key pthread/C11 TSD lifecycle for
 //! the selected main and worker paths, and normal-return `pthread_once`/C11
 //! `call_once` state machine over those private engines, all backed by the
 //! private Static Initial TLS v1 final-executable template, plus bounded weak `pthread_self`/
@@ -50,7 +52,11 @@
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
 //! process-private conditions paired with those normal mutexes. The C11 plain
 //! synchronization sibling maps only distinct `mtx_t`/`cnd_t` storage through
-//! those same private engines. Its TSD sibling stores only selected-main and
+//! those same private engines. The independent rwlock block owns the complete
+//! selected 56-byte rwlock/8-byte attribute surface, including realtime timed
+//! waits, musl-shaped hidden/weak aliases, and process-shared futex wakeups,
+//! but does not complete general pthread synchronization. Its TSD sibling
+//! stores only selected-main and
 //! selected-worker values in a bounded private table and runs worker
 //! destructors for at most four clear-before-callback passes; it excludes
 //! cancellation, main process exit, foreign callers, fork, dynamic/loader
@@ -129,6 +135,8 @@ mod pthread_tsd;
 mod pthread_mutex;
 #[path = "pthread_cond.rs"]
 mod pthread_cond;
+#[path = "pthread_rwlock.rs"]
+mod pthread_rwlock;
 #[path = "c11_thread_lifecycle.rs"]
 mod c11_thread_lifecycle;
 #[path = "c11_sync.rs"]

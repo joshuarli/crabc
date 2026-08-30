@@ -136,6 +136,24 @@ using crabc_pthread_cond_destroy_signature = int (*)(pthread_cond_t *);
 using crabc_pthread_cond_wait_signature = int (*)(pthread_cond_t *, pthread_mutex_t *);
 using crabc_pthread_cond_signal_signature = int (*)(pthread_cond_t *);
 using crabc_pthread_cond_broadcast_signature = int (*)(pthread_cond_t *);
+using crabc_pthread_rwlock_init_signature = int (*)
+	(pthread_rwlock_t *, const pthread_rwlockattr_t *);
+using crabc_pthread_rwlock_destroy_signature = int (*)(pthread_rwlock_t *);
+using crabc_pthread_rwlock_rdlock_signature = int (*)(pthread_rwlock_t *);
+using crabc_pthread_rwlock_tryrdlock_signature = int (*)(pthread_rwlock_t *);
+using crabc_pthread_rwlock_timedrdlock_signature = int (*)
+	(pthread_rwlock_t *, const timespec *);
+using crabc_pthread_rwlock_wrlock_signature = int (*)(pthread_rwlock_t *);
+using crabc_pthread_rwlock_trywrlock_signature = int (*)(pthread_rwlock_t *);
+using crabc_pthread_rwlock_timedwrlock_signature = int (*)
+	(pthread_rwlock_t *, const timespec *);
+using crabc_pthread_rwlock_unlock_signature = int (*)(pthread_rwlock_t *);
+using crabc_pthread_rwlockattr_init_signature = int (*)(pthread_rwlockattr_t *);
+using crabc_pthread_rwlockattr_destroy_signature = int (*)(pthread_rwlockattr_t *);
+using crabc_pthread_rwlockattr_setpshared_signature = int (*)
+	(pthread_rwlockattr_t *, int);
+using crabc_pthread_rwlockattr_getpshared_signature = int (*)
+	(const pthread_rwlockattr_t *, int *);
 using crabc_once_init_signature = void (*)();
 using crabc_pthread_once_signature = int (*)(
 	pthread_once_t *, crabc_once_init_signature);
@@ -202,6 +220,32 @@ static_assert(__is_same(decltype(&pthread_cond_signal),
 	crabc_pthread_cond_signal_signature), "pthread_cond_signal signature");
 static_assert(__is_same(decltype(&pthread_cond_broadcast),
 	crabc_pthread_cond_broadcast_signature), "pthread_cond_broadcast signature");
+static_assert(__is_same(decltype(&pthread_rwlock_init),
+	crabc_pthread_rwlock_init_signature), "pthread_rwlock_init signature");
+static_assert(__is_same(decltype(&pthread_rwlock_destroy),
+	crabc_pthread_rwlock_destroy_signature), "pthread_rwlock_destroy signature");
+static_assert(__is_same(decltype(&pthread_rwlock_rdlock),
+	crabc_pthread_rwlock_rdlock_signature), "pthread_rwlock_rdlock signature");
+static_assert(__is_same(decltype(&pthread_rwlock_tryrdlock),
+	crabc_pthread_rwlock_tryrdlock_signature), "pthread_rwlock_tryrdlock signature");
+static_assert(__is_same(decltype(&pthread_rwlock_timedrdlock),
+	crabc_pthread_rwlock_timedrdlock_signature), "pthread_rwlock_timedrdlock signature");
+static_assert(__is_same(decltype(&pthread_rwlock_wrlock),
+	crabc_pthread_rwlock_wrlock_signature), "pthread_rwlock_wrlock signature");
+static_assert(__is_same(decltype(&pthread_rwlock_trywrlock),
+	crabc_pthread_rwlock_trywrlock_signature), "pthread_rwlock_trywrlock signature");
+static_assert(__is_same(decltype(&pthread_rwlock_timedwrlock),
+	crabc_pthread_rwlock_timedwrlock_signature), "pthread_rwlock_timedwrlock signature");
+static_assert(__is_same(decltype(&pthread_rwlock_unlock),
+	crabc_pthread_rwlock_unlock_signature), "pthread_rwlock_unlock signature");
+static_assert(__is_same(decltype(&pthread_rwlockattr_init),
+	crabc_pthread_rwlockattr_init_signature), "pthread_rwlockattr_init signature");
+static_assert(__is_same(decltype(&pthread_rwlockattr_destroy),
+	crabc_pthread_rwlockattr_destroy_signature), "pthread_rwlockattr_destroy signature");
+static_assert(__is_same(decltype(&pthread_rwlockattr_setpshared),
+	crabc_pthread_rwlockattr_setpshared_signature), "pthread_rwlockattr_setpshared signature");
+static_assert(__is_same(decltype(&pthread_rwlockattr_getpshared),
+	crabc_pthread_rwlockattr_getpshared_signature), "pthread_rwlockattr_getpshared signature");
 static_assert(__is_same(decltype(&pthread_once), crabc_pthread_once_signature),
 	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
@@ -300,6 +344,32 @@ static crabc_pthread_cond_signal_signature const crabc_force_pthread_cond_signal
 	__attribute__((used)) = &pthread_cond_signal;
 static crabc_pthread_cond_broadcast_signature const crabc_force_pthread_cond_broadcast
 	__attribute__((used)) = &pthread_cond_broadcast;
+static crabc_pthread_rwlock_init_signature const crabc_force_pthread_rwlock_init
+	__attribute__((used)) = &pthread_rwlock_init;
+static crabc_pthread_rwlock_destroy_signature const crabc_force_pthread_rwlock_destroy
+	__attribute__((used)) = &pthread_rwlock_destroy;
+static crabc_pthread_rwlock_rdlock_signature const crabc_force_pthread_rwlock_rdlock
+	__attribute__((used)) = &pthread_rwlock_rdlock;
+static crabc_pthread_rwlock_tryrdlock_signature const crabc_force_pthread_rwlock_tryrdlock
+	__attribute__((used)) = &pthread_rwlock_tryrdlock;
+static crabc_pthread_rwlock_timedrdlock_signature const crabc_force_pthread_rwlock_timedrdlock
+	__attribute__((used)) = &pthread_rwlock_timedrdlock;
+static crabc_pthread_rwlock_wrlock_signature const crabc_force_pthread_rwlock_wrlock
+	__attribute__((used)) = &pthread_rwlock_wrlock;
+static crabc_pthread_rwlock_trywrlock_signature const crabc_force_pthread_rwlock_trywrlock
+	__attribute__((used)) = &pthread_rwlock_trywrlock;
+static crabc_pthread_rwlock_timedwrlock_signature const crabc_force_pthread_rwlock_timedwrlock
+	__attribute__((used)) = &pthread_rwlock_timedwrlock;
+static crabc_pthread_rwlock_unlock_signature const crabc_force_pthread_rwlock_unlock
+	__attribute__((used)) = &pthread_rwlock_unlock;
+static crabc_pthread_rwlockattr_init_signature const crabc_force_pthread_rwlockattr_init
+	__attribute__((used)) = &pthread_rwlockattr_init;
+static crabc_pthread_rwlockattr_destroy_signature const crabc_force_pthread_rwlockattr_destroy
+	__attribute__((used)) = &pthread_rwlockattr_destroy;
+static crabc_pthread_rwlockattr_setpshared_signature const crabc_force_pthread_rwlockattr_setpshared
+	__attribute__((used)) = &pthread_rwlockattr_setpshared;
+static crabc_pthread_rwlockattr_getpshared_signature const crabc_force_pthread_rwlockattr_getpshared
+	__attribute__((used)) = &pthread_rwlockattr_getpshared;
 static crabc_pthread_once_signature const crabc_force_pthread_once
 	__attribute__((used)) = &pthread_once;
 static crabc_thrd_create_signature const crabc_force_thrd_create

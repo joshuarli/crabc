@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 bounded static crabc-libc normal pthread-mutex evidence.
+# Native Linux/x86-64 static crabc-libc pthread read/write-lock evidence.
 #
-# The same project-header fixture first runs against pinned musl 1.2.6, then
-# as a true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves NULL-attribute process-private normal-mutex init/lock/
-# trylock/unlock/destroy and two selected create/join workers under contention,
-# not general pthread synchronization, C11, CRT, loader, or public x86 support.
+# The same project-header fixture first executes with pinned musl 1.2.6, then
+# as a true `-nostdlib -static` executable linked solely through the selected
+# crabc archive.  It proves the complete rwlock and rwlockattr family,
+# same-address weak aliases, timed status behavior, private reader/writer
+# contention, and cross-process shared-futex wakeups.  It remains one private
+# artifact within planned `libc.pthread-tls`, not full pthread/TLS, C runtime,
+# sysroot, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-readonly EXECUTION_TIMEOUT=20s
+readonly EXECUTION_TIMEOUT=30s
 
 fail() {
-    printf 'ERROR: x86 static libc normal pthread mutex: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc pthread rwlock: %s\n' "$*" >&2
     exit 1
 }
 
@@ -54,6 +56,32 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+symbol_value() {
+    local symbols_path="$1"
+    local symbol="$2"
+
+    awk -v symbol="$symbol" '$NF == symbol && $4 == "FUNC" { print $2; exit }' \
+        "$symbols_path"
+}
+
+assert_weak_hidden_alias_pair() {
+    local symbols_path="$1"
+    local hidden_symbol="$2"
+    local public_symbol="$3"
+    local hidden_value
+    local public_value
+
+    grep -Eq "GLOBAL +HIDDEN +.*${hidden_symbol}$" "$symbols_path" ||
+        fail "${hidden_symbol} is not a hidden global function"
+    grep -Eq "WEAK +DEFAULT +.*${public_symbol}$" "$symbols_path" ||
+        fail "${public_symbol} is not a weak default function"
+    hidden_value="$(symbol_value "$symbols_path" "$hidden_symbol")"
+    public_value="$(symbol_value "$symbols_path" "$public_symbol")"
+    [ -n "$hidden_value" ] || fail "${hidden_symbol} has no ELF value"
+    [ "$hidden_value" = "$public_value" ] ||
+        fail "${public_symbol} is not the same-address alias of ${hidden_symbol}"
+}
+
 require_native_linux_x86_64
 for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
     require_tool "$tool"
@@ -64,11 +92,11 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-mutex-normal.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-rwlock.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-pthread-mutex-normal-reference"
-candidate="$work_dir/crabc-static-pthread-mutex-normal-candidate"
+reference="$work_dir/musl-pthread-rwlock-reference"
+candidate="$work_dir/crabc-static-pthread-rwlock-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -83,19 +111,20 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
-mutex_lock_disassembly="$work_dir/pthread-mutex-lock-disassembly"
-mutex_unlock_disassembly="$work_dir/pthread-mutex-unlock-disassembly"
+tryread_disassembly="$work_dir/rwlock-tryread-disassembly"
+unlock_disassembly="$work_dir/rwlock-unlock-disassembly"
+timedwait_disassembly="$work_dir/rwlock-timedwait-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_pthread_mutex_normal_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h pthread.h bits/alltypes.h; do
+    compat/x86_64/libc_pthread_rwlock_probe.c >/dev/null 2>"$header_trace"
+for header in errno.h pthread.h time.h sys/mman.h sys/syscall.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_mutex_normal_probe.c \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_rwlock_probe.c \
     -o "$reference"
 if timeout "$EXECUTION_TIMEOUT" "$reference"; then
     :
@@ -114,24 +143,28 @@ readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join pthread_mutex_init \
-    pthread_mutex_destroy pthread_mutex_lock pthread_mutex_trylock \
-    pthread_mutex_unlock; do
+    pthread_create pthread_join pthread_rwlock_init pthread_rwlock_destroy \
+    pthread_rwlock_rdlock pthread_rwlock_tryrdlock pthread_rwlock_timedrdlock \
+    pthread_rwlock_wrlock pthread_rwlock_trywrlock pthread_rwlock_timedwrlock \
+    pthread_rwlock_unlock pthread_rwlockattr_init pthread_rwlockattr_destroy \
+    pthread_rwlockattr_setpshared pthread_rwlockattr_getpshared \
+    __pthread_rwlock_rdlock __pthread_rwlock_tryrdlock \
+    __pthread_rwlock_timedrdlock __pthread_rwlock_wrlock \
+    __pthread_rwlock_trywrlock __pthread_rwlock_timedwrlock \
+    __pthread_rwlock_unlock; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_pthread_clone$' "$archive_elf_symbols" ||
-    fail "archive pthread clone boundary is not hidden"
-grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_symbols" ||
-    fail "archive Static Initial TLS v1 bootstrap is not hidden"
-for unselected in pthread_mutexattr_init pthread_mutexattr_destroy \
-    pthread_mutexattr_settype pthread_mutexattr_gettype pthread_mutex_timedlock \
-    pthread_mutex_consistent pthread_condattr_init pthread_condattr_destroy \
-    pthread_condattr_setclock pthread_condattr_getclock pthread_condattr_setpshared \
-    pthread_condattr_getpshared pthread_cond_timedwait; do
-    if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
-        fail "archive accidentally exports unselected ${unselected}"
-    fi
+for pair in \
+    '__pthread_rwlock_rdlock pthread_rwlock_rdlock' \
+    '__pthread_rwlock_tryrdlock pthread_rwlock_tryrdlock' \
+    '__pthread_rwlock_timedrdlock pthread_rwlock_timedrdlock' \
+    '__pthread_rwlock_wrlock pthread_rwlock_wrlock' \
+    '__pthread_rwlock_trywrlock pthread_rwlock_trywrlock' \
+    '__pthread_rwlock_timedwrlock pthread_rwlock_timedwrlock' \
+    '__pthread_rwlock_unlock pthread_rwlock_unlock'; do
+    set -- $pair
+    assert_weak_hidden_alias_pair "$archive_elf_symbols" "$1" "$2"
 done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 objdump -dr "$archive" >"$archive_disassembly"
@@ -142,11 +175,11 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_MUTEX_NORMAL_FREESTANDING \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_RWLOCK_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_pthread_mutex_normal_probe.c \
-    compat/x86_64/libc_pthread_mutex_normal_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_pthread_rwlock_probe.c \
+    compat/x86_64/libc_pthread_rwlock_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
@@ -154,11 +187,28 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join pthread_mutex_init \
-    pthread_mutex_destroy pthread_mutex_lock pthread_mutex_trylock \
-    pthread_mutex_unlock __crabc_x86_pthread_clone; do
+    pthread_create pthread_join pthread_rwlock_init pthread_rwlock_destroy \
+    pthread_rwlock_rdlock pthread_rwlock_tryrdlock pthread_rwlock_timedrdlock \
+    pthread_rwlock_wrlock pthread_rwlock_trywrlock pthread_rwlock_timedwrlock \
+    pthread_rwlock_unlock pthread_rwlockattr_init pthread_rwlockattr_destroy \
+    pthread_rwlockattr_setpshared pthread_rwlockattr_getpshared \
+    __pthread_rwlock_rdlock __pthread_rwlock_tryrdlock \
+    __pthread_rwlock_timedrdlock __pthread_rwlock_wrlock \
+    __pthread_rwlock_trywrlock __pthread_rwlock_timedwrlock \
+    __pthread_rwlock_unlock __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
+done
+for pair in \
+    '__pthread_rwlock_rdlock pthread_rwlock_rdlock' \
+    '__pthread_rwlock_tryrdlock pthread_rwlock_tryrdlock' \
+    '__pthread_rwlock_timedrdlock pthread_rwlock_timedrdlock' \
+    '__pthread_rwlock_wrlock pthread_rwlock_wrlock' \
+    '__pthread_rwlock_trywrlock pthread_rwlock_trywrlock' \
+    '__pthread_rwlock_timedwrlock pthread_rwlock_timedwrlock' \
+    '__pthread_rwlock_unlock pthread_rwlock_unlock'; do
+    set -- $pair
+    assert_weak_hidden_alias_pair "$candidate_symbols" "$1" "$2"
 done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
@@ -183,29 +233,33 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
-    compat/x86_64/libc_pthread_mutex_normal_start.S ||
+    compat/x86_64/libc_pthread_rwlock_start.S ||
     fail "fixture start does not delegate first-thread TLS to libc"
 if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
-    compat/x86_64/libc_pthread_mutex_normal_start.S; then
+    compat/x86_64/libc_pthread_rwlock_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=pthread_mutex_lock "$candidate" >"$mutex_lock_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks its x86 atomic compare-exchange"
+objdump -d --disassemble=__pthread_rwlock_tryrdlock "$candidate" \
+    >"$tryread_disassembly"
+grep -Eq 'lock[[:space:]]+cmpxchg' "$tryread_disassembly" ||
+    fail "pthread_rwlock_tryrdlock lacks its x86 atomic compare-exchange"
+objdump -d --disassemble=__pthread_rwlock_unlock "$candidate" \
+    >"$unlock_disassembly"
+grep -Eq 'lock[[:space:]]+cmpxchg' "$unlock_disassembly" ||
+    fail "pthread_rwlock_unlock lacks its x86 atomic compare-exchange"
 grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks futex syscall number 202"
-grep -Eq '\$0x80,%esi|\$0x80,%rsi' "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks FUTEX_WAIT_PRIVATE"
-objdump -d --disassemble=pthread_mutex_unlock "$candidate" \
-    >"$mutex_unlock_disassembly"
-grep -Eq 'xchg[[:space:]].*\(%r' "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks its atomic exchange release"
+    "$unlock_disassembly" ||
+    fail "pthread_rwlock_unlock lacks futex syscall number 202"
+timedwait_symbol="$(nm -g --defined-only "$candidate" |
+    awk '$3 ~ /pthread_rwlock16timed_futex_wait$/ { print $3; exit }')"
+[ -n "$timedwait_symbol" ] || fail "candidate lacks the private timed-futex helper"
+objdump -d --disassemble="$timedwait_symbol" "$candidate" >"$timedwait_disassembly"
 grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-    "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks futex syscall number 202"
-grep -Eq '\$0x81,%esi|\$0x81,%rsi' "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks FUTEX_WAKE_PRIVATE"
+    "$timedwait_disassembly" ||
+    fail "rwlock timed wait lacks futex syscall number 202"
+grep -Eq '\$0xe4,%eax|\$0xe4,%rax|\$0x00000000000000e4,%rax' \
+    "$timedwait_disassembly" ||
+    fail "rwlock timed wait lacks clock_gettime syscall number 228"
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :
@@ -214,4 +268,4 @@ else
     fail "candidate execution exited ${candidate_status}"
 fi
 
-printf 'x86 static crabc-libc normal pthread mutex: PASS\n'
+printf 'x86 static crabc-libc pthread rwlock: PASS\n'

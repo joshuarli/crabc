@@ -2,8 +2,9 @@
 //!
 //! The standalone native probe established this exact i32 helper contract
 //! before it was admitted to the selected static archive. It now serves the
-//! private normal-mutex and its private condition-variable handoff artifacts
-//! as well, but remains far smaller than a general C atomic or pthread
+//! private normal-mutex and its private condition-variable handoff artifacts,
+//! plus the separately bounded pthread rwlock state machine, but remains far
+//! smaller than a general C atomic or pthread
 //! synchronization runtime. The complete public C runtime remains
 //! Linux/AArch64-only until every x86 promotion gate passes.
 

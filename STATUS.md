@@ -39,7 +39,7 @@ does not select another executable/root, general loader lifecycle or DSO
 finalization, candidate libc, RuntimeV1, dynamic CRT/sysroot, or public x86
 support.
 
-The x86 lane now has fourteen private static artifacts inside still-planned
+The x86 lane now has fifteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -105,6 +105,24 @@ process-shared/timed mutexes, C11 mutex or condition behavior beyond the
 separately selected plain adapter, general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, and public x86 support. The separate
+`./scripts/dev-x86_64.sh libc-pthread-rwlock` artifact is a fifteenth private
+static `verified_artifact` in the same still-planned `libc.pthread-tls`
+family. Its pinned-musl/reference and true static-candidate routes select the
+complete installed `pthread_rwlock_*` and `pthread_rwlockattr_*` family over
+the 56-byte, eight-byte-aligned rwlock and eight-byte, four-byte-aligned
+attribute records: init/destroy, reader and writer lock/try/timed-lock,
+unlock, and attribute init/destroy/get/set process sharing. The seven
+lock-operation public names are weak same-address aliases of hidden
+`__pthread_rwlock_*` definitions. The fixture proves static and private or
+process-shared initialization, concurrent readers, reader/writer exclusion,
+expired and future absolute `CLOCK_REALTIME` timeout status including musl's
+initial-try ordering, wake-before-deadline handoff, caller-`errno` preservation, and
+cross-process shared-futex reader and writer wakeups. Its raw time, mapping,
+fork, wait, and exit plumbing is fixture-local rather than a C process-runtime
+claim. It does not select cancellation, priority or fairness guarantees,
+general pthread synchronization or runtime ownership, dynamic/loader TLS,
+CRT/sysroot integration, full pthread/TLS or x86-64 parity, promotion, or
+public x86 support. The separate
 `./scripts/dev-x86_64.sh libc-pthread-cond-private` artifact is an eleventh
 private static `verified_artifact` in that same still-planned
 `libc.pthread-tls` family. It admits only a 48-byte, eight-byte-aligned

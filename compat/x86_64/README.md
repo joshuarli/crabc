@@ -353,6 +353,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-detach
 ./scripts/dev-x86_64.sh libc-thrd-sleep
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
+./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
 ./scripts/dev-x86_64.sh libc-c11-plain-sync
 ./scripts/dev-x86_64.sh libc-pthread-c11-once
@@ -454,7 +455,9 @@ The direct `utime-header-abi` gate checks the x86 LP64 `struct utimbuf`,
 `utime` declaration, and C++ C linkage. The `pthread-c11-header-abi` gate is a
 28-context C11/C++17 feature-profile matrix for selected `pthread.h`,
 `threads.h`, and `sched.h` layouts, macros, type identities, include orders,
-GNU declarations, and unmangled C linkage. Both are compile-only partial
+GNU declarations, and unmangled C linkage. Its selected declarations include
+every `pthread_rwlock_*` and `pthread_rwlockattr_*` signature, and the C++
+object probe requires their unmangled C linkage. Both are compile-only partial
 evidence: they do not select archive linkage, pthread behavior, header-family
 completion, or public x86 support.
 
@@ -2125,6 +2128,26 @@ separately selected plain adapter, general condition variables, cancellation,
 dynamic/loader TLS, CRT/sysroot integration, general pthread synchronization,
 full pthread/TLS or x86-64 parity, or public x86 support.
 
+`libc-pthread-rwlock` is a fifteenth separately recorded private static
+`verified_artifact` under that same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects the complete installed
+`pthread_rwlock_*` and `pthread_rwlockattr_*` family over the 56-byte,
+eight-byte-aligned rwlock and eight-byte, four-byte-aligned attribute records:
+init/destroy, reader and writer lock/try/timed-lock, unlock, and attribute
+init/destroy/get/set process sharing. The seven lock-operation public names
+are weak same-address aliases of hidden `__pthread_rwlock_*` definitions. The
+fixture proves static and private or process-shared initialization, concurrent
+readers, reader/writer exclusion, expired and future absolute `CLOCK_REALTIME`
+timeout status including musl's initial-try ordering, wake-before-deadline handoff,
+caller-`errno` preservation, and cross-process shared-futex reader and writer
+wakeups. Fixture-local raw time, mapping, fork, wait, and exit plumbing does
+not select a C process runtime, CRT, loader, or public x86 support. It does
+not select cancellation, priority or fairness guarantees, general pthread
+synchronization or runtime ownership, dynamic/loader TLS, CRT/sysroot
+integration, full pthread/TLS or x86-64 parity, promotion, or public x86
+support.
+
 `libc-pthread-cond-private` is an eleventh separately recorded private static
 `verified_artifact` under that same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -2908,7 +2931,7 @@ deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-pthread-mutex-normal`,
-`libc-pthread-cond-private`, `libc-c11-plain-sync`, or
+`libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, or
 `libc-pthread-c11-once`, or `libc-pthread-c11-tsd`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. `libc-thrd-sleep` deliberately
@@ -3256,7 +3279,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,
-`libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
+`libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
