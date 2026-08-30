@@ -865,6 +865,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memfd-create-header-abi",
             "vector-io-header-abi",
             "libc-crt1-static-tls",
+            "crt-object-bundle",
             "crt-dynamic-startup",
             "linux-5-10-uapi",
             "candidate-header-closure",

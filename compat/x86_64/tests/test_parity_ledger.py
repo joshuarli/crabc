@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 86)
+        self.assertEqual(report["verified_artifact_count"], 87)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -284,6 +284,50 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(changed_artifact, dict)
         changed_artifact["description"] = "private dynamic CRT"
         with self.assertRaisesRegex(ledger.LedgerError, "dynamic-pie-scrt1-startup description omits"):
+            ledger.validate_ledger(changed)
+
+    def test_x86_crt_object_bundle_is_private_provenance_not_a_sysroot(self) -> None:
+        data = self.data()
+        family = self.family(data, "crt.dynamic-startup")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry for entry in artifacts if entry["id"] == "x86-crt-five-object-provenance-bundle"
+        )
+        assert isinstance(artifact, dict)
+        for phrase in (
+            "Two independently-created clean direct-Rust builds",
+            "`crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o`",
+            "byte-identical",
+            "compiler-runtime input",
+            "only the manifest plus those five objects",
+            "owned sysroot",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh crt-object-bundle"},
+        )
+        for owner in (
+            "crt/build_x86_64_bundle.py",
+            "crt/x86_64-object-bundle.md",
+            "compat/x86_64/run_crt_object_bundle.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "crt.dynamic-startup")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "x86-crt-five-object-provenance-bundle"
+        )
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private CRT bundle"
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 CRT object-bundle description omits"):
             ledger.validate_ledger(changed)
 
     def test_header_layout_manifest_is_a_closed_direct_probe_inventory(self) -> None:

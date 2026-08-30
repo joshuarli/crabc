@@ -5217,6 +5217,66 @@ def require_verified_artifacts(
     return records
 
 
+def require_x86_crt_object_bundle_artifact(family: Mapping[str, Any]) -> None:
+    """Keep private five-object provenance distinct from a sysroot claim."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[crt.dynamic-startup].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "x86-crt-five-object-provenance-bundle"]
+    require(len(matching) == 1, "crt.dynamic-startup needs exactly one x86 CRT object-bundle artifact")
+    require(family.get("status") == "planned", "x86 CRT object bundle must not promote crt.dynamic-startup")
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `crt.dynamic-startup`",
+        "Two independently-created clean direct-Rust builds",
+        "`crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o`",
+        "byte-identical",
+        "`rustc --emit=obj`",
+        "CRT, and compiler-runtime input",
+        "only the manifest plus those five objects",
+        "owned sysroot",
+        "public x86 support",
+    ):
+        require(phrase in description, f"x86 CRT object-bundle description omits {phrase}")
+    expected_sources = {
+        "crt/build_x86_64.py",
+        "crt/build_x86_64_bundle.py",
+        "crt/src/x86_64_crt1.rs",
+        "crt/src/x86_64_Scrt1.rs",
+        "crt/src/x86_64_rcrt1.rs",
+        "crt/src/x86_64_crti.rs",
+        "crt/src/x86_64_crtn.rs",
+        "crt/x86_64-object-bundle.md",
+        "compat/x86_64/run_crt_object_bundle.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "x86 CRT object-bundle source owners")) == expected_sources,
+        "x86 CRT object-bundle source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh crt-object-bundle"},
+        "x86 CRT object bundle must use the dedicated native command",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_crt_object_bundle.sh").read_text()
+    for phrase in ("build_x86_64_bundle.py", "two clean builds", "not a sysroot"):
+        require(phrase in runner, f"x86 CRT object-bundle runner omits {phrase}")
+    bundle_builder = (ROOT / "crt" / "build_x86_64_bundle.py").read_text()
+    for phrase in (
+        "OBJECT_NAMES = (\"crt1.o\", \"Scrt1.o\", \"rcrt1.o\", \"crti.o\", \"crtn.o\")",
+        "two clean x86 CRT builds diverged",
+        "no_ambient_crt_or_compiler_runtime_input",
+        "no_headers_libraries_loader_driver_or_sysroot_staged",
+    ):
+        require(phrase in bundle_builder, f"x86 CRT object-bundle builder omits {phrase}")
+
+
 def require_dynamic_pie_scrt1_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the private dynamic-PIE entry bridge without CRT promotion."""
     artifacts = require_verified_artifacts(
@@ -15001,6 +15061,7 @@ def validate_ledger(
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_ldso_owned_crt_handoff_publication_artifact(by_id["ldso.dynamic-runtime"])
+    require_x86_crt_object_bundle_artifact(by_id["crt.dynamic-startup"])
     require_dynamic_pie_scrt1_artifact(by_id["crt.dynamic-startup"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
