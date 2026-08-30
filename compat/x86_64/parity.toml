@@ -5561,6 +5561,59 @@ x86_header_prerequisites = [
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-locale-multibyte", scope = "Pinned-musl project-header C reference plus one true dependency-free x86 crabc-libc archive and -nostdlib/static candidate. The gate requires the separate C/C++ named-locale/multibyte header ABI/linkage matrix; the sixteen selected entry points alongside the aggregate static C ABI export ratchet; archive and final-ELF purity; direct fs initial-TLS errno with no dynamic TLS resolver; no interpreter, DT_NEEDED, unresolved symbols, locale-object, iconv, wide-stream, allocator, or ambient runtime dependency; and matching C/POSIX/C.UTF-8 named-state with CTYPE-only built-in UTF-8, lconv, UTF-8/code-unit, error/reset, initial-state string-conversion behavior, and one caller-owned positive-capacity UTF-8 mbsrtowcs resume. Its candidate-only parser regression enforces the narrower returned-mixed-form input boundary. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not locale/text/stdio family completion, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and C/POSIX behavior oracle for src/locale/setlocale.c, locale_map.c, localeconv.c, src/ctype/__ctype_get_mb_cur_max.c, and the selected src/multibyte internal/state/conversion leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 pointer/size_t convention plus wchar_t, wint_t, mbstate_t, lconv, C/C++ linkage, and initial-exec errno TLS fixture contract." }]
 
+[[family.verified_artifact]]
+id = "static-c-text-math-locale-stdio-composition"
+description = "Private native x86 selected-static C composition artifact inside still-planned `libc.text-math-locale-stdio`. One project-header fixture first executes through pinned musl 1.2.6 and then a dependency-free `-nostdlib -static` crabc-libc archive. It crosses only existing `setlocale`/`localeconv`/`mbrtowc` named C.UTF-8 state, `strtod` C-locale parsing, `__fpclassify` binary64 classification, direct initial-exec errno TLS, and permanent `stdout` `fputc`/`fflush` behavior: valid UTF-8 leaves stale errno, an invalid lead sets EILSEQ, a successful parse preserves that errno, and a pipe-observed explicit stream flush preserves it again. The runner requires all four existing math/complex, float-parse, locale/multibyte, and permanent-standard-stream C/C++ header matrices; ratchets the complete selected archive export list; rejects interpreter/DT_NEEDED/unresolved symbols, dynamic TLS, formatter/path/wide streams, locale objects, `_l` parsers, scalar libm, iconv, allocation, and ambient runtime dependencies; and reaches archive-owned Static Initial TLS v1 from the untouched entry stack. It is a cross-surface regression only, not another C wrapper or a claim of general text, math, locale, stdio, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/float_parse.rs",
+  "libc/src/c_abi/x86_64/float_parse_musl_entry_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_support_x86_64.S",
+  "libc/src/c_abi/x86_64/float_parse_musl_x86_64.S",
+  "libc/src/c_abi/x86_64/math_complex.rs",
+  "libc/src/c_abi/x86_64/locale_multibyte.rs",
+  "libc/src/c_abi/x86_64/stdio_standard.rs",
+  "include/errno.h",
+  "include/float.h",
+  "include/limits.h",
+  "include/locale.h",
+  "include/math.h",
+  "include/stdio.h",
+  "include/stdlib.h",
+  "include/unistd.h",
+  "include/wchar.h",
+  "compat/x86_64/run_math_complex_header_abi.sh",
+  "compat/x86_64/run_float_parse_header_abi.sh",
+  "compat/x86_64/run_locale_multibyte_header_abi.sh",
+  "compat/x86_64/run_stdio_standard_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_text_math_locale_stdio_composition_probe.c",
+  "compat/x86_64/libc_text_math_locale_stdio_composition_start.S",
+  "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the selected pointer arguments in general-purpose registers and returns strtod binary64 in xmm0; __fpclassify receives that binary64 value as a double. The public wchar_t/mbstate_t/FILE pointer boundaries retain their separately selected x86 records, while the fixture observes stdout only through a pipe and never constructs FILE state.",
+  "Pinned musl 1.2.6 src/stdlib/strtod.c and internal/floatscan.c, src/math/__fpclassify.c, src/locale/{setlocale,locale_map,localeconv}.c, src/multibyte internal leaves, and src/stdio/{fputc,fflush}.c remain the source/behavior oracle for the individually selected seams; this artifact proves only their explicitly named composition.",
+  "The static candidate uses direct initial-exec errno TLS and the archive-owned __crabc_x86_static_tls_bootstrap once from the untouched Linux entry stack. It selects neither a fixture-installed FS base nor a general CRT/TLS lifecycle contract.",
+]
+x86_header_prerequisites = [
+  "The composition runner executes the existing pinned-musl/project-first math-complex, float-parse, locale-multibyte, and stdio-standard C/C++ profile matrices before it builds the one cross-surface fixture. That preserves each selected declaration/layout/linkage gate without pretending their union completes the installed header surface.",
+  "The fixture preprocesses project errno.h, float.h, limits.h, locale.h, math.h, stdio.h, stdlib.h, unistd.h, wchar.h, features.h, and bits/alltypes.h under the same headers-first root for both oracle and candidate. Its static assertions bind only binary64, wchar_t/mbstate_t, FP_NORMAL, and UTF-8 capacity facts used by this composition.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-text-math-locale-stdio-composition", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and true `-nostdlib -static` candidate executes the selected C.UTF-8 -> strtod -> __fpclassify -> stdout composition. It requires all four existing C/C++ header profile matrices, complete archive export ratchet, no interpreter/DT_NEEDED/unresolved or dynamic-TLS dependency, direct initial-exec errno TLS, and archive-owned Static Initial TLS v1 bootstrap. The pipe regression proves valid UTF-8 stale errno, EILSEQ propagation through successful parsing and explicit stdout flush, and binary64 classification. It is one verified artifact inside still-planned libc.text-math-locale-stdio, not general text/math/locale/stdio, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "C/POSIX behavior oracle for the exact selected composition of src/stdlib/strtod.c/internal floatscan, src/math/__fpclassify.c, src/locale setlocale/locale_map/localeconv, selected multibyte state, and src/stdio fputc/fflush leaves." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer ABI, xmm0 binary64 strtod return/classifier argument, and the existing x86 initial-exec TLS fixture boundary." }]
+
 [[family]]
 id = "libc.resolver"
 order = 100

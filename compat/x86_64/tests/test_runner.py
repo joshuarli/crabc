@@ -893,7 +893,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-extended-attributes",
             "libc-pathname-lifecycle",
             "libc-directory-streams",
-            "libc-stdio-standard",
+            "libc-stdio-standard|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-detach",
             "libc-memory-sync",
@@ -8724,6 +8724,68 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("stdio-standard-header-abi", dispatcher)
         self.assertIn("libc-stdio-standard", dispatcher)
         self.assertIn("run_stdio_standard_header_abi()", dispatcher)
+
+    def test_libc_static_c_abi_text_math_locale_stdio_composition_stays_cross_surface(
+        self,
+    ) -> None:
+        """The composition artifact stays an evidence join, not a new wrapper."""
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_text_math_locale_stdio_composition_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_text_math_locale_stdio_composition_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_text_math_locale_stdio_composition.sh"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "setlocale_entry",
+            "localeconv_entry",
+            "mbrtowc_entry",
+            "strtod_entry",
+            "fpclassify_entry",
+            "fputc_entry",
+            "fflush_entry",
+            "errno != EILSEQ",
+            "pipe_entry",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "untouched Linux entry stack",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_math_complex_header_abi.sh",
+            "run_float_parse_header_abi.sh",
+            "run_locale_multibyte_header_abi.sh",
+            "run_stdio_standard_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+            "__crabc_x86_static_tls_bootstrap",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn(
+            'id = "static-c-text-math-locale-stdio-composition"', parity_ledger,
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-text-math-locale-stdio-composition"',
+            parity_ledger,
+        )
+        self.assertIn("libc-text-math-locale-stdio-composition", dispatcher)
 
     def test_libc_static_c_abi_intmax_arithmetic_artifact_stays_narrow(self) -> None:
         static_root = (

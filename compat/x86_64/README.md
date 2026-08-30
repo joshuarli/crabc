@@ -595,6 +595,19 @@ Run `./scripts/dev-x86_64.sh stdio-standard-header-abi` for the declaration
 matrix and `./scripts/dev-x86_64.sh libc-stdio-standard` for the static
 runtime fixture.
 
+The separate `libc-text-math-locale-stdio-composition` gate is one private
+cross-surface static artifact, not another implementation wrapper or a family
+completion claim. After all four existing math/complex, float-parse,
+locale/multibyte, and permanent-standard-stream header matrices, its one
+project-header C fixture runs against pinned musl and a closed static candidate.
+It composes C.UTF-8 `mbrtowc`, C-locale `strtod`, `__fpclassify`, initial-exec
+errno, and pipe-observed `fputc`/`fflush(stdout)`: a valid UTF-8 conversion
+preserves stale errno, an invalid lead establishes EILSEQ, and successful
+parsing plus explicit stream output retain that datum. It rejects dynamic TLS,
+format/path/wide streams, locale objects, `_l` parsers, scalar libm, iconv,
+allocation, and ambient runtime dependencies. It does not establish general
+text/math/locale/stdio behavior, parity, promotion, or public x86 support.
+
 `libc-directory-streams` is the separate private static C runtime artifact
 that follows that compile-only header evidence. One project-header fixture runs
 first through pinned musl 1.2.6 and then through a true `-nostdlib -static`

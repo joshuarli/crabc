@@ -94,11 +94,11 @@ static_assert(__is_same(decltype(&ferror), crabc_stdio_stream_flag_signature),
 static_assert(__is_same(decltype(&clearerr), crabc_stdio_clearerr_signature),
     "clearerr C++ declaration");
 
-__attribute__((used)) static crabc_stdio_standard_stream_address_type
+__attribute__((used)) static volatile crabc_stdio_standard_stream_address_type
     crabc_stdio_stdin_reference = &stdin;
-__attribute__((used)) static crabc_stdio_standard_stream_address_type
+__attribute__((used)) static volatile crabc_stdio_standard_stream_address_type
     crabc_stdio_stdout_reference = &stdout;
-__attribute__((used)) static crabc_stdio_standard_stream_address_type
+__attribute__((used)) static volatile crabc_stdio_standard_stream_address_type
     crabc_stdio_stderr_reference = &stderr;
 __attribute__((used)) static crabc_stdio_fflush_signature
     crabc_stdio_fflush_reference = &fflush;
