@@ -111,9 +111,17 @@ fn two_detached_native_routes_park_independently_until_their_own_b_finish() {
         .join()
         .expect("A2 reaches its separate typed detached owner-exit boundary");
 
-    assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "ticket zero remains unavailable while both detached route tokens are parked"
+    // Both A routes are source-active, so ticket zero may complete a private
+    // operation beside their independent scheduler tokens. It cannot release
+    // either route's worker-admission claim.
+    let bookkeeping = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("ticket zero runs only its private operation beside live detached routes"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(bookkeeping) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its private client without changing either detached route"
     );
 
     let both_attached = Arc::new(Barrier::new(3));

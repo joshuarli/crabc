@@ -100,9 +100,17 @@ fn three_detached_native_routes_release_independently_in_non_fifo_order() {
     let second = publish_detached_owner();
     let third = publish_detached_owner();
 
-    assert!(
-        matches!(ticket_zero_allocate(73, false), TicketZeroPageAllocationResult::Unavailable),
-        "three independently parked detached-route tokens keep ticket zero unavailable"
+    // Every A route is still source-active here. Ticket zero may use its
+    // private dormant pair beside those separate scheduler tokens, but it
+    // cannot consume or otherwise settle any route's worker-admission claim.
+    let bookkeeping = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("ticket zero runs only its private operation beside live detached routes"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(bookkeeping) },
+        TicketZeroPageFreeResult::Freed,
+        "ticket zero returns its private client without changing any detached route"
     );
 
     let all_attached = Arc::new(Barrier::new(4));
