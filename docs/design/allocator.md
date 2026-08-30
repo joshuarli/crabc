@@ -2298,6 +2298,25 @@ control; the named static-root and final-shared-ELF audits bind this specific
 private lifecycle to the installed production images. These slices do not
 provide page-bearing allocator thread lifecycle, general terminal page
 release, or metadata reuse while a remote producer can exist.
+
+### Native focused-test invocation
+
+Run a focused `crabc-mimalloc` unit test through the supported native entry
+point, for example:
+
+```bash
+./scripts/dev.sh test -p crabc-mimalloc --lib persistent_worker_storage
+```
+
+`scripts/dev.sh test` sets the existing test-only
+`scripts/rustc_test_host_tool_wrapper.sh`. The production target configuration
+intentionally applies `-Ztls-model=initial-exec` target-wide, but Cargo also
+passes those target rustflags while it builds dynamically loaded build scripts
+and proc macros. A raw native `cargo test` invocation therefore makes the
+`rustversion` proc macro used by `generator` unavailable to `generator`'s
+build script. The wrapper removes only that TLS-model flag for those host
+tools; allocator target crates retain the required initial-exec model.
+
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control
