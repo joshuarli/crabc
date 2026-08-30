@@ -11,14 +11,15 @@
 // before another C allocation escapes. An attached worker may also source-push
 // one exact, still-live ticket-zero client through its page's atomic remote
 // head: that client itself pins the registered page, so this transfers no
-// page engine, scheduler claim, or stored client capability. One detached
+// page engine, scheduler claim, or stored client capability. A worker with its
+// own fully parked local session may use that same exact live-owner path; it
+// briefly resumes and re-parks only its own session for that source
+// publication. One detached
 // multi-page regular route may later accept exact frees and read one exact
 // usable extent from a fresh no-page worker while keeping its ledger and
 // admission private. While A remains parked and live, a fresh no-page B may
 // likewise read one exact source-recorded usable extent before
-// source-publishing an exact free. A second independently parked worker may
-// remain local-only while that one static route is occupied; it owns no
-// remote-free target and receives no client identity from A. Other
+// source-publishing an exact free. Other
 // cross-thread routing remains outside this early M5 shadow slice rather than
 // silently handing a native pointer to libmimalloc.
 

@@ -542,6 +542,7 @@ case "$command" in
             --test native_mimalloc_aggregate_reclaim \
             --test native_mimalloc_owner_exit_realloc \
             --test native_mimalloc_live_remote_free \
+            --test native_mimalloc_live_remote_from_parked_worker \
             --test native_mimalloc_source_published_exit \
             --test native_mimalloc_source_published_live_owner_exit \
             --test native_mimalloc_post_exit_source_published_successor \

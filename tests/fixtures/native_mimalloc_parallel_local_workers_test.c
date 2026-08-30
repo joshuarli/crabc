@@ -81,8 +81,8 @@ static void *local_worker(void *opaque)
         return (void *)(uintptr_t)3;
 
     /* A has already published its live route. B must still receive a local
-     * C allocation and park its independent page engine rather than retaining
-     * the process because B cannot become a second remote-free owner. */
+     * C allocation and park its independent page engine without taking any
+     * A client identity through this local-only witness. */
     local = malloc(73);
     if (local == NULL)
         return (void *)(uintptr_t)4;

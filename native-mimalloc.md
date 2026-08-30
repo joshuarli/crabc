@@ -207,7 +207,7 @@ At this checkpoint:
   initial client parked across a later A's existing mixed aggregate route;
   fresh B terminally frees that route and finishes before ticket zero resumes;
 * Gates 5A and 5B use one private typed A-side runtime operation, and the private scheduler now admits distinct independently parked normal engines while serializing each PageMap mutation. The selected shadow proves both that a second C worker can retain a local private session while a live A route is active and that two independently parked A routes can each accept an exact B-side query/free; neither witness gives later workers a public, cross-pointer, or general persistent allocator route;
-* the worker runtime seam deliberately prevents client pointers from crossing its bounded witnesses: the Gate 5B B/C threads receive only opaque publication capabilities, and Gate 5C gives B/C/D only a scoped same-page atomic producer pair plus an opaque B-side route;
+* the worker runtime seam gives Gate 5B B/C only opaque publication capabilities, and Gate 5C gives B/C/D only a scoped same-page atomic producer pair plus an opaque B-side route; separately, the selected native-shadow C ABI accepts an explicitly handed exact live-owner address, validates it only in A's private ledger, and never returns or enumerates a client capability;
 * native-shadow worker pointers remain local to their parked owner session
   except for the pointer-private post-exit aggregate/sole mapped-regular
   routes and one direct source free: an attached worker may present an exact
@@ -1344,12 +1344,15 @@ allocation-time authority to C.
 The live route keeps addresses private to each A ledger. Its
 `NativeLiveRemoteOwnerRegistry` has stable metadata-backed entries that store
 only one A TLS slot/generation; an empty entry is reused and a new node is
-appended only when all current entries are live. Fresh B/C publishers scan only
-to prove one exact address: every foreign entry is restored before the next is
-considered, and no entry, address, page, or allocator capability escapes. A
-query claims and restores its matched entry without borrowing a page engine or
-scheduler; each later free performs one complete `PARKED -> BUSY -> PARKED`
-operation before restoring that entry. It never falls back to the C allocator.
+appended only when all current entries are live. Fresh B/C publishers, as well
+as a B that already has a fully parked local session, scan only to prove one
+exact address: every foreign entry is restored before the next is considered,
+and no entry, address, page, or allocator capability escapes. A query claims and
+restores its matched entry without borrowing a page engine or scheduler; each
+later free performs one complete `PARKED -> BUSY -> PARKED` operation before
+restoring that entry. A fresh B uses the scoped non-parkable interleaving;
+the parked B temporarily resumes and re-parks only its own session. It never
+falls back to the C allocator.
 If a raw-TLS handoff becomes terminal, it closes the same short registry
 mutation boundary that installs live owners: an in-flight A finishes its
 complete publication before that closure, while a later A cannot publish beside
@@ -1497,6 +1500,14 @@ or release capability.
 separate two-worker local-only admission boundary: A's live entry remains
 reserved through A's temporary resumes while B parks, locally frees, and
 finishes B's own allocation; then A finishes and ticket zero reactivates.
+The complementary
+`crabc-mimalloc/tests/native_live_remote_free.rs` regression and
+`tests/fixtures/native_mimalloc_live_remote_from_parked_worker_test.c` then
+give that already-parked B one explicitly handed exact A client. B briefly
+resumes and re-parks only its own session to source-publish the client, then
+continues its ordinary local free/finish while A later collects the remote
+head. This adds no client enumeration, A-session borrowing, or concurrent
+PageMap mutation.
 The selected C comparison repeats 128 fresh process epochs, so a scheduler
 CAS that loses only because a peer changed `PARKED(n)` remains retryable while
 the runtime still records `BUSY` or a nonzero parked count; `READY` and
@@ -2680,13 +2691,15 @@ general concurrent allocator ownership before claiming the general pthread
 remote-free evidence required to close Gate 5E.
 
 The selected lane also proves that a live-owner entry is not a global
-worker-admission lock. A second C worker can park a distinct local-only native
-session while an A route is active, then free only its own client and complete
+worker-admission lock. A second C worker can park a distinct local native
+session while an A route is active, then either free only its own client or,
+after an explicit handoff, source-publish one exact A client before completing
 the ordinary all-free drain. A's session reserves its entry as `BUSY` while A
 temporarily resumes, so no B can borrow that A in the resume interval. The
-`native_mimalloc_parallel_local_workers` C fixture pauses both engines,
-completes B then A, and proves ticket-zero reactivation. It does not grant
-cross-worker pointer routing or concurrent PageMap mutation.
+`native_mimalloc_parallel_local_workers` C fixture covers the local-only case;
+`native_mimalloc_live_remote_from_parked_worker` covers the exact handed-off
+client. Both prove ticket-zero reactivation without granting cross-worker
+pointer routing beyond that exact input or concurrent PageMap mutation.
 
 The companion selected-C composition fixture keeps the same bounded semantics:
 after that live publication, A alone resumes and collects the remote head;

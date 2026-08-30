@@ -2546,9 +2546,10 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
     }
 
     /// Publishes one exact block to a separately parked live owner's source
-    /// remote head. This wrapper exists only for the complete non-parkable B
-    /// operation; it exposes neither the allocator nor its PageMap lease to
-    /// the native libc boundary.
+    /// remote head. A complete B operation may be a fresh scoped
+    /// interleaving or the temporary resume of B's already parked session;
+    /// either way this wrapper exposes neither the allocator nor its PageMap
+    /// lease to the native libc boundary.
     ///
     /// # Safety
     ///
@@ -6078,9 +6079,11 @@ pub unsafe fn native_reallocate(
 /// `block` must be a live native-shadow allocation. A wrong-domain pointer
 /// reports `InvalidPointer`. An attached later worker may either use its own
 /// local ledger, consume the one typed detached-owner route, or atomically
-/// source-publish an exact still-live ticket-zero client; it receives no
-/// general pointer registry, page engine, or scheduler authority. Callers
-/// must not route any native failure to the C allocator as recovery.
+/// source-publish an exact still-live ticket-zero or parked-live-owner client.
+/// A receiver that already has a parked local session briefly resumes and
+/// re-parks only that session for the source publication; it still receives no
+/// general pointer registry, page engine, or scheduler authority. Callers must
+/// not route any native failure to the C allocator as recovery.
 #[doc(hidden)]
 pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
     if RUNTIME_PROCESS.is_on_initial_thread() {
@@ -6119,8 +6122,15 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         | NativeTicketZeroRemoteFreeResult::Unavailable => {}
     }
 
-    if local != NativePageFreeResult::Unavailable
-        || !current_thread_can_access_native_post_exit_route()
+    // A foreign block normally misses B's local ledger. That miss is not yet
+    // an invalid native C pointer: B may have a parked local session and hold
+    // an exact source client received from another live worker. Preserve the
+    // local result for an actual registry miss, but let the bounded source
+    // publication route prove or reject the foreign address first.
+    if !matches!(
+        local,
+        NativePageFreeResult::InvalidPointer | NativePageFreeResult::Unavailable
+    ) || !current_thread_can_access_native_post_exit_route()
     {
         return local;
     }
@@ -8330,6 +8340,16 @@ enum CurrentThreadPageOwnerSessionRemoteFreeFailure {
     Session(CurrentThreadPageOwnerSessionError),
 }
 
+/// Failure of one exact source remote publication attempted while B retains
+/// its own parked native session. The source publication error is distinct
+/// from B's session transition: both remain private runtime facts, and the C
+/// boundary retains the matched A route on either failure instead of treating
+/// it as a foreign pointer or reopening either session.
+enum CurrentThreadPageOwnerSessionLiveRemotePublicationFailure {
+    Publication(crate::single_thread::RemoteFreePreparationError),
+    Session(CurrentThreadPageOwnerSessionError),
+}
+
 /// The one stable choice made before a parked session is suspended into its
 /// source owner-exit state. It names authority, not a page geometry: the
 /// normal test seam transfers the route to its higher-ranked consumer, while
@@ -8837,6 +8857,35 @@ impl CurrentThreadPageOwnerSessionHandle {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => Err(CurrentThreadPageOwnerSessionError::Preparation(error)),
             Err(error) => Err(error),
+        }
+    }
+
+    /// Publishes one exact A-owned native client while this current B session
+    /// is briefly active. The session immediately re-parks before this helper
+    /// returns, so B never lends its allocator or client ledger to A's route.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the exact current client already proved against a
+    /// separately parked A session whose registry entry remains `BUSY` for
+    /// the full call. The caller must mark that A ledger published only after
+    /// this source push succeeds.
+    unsafe fn native_publish_remote_free_to_parked_live_owner(
+        &mut self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<(), CurrentThreadPageOwnerSessionLiveRemotePublicationFailure> {
+        match self.with_native_active_operation(|allocator, _clients| {
+            // SAFETY: forwarded unchanged from this helper's exact A-client,
+            // matched-route, and parked-owner contract above.
+            unsafe { allocator.publish_remote_free_to_parked_live_owner(block) }
+        }) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                Err(CurrentThreadPageOwnerSessionLiveRemotePublicationFailure::Publication(error))
+            }
+            Err(error) => {
+                Err(CurrentThreadPageOwnerSessionLiveRemotePublicationFailure::Session(error))
+            }
         }
     }
 
@@ -9463,19 +9512,24 @@ unsafe fn native_ticket_zero_live_remote_free(
 /// parked native A session.
 ///
 /// The metadata-backed registry contains no client address. B first proves its
-/// raw input against one A's existing private C ledger, then borrows the
-/// runtime pair only for one complete non-parkable `PARKED -> BUSY -> PARKED`
-/// operation. That operation serializes the PageMap preflight and atomic
-/// source push; A cannot resume until B finishes it, at which point A's normal
-/// allocation or page drain collects the remote head. This remains a bounded
-/// live-owner route, not a general allocator or foreign-pointer registry.
+/// raw input against one A's existing private C ledger. A fresh B borrows the
+/// runtime pair for one complete non-parkable `PARKED -> BUSY -> PARKED`
+/// operation; a B with its own parked session briefly resumes only that
+/// session and re-parks it before the source publication returns. Either
+/// complete operation serializes the PageMap preflight and atomic source push;
+/// A cannot resume until B finishes it, at which point A's normal allocation
+/// or page drain collects the remote head. This remains a bounded live-owner
+/// route, not a general allocator or foreign-pointer registry.
 ///
 /// # Safety
 ///
 /// `block` must be a live native-shadow allocation. The caller has already
-/// established that this B worker is attached, has no local page owner, and
-/// has no terminal post-exit proof. A wrong C pointer is rejected before any
-/// source publication; an inconsistent source transition remains terminal.
+/// established that this B worker is attached, has no terminal post-exit
+/// proof, and either has no local page owner or one fully parked native
+/// session. The latter resumes only for this one complete source producer
+/// operation and re-parks before the result is visible. A wrong C pointer is
+/// rejected before any source publication; an inconsistent source transition
+/// remains terminal.
 unsafe fn native_later_thread_live_remote_free(
     block: core::ptr::NonNull<u8>,
 ) -> NativeLiveRemoteFreeResult {
@@ -9489,15 +9543,64 @@ unsafe fn native_later_thread_live_remote_free(
         NativeLiveRemoteOwnerExactClaim::Claimed { route, client } => (route, client),
     };
 
-    let engine = {
+    let parked_local_session = {
         let slot = current_thread_slot();
-        if slot.state != ThreadLifecycleState::Attached
-            || slot.page_owner.is_some()
-            || slot.post_exit_route_proof.is_some()
-        {
+        if slot.state != ThreadLifecycleState::Attached || slot.post_exit_route_proof.is_some() {
             route.restore();
             return NativeLiveRemoteFreeResult::Unavailable;
         }
+        match slot.page_owner.as_ref() {
+            None => None,
+            Some(ThreadLifecyclePageOwner::Session(session)) if session.parked.is_some() => {
+                Some(CurrentThreadPageOwnerSessionHandle {
+                    generation: session.generation,
+                    _current_thread_only: PhantomData,
+                })
+            }
+            Some(ThreadLifecyclePageOwner::Session(_))
+            | Some(ThreadLifecyclePageOwner::PreparedExit(_)) => {
+                route.restore();
+                return NativeLiveRemoteFreeResult::Unavailable;
+            }
+        }
+    };
+
+    if let Some(mut session) = parked_local_session {
+        // SAFETY: B's current session is parked, and `route` keeps the exact
+        // A ledger and source engine unavailable until the complete B session
+        // operation re-parks. The lower source method receives only A's
+        // already-validated client address.
+        match unsafe { session.native_publish_remote_free_to_parked_live_owner(client.block) } {
+            Ok(()) => {}
+            Err(CurrentThreadPageOwnerSessionLiveRemotePublicationFailure::Publication(error)) => {
+                let _ = error;
+                route.retain();
+                return NativeLiveRemoteFreeResult::Retained;
+            }
+            Err(CurrentThreadPageOwnerSessionLiveRemotePublicationFailure::Session(error)) => {
+                let _ = error;
+                route.retain();
+                return NativeLiveRemoteFreeResult::Retained;
+            }
+        }
+
+        // The source push is visible only after B has re-parked its own
+        // session. Change A's private ledger now, while `route` still makes
+        // A unable to locally free, reallocate, or enter owner exit.
+        let marked = match unsafe { route.session_mut() } {
+            Some(session) => session.clients.mark_published_to_live_owner(&client).is_ok(),
+            None => false,
+        };
+        if !marked {
+            route.retain();
+            return NativeLiveRemoteFreeResult::Retained;
+        }
+        route.restore();
+        return NativeLiveRemoteFreeResult::Freed;
+    }
+
+    let engine = {
+        let slot = current_thread_slot();
         let Some(attachment) = slot.attachment.as_mut() else {
             route.retain();
             return NativeLiveRemoteFreeResult::Retained;

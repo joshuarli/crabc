@@ -2267,10 +2267,12 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// Publishes one exact client through the source remote-free head of a
     /// separately parked live owner.
     ///
-    /// The caller must own a complete non-parkable runtime B operation while
-    /// the A-side persistent engine remains parked. This wrapper deliberately
-    /// exposes no page, PageMap, or owner capability to the native libc
-    /// boundary; it returns only the source publication result.
+    /// The caller must own one complete runtime B operation while the A-side
+    /// persistent engine remains parked. That operation is either a fresh
+    /// non-parkable interleaving or a temporary resume of B's own parked
+    /// session, which re-parks before the result is visible. This wrapper
+    /// deliberately exposes no page, PageMap, or owner capability to the
+    /// native libc boundary; it returns only the source publication result.
     ///
     /// # Safety
     ///

@@ -33677,12 +33677,14 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     ///
     /// This is the source `mi_free_block_mt` producer half, not a second
     /// allocator or a general pointer table. The caller holds the process
-    /// PageMap mutation lease through a complete non-parkable B operation;
-    /// that lease, together with the runtime's `PARKED -> BUSY -> PARKED`
-    /// transition, keeps A's page mapped and prevents A from collecting,
-    /// retiring, abandoning, or reusing it while this preflight reads its
-    /// ordinary geometry. The atomic push itself then leaves collection to
-    /// A's next ordinary source allocation or thread-exit drain.
+    /// PageMap mutation lease through one complete B operation: a fresh
+    /// non-parkable interleaving or a temporary resume of B's already parked
+    /// session. That lease, together with the runtime's
+    /// `PARKED -> BUSY -> PARKED` transition, keeps A's page mapped and
+    /// prevents A from collecting, retiring, abandoning, or reusing it while
+    /// this preflight reads its ordinary geometry. The atomic push itself then
+    /// leaves collection to A's next ordinary source allocation or thread-exit
+    /// drain.
     ///
     /// # Safety
     ///

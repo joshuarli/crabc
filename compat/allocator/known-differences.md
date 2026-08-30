@@ -111,8 +111,14 @@ result may refine it only when it can prove retained ownership.
   `crabc-mimalloc/tests/native_parallel_local_workers.rs` and
   `tests/fixtures/native_mimalloc_parallel_local_workers_test.c` separately
   prove that the same one static route does not reject a second independently
-  parked worker's local-only C allocation/free lifecycle. The second worker
-  receives no A client identity and cannot become a remote-free target.
+  parked worker's local-only C allocation/free lifecycle. The distinct
+  `crabc-mimalloc/tests/native_live_remote_free.rs` regression and
+  `tests/fixtures/native_mimalloc_live_remote_from_parked_worker_test.c`
+  prove the narrower transfer case: B may already have a parked local session
+  when it presents one exact A client, briefly resumes and re-parks only B's
+  session, and source-publishes that exact block to A's remote head. Neither
+  witness gives B an A client identity absent an explicit C handoff, a route
+  iterator, concurrent PageMap mutation, or general remote-free authority.
 - **Decision/removal:** accepted until producer lifetime registration,
   queue-safe concurrent collection, general allocation/free routing, and the
   broader allocator/thread lifecycle are ported. It does not authorize an

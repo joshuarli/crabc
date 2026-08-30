@@ -99,6 +99,10 @@ name = "native_mimalloc_live_remote_free"
 path = "../tests/native_mimalloc_live_remote_free.rs"
 
 [[test]]
+name = "native_mimalloc_live_remote_from_parked_worker"
+path = "../tests/native_mimalloc_live_remote_from_parked_worker.rs"
+
+[[test]]
 name = "native_mimalloc_source_published_exit"
 path = "../tests/native_mimalloc_source_published_exit.rs"
 

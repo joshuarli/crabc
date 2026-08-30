@@ -128,6 +128,7 @@ fn native_live_owner_remote_free_returns_a_parked_worker_to_its_owner() {
     );
 
     native_live_owner_serializes_two_exact_remote_publishers_before_collection();
+    native_live_owner_remote_free_from_parked_worker_keeps_b_local_session();
 }
 
 fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() {
@@ -257,5 +258,116 @@ fn native_live_owner_serializes_two_exact_remote_publishers_before_collection() 
         unsafe { ticket_zero_free(resumed) },
         TicketZeroPageFreeResult::Freed,
         "ticket zero returns its fresh client to the dormant pair after both publishers finish"
+    );
+}
+
+/// A source-shaped transfer receiver commonly has already allocated its own
+/// local bookkeeping and payload before it consumes a foreign pointer. Its
+/// parked session must therefore stay accounted while it atomically publishes
+/// A's exact live client to A's remote head.
+fn native_live_owner_remote_free_from_parked_worker_keeps_b_local_session() {
+    assert!(
+        prepare_native_later_thread_arena(),
+        "ticket zero restores its dormant arena before the parked receiver begins"
+    );
+
+    let (owner_ready_sender, owner_ready_receiver) = mpsc::sync_channel(0);
+    let (remote_sender, remote_receiver) = mpsc::sync_channel(0);
+    let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
+    let owner = std::thread::spawn(move || {
+        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        let remote = match native_allocate_aligned(37, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("A creates the exact live source client"),
+        };
+        let local = match native_allocate_aligned(73, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("A retains a local client while B owns a parked session"),
+        };
+        // SAFETY: A owns both clients until B publishes only `remote` below.
+        unsafe {
+            remote.as_ptr().write(0x61);
+            remote.as_ptr().add(36).write(0x62);
+            local.as_ptr().write(0x63);
+            local.as_ptr().add(72).write(0x64);
+        }
+        owner_ready_sender
+            .send(())
+            .expect("B starts only after A parks the source session");
+        remote_sender
+            .send(remote.as_ptr().addr())
+            .expect("B receives only A's exact C-shaped address after its local session parks");
+        resume_receiver
+            .recv()
+            .expect("A waits until B restored both parked sessions");
+
+        let probe = match native_allocate_aligned(37, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("A resumes after B's parked-session publication"),
+        };
+        // SAFETY: the probe and local block remain current in A's session;
+        // its source all-free drain collects B's remote-head publication.
+        unsafe {
+            assert_eq!(local.as_ptr().read(), 0x63);
+            assert_eq!(local.as_ptr().add(72).read(), 0x64);
+            assert_eq!(native_free(probe), NativePageFreeResult::Freed);
+            assert_eq!(native_free(local), NativePageFreeResult::Freed);
+        }
+        assert_eq!(
+            finish_current_thread_native_after_user_destructors(),
+            ThreadFinishResult::Finished,
+            "A finishes after collecting B's exact source publication"
+        );
+    });
+
+    let releaser = std::thread::spawn(move || {
+        assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        owner_ready_receiver
+            .recv()
+            .expect("B waits for A's live route before creating its local session");
+        let local = match native_allocate_aligned(89, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("B creates its independent parked local session"),
+        };
+        let remote = remote_receiver
+            .recv()
+            .expect("B receives A's pointer only after B parks its local session");
+        // SAFETY: A retains this exact client live and parked; B receives no
+        // source route beyond the raw C-shaped address.
+        let remote = unsafe { core::ptr::NonNull::new_unchecked(remote as *mut u8) };
+        assert_eq!(
+            unsafe { native_free(remote) },
+            NativePageFreeResult::Freed,
+            "B publishes A's exact client while restoring B's own parked session"
+        );
+        assert_eq!(
+            unsafe { native_free(local) },
+            NativePageFreeResult::Freed,
+            "B retains and frees its local client after publishing A's pointer"
+        );
+        assert_eq!(
+            finish_current_thread_native_after_user_destructors(),
+            ThreadFinishResult::Finished,
+            "B's all-free finish releases only B's own parked session"
+        );
+    });
+    releaser
+        .join()
+        .expect("B publishes A's pointer and finishes its local session");
+    resume_sender
+        .send(())
+        .expect("A may resume after B restores its parked state");
+    owner
+        .join()
+        .expect("A collects the publication and finishes normally");
+
+    let resumed = match ticket_zero_allocate(89, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("ticket zero resumes after A and B complete their parked sessions"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(resumed) },
+        TicketZeroPageFreeResult::Freed,
+        "the dormant ticket-zero pair receives its local client after the transfer"
     );
 }

@@ -161,16 +161,21 @@ cannot retry the retained route. The test hook exposes no route, client,
 PageMap, or allocator capability outside that direct evidence build. While an A session is
 still parked and live, independently attached fresh no-page B/C publishers may
 query exact source-recorded usable extents or return their exact native C
-clients through a private `NativeLiveRemoteOwnerRegistry` entry. Stable
+clients through a private `NativeLiveRemoteOwnerRegistry` entry. A B that has
+already parked its own local session may return one explicitly handed exact A
+client, but cannot use that parked-session route to query A or gain any other
+client identity. Stable
 metadata-backed entries contain only an A compiler-TLS slot and generation;
 empty storage is reused and a new node is appended only when every entry is
 live. An exact-address scan restores every foreign entry before considering the
 next. The read-only query claims and restores its matching entry without
 acquiring A's page engine or scheduler; the free path instead proves the raw
 address against A's private ledger, performs one complete source-shaped
-`PARKED -> BUSY -> PARKED` interleaving operation, atomically pushes the
-canonical block to A's remote head, and only then marks that ledger member
-`PublishedToLiveOwner`. A removes or claims its matching entry before every
+`PARKED -> BUSY -> PARKED` operation, atomically pushes the canonical block to
+A's remote head, and only then marks that ledger member
+`PublishedToLiveOwner`. A fresh B uses the scoped interleaving; an already
+parked B briefly resumes and re-parks only its own session. A removes or claims
+its matching entry before every
 TLS inspection, resume, or teardown, so B cannot retain the raw TLS capability
 while A accesses its session. A's next ordinary operation or its all-free drain
 collects the source remote head. If a raw-TLS handoff becomes terminal, it
@@ -874,8 +879,10 @@ scheduler count and A's admission proof until B completes its own normal
 attachment finish. Separately, independently parked live native A sessions
 publish private `NativeLiveRemoteOwnerRegistry` entries for exact source
 remote-head publications. Each stable entry carries only its A TLS
-slot/generation, never a client address, page, or allocator; B restores that
-entry to `PARKED` before A can resume. The selected direct and C
+slot/generation, never a client address, page, or allocator; a fresh B uses a
+scoped interleaving, while a B that already has a fully parked local session
+briefly resumes and re-parks only that session before restoring A's entry to
+`PARKED`. The selected direct and C
 two-live-owner fixtures park A1 before A2 enters setup, then let B1/B2 query
 and free only their matching exact clients while the scheduler serializes the
 two PageMap operations. Terminal raw-TLS retention closes the same short
