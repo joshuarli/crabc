@@ -7,10 +7,10 @@
 // Source map: pinned mimalloc v3.5.0 `src/page-queue.c:40-55,147-172,204-274,
 // 252-423` (predicates, the test-only validity oracle, intrusive queue
 // membership, and the direct-cache-before-page-count queue-removal order).
-// The generic owner-exit coordinator below owns only this source queue half;
-// deferred-free, retired-page, page-local collection, abandonment publication,
-// PageMap/backing release, and TLD/Theap detach stay at their respective
-// lifecycle boundaries.
+// The generic owner-exit coordinator below owns only source callback ordering
+// and the queue half; concrete deferred-free, retired-page, page-local
+// collection, abandonment publication, PageMap/backing release, and TLD/Theap
+// detach stay at their respective lifecycle boundaries.
 
 use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::Ordering;
@@ -64,6 +64,49 @@ pub(crate) enum TheapCollectAbandonPageAction {
     Abandon,
 }
 
+/// The two source prepasses that precede every `MI_ABANDON` page visit.
+///
+/// Pinned `mi_theap_collect_ex` calls deferred-free collection before retired
+/// page collection. [`theap_collect_abandon_queues`] owns that ordering rather
+/// than trusting an owner-exit caller to reproduce it before entering the
+/// page-action callbacks.
+#[must_use = "the source prepass must be passed to the collect-abandon coordinator"]
+pub(crate) struct TheapCollectAbandonPrepass<DeferredFrees, RetiredPages> {
+    deferred_frees: DeferredFrees,
+    retired_pages: RetiredPages,
+}
+
+impl<DeferredFrees, RetiredPages> TheapCollectAbandonPrepass<DeferredFrees, RetiredPages> {
+    /// Records the source-order prepass callbacks without running either one.
+    #[inline]
+    pub(crate) const fn new(deferred_frees: DeferredFrees, retired_pages: RetiredPages) -> Self {
+        Self {
+            deferred_frees,
+            retired_pages,
+        }
+    }
+
+    /// Runs the two source prepasses and creates the otherwise-unforgeable
+    /// proof required by page-action callbacks.
+    #[inline]
+    fn run<E>(&mut self, theap: &mut Theap) -> Result<TheapCollectAbandonPageActionsReady, E>
+    where
+        DeferredFrees: FnMut(&mut Theap) -> Result<(), E>,
+        RetiredPages: FnMut(&mut Theap) -> Result<(), E>,
+    {
+        (self.deferred_frees)(theap)?;
+        (self.retired_pages)(theap)?;
+        Ok(TheapCollectAbandonPageActionsReady(()))
+    }
+}
+
+/// Evidence that the source deferred-free and retired-page prepasses finished.
+///
+/// Its field is private so only [`TheapCollectAbandonPrepass::run`] can create
+/// it. Page callbacks borrow this proof, which makes the coordinator's source
+/// ordering part of their type-level boundary.
+pub(crate) struct TheapCollectAbandonPageActionsReady(());
+
 /// Failure from the generic queue half of `_mi_theap_collect_abandon`.
 ///
 /// A callback failure can occur after a one-way queue detach. The caller owns
@@ -71,6 +114,8 @@ pub(crate) enum TheapCollectAbandonPageAction {
 /// different queue, invents a fresh page, or reattaches the former owner.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum TheapCollectAbandonError<E> {
+    /// Deferred-free or retired-page collection failed before page traversal.
+    Prepass(E),
     /// A page-local collector or post-detach source transition failed.
     Page(E),
     /// The caller violated the exclusive complete-queue invariant.
@@ -80,10 +125,11 @@ pub(crate) enum TheapCollectAbandonError<E> {
 /// Visits the actual source queues for `MI_ABANDON` in pinned order.
 ///
 /// This is the queue coordinator seam for a future complete
-/// `_mi_theap_collect_abandon` owner-exit path. Its caller performs deferred
-/// free processing and retired-page collection first, then supplies the two
-/// page-local source transitions: force/false collection before detachment,
-/// followed by exact release or abandonment publication. The helper covers
+/// `_mi_theap_collect_abandon` owner-exit path. It runs
+/// [`TheapCollectAbandonPrepass`] first, preserving source deferred-free then
+/// retired-page order before it enters either page-action callback. The
+/// otherwise-unforgeable [`TheapCollectAbandonPageActionsReady`] borrow makes
+/// that order part of each page callback's interface. The helper then covers
 /// every queue through `BIN_FULL`, saves the successor before either callback
 /// can detach the current page, and performs the source queue mutation in the
 /// required order: intrusive removal, direct-small cache repair, then Theap
@@ -98,23 +144,42 @@ pub(crate) enum TheapCollectAbandonError<E> {
 ///
 /// `theap` must be initialized and exclusively owned for the whole call. Its
 /// queues must be complete, acyclic, and contain exactly `page_count` live
-/// initialized pages. Both callbacks may mutate only the current page's
-/// page-local source state; they must not alter queue links, queue membership,
-/// direct-cache entries, or `theap.page_count`. `finish_page` may release the
-/// current page only after this helper has detached it. No producer may race
-/// any non-atomic page field or queue transition.
-pub(crate) unsafe fn theap_collect_abandon_queues<E>(
+/// initialized pages after the prepass returns. Prepass callbacks may perform
+/// only their source deferred-free or retired-page transitions and must leave
+/// that valid exclusive image. Both page callbacks may mutate only the current
+/// page's page-local source state; they must not alter queue links, queue
+/// membership, direct-cache entries, or `theap.page_count`. `finish_page` may
+/// release the current page only after this helper has detached it. No producer
+/// may race any non-atomic page field or queue transition.
+pub(crate) unsafe fn theap_collect_abandon_queues<E, DeferredFrees, RetiredPages>(
     theap: &mut Theap,
-    mut collect_page: impl FnMut(usize, NonNull<Page>) -> Result<TheapCollectAbandonPageAction, E>,
+    mut prepass: TheapCollectAbandonPrepass<DeferredFrees, RetiredPages>,
+    mut collect_page: impl FnMut(
+        &TheapCollectAbandonPageActionsReady,
+        usize,
+        NonNull<Page>,
+    ) -> Result<TheapCollectAbandonPageAction, E>,
     mut finish_page: impl FnMut(
+        &TheapCollectAbandonPageActionsReady,
         &Theap,
         usize,
         NonNull<Page>,
         TheapCollectAbandonPageAction,
     ) -> Result<(), E>,
-) -> Result<(), TheapCollectAbandonError<E>> {
+) -> Result<(), TheapCollectAbandonError<E>>
+where
+    DeferredFrees: FnMut(&mut Theap) -> Result<(), E>,
+    RetiredPages: FnMut(&mut Theap) -> Result<(), E>,
+{
+    // `mi_theap_collect_ex` runs this complete prepass even when the visitor
+    // finds no pages, so the source empty fast path follows rather than
+    // bypasses the typed prerequisite boundary.
+    let page_actions_ready = prepass
+        .run(theap)
+        .map_err(TheapCollectAbandonError::Prepass)?;
+
     // This is the source `mi_theap_visit_pages` fast empty case. A live
-    // Theap with zero pages has no queue transition to make.
+    // Theap with zero pages has no queue transition to make after the prepass.
     if theap.page_count == 0 {
         return Ok(());
     }
@@ -142,13 +207,15 @@ pub(crate) unsafe fn theap_collect_abandon_queues<E>(
             // Saving this edge is the source visitor's required protection
             // against either post-detach callback retiring current metadata.
             let next = unsafe { page.as_ref().next };
-            let action = collect_page(bin, page).map_err(TheapCollectAbandonError::Page)?;
+            let action = collect_page(&page_actions_ready, bin, page)
+                .map_err(TheapCollectAbandonError::Page)?;
 
             // SAFETY: the caller proves `page` remains a current member of
             // this exact complete queue; the callback contract forbids it
             // from changing links or membership before this source removal.
             unsafe { theap_collect_abandon_detach_page(theap, bin, page)? };
-            finish_page(theap, bin, page, action).map_err(TheapCollectAbandonError::Page)?;
+            finish_page(&page_actions_ready, theap, bin, page, action)
+                .map_err(TheapCollectAbandonError::Page)?;
 
             visited_page_count = visited_page_count
                 .checked_add(1)
@@ -958,7 +1025,11 @@ mod tests {
         unsafe {
             theap_collect_abandon_queues(
                 &mut theap,
-                |bin, page| {
+                TheapCollectAbandonPrepass::new(
+                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                ),
+                |_prepass, bin, page| {
                     visits.push((bin, page));
                     Ok::<_, ()>(if page == small_second {
                         TheapCollectAbandonPageAction::Abandon
@@ -966,7 +1037,7 @@ mod tests {
                         TheapCollectAbandonPageAction::Release
                     })
                 },
-                |theap, bin, page, action| {
+                |_prepass, theap, bin, page, action| {
                     finished.push((bin, page, action, theap.page_count(), theap.direct_page(small_direct)));
                     Ok::<_, ()>(())
                 },
@@ -1026,6 +1097,113 @@ mod tests {
     }
 
     #[test]
+    fn generic_collect_abandon_prepass_precedes_every_page_action() {
+        let mut theap = Theap::empty();
+        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let block_size = theap.queue(bin).unwrap().block_size();
+        let mut only = page(block_size);
+        let only = NonNull::from(&mut only);
+        // SAFETY: this local page begins detached, and the test owns the
+        // complete one-member queue image.
+        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
+        theap.note_page_added();
+
+        let events = std::cell::RefCell::new(std::vec::Vec::new());
+        // SAFETY: the test exclusively owns the complete acyclic queue image.
+        // The typed prepass callbacks only observe the Theap, while page
+        // callbacks only record their source-order position.
+        unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                TheapCollectAbandonPrepass::new(
+                    |theap: &mut Theap| {
+                        assert_eq!(theap.page_count(), 1);
+                        events.borrow_mut().push("deferred frees");
+                        Ok::<_, ()>(())
+                    },
+                    |theap: &mut Theap| {
+                        assert_eq!(theap.page_count(), 1);
+                        events.borrow_mut().push("retired pages");
+                        Ok::<_, ()>(())
+                    },
+                ),
+                |_prepass, actual_bin, page| {
+                    assert_eq!(actual_bin, bin);
+                    assert_eq!(page, only);
+                    events.borrow_mut().push("page collect");
+                    Ok::<_, ()>(TheapCollectAbandonPageAction::Release)
+                },
+                |_prepass, theap, actual_bin, page, action| {
+                    assert_eq!(actual_bin, bin);
+                    assert_eq!(page, only);
+                    assert_eq!(action, TheapCollectAbandonPageAction::Release);
+                    assert_eq!(theap.page_count(), 0);
+                    events.borrow_mut().push("terminal callback");
+                    Ok::<_, ()>(())
+                },
+            )
+            .expect("the source prepass and one-page traversal complete");
+        }
+
+        assert_eq!(
+            events.into_inner(),
+            std::vec![
+                "deferred frees",
+                "retired pages",
+                "page collect",
+                "terminal callback",
+            ],
+            "pinned mi_theap_collect_ex completes its two prepasses before a visitor can act"
+        );
+    }
+
+    #[test]
+    fn generic_collect_abandon_prepass_failure_prevents_page_actions() {
+        #[derive(Debug, Eq, PartialEq)]
+        enum Failure {
+            DeferredFrees,
+        }
+
+        let mut theap = Theap::empty();
+        let bin = crate::size_class::bin(16).expect("small size has a regular bin");
+        let block_size = theap.queue(bin).unwrap().block_size();
+        let mut only = page(block_size);
+        let only = NonNull::from(&mut only);
+        // SAFETY: the local page is detached before the test exclusively
+        // constructs its one-member valid source queue image.
+        unsafe { page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), only.as_ptr()) };
+        theap.note_page_added();
+        let page_actions = core::cell::Cell::new(0usize);
+
+        // SAFETY: the prepass rejects before it can mutate the valid queue.
+        // The page callbacks must consequently remain unreachable and the
+        // original owner retains its full queue image.
+        let result = unsafe {
+            theap_collect_abandon_queues(
+                &mut theap,
+                TheapCollectAbandonPrepass::new(
+                    |_theap: &mut Theap| Err::<(), _>(Failure::DeferredFrees),
+                    |_theap: &mut Theap| panic!("retired-page collection follows only a successful deferred prepass"),
+                ),
+                |_prepass, _bin, _page| {
+                    page_actions.set(page_actions.get() + 1);
+                    Ok::<_, Failure>(TheapCollectAbandonPageAction::Release)
+                },
+                |_prepass, _theap, _bin, _page, _action| {
+                    page_actions.set(page_actions.get() + 1);
+                    Ok::<_, Failure>(())
+                },
+            )
+        };
+
+        assert_eq!(result, Err(TheapCollectAbandonError::Prepass(Failure::DeferredFrees)));
+        assert_eq!(page_actions.get(), 0);
+        assert_eq!(theap.page_count(), 1);
+        assert_eq!(theap.queue(bin).unwrap().first, only.as_ptr());
+        assert_eq!(theap.queue(bin).unwrap().count, 1);
+    }
+
+    #[test]
     fn generic_collect_abandon_rejects_a_queue_count_mismatch() {
         let mut theap = Theap::empty();
         let bin = crate::size_class::bin(16).expect("small size has a regular bin");
@@ -1046,8 +1224,12 @@ mod tests {
         let result = unsafe {
             theap_collect_abandon_queues(
                 &mut theap,
-                |_bin, _page| Ok::<_, ()>(TheapCollectAbandonPageAction::Release),
-                |_theap, _bin, _page, _action| Ok::<_, ()>(()),
+                TheapCollectAbandonPrepass::new(
+                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                ),
+                |_prepass, _bin, _page| Ok::<_, ()>(TheapCollectAbandonPageAction::Release),
+                |_prepass, _theap, _bin, _page, _action| Ok::<_, ()>(()),
             )
         };
         assert_eq!(result, Err(TheapCollectAbandonError::QueueInvariant));
