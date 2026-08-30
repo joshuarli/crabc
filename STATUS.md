@@ -6,8 +6,8 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
-The x86 lane has one private `ldso-initial-graph` ET_DYN interpreter artifact
-inside still-planned `ldso.dynamic-runtime`. Its native evidence is limited to
+The x86 lane has two private ET_DYN interpreter artifacts inside still-planned
+`ldso.dynamic-runtime`. `ldso-initial-graph` is limited to
 one main PIE -> mid.so -> leaf.so graph, RELATIVE/GLOB_DAT/JUMP_SLOT ELF64
 RELA plus one bounded packed leaf `DT_RELR` direct-and-bitmap stream with
 independent 512-record/512-target caps; the pre-Rust interpreter bootstrap
@@ -17,6 +17,14 @@ sealing, and main/leaf RELRO-fault plus fail-closed malformed-file-range/TLS/
 unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
+
+The separate `ldso-initial-tls` artifact keeps that original no-TLS proof
+unchanged while adding one fixed TLS-free main PIE -> two GNU-Dynamic TLS DSO
+graph. It proves checked DSO `PT_TLS` parsing and Variant-II copying,
+initialized/TBSS/high-alignment values, a two-entry private DTV, DTPMOD/DTPOFF
+and interpreter-owned `__tls_get_addr`, and reject-only TPOFF/static-TLS
+inputs. It remains neither a general loader/TLS/pthread implementation nor a
+dynamic CRT/sysroot, full x86-64 parity, or public x86 support claim.
 
 The x86 lane now has thirteen private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a

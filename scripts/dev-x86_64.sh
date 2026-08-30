@@ -234,6 +234,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
   ldso-image  run the source-only checked x86 ELF image parser tests
   ldso-initial-graph  run the bounded x86 ET_DYN initial-interpreter graph artifact
+  ldso-initial-tls  run the bounded x86 Variant-II initial-TLS interpreter graph artifact
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 a general x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or
@@ -1131,6 +1132,11 @@ dependency DSO init arrays, and interpreter-and-graph PT_GNU_RELRO sealing;
 the runner rejects malformed-file-range/TLS/relocation/tag/flag/main-init
 mutations. It is not a general x86 ldso, CRT, loader TLS, dlfcn, sysroot, or
 public-support claim.
+`ldso-initial-tls` is a separate private Variant-II GNU-Dynamic TLS graph:
+one TLS-free main and two TLS DSOs prove initial PT_TLS copying, TBSS,
+alignment, DTPMOD/DTPOFF plus `__tls_get_addr`, and fail-closed malformed
+TLS/TPOFF/static-TLS inputs. It remains neither general loader or pthread
+TLS, dynamic CRT/sysroot, nor public x86 support.
 None of the other C-runtime commands is a crabc-libc or crabc-ldso build,
 general facade admission, or C ABI support claim.
 EOF
@@ -2356,6 +2362,10 @@ run_ldso_initial_graph_tests() {
     run_in_container bash /workspace/compat/x86_64/run_ldso_initial_graph.sh
 }
 
+run_ldso_initial_tls_tests() {
+    run_in_container bash /workspace/compat/x86_64/run_ldso_initial_tls.sh
+}
+
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
@@ -2365,7 +2375,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph) ;;
+    image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls) ;;
     linux-5-10-uapi) ;;
     candidate-header-closure) ;;
     uapi-wrapper-matrix) ;;
@@ -3443,5 +3453,10 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ldso-initial-graph takes no arguments"
         ensure_image
         run_ldso_initial_graph_tests
+        ;;
+    ldso-initial-tls)
+        [ "$#" -eq 0 ] || fail "ldso-initial-tls takes no arguments"
+        ensure_image
+        run_ldso_initial_tls_tests
         ;;
 esac

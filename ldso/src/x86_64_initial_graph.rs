@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![allow(unexpected_cfgs)]
 
 //! A bounded Linux/x86-64 initial-interpreter graph.
 //!
@@ -10,18 +11,24 @@
 //! `R_X86_64_RELATIVE` relocations in assembly before entering Rust.  Rust
 //! then discovers the two `DT_NEEDED` edges through absolute `DT_RUNPATH`
 //! directories, maps the two ET_DYN images, and processes RELATIVE,
-//! GLOB_DAT, and JUMP_SLOT ELF64 RELA records plus one bounded packed
-//! `DT_RELR` stream in the leaf dependency. Once all mappings are relocated,
-//! it seals every present `PT_GNU_RELRO` range and runs the two dependency
-//! `DT_INIT_ARRAY` lists in leaf-before-mid order.
+//! GLOB_DAT, JUMP_SLOT, and the GNU dynamic-TLS DTPMOD64/DTPOFF64 ELF64 RELA
+//! records plus one bounded packed `DT_RELR` stream in the leaf dependency.
+//! The TLS sibling graph first lays out every initial `PT_TLS` image below an
+//! x86 Variant-II TP, installs the minimal `%fs:0` self / `%fs:8` DTV prefix,
+//! and resolves `__tls_get_addr`; the original no-TLS graph remains a
+//! deliberately independent fixture. Once all mappings are relocated and
+//! initial TLS is materialized, it seals every present `PT_GNU_RELRO` range
+//! and runs the two dependency `DT_INIT_ARRAY` lists in leaf-before-mid order.
 //!
-//! Musl 1.2.6 oracle: `ldso/dynlink.c:do_relocs` and
-//! `arch/x86_64/reloc.h`.  The narrow relocation set and all exclusions are
+//! Musl 1.2.6 oracle: `ldso/dynlink.c` initial-TLS layout and `do_relocs`,
+//! `src/thread/__tls_get_addr.c`, and `arch/x86_64/reloc.h`. The narrow
+//! relocation set and all exclusions are
 //! deliberate evidence boundaries: the interpreter's own pre-Rust bootstrap
-//! remains `DT_RELA`-only; TLS, `DT_INIT`, main-image constructor dispatch
-//! (that remains CRT-owned), preload/environment search, `dl*`, audit,
-//! secure-exec filtering, symbolic versioning, or a general dependency graph
-//! are not claimed here.
+//! remains `DT_RELA`-only; the one-thread initial TLS slice accepts only GNU
+//! DTPMOD64/DTPOFF64 plus `__tls_get_addr`, and rejects initial-exec/TPOFF,
+//! TLSDESC, DTV growth, `DT_INIT`, main-image constructor dispatch (that
+//! remains CRT-owned), preload/environment search, `dl*`, audit, secure-exec
+//! filtering, symbolic versioning, or a general dependency graph.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -83,6 +90,7 @@ const DT_VERNEEDNUM: i64 = 0x6fff_ffff;
 const DT_FLAGS_1: i64 = 0x6fff_fffb;
 
 const DF_BIND_NOW: u64 = 0x8;
+const DF_STATIC_TLS: u64 = 0x10;
 const DF_1_NOW: u64 = 0x1;
 const DF_1_PIE: u64 = 0x0800_0000;
 
@@ -90,6 +98,14 @@ const ELF64_RELA: u64 = 7;
 const R_X86_64_GLOB_DAT: u32 = 6;
 const R_X86_64_JUMP_SLOT: u32 = 7;
 const R_X86_64_RELATIVE: u32 = 8;
+const R_X86_64_DTPMOD64: u32 = 16;
+const R_X86_64_DTPOFF64: u32 = 17;
+const R_X86_64_TPOFF64: u32 = 18;
+const R_X86_64_GOTTPOFF: u32 = 22;
+const R_X86_64_TPOFF32: u32 = 23;
+const R_X86_64_GOTPC32_TLSDESC: u32 = 34;
+const R_X86_64_TLSDESC_CALL: u32 = 35;
+const R_X86_64_TLSDESC: u32 = 36;
 
 const SYS_WRITE: i64 = 1;
 const SYS_CLOSE: i64 = 3;
@@ -97,6 +113,7 @@ const SYS_FSTAT: i64 = 5;
 const SYS_MMAP: i64 = 9;
 const SYS_MPROTECT: i64 = 10;
 const SYS_MUNMAP: i64 = 11;
+const SYS_ARCH_PRCTL: i64 = 158;
 const SYS_OPENAT: i64 = 257;
 const SYS_EXIT: i64 = 60;
 const AT_FDCWD: i64 = -100;
@@ -106,6 +123,7 @@ const PROT_EXEC: i64 = 4;
 const MAP_PRIVATE: i64 = 2;
 const MAP_FIXED: i64 = 0x10;
 const MAP_ANONYMOUS: i64 = 0x20;
+const ARCH_SET_FS: i64 = 0x1002;
 const PAGE: u64 = 4096;
 // Linux 5.10 x86-64 `fstat=5` fills the same 144-byte LP64 `struct stat`
 // whose signed `st_size` lives at byte offset 48 in the selected x86 C ABI.
@@ -129,6 +147,15 @@ const ELF64_RELR_SIZE: usize = 8;
 const ELF64_RELR_BITMAP_BITS: u64 = 63;
 const MAX_RELR_ENTRIES: usize = 512;
 const MAX_RELR_BYTE_LEN: usize = MAX_RELR_ENTRIES * ELF64_RELR_SIZE;
+// The first initial-TLS graph deliberately carries only the musl-compatible
+// non-pthread prefix used by GNU Dynamic TLS: `self` at `%fs:0` and the DTV
+// pointer at `%fs:8`. The remaining bytes reserve the usual early TCB prefix
+// (including the stack-canary slot) without claiming a full pthread TCB.
+const TLS_TCB_PREFIX_SIZE: usize = 64;
+const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 2;
+const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
+const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
+const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 
 #[derive(Copy, Clone)]
 struct Object {
@@ -154,6 +181,12 @@ struct Object {
     needed: [usize; MAX_NEEDED],
     needed_count: usize,
     mapped: bool,
+    tls_image: *const u8,
+    tls_filesz: usize,
+    tls_memsz: usize,
+    tls_align: usize,
+    tls_offset_below_tp: usize,
+    tls_module_id: usize,
 }
 
 const EMPTY_OBJECT: Object = Object {
@@ -179,6 +212,12 @@ const EMPTY_OBJECT: Object = Object {
     needed: [0; MAX_NEEDED],
     needed_count: 0,
     mapped: false,
+    tls_image: core::ptr::null(),
+    tls_filesz: 0,
+    tls_memsz: 0,
+    tls_align: 1,
+    tls_offset_below_tp: 0,
+    tls_module_id: 0,
 };
 
 #[panic_handler]
@@ -302,11 +341,22 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         if objects[2].needed_count != 0 || objects[2].relrsz == 0 {
             fail(b"leafshape\n");
         }
+        // Keep module IDs stable in this fixed main -> mid -> leaf graph
+        // before relocation writes their GNU-Dynamic DTPMOD/DTPOFF slots. The
+        // no-TLS graph retains its old behavior: a layout with no PT_TLS image
+        // does not install or modify `%fs`.
+        let has_initial_tls = plan_initial_tls(&mut objects).unwrap_or_else(|| fail(b"tlsplan\n"));
         for object in &objects {
             relocate(object, &objects).unwrap_or_else(|| fail(b"reloc\n"));
         }
         for object in &objects[1..] {
             protect_segments(object).unwrap_or_else(|| fail(b"protect\n"));
+        }
+        // PT_TLS templates may contain relocated data, so copy them only after
+        // relocation but before any dependency initializer or application TLS
+        // access. `install_initial_tls` installs `%fs` only on success.
+        if has_initial_tls {
+            install_initial_tls(&objects).unwrap_or_else(|| fail(b"tlsinit\n"));
         }
         for object in &objects {
             apply_relro(object).unwrap_or_else(|| fail(b"relro\n"));
@@ -358,6 +408,10 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     let mut dynamic_virtual_address = None;
     let mut dynamic_byte_len = None;
     let mut relro = None;
+    #[cfg(crabc_initial_tls_graph)]
+    let mut tls: Option<(u64, u64, u64, usize)> = None;
+    #[cfg(not(crabc_initial_tls_graph))]
+    let tls: Option<(u64, u64, u64, usize)> = None;
     for index in 0..phnum {
         let header = phdr.add(index * 56);
         match read_u32(header) {
@@ -373,10 +427,56 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
                 if relro.is_some() { return None; }
                 let address = read_u64(header.add(16));
                 let byte_len = read_u64(header.add(40));
-                if byte_len == 0 || !virtual_range_in_load(phdr, phnum, address, byte_len) { return None; }
+                // Linkers commonly extend PT_GNU_RELRO through the final page
+                // that owns a writable PT_LOAD prefix. Validate against the
+                // actual page-rounded mapping rather than raw p_memsz, but do
+                // not accept an arbitrary span beyond that mapping.
+                if byte_len == 0 || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len) { return None; }
                 relro = Some((address, byte_len));
             }
+            // The original graph is intentionally a no-TLS artifact and its
+            // negative runner mutates a spare program header into PT_TLS.
+            // Compile the sibling initial-TLS graph with the explicit cfg so
+            // this shared bootstrap source cannot silently widen the older
+            // fixture's contract.
+            #[cfg(not(crabc_initial_tls_graph))]
             PT_TLS => return None,
+            #[cfg(crabc_initial_tls_graph)]
+            PT_TLS => {
+                if tls.is_some() {
+                    return None;
+                }
+                let file_offset = read_u64(header.add(8));
+                let virtual_address = read_u64(header.add(16));
+                let filesz = read_u64(header.add(32));
+                let memsz = read_u64(header.add(40));
+                let raw_align = read_u64(header.add(48));
+                let align = if raw_align == 0 { 1 } else { raw_align };
+                if filesz > memsz
+                    || !align.is_power_of_two()
+                    || virtual_address & (align - 1) != file_offset & (align - 1)
+                {
+                    return None;
+                }
+                let align = usize::try_from(align).ok()?;
+                if memsz != 0 && !virtual_range_in_load(phdr, phnum, virtual_address, memsz) {
+                    return None;
+                }
+                // The initialized prefix is copied after relocation. It must
+                // originate in an explicitly readable, file-backed PT_LOAD,
+                // never in a BSS extension that happens to be mapped today.
+                if filesz != 0
+                    && !virtual_range_in_readable_file_load(
+                        phdr,
+                        phnum,
+                        virtual_address,
+                        filesz,
+                    )
+                {
+                    return None;
+                }
+                tls = Some((virtual_address, filesz, memsz, align));
+            }
             _ => {}
         }
     }
@@ -386,6 +486,14 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
     let dynamic_count = usize::try_from(dynamic_byte_len / 16).ok()?;
     let (relro_virtual_address, relro_byte_len) = relro.unwrap_or((0, 0));
     let mut object = Object { base, phdr, phnum, mapped, relro_virtual_address, relro_byte_len, ..EMPTY_OBJECT };
+    if let Some((virtual_address, filesz, memsz, align)) = tls {
+        object.tls_filesz = usize::try_from(filesz).ok()?;
+        object.tls_memsz = usize::try_from(memsz).ok()?;
+        object.tls_align = align;
+        if object.tls_memsz != 0 {
+            object.tls_image = runtime_address(base, virtual_address)? as *const u8;
+        }
+    }
     let mut needed_offsets = [0usize; MAX_NEEDED];
     let mut runpath_offset = None;
     let mut init_array_virtual_address = None;
@@ -434,8 +542,12 @@ unsafe fn parse_mapped(base: u64, phdr: *const u8, phnum: usize, mapped: bool) -
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
             // The fixtures use eager relocation; only its corresponding flag
-            // bits are inert here.  Symbolic lookup, text relocations, and
-            // static TLS would alter unsupported resolution/write/TLS modes.
+            // bits are inert here. Symbolic lookup, text relocations, and the
+            // static-TLS admission bit would alter unsupported loader modes.
+            // Initial-exec TLS needs a complete static-TLS admission policy,
+            // so reject DF_STATIC_TLS rather than silently accepting a
+            // TPOFF-encoded object under this GNU-Dynamic-only boundary.
+            DT_FLAGS if value & DF_STATIC_TLS != 0 => return None,
             DT_FLAGS if value & !DF_BIND_NOW != 0 => return None,
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE) != 0 => return None,
             // These imply relocation, finalization, hash, or initialization
@@ -656,6 +768,220 @@ unsafe fn map_elf(fd: i64) -> Option<Object> {
     parse_mapped(base, runtime_phdr, phnum, true)
 }
 
+/// Assign the fixed graph's one-based GNU TLS module IDs and Variant-II
+/// offsets before relocation writes use them. This is a layout plan only: it
+/// neither maps a thread block nor touches `%fs`, so a later relocation or
+/// mapping failure cannot leave a partially initialized thread pointer.
+///
+/// The offset calculation is the x86 branch of musl 1.2.6
+/// `ldso/dynlink.c`'s initial TLS layout: account for the source image's
+/// alignment phase rather than treating every PT_TLS image as a standalone
+/// `align_up(p_memsz)` block. The fixture fixes loader order to main, mid,
+/// leaf; as in musl, only TLS-bearing images receive one-based module IDs, so
+/// the TLS-free main image consumes neither an ID nor a DTV slot.
+unsafe fn plan_initial_tls(objects: &mut [Object; MAX_OBJECTS]) -> Option<bool> {
+    let mut offset_below_tp = 0usize;
+    let mut module_count = 0usize;
+    let mut has_tls = false;
+    for object in objects {
+        object.tls_module_id = 0;
+        object.tls_offset_below_tp = 0;
+        if object.tls_memsz == 0 {
+            continue;
+        }
+        has_tls = true;
+        if object.tls_image.is_null()
+            || object.tls_filesz > object.tls_memsz
+            || object.tls_align == 0
+            || !object.tls_align.is_power_of_two()
+        {
+            return None;
+        }
+        let with_alignment_slack = offset_below_tp
+            .checked_add(object.tls_memsz)?
+            .checked_add(object.tls_align - 1)?;
+        let source_phase = object.tls_image as usize & (object.tls_align - 1);
+        let placement_phase = with_alignment_slack.checked_add(source_phase)?
+            & (object.tls_align - 1);
+        offset_below_tp = with_alignment_slack.checked_sub(placement_phase)?;
+        if offset_below_tp < object.tls_memsz {
+            return None;
+        }
+        module_count = module_count.checked_add(1)?;
+        if module_count >= TLS_DTV_WORDS {
+            return None;
+        }
+        object.tls_module_id = module_count;
+        object.tls_offset_below_tp = offset_below_tp;
+    }
+    Some(has_tls)
+}
+
+/// Materialize every fixed-graph initial TLS image and install its minimal
+/// GNU-Dynamic x86 thread-pointer prefix.
+///
+/// This owns exactly one main-thread block. `%fs:0` is the self pointer and
+/// `%fs:8` is a DTV with one count word followed by one one-based module slot
+/// per TLS-bearing object. The prefix intentionally does not claim a full musl pthread
+/// TCB, a DTV growth protocol, or a worker allocation interface.
+unsafe fn install_initial_tls(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+    let mut total_tls_size = 0usize;
+    let mut tp_alignment = core::mem::align_of::<usize>();
+    let mut module_count = 0usize;
+    for object in objects {
+        if object.tls_memsz == 0 {
+            continue;
+        }
+        if object.tls_offset_below_tp < object.tls_memsz
+            || object.tls_align == 0
+            || !object.tls_align.is_power_of_two()
+        {
+            return None;
+        }
+        total_tls_size = total_tls_size.max(object.tls_offset_below_tp);
+        tp_alignment = tp_alignment.max(object.tls_align);
+        module_count = module_count.checked_add(1)?;
+        if object.tls_module_id != module_count || module_count >= TLS_DTV_WORDS {
+            return None;
+        }
+    }
+    if total_tls_size == 0 || !tp_alignment.is_power_of_two() {
+        return None;
+    }
+
+    let reserved_after_tp = TLS_TCB_PREFIX_SIZE
+        .checked_add(TLS_DTV_BYTE_LEN)?
+        .checked_add(TLS_MODULE_SIZE_TABLE_BYTE_LEN)?;
+    let raw_mapping_size = total_tls_size
+        .checked_add(reserved_after_tp)?
+        // `align_down` may discard almost one complete TP-alignment unit.
+        .checked_add(tp_alignment)?;
+    let mapping_size = align_up_usize(raw_mapping_size, PAGE as usize)?;
+    let mapping = syscall6(
+        SYS_MMAP,
+        0,
+        mapping_size as i64,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if is_linux_error(mapping) {
+        return None;
+    }
+    let block = mapping as usize;
+    let mapping_end = block.checked_add(mapping_size)?;
+    let unaligned_tp = mapping_end.checked_sub(reserved_after_tp)?;
+    let thread_pointer = align_down_usize(unaligned_tp, tp_alignment);
+    let tls_start = thread_pointer.checked_sub(total_tls_size)?;
+    let dtv_end = thread_pointer.checked_add(reserved_after_tp)?;
+    if tls_start < block || dtv_end > mapping_end {
+        let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+        return None;
+    }
+
+    let tcb = thread_pointer as *mut u8;
+    let dtv = tcb.add(TLS_TCB_PREFIX_SIZE) as *mut usize;
+    let module_sizes = (dtv as *mut u8).add(TLS_DTV_BYTE_LEN) as *mut usize;
+    // SAFETY: the fresh anonymous mapping spans the checked TCB/DTV ranges;
+    // no application code can observe it until ARCH_SET_FS succeeds below.
+    core::ptr::write_unaligned(tcb as *mut usize, thread_pointer);
+    core::ptr::write_unaligned(tcb.add(core::mem::size_of::<usize>()) as *mut usize, dtv as usize);
+    core::ptr::write_unaligned(
+        tcb.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET) as *mut usize,
+        module_sizes as usize,
+    );
+    core::ptr::write_unaligned(dtv, module_count);
+    for module_id in 1..TLS_DTV_WORDS {
+        core::ptr::write_unaligned(dtv.add(module_id), 0);
+        core::ptr::write_unaligned(module_sizes.add(module_id), 0);
+    }
+
+    for object in objects {
+        if object.tls_memsz == 0 {
+            continue;
+        }
+        if object.tls_module_id == 0 || object.tls_module_id >= TLS_DTV_WORDS {
+            let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+            return None;
+        }
+        let destination = thread_pointer.checked_sub(object.tls_offset_below_tp)? as *mut u8;
+        if object.tls_filesz != 0 {
+            core::ptr::copy_nonoverlapping(object.tls_image, destination, object.tls_filesz);
+        }
+        if object.tls_memsz > object.tls_filesz {
+            core::ptr::write_bytes(
+                destination.add(object.tls_filesz),
+                0,
+                object.tls_memsz - object.tls_filesz,
+            );
+        }
+        core::ptr::write_unaligned(dtv.add(object.tls_module_id), destination as usize);
+        core::ptr::write_unaligned(module_sizes.add(object.tls_module_id), object.tls_memsz);
+    }
+    if syscall2(SYS_ARCH_PRCTL, ARCH_SET_FS, thread_pointer as i64) < 0 {
+        let _ = syscall2(SYS_MUNMAP, mapping, mapping_size as i64);
+        return None;
+    }
+    Some(())
+}
+
+#[repr(C)]
+pub struct TlsIndex {
+    ti_module: usize,
+    ti_offset: usize,
+}
+
+/// Resolve the private fixed-graph GNU TLS index ABI from the minimal DTV at
+/// `%fs:8`.
+///
+/// # Safety
+///
+/// `index` must point to a readable [`TlsIndex`]. Its module ID must identify
+/// a TLS-bearing image materialized by this fixed graph, and its offset must
+/// be the ABI offset of a symbol in that module (or its one-past boundary).
+/// The resolver returns null for an unmaterialized module or an offset outside
+/// that module's recorded `PT_TLS.p_memsz`; it cannot establish that a
+/// non-null result is safe for a caller's eventual typed dereference. This
+/// private exported ELF symbol is not an installed or public x86 API.
+#[no_mangle]
+pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
+    if index.is_null() {
+        return core::ptr::null_mut();
+    }
+    let module_id = core::ptr::read_unaligned(core::ptr::addr_of!((*index).ti_module));
+    let offset = core::ptr::read_unaligned(core::ptr::addr_of!((*index).ti_offset));
+    let thread_pointer = read_thread_pointer();
+    if thread_pointer == 0 {
+        return core::ptr::null_mut();
+    }
+    let dtv = core::ptr::read_unaligned(
+        (thread_pointer as *const u8).add(core::mem::size_of::<usize>()) as *const usize,
+    ) as *const usize;
+    if dtv.is_null() {
+        return core::ptr::null_mut();
+    }
+    let module_sizes = core::ptr::read_unaligned(
+        (thread_pointer as *const u8).add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET) as *const usize,
+    ) as *const usize;
+    if module_sizes.is_null() {
+        return core::ptr::null_mut();
+    }
+    let module_count = core::ptr::read_unaligned(dtv);
+    if module_id == 0 || module_id > module_count || module_id >= TLS_DTV_WORDS {
+        return core::ptr::null_mut();
+    }
+    let module_base = core::ptr::read_unaligned(dtv.add(module_id));
+    let module_size = core::ptr::read_unaligned(module_sizes.add(module_id));
+    if module_size == 0 || offset > module_size {
+        return core::ptr::null_mut();
+    }
+    match module_base.checked_add(offset) {
+        Some(address) if module_base != 0 => address as *mut c_void,
+        _ => core::ptr::null_mut(),
+    }
+}
+
 unsafe fn relocate(object: &Object, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
     // Do not let a malformed table change an earlier target before the graph
     // discovers that another table or packed bitmap is invalid. The fixed
@@ -748,15 +1074,7 @@ unsafe fn preflight_rela_table(
         let kind = info as u32;
         let symbol = (info >> 32) as usize;
         let addend = read_i64(rela.add(16));
-        match kind {
-            R_X86_64_RELATIVE if symbol == 0 => {
-                let _ = add_signed(object.base, addend)?;
-            }
-            R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
-                let _ = add_signed(resolve_symbol(object, objects, symbol)?, addend)?;
-            }
-            _ => return None,
-        }
+        let _ = relocation_value(kind, object, objects, symbol, addend)?;
         target_count = record_relocation_target(targets, target_count, relocation_offset)?;
     }
     Some(target_count)
@@ -864,11 +1182,7 @@ unsafe fn apply_rela_table(
         let kind = info as u32;
         let symbol = (info >> 32) as usize;
         let addend = read_i64(rela.add(16));
-        let value = match kind {
-            R_X86_64_RELATIVE if symbol == 0 => add_signed(object.base, addend)?,
-            R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => add_signed(resolve_symbol(object, objects, symbol)?, addend)?,
-            _ => return None,
-        };
+        let value = relocation_value(kind, object, objects, symbol, addend)?;
         *slot = value;
     }
     Some(())
@@ -914,6 +1228,54 @@ unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()>
     Some(())
 }
 
+/// Evaluate the constrained relocation vocabulary before a relocation table
+/// changes any destination word. The GNU-Dynamic TLS pair uses module IDs and
+/// module-relative offsets; TP-relative initial-exec and descriptor records
+/// deliberately remain a later loader boundary.
+unsafe fn relocation_value(
+    kind: u32,
+    requestor: &Object,
+    objects: &[Object; MAX_OBJECTS],
+    symbol: usize,
+    addend: i64,
+) -> Option<u64> {
+    match kind {
+        R_X86_64_RELATIVE if symbol == 0 => add_signed(requestor.base, addend),
+        R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
+            add_signed(resolve_symbol(requestor, objects, symbol)?, addend)
+        }
+        #[cfg(crabc_initial_tls_graph)]
+        R_X86_64_DTPMOD64 => {
+            if addend != 0 {
+                return None;
+            }
+            let (module_id, _, _) = resolve_tls_symbol(requestor, objects, symbol)?;
+            u64::try_from(module_id).ok()
+        }
+        #[cfg(crabc_initial_tls_graph)]
+        R_X86_64_DTPOFF64 => {
+            let (_, symbol_offset, module_memsz) = resolve_tls_symbol(requestor, objects, symbol)?;
+            let offset = add_signed(symbol_offset, addend)?;
+            if offset > module_memsz as u64 {
+                return None;
+            }
+            Some(offset)
+        }
+        #[cfg(not(crabc_initial_tls_graph))]
+        R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 => None,
+        // Naming these rejected forms makes this source's boundary auditable:
+        // no `DF_STATIC_TLS`/TPOFF admission and no TLSDESC resolver are
+        // implied by the GNU-Dynamic DTV implementation above.
+        R_X86_64_TPOFF64
+        | R_X86_64_GOTTPOFF
+        | R_X86_64_TPOFF32
+        | R_X86_64_GOTPC32_TLSDESC
+        | R_X86_64_TLSDESC_CALL
+        | R_X86_64_TLSDESC => None,
+        _ => None,
+    }
+}
+
 unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], index: usize) -> Option<u64> {
     if index >= requestor.symcount { return None; }
     let symbol = requestor.symtab.add(index * 24);
@@ -921,10 +1283,24 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
     if name_offset >= requestor.strsz { return None; }
     let name = requestor.strtab.add(name_offset);
     let len = bounded_nul(name, requestor.strsz - name_offset)?;
+    // The initial TLS sibling has no libc object. Its direct `__tls_get_addr`
+    // import is resolved by that interpreter only; compile this special scope
+    // out of the older no-TLS artifact so it cannot silently widen its
+    // ordinary GLOB_DAT/JUMP_SLOT lookup contract.
+    #[cfg(crabc_initial_tls_graph)]
+    if len == b"__tls_get_addr".len() && bytes_eq(name, b"__tls_get_addr".as_ptr(), len) {
+        return Some(__tls_get_addr as *const () as usize as u64);
+    }
     for object in objects {
         for candidate in 1..object.symcount {
             let symbol = object.symtab.add(candidate * 24);
             if read_u16(symbol.add(6)) == 0 { continue; }
+            if *symbol.add(4) & 0x0f == 6 {
+                // STT_TLS has an offset in a module image, not an ordinary
+                // runtime virtual address. Only the DTP* relocation path may
+                // consume it.
+                continue;
+            }
             let candidate_offset = read_u32(symbol) as usize;
             if candidate_offset >= object.strsz { continue; }
             let candidate_name = object.strtab.add(candidate_offset);
@@ -933,6 +1309,68 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
                 let address = read_u64(symbol.add(8));
                 if !virtual_range_in_load(object.phdr, object.phnum, address, 1) { return None; }
                 return runtime_address(object.base, address);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a dynamic-symbol-table TLS definition to its fixed-graph module
+/// index and module-relative `st_value` offset.
+#[cfg(crabc_initial_tls_graph)]
+unsafe fn resolve_tls_symbol(
+    requestor: &Object,
+    objects: &[Object; MAX_OBJECTS],
+    index: usize,
+) -> Option<(usize, u64, usize)> {
+    if index == 0 {
+        for object in objects {
+            if object.base == requestor.base
+                && object.phdr == requestor.phdr
+                && object.tls_memsz != 0
+                && object.tls_module_id != 0
+            {
+                return Some((object.tls_module_id, 0, object.tls_memsz));
+            }
+        }
+        return None;
+    }
+    if index >= requestor.symcount {
+        return None;
+    }
+    let requested = requestor.symtab.add(index * 24);
+    let name_offset = read_u32(requested) as usize;
+    if name_offset >= requestor.strsz || *requested.add(4) & 0x0f != 6 {
+        return None;
+    }
+    let name = requestor.strtab.add(name_offset);
+    let name_len = bounded_nul(name, requestor.strsz - name_offset)?;
+    for object in objects {
+        if object.tls_memsz == 0 {
+            continue;
+        }
+        for candidate in 1..object.symcount {
+            let definition = object.symtab.add(candidate * 24);
+            if read_u16(definition.add(6)) == 0 || *definition.add(4) & 0x0f != 6 {
+                continue;
+            }
+            let definition_name_offset = read_u32(definition) as usize;
+            if definition_name_offset >= object.strsz {
+                continue;
+            }
+            let definition_name = object.strtab.add(definition_name_offset);
+            let Some(definition_len) = bounded_nul(definition_name, object.strsz - definition_name_offset) else {
+                continue;
+            };
+            if definition_len == name_len && bytes_eq(name, definition_name, name_len) {
+                let offset = read_u64(definition.add(8));
+                if offset > object.tls_memsz as u64 {
+                    return None;
+                }
+                if object.tls_module_id == 0 {
+                    return None;
+                }
+                return Some((object.tls_module_id, offset, object.tls_memsz));
             }
         }
     }
@@ -985,7 +1423,7 @@ unsafe fn apply_self_relro(base: u64) -> Option<()> {
         let address = read_u64(program_header.add(16));
         let byte_len = read_u64(program_header.add(40));
         if relro.replace((address, byte_len)).is_some() || byte_len == 0
-            || !virtual_range_in_load(phdr, phnum, address, byte_len)
+            || !virtual_range_in_page_mapped_load(phdr, phnum, address, byte_len)
         {
             return None;
         }
@@ -1027,6 +1465,61 @@ unsafe fn virtual_range_in_load(phdr: *const u8, phnum: usize, address: u64, byt
         let start = read_u64(header.add(16));
         let Some(load_end) = start.checked_add(read_u64(header.add(40))) else { return false; };
         if address >= start && end <= load_end { return true; }
+    }
+    false
+}
+
+/// Whether a range fits the page-rounded mapping of one PT_LOAD segment.
+/// This is intentionally narrower than an arbitrary adjacent mapping: it
+/// exists solely for the linker-permitted final-page extension of PT_GNU_RELRO.
+unsafe fn virtual_range_in_page_mapped_load(
+    phdr: *const u8,
+    phnum: usize,
+    address: u64,
+    byte_len: u64,
+) -> bool {
+    let Some(end) = address.checked_add(byte_len) else { return false; };
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD {
+            continue;
+        }
+        let start = align_down(read_u64(header.add(16)));
+        let Some(raw_end) = read_u64(header.add(16)).checked_add(read_u64(header.add(40))) else {
+            return false;
+        };
+        let mapped_end = align_up(raw_end);
+        if address >= start && end <= mapped_end {
+            return true;
+        }
+    }
+    false
+}
+
+/// Require a PT_TLS initialized prefix to be backed by one readable file
+/// segment. `p_memsz` may legitimately extend through BSS, but copying
+/// `p_filesz` from that extension would turn a malformed ELF record into a
+/// speculative read from whatever virtual mapping happens to follow it.
+#[cfg(crabc_initial_tls_graph)]
+unsafe fn virtual_range_in_readable_file_load(
+    phdr: *const u8,
+    phnum: usize,
+    address: u64,
+    byte_len: u64,
+) -> bool {
+    let Some(end) = address.checked_add(byte_len) else { return false; };
+    for index in 0..phnum {
+        let header = phdr.add(index * 56);
+        if read_u32(header) != PT_LOAD || read_u32(header.add(4)) & PF_R == 0 {
+            continue;
+        }
+        let start = read_u64(header.add(16));
+        let Some(file_end) = start.checked_add(read_u64(header.add(32))) else {
+            return false;
+        };
+        if address >= start && end <= file_end {
+            return true;
+        }
     }
     false
 }
@@ -1076,7 +1569,26 @@ unsafe fn read_u64(pointer: *const u8) -> u64 { core::ptr::read_unaligned(pointe
 unsafe fn read_i64(pointer: *const u8) -> i64 { core::ptr::read_unaligned(pointer as *const i64) }
 fn align_down(value: u64) -> u64 { value & !(PAGE - 1) }
 fn align_up(value: u64) -> u64 { value.checked_add(PAGE - 1).unwrap_or(u64::MAX) & !(PAGE - 1) }
+fn align_down_usize(value: usize, align: usize) -> usize { value & !(align - 1) }
+fn align_up_usize(value: usize, align: usize) -> Option<usize> {
+    if align == 0 || !align.is_power_of_two() {
+        return None;
+    }
+    value.checked_add(align - 1).map(|rounded| rounded & !(align - 1))
+}
 fn add_signed(value: u64, addend: i64) -> Option<u64> { if addend >= 0 { value.checked_add(addend as u64) } else { value.checked_sub(addend.unsigned_abs()) } }
+fn is_linux_error(value: i64) -> bool { (-4_095..=-1).contains(&value) }
+
+#[inline(always)]
+unsafe fn read_thread_pointer() -> usize {
+    let thread_pointer: usize;
+    core::arch::asm!(
+        "mov {thread_pointer}, fs:[0]",
+        thread_pointer = out(reg) thread_pointer,
+        options(readonly, nostack, preserves_flags),
+    );
+    thread_pointer
+}
 
 unsafe fn syscall1(number: i64, one: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, lateout("rcx") _, lateout("r11") _, options(nostack)); result }
 unsafe fn syscall2(number: i64, one: i64, two: i64) -> i64 { let result: i64; core::arch::asm!("syscall", inlateout("rax") number => result, in("rdi") one, in("rsi") two, lateout("rcx") _, lateout("r11") _, options(nostack)); result }

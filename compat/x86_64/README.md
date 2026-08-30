@@ -395,6 +395,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-relocation
 ./scripts/dev-x86_64.sh ldso-image
 ./scripts/dev-x86_64.sh ldso-initial-graph
+./scripts/dev-x86_64.sh ldso-initial-tls
 ```
 
 The runner rejects non-Linux and non-x86_64 hosts before Docker, requests
@@ -2841,6 +2842,21 @@ Main-image constructor dispatch is explicitly rejected and remains future CRT
 handoff work. This is not general `DT_NEEDED` or RUNPATH policy,
 general or interpreter `DT_RELR`, TLS, symbol versions, `dl*`, a dynamic
 CRT/sysroot, or public x86 support.
+
+`ldso-initial-tls` is a separate private Variant-II GNU-Dynamic TLS artifact
+inside the same still-planned `ldso.dynamic-runtime` family, not a widened
+`crabc-ldso` target. Its fixed TLS-free main PIE -> `mid.so` -> `leaf.so`
+graph materializes only the two DSO `PT_TLS` images, preserves initialized
+values, zeroes TBSS, preserves a 4096-byte TLS alignment, assigns IDs only to
+the TLS-bearing modules, and resolves `R_X86_64_DTPMOD64`/
+`R_X86_64_DTPOFF64` plus `__tls_get_addr` after all relocation and before
+constructors. The candidate has no external runtime dependency and runs with
+an empty environment; the naked pinned-musl reference main carries only
+musl's static resolver object, not a libc dependency. Mutations reject bad
+`PT_TLS` size/alignment/phase/file backing/duplication, bad DTPMOD/DTPOFF,
+`R_X86_64_TPOFF64`, and `DF_STATIC_TLS`. It does not select initial-exec or
+TLSDESC, DTV growth, `dl*`, pthread/TCB parity, a general loader, dynamic
+CRT/sysroot, full x86-64 parity, or public x86 support.
 
 The separately launched `./crt/run-x86_64.sh static-pie` gate proves the
 private Rust-produced `rcrt1.o`/`crti.o`/`crtn.o` no-TLS static-PIE foundation.

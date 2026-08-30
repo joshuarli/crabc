@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 57)
+        self.assertEqual(report["verified_artifact_count"], 58)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -110,6 +110,58 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(changed_artifact, dict)
         changed_artifact["description"] = "private graph"
         with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-graph description omits"):
+            ledger.validate_ledger(changed)
+
+    def test_ldso_initial_tls_is_a_planned_private_artifact(self) -> None:
+        data = self.data()
+        family = self.family(data, "ldso.dynamic-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(entry for entry in artifacts if entry["id"] == "ldso-initial-tls")
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "still-planned `ldso.dynamic-runtime`",
+            "main PIE (without PT_TLS) -> mid.so -> leaf.so",
+            "GNU-Dynamic TLS",
+            "R_X86_64_DTPMOD64",
+            "R_X86_64_DTPOFF64",
+            "__tls_get_addr",
+            "Variant-II",
+            "PT_TLS",
+            "TBSS",
+            "DTV",
+            "R_X86_64_TPOFF64",
+            "DF_STATIC_TLS",
+            "pinned musl 1.2.6 static __tls_get_addr",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh ldso-initial-tls"},
+        )
+        self.assertEqual(
+            set(artifact["source_owners"]),
+            {
+                "ldso/src/x86_64_initial_graph.rs",
+                "compat/x86_64/ldso_initial_graph_start.S",
+                "compat/x86_64/ldso_initial_tls_leaf.c",
+                "compat/x86_64/ldso_initial_tls_mid.c",
+                "compat/x86_64/ldso_initial_tls_main.c",
+                "compat/x86_64/run_ldso_initial_tls.sh",
+                "scripts/dev-x86_64.sh",
+            },
+        )
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "ldso.dynamic-runtime")["verified_artifact"]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(entry for entry in changed_artifacts if entry["id"] == "ldso-initial-tls")
+        assert isinstance(changed_artifact, dict)
+        changed_artifact["description"] = "private TLS graph"
+        with self.assertRaisesRegex(ledger.LedgerError, "ldso-initial-tls description omits"):
             ledger.validate_ledger(changed)
 
     def test_header_layout_manifest_is_a_closed_direct_probe_inventory(self) -> None:

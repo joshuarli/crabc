@@ -3714,6 +3714,67 @@ def require_ldso_initial_graph_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ldso_initial_tls_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet the private GNU-Dynamic TLS graph without promoting the loader."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[ldso.dynamic-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "ldso-initial-tls"]
+    require(len(matching) == 1, "ldso.dynamic-runtime needs exactly one ldso-initial-tls artifact")
+    artifact = matching[0]
+    require(family.get("status") == "planned", "ldso-initial-tls must not promote ldso.dynamic-runtime")
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `ldso.dynamic-runtime`",
+        "main PIE (without PT_TLS) -> mid.so -> leaf.so",
+        "GNU-Dynamic TLS",
+        "Variant-II",
+        "R_X86_64_DTPMOD64",
+        "R_X86_64_DTPOFF64",
+        "__tls_get_addr",
+        "TBSS",
+        "DTV",
+        "R_X86_64_TPOFF64",
+        "DF_STATIC_TLS",
+        "pinned musl 1.2.6 static __tls_get_addr",
+        "TLSDESC",
+        "DTV growth",
+        "pthread/TCB parity",
+        "dynamic CRT/sysroot",
+        "public x86 support",
+    ):
+        require(phrase in description, f"ldso-initial-tls description omits {phrase}")
+    expected_sources = {
+        "ldso/src/x86_64_initial_graph.rs",
+        "compat/x86_64/ldso_initial_graph_start.S",
+        "compat/x86_64/ldso_initial_tls_leaf.c",
+        "compat/x86_64/ldso_initial_tls_mid.c",
+        "compat/x86_64/ldso_initial_tls_main.c",
+        "compat/x86_64/run_ldso_initial_tls.sh",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(artifact["source_owners"], "ldso-initial-tls source owners")) == expected_sources,
+        "ldso-initial-tls source owners drifted",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh ldso-initial-tls"},
+        "ldso-initial-tls must use the dedicated native command",
+    )
+    runner = (ROOT / "compat" / "x86_64" / "run_ldso_initial_tls.sh").read_text()
+    require("MUSL_LIBC_ARCHIVE" in runner, "ldso-initial-tls must use the pinned musl static resolver")
+    require("env -i PATH=/usr/bin:/bin" in runner, "ldso-initial-tls must reject ambient execution state")
+    require(
+        "run_ldso_initial_tls.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "ldso-initial-tls dispatcher binding is missing",
+    )
+
+
 def require_static_initial_tls_v1_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet the private real-PT_TLS foundation without promoting pthreads."""
     artifacts = require_verified_artifacts(
@@ -8947,6 +9008,7 @@ def validate_ledger(
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
 
     require_ldso_initial_graph_artifact(by_id["ldso.dynamic-runtime"])
+    require_ldso_initial_tls_artifact(by_id["ldso.dynamic-runtime"])
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
