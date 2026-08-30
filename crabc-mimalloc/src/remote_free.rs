@@ -21,9 +21,9 @@
 // live producers are joined/quiescent before its queue transition. The
 // explicit detached metadata branch has no remote producer path and does not
 // call this module.
-// `remote_free_loom.rs` separately models this module's
-// exact head CAS transitions with Loom; it does not model page lifetime, raw
-// block pointers, or owner-local mutation.
+// `remote_free_loom.rs` separately models this module's exact head CAS and
+// compact page-lifetime-word transitions with Loom; it does not model raw
+// block pointers or owner-local mutation.
 
 use core::ptr::{self, NonNull};
 
