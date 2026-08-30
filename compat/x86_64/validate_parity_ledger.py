@@ -4902,6 +4902,332 @@ def require_static_c11_plain_sync_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
+    """Ratchet one normal-return pthread/C11 once artifact without promotion.
+
+    The private artifact deliberately shares only the selected static-worker,
+    atomic, and raw-futex seams. It must not turn the normal-return 0/1/2/3
+    control-word route into cancellation, fork, TSS, or pthread-family parity.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-c11-once"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
+    )
+    require(
+        len(artifacts) == 12,
+        "libc.pthread-tls must retain exactly twelve private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-c11-once must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Twelve separately verified static artifacts",
+        "private normal-return pthread/C11 once state machine",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after the once artifact",
+        )
+    family_sources = string_list(
+        family["source_owners"], "libc.pthread-tls source owners"
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/pthread_once.rs",
+        "compat/x86_64/libc_pthread_c11_once_probe.c",
+        "compat/x86_64/libc_pthread_c11_once_start.S",
+        "compat/x86_64/run_libc_pthread_c11_once.sh",
+    ):
+        require(
+            owner in family_sources,
+            f"libc.pthread-tls source owners omit {owner} after the once artifact",
+        )
+    family_abi_text = " ".join(
+        string_list(
+            family["x86_abi_prerequisites"],
+            "libc.pthread-tls ABI prerequisites",
+        )
+    )
+    for phrase in (
+        "pthread_once.c::{__pthread_once,__pthread_once_full}",
+        "call_once.c",
+        "__wait.c::__wait",
+        "pthread_impl.h::__wake",
+        "selected state machine is 0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters",
+        "INT_MAX",
+        "does not establish musl's weak pthread_once ELF binding or exact ELF parity",
+    ):
+        require(
+            phrase in family_abi_text,
+            f"libc.pthread-tls ABI prerequisites omit {phrase} after the once artifact",
+        )
+    family_header_text = " ".join(
+        string_list(
+            family["x86_header_prerequisites"],
+            "libc.pthread-tls header prerequisites",
+        )
+    )
+    for phrase in (
+        "pthread_once/call_once",
+        "four-byte pthread_once_t/once_flag",
+        "28-context C/C++",
+    ):
+        require(
+            phrase in family_header_text,
+            f"libc.pthread-tls header prerequisites omit {phrase} after the once artifact",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "exactly `pthread_once` and `call_once`",
+        "four-byte aligned `pthread_once_t`/`once_flag`",
+        "all-zero static initializers",
+        "0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters",
+        "compare-exchange 0->1",
+        "private-futex state-3 waiting",
+        "release exchange to 2",
+        "interposable pthread C ABI",
+        "static/all-zero initialization",
+        "exactly one normal-return initializer",
+        "two contending workers",
+        "relaxed payload/count observations without an independent release/acquire edge",
+        "stale errno preservation",
+        "cancellation cleanup/reset",
+        "initializer pthread_exit/thrd_exit",
+        "recursive same-control entry",
+        "fork/atfork interaction",
+        "TSS",
+        "dynamic/loader TLS",
+        "weak pthread_once ELF binding",
+        "exact ELF parity",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-c11-once description omits {phrase}",
+        )
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/atomic.rs",
+        "libc/src/c_abi/x86_64/pthread_once.rs",
+        "libc/src/c_abi/x86_64/pthread_identity.rs",
+        "libc/src/c_abi/x86_64/pthread_mutex.rs",
+        "libc/src/c_abi/x86_64/pthread_cond.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "include/threads.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/run_types_header_abi.sh",
+        "compat/x86_64/run_libc_pthread_mutex_normal.sh",
+        "compat/x86_64/run_libc_c11_lifecycle.sh",
+        "compat/x86_64/run_libc_thrd_sleep.sh",
+        "compat/x86_64/run_libc_c11_plain_sync.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_c11_once_probe.c",
+        "compat/x86_64/libc_pthread_c11_once_start.S",
+        "compat/x86_64/run_libc_pthread_c11_once.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    }
+    require(
+        set(
+            string_list(
+                artifact["source_owners"],
+                "static-c-pthread-c11-once source owners",
+            )
+        )
+        == expected_sources,
+        "static-c-pthread-c11-once source owners drifted",
+    )
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "pthread_once.c::{__pthread_once,__pthread_once_full}",
+        "call_once.c",
+        "__wait.c::__wait",
+        "pthread_impl.h::__wake",
+        "four-byte align-4",
+        "PTHREAD_ONCE_INIT=0",
+        "ONCE_FLAG_INIT=0",
+        "0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters",
+        "compare-exchange claims 0->1",
+        "release exchange publishes 2",
+        "futex=202",
+        "FUTEX_WAIT_PRIVATE=128",
+        "FUTEX_WAKE_PRIVATE=129",
+        "INT_MAX",
+        "r10",
+        "EAGAIN, EINTR",
+        "without changing C errno",
+        "interposable pthread C ABI",
+        "cancellation reset",
+        "dynamic TLS",
+        "relaxed atomics only",
+        "no independent release/acquire edge",
+        "weak pthread_once ELF binding",
+        "exact ELF parity",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-c11-once ABI prerequisites omit {phrase}",
+        )
+
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    header_text = " ".join(header_prerequisites)
+    for phrase in (
+        "pthread.h",
+        "threads.h",
+        "errno.h",
+        "bits/alltypes.h",
+        "bits/syscall.h",
+        "four-byte align-4",
+        "pthread_once_t/once_flag identity",
+        "PTHREAD_ONCE_INIT/ONCE_FLAG_INIT",
+        "pthread_once/call_once",
+        "28-context C/C++",
+        "unmangled C linkage",
+        "does not claim broad installed-header, full C11, or pthread runtime completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-pthread-c11-once header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-c11-once"},
+        "static-c-pthread-c11-once must use the closed libc-pthread-c11-once command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl project-header C reference",
+        "`-nostdlib -static` candidate",
+        "pthread_once/call_once static/all-zero initialization",
+        "exactly one normal-return initializer",
+        "two contending workers that reach state 3",
+        "once publication of relaxed payload/count observations without an independent release/acquire edge",
+        "stale errno preservation",
+        "exactly the two selected once exports",
+        "direct private shared-state routing",
+        "interposable pthread call",
+        "locked compare-exchange",
+        "release exchange/xchg",
+        "futex=202",
+        "FUTEX_WAIT_PRIVATE=128",
+        "FUTEX_WAKE_PRIVATE=129",
+        "INT_MAX wake-all",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "cancellation reset",
+        "initializer pthread_exit/thrd_exit",
+        "recursive same-control entry",
+        "fork/atfork",
+        "TSS",
+        "weak pthread_once ELF binding or exact ELF parity",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-c11-once evidence scope omits {phrase}",
+        )
+
+    oracle_entries = artifact["oracle"]
+    assert isinstance(oracle_entries, list)
+    source_oracles = [
+        entry
+        for entry in oracle_entries
+        if isinstance(entry, dict) and entry.get("kind") == "c-posix"
+    ]
+    require(
+        len(source_oracles) == 1,
+        "static-c-pthread-c11-once must retain one pinned-musl C/POSIX/C11 oracle",
+    )
+    source_oracle = source_oracles[0]
+    source = source_oracle.get("source")
+    role = source_oracle.get("role")
+    require(
+        source
+        == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "static-c-pthread-c11-once musl oracle pin drifted",
+    )
+    require(
+        isinstance(role, str)
+        and "src/thread/pthread_once.c" in role
+        and "src/thread/call_once.c" in role
+        and "src/thread/__wait.c" in role
+        and "src/internal/pthread_impl.h::__wake" in role,
+        "static-c-pthread-c11-once musl source mapping omits __wake provenance",
+    )
+
+    static_exports = {
+        line
+        for line in (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text().splitlines()
+        if line and not line.startswith("#")
+    }
+    selected_once_exports = {"pthread_once", "call_once"}
+    require(
+        selected_once_exports <= static_exports,
+        "static-c-pthread-c11-once must expose pthread_once and call_once",
+    )
+    for unselected in ("__pthread_once", "__pthread_once_full"):
+        require(
+            unselected not in static_exports,
+            f"static-c-pthread-c11-once must not expose private {unselected}",
+        )
+    require(
+        "run_libc_pthread_c11_once.sh"
+        in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
+        "static-c-pthread-c11-once dispatcher binding is missing",
+    )
+
+
 def require_random_entropy_artifact(family: Mapping[str, Any]) -> None:
     """Keep the direct entropy artifact's cancellation and TLS boundary explicit."""
     artifacts = require_verified_artifacts(
@@ -6957,6 +7283,7 @@ def validate_ledger(
     require_static_pthread_normal_mutex_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_private_cond_artifact(by_id["libc.pthread-tls"])
     require_static_c11_plain_sync_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_c11_once_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

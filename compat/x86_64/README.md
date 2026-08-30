@@ -338,6 +338,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
 ./scripts/dev-x86_64.sh libc-c11-plain-sync
+./scripts/dev-x86_64.sh libc-pthread-c11-once
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -1928,6 +1929,25 @@ cancellation, TSS, once, process-shared synchronization, C11-family
 completion, full pthread/TLS or x86-64 parity, promotion, or public x86
 support.
 
+`libc-pthread-c11-once` is a twelfth separately recorded private static
+`verified_artifact` under that same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only normal-return `pthread_once`
+and C11 `call_once` for the installed four-byte, zero-initialized
+`pthread_once_t` and `once_flag` records. The shared private state machine
+moves `0 -> 1`; while two selected contenders start, it records contention as
+state `3` and uses `FUTEX_WAIT_PRIVATE`; it then release-publishes `2` and
+uses `FUTEX_WAKE_PRIVATE` only if waiters were recorded. The fixture proves static
+and local zero initialization, exactly one initializer, relaxed-payload
+visibility after completion without a separate release/acquire edge, and
+caller-`errno` preservation. C11 calls the
+private shared machine without an interposable pthread C call. It does not
+select cancellation reset, initializer `pthread_exit`/`thrd_exit`, recursive
+same-control entry, fork/atfork, TSS, dynamic/loader TLS, musl's weak
+`pthread_once` ELF binding, general pthread/C11 synchronization, full
+pthread/TLS or x86-64 parity, promotion, or public x86
+support.
+
 `libc-termios-control` is a separately recorded static
 `verified_artifact` gate over that archive, not a terminal capability. Its
 project-header C body first executes through pinned musl and then through a
@@ -2395,7 +2415,8 @@ deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-pthread-mutex-normal`,
-`libc-pthread-cond-private`, or `libc-c11-plain-sync`: their start shims
+`libc-pthread-cond-private`, `libc-c11-plain-sync`, or
+`libc-pthread-c11-once`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
 owner instead of writing an FS base themselves. `libc-thrd-sleep` deliberately
 retains the fixture-local errno/TLS setup because it proves that its adapter
@@ -2707,7 +2728,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
 `libc-pthread-detach`, `libc-thrd-sleep`, `libc-pthread-mutex-normal`,
-`libc-pthread-cond-private`, `libc-c11-plain-sync`,
+`libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-termios-control`,
 `libc-process-context`, `libc-child-reaping`, and
 `libc-immediate-termination`, `libc-callback-algorithms`,

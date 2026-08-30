@@ -149,6 +149,9 @@ typedef int (*crabc_pthread_cond_destroy_signature)(pthread_cond_t *);
 typedef int (*crabc_pthread_cond_wait_signature)(pthread_cond_t *, pthread_mutex_t *);
 typedef int (*crabc_pthread_cond_signal_signature)(pthread_cond_t *);
 typedef int (*crabc_pthread_cond_broadcast_signature)(pthread_cond_t *);
+typedef void (*crabc_once_init_signature)(void);
+typedef int (*crabc_pthread_once_signature)(
+	pthread_once_t *, crabc_once_init_signature);
 typedef int (*crabc_thrd_create_signature)(thrd_t *, thrd_start_t, void *);
 typedef int (*crabc_thrd_detach_signature)(thrd_t);
 typedef int (*crabc_thrd_join_signature)(thrd_t, int *);
@@ -157,6 +160,7 @@ typedef int (*crabc_thrd_sleep_signature)(const struct timespec *,
 	struct timespec *);
 typedef thrd_t (*crabc_thrd_current_signature)(void);
 typedef int (*crabc_thrd_equal_signature)(thrd_t, thrd_t);
+typedef void (*crabc_call_once_signature)(once_flag *, crabc_once_init_signature);
 typedef int (*crabc_mtx_init_signature)(mtx_t *, int);
 typedef void (*crabc_mtx_destroy_signature)(mtx_t *);
 typedef int (*crabc_mtx_lock_signature)(mtx_t *);
@@ -200,6 +204,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_signal),
 	crabc_pthread_cond_signal_signature), "pthread_cond_signal signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_cond_broadcast),
 	crabc_pthread_cond_broadcast_signature), "pthread_cond_broadcast signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_once), crabc_pthread_once_signature),
+	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_sigmask),
 	crabc_pthread_sigmask_signature), "pthread_sigmask signature");
@@ -218,6 +224,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_current), crabc_thrd_current_signa
 	"thrd_current signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&thrd_equal), crabc_thrd_equal_signature),
 	"thrd_equal signature");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&call_once), crabc_call_once_signature),
+	"call_once signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_init), crabc_mtx_init_signature),
 	"mtx_init signature");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&mtx_destroy), crabc_mtx_destroy_signature),

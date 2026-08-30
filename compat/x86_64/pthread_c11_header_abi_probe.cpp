@@ -131,6 +131,9 @@ using crabc_pthread_cond_destroy_signature = int (*)(pthread_cond_t *);
 using crabc_pthread_cond_wait_signature = int (*)(pthread_cond_t *, pthread_mutex_t *);
 using crabc_pthread_cond_signal_signature = int (*)(pthread_cond_t *);
 using crabc_pthread_cond_broadcast_signature = int (*)(pthread_cond_t *);
+using crabc_once_init_signature = void (*)();
+using crabc_pthread_once_signature = int (*)(
+	pthread_once_t *, crabc_once_init_signature);
 using crabc_thrd_create_signature = int (*)(thrd_t *, thrd_start_t, void *);
 using crabc_thrd_detach_signature = int (*)(thrd_t);
 using crabc_thrd_join_signature = int (*)(thrd_t, int *);
@@ -138,6 +141,7 @@ using crabc_thrd_exit_signature = void (*)(int);
 using crabc_thrd_sleep_signature = int (*)(const timespec *, timespec *);
 using crabc_thrd_current_signature = thrd_t (*)();
 using crabc_thrd_equal_signature = int (*)(thrd_t, thrd_t);
+using crabc_call_once_signature = void (*)(once_flag *, crabc_once_init_signature);
 using crabc_mtx_init_signature = int (*)(mtx_t *, int);
 using crabc_mtx_destroy_signature = void (*)(mtx_t *);
 using crabc_mtx_lock_signature = int (*)(mtx_t *);
@@ -182,6 +186,8 @@ static_assert(__is_same(decltype(&pthread_cond_signal),
 	crabc_pthread_cond_signal_signature), "pthread_cond_signal signature");
 static_assert(__is_same(decltype(&pthread_cond_broadcast),
 	crabc_pthread_cond_broadcast_signature), "pthread_cond_broadcast signature");
+static_assert(__is_same(decltype(&pthread_once), crabc_pthread_once_signature),
+	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
 static_assert(__is_same(decltype(&pthread_sigmask),
 	crabc_pthread_sigmask_signature), "pthread_sigmask signature");
@@ -200,6 +206,8 @@ static_assert(__is_same(decltype(&thrd_current), crabc_thrd_current_signature),
 	"thrd_current signature");
 static_assert(__is_same(decltype(&thrd_equal), crabc_thrd_equal_signature),
 	"thrd_equal signature");
+static_assert(__is_same(decltype(&call_once), crabc_call_once_signature),
+	"call_once signature");
 static_assert(__is_same(decltype(&mtx_init), crabc_mtx_init_signature),
 	"mtx_init signature");
 static_assert(__is_same(decltype(&mtx_destroy), crabc_mtx_destroy_signature),
@@ -262,6 +270,8 @@ static crabc_pthread_cond_signal_signature const crabc_force_pthread_cond_signal
 	__attribute__((used)) = &pthread_cond_signal;
 static crabc_pthread_cond_broadcast_signature const crabc_force_pthread_cond_broadcast
 	__attribute__((used)) = &pthread_cond_broadcast;
+static crabc_pthread_once_signature const crabc_force_pthread_once
+	__attribute__((used)) = &pthread_once;
 static crabc_thrd_create_signature const crabc_force_thrd_create
 	__attribute__((used)) = &thrd_create;
 static crabc_thrd_detach_signature const crabc_force_thrd_detach
@@ -276,6 +286,8 @@ static crabc_thrd_current_signature const crabc_force_thrd_current
 	__attribute__((used)) = &thrd_current;
 static crabc_thrd_equal_signature const crabc_force_thrd_equal
 	__attribute__((used)) = &thrd_equal;
+static crabc_call_once_signature const crabc_force_call_once
+	__attribute__((used)) = &call_once;
 static crabc_mtx_init_signature const crabc_force_mtx_init
 	__attribute__((used)) = &mtx_init;
 static crabc_mtx_destroy_signature const crabc_force_mtx_destroy

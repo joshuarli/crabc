@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 50)
+        self.assertEqual(report["verified_artifact_count"], 51)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -4300,6 +4300,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(pthread_tls["status"], "planned")
         self.assertIn("libc/src/c_abi/x86_64/atomic.rs", pthread_tls["source_owners"])
         self.assertIn("libc/src/c_abi/x86_64/clone.rs", pthread_tls["source_owners"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/pthread_once.rs", pthread_tls["source_owners"]
+        )
+        self.assertIn("Twelve separately verified static artifacts", pthread_tls["description"])
         self.assertEqual(
             pthread_tls["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-atomic",
@@ -4316,7 +4320,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 11)
+        self.assertEqual(len(artifacts), 12)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -4332,6 +4336,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-normal-mutex",
                 "static-c-pthread-cond-private",
                 "static-c-c11-plain-sync",
+                "static-c-pthread-c11-once",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -4345,6 +4350,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         normal_mutex = by_id["static-c-pthread-normal-mutex"]
         private_condition = by_id["static-c-pthread-cond-private"]
         c11_plain_sync = by_id["static-c-c11-plain-sync"]
+        once = by_id["static-c-pthread-c11-once"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         for artifact in (normal_return, explicit_exit):
@@ -4920,6 +4926,138 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, c11_plain_sync_scope)
+        self.assertEqual(
+            once["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-c11-once",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "exactly `pthread_once` and `call_once`",
+            "four-byte aligned `pthread_once_t`/`once_flag`",
+            "all-zero static initializers",
+            "0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters",
+            "compare-exchange 0->1",
+            "private-futex state-3 waiting",
+            "release exchange to 2",
+            "interposable pthread C ABI",
+            "static/all-zero initialization",
+            "exactly one normal-return initializer",
+            "two contending workers",
+            "relaxed payload/count observations without an independent release/acquire edge",
+            "stale errno preservation",
+            "cancellation cleanup/reset",
+            "initializer pthread_exit/thrd_exit",
+            "recursive same-control entry",
+            "fork/atfork interaction",
+            "TSS",
+            "dynamic/loader TLS",
+            "weak pthread_once ELF binding",
+            "exact ELF parity",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, once["description"])
+        for owner in (
+            "libc/src/c_abi/x86_64/atomic.rs",
+            "libc/src/c_abi/x86_64/pthread_once.rs",
+            "libc/src/c_abi/x86_64/pthread_identity.rs",
+            "libc/src/c_abi/x86_64/pthread_mutex.rs",
+            "libc/src/c_abi/x86_64/pthread_cond.rs",
+            "libc/src/c_abi/x86_64/c11_thread_lifecycle.rs",
+            "include/pthread.h",
+            "include/threads.h",
+            "compat/x86_64/libc_pthread_c11_once_probe.c",
+            "compat/x86_64/libc_pthread_c11_once_start.S",
+            "compat/x86_64/run_libc_pthread_c11_once.sh",
+            "compat/x86_64/run_pthread_c11_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, once["source_owners"])
+        once_abi = " ".join(once["x86_abi_prerequisites"])
+        for phrase in (
+            "pthread_once.c::{__pthread_once,__pthread_once_full}",
+            "call_once.c",
+            "__wait.c::__wait",
+            "pthread_impl.h::__wake",
+            "four-byte align-4",
+            "PTHREAD_ONCE_INIT=0",
+            "ONCE_FLAG_INIT=0",
+            "0 initial, 1 initializer, 2 complete, and 3 initializer-with-waiters",
+            "compare-exchange claims 0->1",
+            "release exchange publishes 2",
+            "futex=202",
+            "FUTEX_WAIT_PRIVATE=128",
+            "FUTEX_WAKE_PRIVATE=129",
+            "INT_MAX",
+            "r10",
+            "EAGAIN, EINTR",
+            "without changing C errno",
+            "interposable pthread C ABI",
+            "cancellation reset",
+            "dynamic TLS",
+            "weak pthread_once ELF binding",
+            "exact ELF parity",
+        ):
+            self.assertIn(phrase, once_abi)
+        once_headers = " ".join(once["x86_header_prerequisites"])
+        for phrase in (
+            "pthread.h",
+            "threads.h",
+            "errno.h",
+            "bits/alltypes.h",
+            "bits/syscall.h",
+            "four-byte align-4",
+            "pthread_once_t/once_flag identity",
+            "PTHREAD_ONCE_INIT/ONCE_FLAG_INIT",
+            "pthread_once/call_once",
+            "28-context C/C++",
+            "unmangled C linkage",
+            "does not claim broad installed-header, full C11, or pthread runtime completion",
+        ):
+            self.assertIn(phrase, once_headers)
+        once_scope = once["native_evidence"][0]["scope"]
+        for phrase in (
+            "Pinned-musl project-header C reference",
+            "`-nostdlib -static` candidate",
+            "pthread_once/call_once static/all-zero initialization",
+            "exactly one normal-return initializer",
+            "two contending workers that reach state 3",
+            "once publication of relaxed payload/count observations without an independent release/acquire edge",
+            "stale errno preservation",
+            "exactly the two selected once exports",
+            "direct private shared-state routing",
+            "interposable pthread call",
+            "locked compare-exchange",
+            "release exchange/xchg",
+            "futex=202",
+            "FUTEX_WAIT_PRIVATE=128",
+            "FUTEX_WAKE_PRIVATE=129",
+            "INT_MAX wake-all",
+            "no interpreter/DT_NEEDED/unresolved symbol",
+            "cancellation reset",
+            "initializer pthread_exit/thrd_exit",
+            "recursive same-control entry",
+            "fork/atfork",
+            "TSS",
+            "weak pthread_once ELF binding or exact ELF parity",
+            "family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, once_scope)
+        once_oracle = next(
+            entry for entry in once["oracle"] if entry["kind"] == "c-posix"
+        )
+        self.assertEqual(
+            once_oracle["source"],
+            "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        )
+        for phrase in (
+            "src/thread/pthread_once.c",
+            "src/thread/call_once.c",
+            "src/thread/__wait.c",
+            "src/internal/pthread_impl.h::__wake",
+        ):
+            self.assertIn(phrase, once_oracle["role"])
         self.assertIn("not pthread/TLS parity", pthread_tls["description"])
         self.assertIn("Static Initial TLS v1", static_tls["description"])
         self.assertIn("AT_PHDR", static_tls["description"])
@@ -5133,6 +5271,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-c11-plain-sync must use the closed libc-c11-plain-sync command",
+        ):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.pthread-tls")[
+            "verified_artifact"
+        ]
+        changed_once = next(
+            artifact
+            for artifact in changed_artifacts
+            if artifact["id"] == "static-c-pthread-c11-once"
+        )
+        changed_once["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh core"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-pthread-c11-once must use the closed libc-pthread-c11-once command",
         ):
             ledger.validate_ledger(changed)
 

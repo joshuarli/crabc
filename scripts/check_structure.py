@@ -161,6 +161,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/process_resources.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),
+    Path("libc/src/c_abi/x86_64/pthread_once.rs"),
     Path("libc/src/c_abi/x86_64/pthread_create_join.rs"),
     Path("libc/src/c_abi/x86_64/pthread_identity.rs"),
     Path("libc/src/c_abi/x86_64/pthread_mutex.rs"),
@@ -3547,6 +3548,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_cond.rs"]',
         '#[path = "c11_thread_lifecycle.rs"]',
         '#[path = "c11_sync.rs"]',
+        '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "child_reaping.rs"]',
@@ -4702,6 +4704,81 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "libc/src/c_abi/x86_64/c11_sync.rs: selected private C11 plain "
                 f"synchronization leaf must not select {forbidden!r}"
             )
+
+    pthread_once_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_once.rs"
+    )
+    pthread_once_text = pthread_once_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/thread/pthread_once.c::{__pthread_once,__pthread_once_full}",
+        "src/thread/call_once.c",
+        "src/thread/__wait.c::__wait",
+        "src/internal/pthread_impl.h::__wake",
+        "ONCE_INITIAL: c_int = 0",
+        "ONCE_INITIALIZING: c_int = 1",
+        "ONCE_COMPLETE: c_int = 2",
+        "ONCE_WAITERS: c_int = 3",
+        "FUTEX_WAIT_PRIVATE",
+        "FUTEX_WAKE_PRIVATE",
+        "raw_syscall::SYS_FUTEX",
+        "raw_syscall::syscall4(",
+        "raw_syscall::syscall3(",
+        "c_int::MAX as i64",
+        "x86_64_load_acquire_i32",
+        "x86_64_compare_exchange_acqrel_i32",
+        "x86_64_swap_acqrel_i32",
+        "run_selected_once",
+        "non-cancellation",
+        "recursive same-control",
+        "dynamic/loader TLS",
+        "weak `pthread_once` ELF-alias binding",
+        "public x86 support",
+    ):
+        if required not in pthread_once_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_once.rs: selected private pthread/C11 "
+                f"once leaf is missing {required!r}"
+            )
+    pthread_once_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            pthread_once_text,
+        )
+    )
+    if pthread_once_exports != {"pthread_once", "call_once"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_once.rs: selected private pthread/C11 "
+            "once leaf must export only pthread_once and call_once"
+        )
+    for forbidden in (
+        'pub unsafe extern "C" fn pthread_cancel',
+        'pub unsafe extern "C" fn pthread_exit',
+        'pub unsafe extern "C" fn thrd_exit',
+        'pub unsafe extern "C" fn tss_',
+        "__tls_get_addr",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in pthread_once_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/pthread_once.rs: selected private pthread/C11 "
+                f"once leaf must not select {forbidden!r}"
+            )
+    call_once_text = pthread_once_text.split(
+        'pub unsafe extern "C" fn call_once', 1
+    )[-1]
+    if "run_selected_once(flag, function)" not in call_once_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_once.rs: call_once must use the "
+            "private shared once state machine"
+        )
+    if re.search(r"\bpthread_once\s*\(", call_once_text):
+        errors.append(
+            "libc/src/c_abi/x86_64/pthread_once.rs: call_once must not cross "
+            "the interposable pthread_once C ABI"
+        )
 
     termios_control_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "termios_control.rs"
@@ -6177,6 +6254,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_cond_text,
         c11_thread_lifecycle_text,
         c11_sync_text,
+        pthread_once_text,
         termios_control_text,
         process_context_text,
         child_reaping_text,
@@ -6327,6 +6405,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "pthread_mutex_lock",
         "pthread_mutex_trylock",
         "pthread_mutex_unlock",
+        "pthread_once",
         "pthread_cond_broadcast",
         "pthread_cond_destroy",
         "pthread_cond_init",
@@ -6347,6 +6426,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "cnd_wait",
         "cnd_signal",
         "cnd_broadcast",
+        "call_once",
         "pthread_self",
         "pthread_equal",
         "thrd_current",
@@ -6524,7 +6604,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
+            "signal-control and bounded process-signal execution, bounded pthread create/exit/join/detach initial-TLS worker, private process-normal pthread mutexes and their musl private condition-variable handoff plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-owned mapping-core, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport, selected system-observation, selected UTS-identity, "
             "selected byte-string, random-entropy, memory-search, C-string-copy, "
@@ -6552,6 +6632,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_cond.rs", pthread_cond_text),
         ("c11_thread_lifecycle.rs", c11_thread_lifecycle_text),
         ("c11_sync.rs", c11_sync_text),
+        ("pthread_once.rs", pthread_once_text),
         ("termios_control.rs", termios_control_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

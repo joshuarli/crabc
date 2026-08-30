@@ -18,7 +18,7 @@ unsupported-relocation/RELR inputs. It deliberately rejects main-image
 constructors pending CRT handoff and is not a general loader, CRT/sysroot, or
 public x86 support claim.
 
-The x86 lane now has eleven private static artifacts inside still-planned
+The x86 lane now has twelve private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -115,7 +115,26 @@ without calling an interposable pthread C symbol; a held trylock maps to
 rejections before their records are interpreted, not musl-differential
 behavior. Timed calls, static C11 initialization, cancellation, TSS, once,
 process-shared synchronization, C11-family completion, pthread/TLS or x86-64
-parity, promotion, and public x86 support remain excluded. The CRT-composition artifact,
+parity, promotion, and public x86 support remain excluded. The separate
+`./scripts/dev-x86_64.sh libc-pthread-c11-once` artifact is a twelfth private
+static `verified_artifact` in that same still-planned `libc.pthread-tls`
+family. Its pinned-musl/reference and true static-candidate routes select only
+the normal-return `pthread_once` and C11 `call_once` path for the installed
+four-byte, zero-initialized `pthread_once_t` and `once_flag` records. The
+shared private state machine changes `0` to initializer state `1`; two selected
+contenders start while the control reaches state `3` and selected waiters use
+`FUTEX_WAIT_PRIVATE`; a normal
+initializer release-publishes state `2` and uses `FUTEX_WAKE_PRIVATE` only
+when waiters were recorded. Static and local zero initialization, exactly one
+initializer, post-completion relaxed-payload visibility without a separate
+release/acquire edge, and caller-`errno`
+preservation are evidence boundaries; `call_once` reaches the shared private
+machine rather than an interposable pthread C symbol. Cancellation reset,
+initializer `pthread_exit`/`thrd_exit`, recursive same-control entry,
+fork/atfork, TSS, dynamic/loader TLS, musl's weak `pthread_once` ELF binding,
+general pthread/C11 synchronization,
+full pthread/TLS or x86-64 parity, promotion, and public x86 support remain
+excluded. The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked
 relocation and RELRO, `rcrt1.o` calls

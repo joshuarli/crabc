@@ -153,7 +153,7 @@ done
  # The shared archive's separately evidenced normal private pthread-mutex and
  # private condition blocks are not C11 synchronization and are deliberately
  # outside this adapter.
-for unselected in thrd_yield call_once \
+for unselected in thrd_yield \
     tss_create tss_delete tss_set tss_get pthread_cancel \
     pthread_key_create pthread_mutexattr_init pthread_mutexattr_destroy \
     pthread_mutexattr_settype pthread_mutex_timedlock pthread_mutex_consistent \
