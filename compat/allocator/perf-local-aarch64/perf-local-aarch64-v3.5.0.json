@@ -1,0 +1,47 @@
+{
+  "architecture": "aarch64",
+  "architecture_smoke": {
+    "minimum_rust_over_pinned_c_throughput_ratio": 0.25,
+    "purpose": "architecture blocker only; this is not a final promotion band"
+  },
+  "fixture": {
+    "boundary": "opaque fixture-private init/malloc/free/shutdown functions",
+    "single_thread_only": true,
+    "timer": "one CLOCK_MONOTONIC pair around each batch"
+  },
+  "kind": "crabc-mimalloc-aarch64-local-allocation-performance-smoke",
+  "lanes": {
+    "pinned_c": "pinned mimalloc v3.5.0 source",
+    "rust_native_shadow": "prefixed crabc_test_* test adapter over the Rust native engine"
+  },
+  "mode": {
+    "samples_per_lane_and_workload": 5,
+    "warmup_processes_per_lane_and_workload": 2
+  },
+  "profile": "linux-aarch64-local-private-shadow",
+  "scope": {
+    "final_promotion_qualification": false,
+    "public_crabc_allocator_integration": false,
+    "public_mi_api": false,
+    "statement": "A Linux/AArch64 development smoke, including Apple-Silicon Docker, is not final performance qualification."
+  },
+  "schema": 1,
+  "upstream": {
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "workloads": [
+    {
+      "batches_per_process": 32,
+      "iterations_per_batch": 20000,
+      "name": "alloc_free_64",
+      "request_bytes": 64
+    },
+    {
+      "batches_per_process": 32,
+      "iterations_per_batch": 5000,
+      "name": "alloc_free_4096",
+      "request_bytes": 4096
+    }
+  ]
+}
