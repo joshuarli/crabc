@@ -11,7 +11,9 @@ path was accidentally reused.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import dataclasses
+import fcntl
 import hashlib
 import json
 import os
@@ -22,7 +24,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +33,7 @@ PRIMARY_BUILD_ROOT = TARGET / "crabc-sysroot-build-primary"
 COMPARISON_BUILD_ROOT = TARGET / "crabc-sysroot-build-comparison"
 PRIMARY_SYSROOT = TARGET / "crabc-sysroot"
 COMPARISON_SYSROOT = TARGET / "crabc-sysroot-repro"
+OWNED_SYSROOT_BUILD_LOCK = TARGET / ".crabc-owned-sysroot-build.lock"
 REPORT = ROOT / "compat/reports/sysroot/latest.json"
 TARGET_TRIPLE = "aarch64-unknown-linux-musl"
 CANONICAL_INTERPRETER = "/lib/ld-crabc-aarch64.so.1"
@@ -526,6 +529,31 @@ def remove_owned_sysroot(path: Path) -> None:
     shutil.rmtree(path)
 
 
+@contextmanager
+def exclusive_owned_sysroot_build_lock(lock_path: Path = OWNED_SYSROOT_BUILD_LOCK) -> Iterator[None]:
+    """Fail before a second producer can erase a live Cargo target tree.
+
+    The two clean builds deliberately own fixed generated paths under
+    ``target/``. Cargo itself serializes writers beneath a target directory,
+    but a second sysroot entry point could otherwise remove that directory
+    before Cargo observes its own lock. Keep the producer boundary exclusive
+    for the full assembly and evidence transaction.
+    """
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a", encoding="utf-8") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise BuildError(
+                "owned sysroot build is already active; its producer owns the generated target trees"
+            ) from error
+        try:
+            yield
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
 def assert_native_target() -> None:
     if platform.system() != "Linux" or platform.machine() != "aarch64":
         raise BuildError("owned sysroot production evidence requires native Linux/AArch64")
@@ -790,62 +818,63 @@ def main(arguments: Sequence[str] | None = None) -> int:
         assert_native_target()
         if args.timeout <= 0 or args.timeout > 300:
             raise BuildError("--timeout must be > 0 and <= 300")
-        first = build_once(PRIMARY_SYSROOT, PRIMARY_BUILD_ROOT)
-        second = build_once(COMPARISON_SYSROOT, COMPARISON_BUILD_ROOT)
-        evidence_records: list[dict[str, object]] = []
-        focused_tests = run_focused_contract_tests(evidence_records)
-        runner = [
-            sys.executable,
-            "compat/sysroot/run.py",
-            "--sysroot",
-            str(PRIMARY_SYSROOT),
-            "--comparison-sysroot",
-            str(COMPARISON_SYSROOT),
-            "--report",
-            str(REPORT),
-            "--timeout",
-            str(args.timeout),
-        ]
-        if not args.no_stage_canonical_loader:
-            runner.append("--stage-canonical-loader")
-        run_checked(runner, evidence_records)
-        report = json.loads(REPORT.read_text(encoding="utf-8"))
-        if report.get("passed") is not True:
-            raise BuildError("owned sysroot evidence report is not passing")
-        write_reproducibility_status((PRIMARY_SYSROOT, COMPARISON_SYSROOT))
-        static_pthread_command = [
-            sys.executable,
-            "compat/static-pthread-tls/run.py",
-            "--sysroot",
-            str(PRIMARY_SYSROOT),
-            "--timeout",
-            str(args.timeout),
-        ]
-        run_checked(static_pthread_command, evidence_records)
-        report["purity"] = json.loads(
-            (PRIMARY_SYSROOT / "share/crabc/purity.json").read_text(encoding="utf-8")
-        )
-        bind_report_evidence(report, first, second, focused_tests, evidence_records[-1])
-        # The harness writes atomically; retain that property after binding
-        # the producer and static-link evidence it intentionally does not own.
-        report_path = REPORT
-        temporary = report_path.with_name(f".{report_path.name}.{os.getpid()}.tmp")
-        write_json(temporary, report)
-        os.replace(temporary, report_path)
-        print(
-            json.dumps(
-                {
-                    "schema": 1,
-                    "primary": first,
-                    "comparison": second,
-                    "report": str(REPORT),
-                    "evidence_commands": evidence_records,
-                },
-                indent=2,
-                sort_keys=True,
+        with exclusive_owned_sysroot_build_lock():
+            first = build_once(PRIMARY_SYSROOT, PRIMARY_BUILD_ROOT)
+            second = build_once(COMPARISON_SYSROOT, COMPARISON_BUILD_ROOT)
+            evidence_records: list[dict[str, object]] = []
+            focused_tests = run_focused_contract_tests(evidence_records)
+            runner = [
+                sys.executable,
+                "compat/sysroot/run.py",
+                "--sysroot",
+                str(PRIMARY_SYSROOT),
+                "--comparison-sysroot",
+                str(COMPARISON_SYSROOT),
+                "--report",
+                str(REPORT),
+                "--timeout",
+                str(args.timeout),
+            ]
+            if not args.no_stage_canonical_loader:
+                runner.append("--stage-canonical-loader")
+            run_checked(runner, evidence_records)
+            report = json.loads(REPORT.read_text(encoding="utf-8"))
+            if report.get("passed") is not True:
+                raise BuildError("owned sysroot evidence report is not passing")
+            write_reproducibility_status((PRIMARY_SYSROOT, COMPARISON_SYSROOT))
+            static_pthread_command = [
+                sys.executable,
+                "compat/static-pthread-tls/run.py",
+                "--sysroot",
+                str(PRIMARY_SYSROOT),
+                "--timeout",
+                str(args.timeout),
+            ]
+            run_checked(static_pthread_command, evidence_records)
+            report["purity"] = json.loads(
+                (PRIMARY_SYSROOT / "share/crabc/purity.json").read_text(encoding="utf-8")
             )
-        )
-        return 0
+            bind_report_evidence(report, first, second, focused_tests, evidence_records[-1])
+            # The harness writes atomically; retain that property after binding
+            # the producer and static-link evidence it intentionally does not own.
+            report_path = REPORT
+            temporary = report_path.with_name(f".{report_path.name}.{os.getpid()}.tmp")
+            write_json(temporary, report)
+            os.replace(temporary, report_path)
+            print(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "primary": first,
+                        "comparison": second,
+                        "report": str(REPORT),
+                        "evidence_commands": evidence_records,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
     except BuildError as error:
         print(f"crabc-owned-sysroot: {error}", file=sys.stderr)
         return 1
