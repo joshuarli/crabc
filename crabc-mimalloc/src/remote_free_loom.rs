@@ -10,7 +10,13 @@
 //! [`super::try_unown_abandoned_head_with`], and
 //! [`super::try_unown_abandoned_expected_head_with`] directly, so the production
 //! Relaxed load, AcqRel OR, and AcqRel/Acquire weak-CAS transitions cannot
-//! drift from this evidence.
+//! drift from this evidence. The compact lifetime-word models likewise call
+//! [`super::begin_live_remote_page_publication_with`],
+//! [`super::finish_live_remote_page_publication_with`],
+//! [`super::begin_live_remote_page_retirement_with`], and
+//! [`super::reinitialize_live_remote_page_with`] directly. This keeps their
+//! acquire/AcqRel publication, owner-close, and generation transitions tied to
+//! the production boundary rather than to a geometry-specific free route.
 //!
 //! It proves the low-bit head races for live-owner collection and bounded
 //! abandoned-page claim/unown. The lifetime model below also mirrors the
@@ -32,9 +38,14 @@
 
 use super::{
     AbandonedExpectedHeadTransition, AbandonedOwnerClaim, AbandonedOwnerHeadTransition,
+    LiveRemoteFreePagePublicationError, LiveRemoteFreePageReinitializeError,
+    LiveRemoteFreePageRetirementError,
     THREAD_FREE_OWNED,
-    ThreadFree, claim_abandoned_owner_with, detach_from_head, publish_to_head,
-    publish_to_head_with_owner, thread_free_block_address,
+    ThreadFree, begin_live_remote_page_publication_with,
+    begin_live_remote_page_retirement_with, claim_abandoned_owner_with,
+    detach_from_head, finish_live_remote_page_publication_with, live_remote_page_word,
+    publish_to_head, publish_to_head_with_owner, reinitialize_live_remote_page_with,
+    thread_free_block_address,
     try_unown_abandoned_expected_head_with, try_unown_abandoned_head_with,
 };
 use loom::sync::Arc;
@@ -70,6 +81,33 @@ impl super::ThreadFreeHead for AtomicUsize {
     #[inline]
     fn fetch_or_acq_rel(&self, value: ThreadFree) -> ThreadFree {
         self.fetch_or(value, Ordering::AcqRel)
+    }
+}
+
+/// Test-only adapter for the compact production lifetime word. Its ordering
+/// surface exactly mirrors `LiveRemoteFreePageLifetimeWord` on `AtomicWord`.
+impl super::LiveRemoteFreePageLifetimeWord for AtomicUsize {
+    #[inline]
+    fn load_acquire(&self) -> usize {
+        self.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    fn cas_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool {
+        self.compare_exchange_weak(
+            *expected,
+            replacement,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .map(|_| ())
+        .map_err(|actual| *expected = actual)
+        .is_ok()
+    }
+
+    #[inline]
+    fn fetch_sub_acq_rel(&self, value: usize) -> usize {
+        self.fetch_sub(value, Ordering::AcqRel)
     }
 }
 
@@ -894,5 +932,168 @@ fn loom_post_unregister_release_fault_retains_one_auditable_terminal_owner() {
             "the retained terminal owner prevents a guessed retry"
         );
         model.assert_retained_after_unregister();
+    });
+}
+
+#[test]
+fn loom_lifetime_word_owner_collection_after_publication_allows_retirement() {
+    loom::model(|| {
+        // This starts after PageMap lookup selected generation one. The
+        // lifetime word is intentionally independent of bin, arena, and page
+        // geometry; the modeled head only records the source remote block
+        // that the owner must collect before closing the lifetime.
+        let generation = 1;
+        let lifetime = AtomicUsize::new(live_remote_page_word(generation, true, 0));
+        let head = AtomicUsize::new(OWNER_EMPTY_HEAD);
+        let blocks = ModelBlocks::new();
+
+        begin_live_remote_page_publication_with(&lifetime, generation)
+            .expect("the active PageMap generation admits one producer");
+        blocks.publish(&head, 0);
+        finish_live_remote_page_publication_with(&lifetime, generation);
+
+        // `collect_once` stands for the owner-side
+        // `mi_page_thread_free_collect`: after the final producer has
+        // completed its source publication, it detaches the block exactly
+        // once before the owner closes the lifetime for unregistration.
+        assert_eq!(blocks.collect_once(&head), 1);
+        blocks.assert_collected(0);
+        assert_eq!(
+            begin_live_remote_page_retirement_with(&lifetime, generation),
+            Ok(())
+        );
+        assert_eq!(
+            lifetime.load(Ordering::Acquire),
+            live_remote_page_word(generation, false, 0),
+            "retirement preserves the generation and leaves no publisher pin"
+        );
+    });
+}
+
+#[test]
+fn loom_lifetime_word_retirement_racing_final_producer_admits_or_rejects_once() {
+    loom::model(|| {
+        let generation = 1;
+        let lifetime = Arc::new(AtomicUsize::new(live_remote_page_word(
+            generation, true, 0,
+        )));
+        let (finish_send, finish_receive) = mpsc::channel();
+        let (producer_done_send, producer_done_receive) = mpsc::channel();
+
+        // The owner either closes before this final producer's admission, or
+        // observes the producer's publication pin and retries after it has
+        // completed. The producer is held between its named begin/finish
+        // transitions so Loom must explore the owner CAS racing that final
+        // admission rather than only an already-finished publication.
+        let producer_lifetime = Arc::clone(&lifetime);
+        let producer = thread::spawn(move || {
+            match begin_live_remote_page_publication_with(&*producer_lifetime, generation) {
+                Ok(()) => {
+                    finish_receive
+                        .recv()
+                        .expect("an in-flight producer makes the owner retry");
+                    finish_live_remote_page_publication_with(&*producer_lifetime, generation);
+                    let _ = producer_done_send.send(true);
+                    true
+                }
+                Err(LiveRemoteFreePagePublicationError::Retired) => {
+                    let _ = producer_done_send.send(false);
+                    false
+                }
+                Err(error) => panic!("initial generation has no other producer outcome: {error:?}"),
+            }
+        });
+
+        let owner_lifetime = Arc::clone(&lifetime);
+        let owner = thread::spawn(move || {
+            match begin_live_remote_page_retirement_with(&*owner_lifetime, generation) {
+                Ok(()) => false,
+                Err(LiveRemoteFreePageRetirementError::PublishersInFlight) => {
+                    finish_send
+                        .send(())
+                        .expect("the admitted producer retains its finish receiver");
+                    assert!(
+                        producer_done_receive
+                            .recv()
+                            .expect("the admitted producer completes its publication"),
+                        "the owner only waits after observing an admitted producer"
+                    );
+                    assert_eq!(
+                        begin_live_remote_page_retirement_with(&*owner_lifetime, generation),
+                        Ok(()),
+                        "the final publisher leaves exactly one retryable close"
+                    );
+                    true
+                }
+                Err(error) => panic!("initial active generation has no other owner outcome: {error:?}"),
+            }
+        });
+
+        let producer_published = producer.join().expect("producer completes or is rejected");
+        let owner_waited_for_producer = owner.join().expect("owner retirement completes");
+
+        assert_eq!(
+            producer_published, owner_waited_for_producer,
+            "the final producer is either pinned and observed by retirement, or rejected after close"
+        );
+        assert_eq!(
+            lifetime.load(Ordering::Acquire),
+            live_remote_page_word(generation, false, 0),
+            "all schedules end with one closed generation and no lost publisher pin"
+        );
+        assert_eq!(
+            begin_live_remote_page_publication_with(&*lifetime, generation),
+            Err(LiveRemoteFreePagePublicationError::Retired),
+            "a producer that loses retirement cannot repin the closed lifetime"
+        );
+    });
+}
+
+#[test]
+fn loom_lifetime_word_reinitialize_rejects_stale_generation() {
+    loom::model(|| {
+        let first_generation = 1;
+        let lifetime = AtomicUsize::new(live_remote_page_word(first_generation, true, 0));
+
+        assert_eq!(
+            begin_live_remote_page_retirement_with(&lifetime, first_generation),
+            Ok(())
+        );
+        let next_generation = reinitialize_live_remote_page_with(&lifetime, first_generation)
+            .expect("a closed zero-publisher generation can be reused exactly once");
+        assert_ne!(
+            next_generation, first_generation,
+            "reuse changes the PageMap generation even at the same metadata address"
+        );
+        assert_eq!(
+            lifetime.load(Ordering::Acquire),
+            live_remote_page_word(next_generation, true, 0),
+            "reinitialization admits only the distinct current generation"
+        );
+
+        assert_eq!(
+            begin_live_remote_page_publication_with(&lifetime, first_generation),
+            Err(LiveRemoteFreePagePublicationError::StaleGeneration),
+            "a stale PageMap lookup cannot pin the later page lifetime"
+        );
+        assert_eq!(
+            begin_live_remote_page_retirement_with(&lifetime, first_generation),
+            Err(LiveRemoteFreePageRetirementError::StaleGeneration),
+            "a former owner cannot close a later page lifetime"
+        );
+        assert_eq!(
+            reinitialize_live_remote_page_with(&lifetime, first_generation),
+            Err(LiveRemoteFreePageReinitializeError::StaleGeneration),
+            "a stale reinitializer cannot recreate an earlier generation"
+        );
+
+        begin_live_remote_page_publication_with(&lifetime, next_generation)
+            .expect("the current generation remains publishable after reuse");
+        finish_live_remote_page_publication_with(&lifetime, next_generation);
+        assert_eq!(
+            begin_live_remote_page_retirement_with(&lifetime, next_generation),
+            Ok(()),
+            "the current generation still has one terminal owner-close transition"
+        );
     });
 }
