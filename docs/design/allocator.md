@@ -172,8 +172,9 @@ the following native all-free finish settles A's proof. On B's `pthread_exit`,
 the preceding cleanup handler also receives `ENOMEM` for a new local
 allocation; the TSD destructor then receives `ENOMEM` for the existing
 client's valid `realloc` before it frees that client. The same proof repeats
-through deferred cancellation at a real cancellation point before the native
-all-free finish can settle A's proof. Usable-size
+through normal return, where only the TSD destructor runs, and through deferred
+cancellation at a real cancellation point before the native all-free finish
+can settle A's proof. Usable-size
 outside the exact detached route or parked live owner, cross-thread
 reallocation outside that exact post-exit transition, and
 cross-thread exit/abandoned-page routing remain unavailable; the ticket-zero

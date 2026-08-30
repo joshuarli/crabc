@@ -1288,8 +1288,8 @@ without an irreversible speculative claim. A resulting aggregate-free or sole-ad
   from B's `pthread_exit` cleanup handler for a new local allocation and then
   B's TSD destructor for the existing client's valid `realloc`, before its
   native all-free finish settles A's proof. The same selected fixture repeats
-  that cleanup/TSD ordering through deferred cancellation at a real
-  cancellation point. The
+  the TSD-only normal-return phase and the cleanup/TSD ordering through
+  deferred cancellation at a real cancellation point. The
   `native_post_exit_registry_terminal_close_waits_for_an_inflight_installation`
   unit regression proves that terminal retention waits for an in-flight
   detached-owner installation to complete, then permanently rejects a later

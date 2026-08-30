@@ -2822,8 +2822,9 @@ native all-free finish that settles A's proof. On B's `pthread_exit`, its
 cleanup handler first receives `ENOMEM` for a new local allocation; the TSD
 destructor then receives `ENOMEM` for the existing client's valid `realloc`
 before it frees that client. The same fixture repeats the cleanup/TSD order
-through deferred cancellation at a real cancellation point before B's native
-all-free finish settles A's proof.
+through deferred cancellation at a real cancellation point and proves the
+TSD-only normal-return phase before B's native all-free finish settles A's
+proof.
 For the one detached `realloc` transition, the entry stays private and BUSY
 while B records a normal-alignment replacement in that parked session, copies
 `min(A's recorded usable extent, requested size)`, and only then calls the

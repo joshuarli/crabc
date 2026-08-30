@@ -2226,8 +2226,9 @@ whose destructor repeats the refusal and frees it before B's native all-free
 finish can settle A's proof. B exits through `pthread_exit`: its cleanup handler
 first receives `ENOMEM` for a new local allocation, then the TSD destructor
 receives `ENOMEM` for the existing client's valid `realloc` before freeing it.
-The same fixture repeats that ordering through deferred cancellation at a real
-cancellation point before the native all-free finish settles A's proof. It does
+The same fixture also proves normal return's TSD-only phase and repeats the
+cleanup/TSD ordering through deferred cancellation at a real cancellation point
+before the native all-free finish settles A's proof. It does
 not yet cover general cross-thread routing beyond that exact-live ticket-zero
 free, general single-page adoption/reclaim exits, foreign worker `realloc`
 beyond the exact detached-owner transition, usable-size outside the exact

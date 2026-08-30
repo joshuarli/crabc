@@ -1332,9 +1332,10 @@ following native all-free finish may settle A's proof. B exits through
 `pthread_exit`: its cleanup handler first sees a new local allocation fail
 with `ENOMEM`, then the TSD destructor sees the same `ENOMEM` refusal for the
 existing client's valid `realloc` before it frees that client. The same
-fixture repeats that ordering through deferred cancellation at a real
-cancellation point, before the native all-free finish may settle A's proof.
-Usable size outside these exact routes, general
+fixture also proves normal return runs the TSD destructor without a cleanup
+handler, and repeats the cleanup/TSD ordering through deferred cancellation at
+a real cancellation point before the native all-free finish may settle A's
+proof. Usable size outside these exact routes, general
 single-page/adoption/reclaim routes,
 or arbitrary worker allocation beyond the bounded live-entry witnesses remain
 unavailable, so this gate remains open.

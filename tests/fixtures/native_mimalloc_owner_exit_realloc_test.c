@@ -20,16 +20,21 @@ static pthread_key_t terminal_proof_destructor_key;
 static unsigned char *terminal_proof_replacement;
 static pthread_mutex_t terminal_proof_cancel_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t terminal_proof_cancel_cond = PTHREAD_COND_INITIALIZER;
-static int terminal_proof_cancel_mode;
+enum terminal_proof_exit_kind {
+    TERMINAL_PROOF_RETURN,
+    TERMINAL_PROOF_PTHREAD_EXIT,
+    TERMINAL_PROOF_CANCELLATION,
+};
+static enum terminal_proof_exit_kind terminal_proof_exit_kind;
 static int terminal_proof_cancel_ready;
 static unsigned int terminal_proof_cleanup_calls;
 static int terminal_proof_cleanup_failed;
 static unsigned int terminal_proof_destructor_calls;
 static int terminal_proof_destructor_failed;
 
-/* `pthread_exit` invokes this cleanup before its TSD destructors. It covers
- * the other user-owned phase between B's terminal A free and the native
- * lifecycle finish: neither phase may create a new B-local client. */
+/* `pthread_exit` and cancellation invoke this cleanup before their TSD
+ * destructors. It covers the user-owned phase between B's terminal A free and
+ * the native lifecycle finish: neither phase may create a new B-local client. */
 static void terminal_proof_cleanup(void *opaque)
 {
     void *unexpected;
@@ -51,6 +56,15 @@ static void terminal_proof_cancel_unlock(void *opaque)
     (void)pthread_mutex_unlock((pthread_mutex_t *)opaque);
 }
 
+static int terminal_proof_cleanup_order_is_valid(void)
+{
+    unsigned int expected = terminal_proof_exit_kind == TERMINAL_PROOF_RETURN
+        ? 0
+        : 1;
+
+    return terminal_proof_cleanup_calls == expected;
+}
+
 /* This destructor runs after B has terminally freed A's route client, but
  * before libc calls the native owner finish. It therefore exercises the
  * proof-gated allocator boundary at the exact pthread TSD ordering point:
@@ -62,7 +76,7 @@ static void terminal_proof_destructor(void *value)
     unsigned char *resized;
 
     if (value == NULL || replacement == NULL
-            || terminal_proof_cleanup_calls != 1) {
+            || !terminal_proof_cleanup_order_is_valid()) {
         terminal_proof_destructor_failed = 1;
     } else {
         errno = 0;
@@ -170,9 +184,9 @@ static void *release_worker(void *opaque)
         free(replacement);
         return (void *)(uintptr_t)17;
     }
-    if (terminal_proof_cancel_mode) {
-        /* Deferred cancellation is the third pthread exit entrance. Main
-         * cannot request it until both cleanup handlers are installed and B
+    if (terminal_proof_exit_kind == TERMINAL_PROOF_CANCELLATION) {
+        /* Main cannot request deferred cancellation until both cleanup
+         * handlers are installed and B
          * already holds A's terminal proof. The allocation cleanup must run
          * first, then unlock, then the TSD destructor must reject `realloc`
          * before the native finish can release A's admission. */
@@ -193,9 +207,11 @@ static void *release_worker(void *opaque)
         pthread_cleanup_pop(1);
         return NULL;
     }
-    pthread_cleanup_push(terminal_proof_cleanup, NULL);
-    pthread_exit(NULL);
-    pthread_cleanup_pop(0);
+    if (terminal_proof_exit_kind == TERMINAL_PROOF_PTHREAD_EXIT) {
+        pthread_cleanup_push(terminal_proof_cleanup, NULL);
+        pthread_exit(NULL);
+        pthread_cleanup_pop(0);
+    }
     return NULL;
 }
 
@@ -206,22 +222,25 @@ int main(void)
     void *result = (void *)(uintptr_t)5;
     unsigned char *after;
 
-    static const size_t replacement_sizes[] = {
-        4096,
-        128 * 1024,
-        0,
-        4096,
+    static const struct {
+        size_t replacement_size;
+        enum terminal_proof_exit_kind exit_kind;
+    } cases[] = {
+        { 4096, TERMINAL_PROOF_RETURN },
+        { 128 * 1024, TERMINAL_PROOF_PTHREAD_EXIT },
+        { 0, TERMINAL_PROOF_PTHREAD_EXIT },
+        { 4096, TERMINAL_PROOF_CANCELLATION },
     };
 
     if (pthread_key_create(&terminal_proof_destructor_key,
             terminal_proof_destructor) != 0)
         return 1;
     for (unsigned int round = 0;
-            round < sizeof(replacement_sizes) / sizeof(replacement_sizes[0]);
+            round < sizeof(cases) / sizeof(cases[0]);
             ++round) {
-        replacement_size = replacement_sizes[round];
+        replacement_size = cases[round].replacement_size;
         terminal_proof_replacement = NULL;
-        terminal_proof_cancel_mode = round == 3;
+        terminal_proof_exit_kind = cases[round].exit_kind;
         terminal_proof_cancel_ready = 0;
         terminal_proof_cleanup_calls = 0;
         terminal_proof_cleanup_failed = 0;
@@ -234,7 +253,7 @@ int main(void)
         if (pthread_create(&releaser, NULL, release_worker, NULL) != 0)
             return 3;
         result = (void *)(uintptr_t)6;
-        if (terminal_proof_cancel_mode) {
+        if (terminal_proof_exit_kind == TERMINAL_PROOF_CANCELLATION) {
             if (pthread_mutex_lock(&terminal_proof_cancel_mutex) != 0)
                 return 4;
             while (!terminal_proof_cancel_ready) {
@@ -256,7 +275,7 @@ int main(void)
         }
         if (terminal_proof_destructor_calls != 1
                 || terminal_proof_destructor_failed
-                || terminal_proof_cleanup_calls != 1
+                || !terminal_proof_cleanup_order_is_valid()
                 || terminal_proof_cleanup_failed
                 || terminal_proof_replacement != NULL)
             return 10;
