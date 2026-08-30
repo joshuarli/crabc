@@ -2032,8 +2032,8 @@ thread instead keeps its own ordinary client: immediately before `clone`, it
 parks the exact ticket-zero engine and releases only its long PageMap
 exclusion. The child receives the immutable process pair for one local
 allocation/free operation, not the initial engine, session, or address. After
-the child returns all-free, the initial thread resumes to validate, free, and
-reuse its client. This is a serialized initial-live/local-worker witness, not
+the child returns all-free, the initial thread resumes to query, reallocate,
+validate, free, and reuse its client. This is a serialized initial-live/local-worker witness, not
 a concurrent allocator or general pointer handoff. In the
 owner-exit fixture A leaves a
 direct-small block, a non-direct-small block, a medium block, a regular-large

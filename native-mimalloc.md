@@ -1262,8 +1262,8 @@ thread; one exact still-live initial-thread normal/aligned client freed by an
 attached worker through the source atomic remote head and then collected by
 ticket zero; one initial-thread local client kept live while its creating
 thread parks only its own PageMap exclusion before a child performs and frees
-one local allocation, then resumes to validate, free, and reuse that initial
-client; bounded worker-local allocation/free with all-free post-destructor
+one local allocation, then resumes to query, reallocate, validate, free, and
+reuse that initial client; bounded worker-local allocation/free with all-free post-destructor
 finish; one live-C-block aggregate where A exits with direct-small and
 non-direct-small blocks, a medium block, a regular-large block, an unaligned
 arena singleton, and an OS-aligned singleton, and B frees each exact address;

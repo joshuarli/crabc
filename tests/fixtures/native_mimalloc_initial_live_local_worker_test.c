@@ -7,6 +7,7 @@
  */
 #include <pthread.h>
 #include <stdint.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -46,15 +47,28 @@ int main(void)
 
     if (initial[0] != 0x31 || initial[78] != 0x32)
         return 4;
+    if (malloc_usable_size(initial) < 79)
+        return 5;
+
+    /* Both query and replacement must reassemble the same initial-thread
+     * engine, then re-park it while the child owns no allocator state. */
+    initial = realloc(initial, 151);
+    if (initial == NULL)
+        return 6;
+    if (initial[0] != 0x31 || initial[78] != 0x32)
+        return 7;
+    initial[150] = 0x33;
+    if (malloc_usable_size(initial) < 151 || initial[150] != 0x33)
+        return 8;
     free(initial);
 
     after = malloc(53);
     if (after == NULL)
-        return 5;
+        return 9;
     after[0] = 0x51;
     after[52] = 0x52;
     if (after[0] != 0x51 || after[52] != 0x52)
-        return 6;
+        return 10;
     free(after);
 
     puts("native mimalloc initial live local worker ok");
