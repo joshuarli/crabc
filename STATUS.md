@@ -322,7 +322,7 @@ all-header closure, general C/C++ runtime support, libc.so, CRT, loader,
 sysroot, family/platform parity, or public x86 support.
 
 `compat/x86_64/headers-layouts-foundation.toml` is now the separate planned
-v7 accounting contract for eventually closing that header family. It resolves
+v8 accounting contract for eventually closing that header family. It resolves
 the 183 pinned-musl paths and eight project-only headers into exact classes,
 names `sys/kd.h` -> `linux/kd.h`, `sys/soundcard.h` ->
 `linux/soundcard.h`, and `sys/vt.h` -> `linux/vt.h` through one fixed Linux
@@ -360,9 +360,14 @@ C11/C++17 profiles, and C++ declaration C-linkage spelling. It likewise
 proves only header-requested names, not an artifact export. All six are
 compile-only evidence: callable linkage,
 device behavior, all-header closure, runtime completion, family promotion, and
-public x86 support all remain planned. Its live 382-record
-raw-GCC/pinned-musl C11/C++17 include diagnostic must also pass without a musl
-fallback.
+public x86 support all remain planned. Its live `candidate-header-closure`
+diagnostic now resolves 1,337 rows across seven isolated C11/C++17 profiles
+for all 183 pinned-musl paths and eight project-only headers. It records
+exactly two auditable pinned-musl `reference-not-applicable` rows
+(`aio.h:c11-strict` and `aio.h:cxx17-strict`), while requiring the candidate
+arm to compile them. This verifies isolated empty-TU consumer closure only;
+feature visibility, declaration/layout parity, callable linkage, runtime
+completion, family promotion, and public x86 support remain planned.
 
 Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
 evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),

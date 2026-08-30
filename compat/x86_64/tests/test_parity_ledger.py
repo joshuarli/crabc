@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 28)
-        self.assertEqual(report["verified_artifact_count"], 56)
+        self.assertEqual(report["verified_artifact_count"], 57)
         self.assertEqual(report["header_layout_probe_count"], 37)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -298,7 +298,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v7"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v8"
         )
         self.assertEqual(manifest["status"], "planned")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -338,6 +338,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         uapi = classes[1]
         project_only = classes[2]
         assert isinstance(uapi, dict) and isinstance(project_only, dict)
+        for entry in classes:
+            assert isinstance(entry, dict)
+            self.assertEqual(
+                entry["language_profiles"],
+                list(ledger.EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES),
+            )
+            self.assertEqual(entry["future_feature_profiles"], [])
         self.assertEqual(uapi["paths"], ["sys/kd.h", "sys/soundcard.h", "sys/vt.h"])
         self.assertEqual(
             project_only["paths"],
@@ -604,12 +611,21 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         completion = manifest["completion"]
         assert isinstance(completion, dict)
+        policy = manifest["policy"]
+        assert isinstance(policy, dict)
+        self.assertTrue(policy["candidate_transitive_include_closure"])
+        self.assertTrue(policy["full_c11_consumer_matrix"])
+        self.assertTrue(policy["full_cxx17_consumer_matrix"])
+        self.assertFalse(policy["feature_visibility_matrix"])
         self.assertTrue(completion["uapi_wrapper_profile_matrix_slice"])
         self.assertTrue(completion["ioctl_header_profile_matrix_slice"])
         self.assertTrue(completion["epoll_header_profile_matrix_slice"])
         self.assertTrue(completion["timeval_transitive_header_profile_matrix_slice"])
         self.assertTrue(completion["sys_time_direct_header_profile_matrix_slice"])
         self.assertTrue(completion["access_header_profile_matrix_slice"])
+        self.assertTrue(completion["candidate_transitive_include_closure"])
+        self.assertTrue(completion["c11_consumer_matrix"])
+        self.assertTrue(completion["cxx17_consumer_matrix"])
         self.assertFalse(completion["family_promotion"])
         self.assertFalse(completion["public_support"])
 
@@ -620,13 +636,21 @@ class X86ParityLedgerTests(unittest.TestCase):
             and isinstance(diagnostics[0], dict)
         )
         self.assertEqual(diagnostics[0]["id"], "isolated-candidate-header-closure")
-        self.assertEqual(diagnostics[0]["state"], "required-live")
+        self.assertEqual(diagnostics[0]["state"], "partial-verified")
         self.assertEqual(diagnostics[0]["required_result"], "pass")
         self.assertEqual(
             diagnostics[0]["command"],
             "./scripts/dev-x86_64.sh candidate-header-closure",
         )
-        self.assertEqual(diagnostics[0]["record_count"], 382)
+        self.assertEqual(
+            diagnostics[0]["profiles"],
+            list(ledger.EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES),
+        )
+        self.assertEqual(diagnostics[0]["record_count"], 1337)
+        self.assertEqual(
+            diagnostics[0]["oracle_not_applicable_rows"],
+            list(ledger.EXPECTED_CANDIDATE_HEADER_CLOSURE_ORACLE_NOT_APPLICABLE_ROWS),
+        )
         obligations = manifest["profile_obligation"]
         assert isinstance(obligations, list)
         self.assertEqual(len(obligations), 21)
@@ -639,7 +663,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(current, dict)
         self.assertEqual(current["applicability"], "applicable")
         self.assertEqual(current["state"], "partial-verified")
-        self.assertEqual(current["evidence"], ["public-header-c-consumability"])
+        self.assertEqual(
+            current["evidence"],
+            ["public-header-c-consumability", "public-header-profile-consumability"],
+        )
         uapi_current = next(
             obligation
             for obligation in obligations
@@ -654,8 +681,28 @@ class X86ParityLedgerTests(unittest.TestCase):
             [
                 "pinned-linux-5.10-uapi-input",
                 "linux-5.10-uapi-wrapper-profile-matrix",
+                "public-header-profile-consumability",
             ],
         )
+        strict = next(
+            obligation
+            for obligation in obligations
+            if obligation["header_class"] == "pinned-non-uapi"
+            and obligation["profile"] == "c11-strict"
+        )
+        assert isinstance(strict, dict)
+        self.assertEqual(strict["applicability"], "mixed-applicability")
+        self.assertEqual(strict["state"], "partial-verified")
+        self.assertEqual(strict["evidence"], ["public-header-profile-consumability"])
+        project_only_strict = next(
+            obligation
+            for obligation in obligations
+            if obligation["header_class"] == "project-only-extensions"
+            and obligation["profile"] == "cxx17-strict"
+        )
+        assert isinstance(project_only_strict, dict)
+        self.assertEqual(project_only_strict["applicability"], "candidate-only")
+        self.assertEqual(project_only_strict["state"], "partial-verified")
 
         owners = manifest["linkage_owner"]
         assert isinstance(owners, list)
@@ -835,6 +882,14 @@ class X86ParityLedgerTests(unittest.TestCase):
 
         data = self.data()
         manifest = self.header_foundation_manifest()
+        diagnostics = manifest["closure_diagnostic"]
+        assert isinstance(diagnostics, list) and isinstance(diagnostics[0], dict)
+        diagnostics[0]["oracle_not_applicable_rows"] = ["aio.h:c11-strict"]
+        with self.assertRaisesRegex(ledger.LedgerError, "oracle-not-applicable rows drifted"):
+            ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
+
+        data = self.data()
+        manifest = self.header_foundation_manifest()
         classes = manifest["header_class"]
         assert isinstance(classes, list) and isinstance(classes[2], dict)
         paths = classes[2]["paths"]
@@ -846,8 +901,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         manifest = self.header_foundation_manifest()
         obligations = manifest["profile_obligation"]
-        assert isinstance(obligations, list) and isinstance(obligations[1], dict)
-        obligations[1]["applicability"] = "applicable"
+        assert isinstance(obligations, list) and isinstance(obligations[2], dict)
+        obligations[2]["applicability"] = "applicable"
         with self.assertRaisesRegex(ledger.LedgerError, "applicability drifted"):
             ledger.validate_ledger(data, header_layout_foundation_manifest=manifest)
 
@@ -899,12 +954,64 @@ class X86ParityLedgerTests(unittest.TestCase):
             artifact["description"],
         )
 
+    def test_public_header_profile_consumability_is_a_closed_partial_artifact(self) -> None:
+        data = self.data()
+        headers_layouts = self.family(data, "libc.headers-layouts")
+        artifacts = headers_layouts["verified_artifact"]
+        assert isinstance(artifacts, list) and len(artifacts) == 4
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "public-header-profile-consumability"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh candidate-header-closure"},
+        )
+        for owner in (
+            "compat/x86_64/public_headers.txt",
+            "compat/x86_64/headers-layouts-foundation.toml",
+            "compat/x86_64/run_candidate_header_closure.sh",
+            "compat/x86_64/header_cxx_closure.cpp",
+            "compat/x86_64/tests/test_candidate_header_closure.py",
+            "compat/x86_64/tests/test_parity_ledger.py",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "seven-profile",
+            "1,337",
+            "183 pinned-musl public headers plus eight project-only headers",
+            "`aio.h:c11-strict`",
+            "`aio.h:cxx17-strict`",
+            "pinned-musl oracle-not-applicable",
+            "candidate still must compile",
+            "not feature-visibility, declaration/layout, callable-linkage, archive, runtime, installed-header, family-promotion, or public-x86 evidence",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.headers-layouts")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        changed = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "public-header-profile-consumability"
+        )
+        changed["native_evidence"][0]["command"] = "./scripts/dev-x86_64.sh public-header-surface"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed candidate-header-closure command"):
+            ledger.validate_ledger(data)
+
     def test_header_layouts_baseline_is_a_closed_c_and_cxx_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
         self.assertEqual(headers_layouts["status"], "planned")
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         artifact = next(
             entry
             for entry in artifacts
@@ -2266,7 +2373,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(socket_header_evidence["state"], "required")
         self.assertIn("IPv6 address-classification", socket_header_evidence["scope"])
         artifacts = headers_layouts["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         bootstrap = next(
             entry
             for entry in artifacts
@@ -5631,7 +5738,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         artifact = next(
             entry
             for entry in artifacts
@@ -5645,7 +5752,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         headers = self.family(data, "libc.headers-layouts")
         artifacts = headers["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 3
+        assert isinstance(artifacts, list) and len(artifacts) == 4
         artifact = next(
             entry
             for entry in artifacts

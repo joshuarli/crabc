@@ -444,7 +444,7 @@ headers. The report is generated under `compat/reports/`; it is a
 consumability/accounting artifact, not declaration, layout, linkage, runtime,
 installed-header completion, or public x86 support evidence.
 
-`headers-layouts-foundation.toml` is the planned v7 contract that turns those
+`headers-layouts-foundation.toml` is the planned v8 contract that turns those
 separate inventories into a reviewable closure plan without claiming family
 completion. It partitions all 183 pinned paths plus eight project-only
 extensions, fixes the three `sys/*` dependencies to one Linux 5.10 x86 UAPI
@@ -498,13 +498,21 @@ eight compile-only profiles for direct `fcntl.h`/`unistd.h`: selected
 `eaccess`/`euidaccess` visibility across default-C and isolated C11/C++17
 profiles, and unmangled C++ declaration references. It proves only the names
 requested by declarations, not artifact linkage or runtime behavior. The live
-`candidate-header-closure` command requires all 382 raw-GCC candidate and
-pinned-musl-reference C11/C++17 empty-TU rows to pass with only project,
-raw-GCC builtin, and declared Linux-UAPI roots; it is not an expected-failure
-baseline. C++ applicability, feature visibility, declaration/layout
-comparison, callable linkage, runtime completion, and public support remain
-individual planned work. The static-export list is only an input to that
-linkage audit: unlisted public callables remain owned by planned
+`candidate-header-closure` command resolves all 1,337 rows formed by the 183
+pinned-musl public headers plus eight project-only headers across seven
+isolated profiles (`c11-gnu`, `cxx17-gnu`, `c11-strict`, `c11-posix-2008`,
+`c11-xopen-700`, `c11-bsd`, and `cxx17-strict`). Each row compiles the
+project-header-first candidate and, where applicable, the pinned-musl
+reference using only raw-GCC builtin and declared Linux-UAPI roots. The report
+records exactly two explicit `reference-not-applicable` rows—
+`aio.h:c11-strict` and `aio.h:cxx17-strict`—because pinned musl leaves
+`struct sigevent` incomplete in those macro-free profiles; the candidate
+still must compile and does. This is a complete isolated empty-TU consumer
+matrix, not feature-visibility, declaration/layout, callable-linkage,
+archive, runtime, installed-header, family-promotion, or public-x86 evidence.
+The wider candidate visibility for those `aio.h` rows remains a tracked parity
+question rather than being silently treated as equivalent. The static-export
+list is only an input to that linkage audit: unlisted public callables remain owned by planned
 `libc.c-abi-compat`, while noncallable header ABI remains owned by
 `libc.headers-layouts`.
 

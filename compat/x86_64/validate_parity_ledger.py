@@ -46,7 +46,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v7"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v8"
 EXPECTED_PUBLIC_HEADER_COUNT = 183
 EXPECTED_PUBLIC_HEADER_SHA256 = "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
 EXPECTED_PUBLIC_HEADER_UAPI_GAPS = {
@@ -130,7 +130,11 @@ EXPECTED_LINUX_5_10_UAPI_HEADER_COUNT = 935
 EXPECTED_LINUX_5_10_UAPI_HEADER_MANIFEST_SHA256 = (
     "00cdc98ceb35926f68dc57dc0d84a989a6df4f60f84b1ae5981b54bb1088eb0e"
 )
-EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT = 382
+EXPECTED_CANDIDATE_HEADER_CLOSURE_RECORD_COUNT = 1337
+EXPECTED_CANDIDATE_HEADER_CLOSURE_ORACLE_NOT_APPLICABLE_ROWS = (
+    "aio.h:c11-strict",
+    "aio.h:cxx17-strict",
+)
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
     "c11-gnu": {
@@ -143,37 +147,37 @@ EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
         "language": "c++",
         "standard": "c++17",
         "macros": ["_GNU_SOURCE"],
-        "state": "planned",
+        "state": "partial-verified",
     },
     "c11-strict": {
         "language": "c",
         "standard": "c11",
         "macros": [],
-        "state": "planned",
+        "state": "partial-verified",
     },
     "c11-posix-2008": {
         "language": "c",
         "standard": "c11",
         "macros": ["_POSIX_C_SOURCE=200809L"],
-        "state": "planned",
+        "state": "partial-verified",
     },
     "c11-xopen-700": {
         "language": "c",
         "standard": "c11",
         "macros": ["_XOPEN_SOURCE=700"],
-        "state": "planned",
+        "state": "partial-verified",
     },
     "c11-bsd": {
         "language": "c",
         "standard": "c11",
         "macros": ["_BSD_SOURCE"],
-        "state": "planned",
+        "state": "partial-verified",
     },
     "cxx17-strict": {
         "language": "c++",
         "standard": "c++17",
         "macros": [],
-        "state": "planned",
+        "state": "partial-verified",
     },
 }
 EXPECTED_UAPI_WRAPPER_MATRIX_PROFILES = tuple(EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES)
@@ -183,14 +187,10 @@ EXPECTED_HEADER_FOUNDATION_CLASS_IDS = (
     "pinned-uapi-inputs",
     "project-only-extensions",
 )
-EXPECTED_HEADER_FOUNDATION_CURRENT_PROFILES = ("c11-gnu", "cxx17-gnu")
-EXPECTED_HEADER_FOUNDATION_FUTURE_PROFILES = (
-    "c11-strict",
-    "c11-posix-2008",
-    "c11-xopen-700",
-    "c11-bsd",
-    "cxx17-strict",
+EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES = tuple(
+    EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES
 )
+EXPECTED_HEADER_FOUNDATION_UNVERIFIED_FEATURE_PROFILES: tuple[str, ...] = ()
 EXPECTED_HEADER_FOUNDATION_CLASS_FACETS = {
     "pinned-non-uapi": (
         "public-path-inventory",
@@ -251,107 +251,135 @@ EXPECTED_HEADER_FOUNDATION_PROFILE_OBLIGATIONS = {
     ("pinned-non-uapi", "c11-gnu"): (
         "applicable",
         "partial-verified",
-        ("public-header-c-consumability",),
+        ("public-header-c-consumability", "public-header-profile-consumability"),
     ),
     ("pinned-non-uapi", "cxx17-gnu"): (
-        "oracle-required",
-        "planned",
-        ("oracle-derived-cxx17-matrix",),
+        "applicable",
+        "partial-verified",
+        ("public-header-profile-consumability",),
     ),
     ("pinned-non-uapi", "c11-strict"): (
-        "oracle-required",
-        "planned",
-        ("strict-posix-xopen-gnu-bsd-matrix",),
+        "mixed-applicability",
+        "partial-verified",
+        ("public-header-profile-consumability",),
     ),
     ("pinned-non-uapi", "c11-posix-2008"): (
-        "oracle-required",
-        "planned",
-        ("strict-posix-xopen-gnu-bsd-matrix",),
+        "applicable",
+        "partial-verified",
+        ("public-header-profile-consumability",),
     ),
     ("pinned-non-uapi", "c11-xopen-700"): (
-        "oracle-required",
-        "planned",
-        ("strict-posix-xopen-gnu-bsd-matrix",),
+        "applicable",
+        "partial-verified",
+        ("public-header-profile-consumability",),
     ),
     ("pinned-non-uapi", "c11-bsd"): (
-        "oracle-required",
-        "planned",
-        ("strict-posix-xopen-gnu-bsd-matrix",),
+        "applicable",
+        "partial-verified",
+        ("public-header-profile-consumability",),
     ),
     ("pinned-non-uapi", "cxx17-strict"): (
-        "oracle-required",
-        "planned",
-        ("oracle-derived-cxx17-matrix",),
+        "mixed-applicability",
+        "partial-verified",
+        ("public-header-profile-consumability",),
     ),
     ("pinned-uapi-inputs", "c11-gnu"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("pinned-uapi-inputs", "cxx17-gnu"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("pinned-uapi-inputs", "c11-strict"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("pinned-uapi-inputs", "c11-posix-2008"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("pinned-uapi-inputs", "c11-xopen-700"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("pinned-uapi-inputs", "c11-bsd"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("pinned-uapi-inputs", "cxx17-strict"): (
         "applicable",
         "partial-verified",
-        ("pinned-linux-5.10-uapi-input", EXPECTED_UAPI_WRAPPER_MATRIX_ID),
+        (
+            "pinned-linux-5.10-uapi-input",
+            EXPECTED_UAPI_WRAPPER_MATRIX_ID,
+            "public-header-profile-consumability",
+        ),
     ),
     ("project-only-extensions", "c11-gnu"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification",),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
     ("project-only-extensions", "cxx17-gnu"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification", "oracle-derived-cxx17-matrix"),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
     ("project-only-extensions", "c11-strict"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
     ("project-only-extensions", "c11-posix-2008"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
     ("project-only-extensions", "c11-xopen-700"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
     ("project-only-extensions", "c11-bsd"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification", "strict-posix-xopen-gnu-bsd-matrix"),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
     ("project-only-extensions", "cxx17-strict"): (
-        "oracle-required",
-        "planned",
-        ("project-only-header-classification", "oracle-derived-cxx17-matrix"),
+        "candidate-only",
+        "partial-verified",
+        ("project-only-header-classification", "public-header-profile-consumability"),
     ),
 }
 
@@ -423,16 +451,16 @@ EXPECTED_HEADER_FOUNDATION_FACETS = {
         ("project-only-header-classification",),
     ),
     "candidate-transitive-closure": (
-        "planned",
+        "partial-verified",
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
         ("isolated-candidate-header-closure",),
     ),
     "cxx17-consumability": (
-        "planned",
+        "partial-verified",
         "all-pinned-and-project-only-public-headers",
         "libc.headers-layouts",
-        ("isolated-candidate-header-closure", "oracle-derived-cxx17-matrix"),
+        ("isolated-candidate-header-closure",),
     ),
     "feature-visibility": (
         "planned",
@@ -1322,13 +1350,14 @@ def validate_header_layout_foundation_manifest(
 ) -> dict[str, int]:
     """Validate the planned all-header accounting contract without promoting it.
 
-    The v7 contract resolves every current pathname into one class and expands
+    The v8 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
     Linux-UAPI input, resolves selected UAPI-wrapper, ioctl-header, epoll-header,
-    timeval-transitive, direct sys/time, and access-header ABI matrices, and requires a live C11/C++17 empty-TU
-    closure diagnostic, while keeping aggregate applicability,
-    declaration/layout comparisons, and declared-callable linkage in planned
-    evidence lanes.
+    timeval-transitive, direct sys/time, and access-header ABI matrices, and
+    verifies a seven-profile empty-TU closure diagnostic with two explicit
+    pinned-musl aio.h strict-profile applicability results, while keeping
+    feature visibility, declaration/layout comparisons, and declared-callable
+    linkage in planned evidence lanes.
     """
     require(isinstance(manifest, Mapping), "header-foundation manifest must be a table")
     expected_manifest_keys = {
@@ -1386,9 +1415,9 @@ def validate_header_layout_foundation_manifest(
             "native_execution_only": True,
             "project_headers_first": True,
             "inventory_accounting": True,
-            "candidate_transitive_include_closure": False,
-            "full_c11_consumer_matrix": False,
-            "full_cxx17_consumer_matrix": False,
+            "candidate_transitive_include_closure": True,
+            "full_c11_consumer_matrix": True,
+            "full_cxx17_consumer_matrix": True,
             "feature_visibility_matrix": False,
             "abi_facet_matrix": False,
             "callable_linkage_audit": False,
@@ -1417,9 +1446,9 @@ def validate_header_layout_foundation_manifest(
             "timeval_transitive_header_profile_matrix_slice": True,
             "sys_time_direct_header_profile_matrix_slice": True,
             "access_header_profile_matrix_slice": True,
-            "candidate_transitive_include_closure": False,
-            "c11_consumer_matrix": False,
-            "cxx17_consumer_matrix": False,
+            "candidate_transitive_include_closure": True,
+            "c11_consumer_matrix": True,
+            "cxx17_consumer_matrix": True,
             "feature_visibility_matrix": False,
             "abi_facet_matrix": False,
             "callable_linkage_audit": False,
@@ -1528,7 +1557,7 @@ def validate_header_layout_foundation_manifest(
                 "not-applicable",
                 "blocked-missing-input",
             ],
-            "all_rows_resolved": False,
+            "all_rows_resolved": True,
         },
         "header-foundation profile_matrix drifted",
     )
@@ -1699,6 +1728,7 @@ def validate_header_layout_foundation_manifest(
             "candidate_public_header_count",
             "candidate_only_header_count",
             "record_count",
+            "oracle_not_applicable_rows",
             "scope",
         },
         "header-foundation candidate-header closure diagnostic keys drifted",
@@ -1708,9 +1738,9 @@ def validate_header_layout_foundation_manifest(
         "header-foundation candidate-header closure diagnostic id drifted",
     )
     require(
-        closure_diagnostic["state"] == "required-live"
+        closure_diagnostic["state"] == "partial-verified"
         and closure_diagnostic["required_result"] == "pass",
-        "header-foundation candidate-header closure diagnostic must require a live pass",
+        "header-foundation candidate-header closure diagnostic must remain partial verified and require a live pass",
     )
     require(
         closure_diagnostic["command"]
@@ -1719,7 +1749,7 @@ def validate_header_layout_foundation_manifest(
     )
     require(
         tuple(string_list(closure_diagnostic["profiles"], "header-foundation closure profiles"))
-        == ("c11-gnu", "cxx17-gnu"),
+        == EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES,
         "header-foundation candidate-header closure profiles drifted",
     )
     require(
@@ -1732,8 +1762,19 @@ def validate_header_layout_foundation_manifest(
         "header-foundation candidate-header closure inventory counts drifted",
     )
     require(
+        tuple(
+            string_list(
+                closure_diagnostic["oracle_not_applicable_rows"],
+                "header-foundation closure oracle-not-applicable rows",
+            )
+        )
+        == EXPECTED_CANDIDATE_HEADER_CLOSURE_ORACLE_NOT_APPLICABLE_ROWS,
+        "header-foundation candidate-header closure oracle-not-applicable rows drifted",
+    )
+    require(
         isinstance(closure_diagnostic["scope"], str)
-        and "no declaration/layout/linkage/runtime/installed-header/public-support claim"
+        and "aio.h:c11-strict and aio.h:cxx17-strict" in closure_diagnostic["scope"]
+        and "not feature-visibility, declaration/layout/linkage/runtime/installed-header/public-support evidence"
         in closure_diagnostic["scope"],
         "header-foundation candidate-header closure scope must retain its non-completion boundary",
     )
@@ -1746,6 +1787,28 @@ def validate_header_layout_foundation_manifest(
         "candidate-header-closure)" in dispatch_source,
         "candidate-header-closure is absent from the native dispatcher",
     )
+    closure_runner = CANDIDATE_HEADER_CLOSURE_RUNNER_PATH.read_text(encoding="utf-8")
+    for phrase in (
+        "readonly EXPECTED_PROFILE_COUNT=7",
+        "readonly EXPECTED_RECORD_COUNT=1337",
+        "readonly -a PROFILES=(c11-gnu cxx17-gnu c11-strict c11-posix-2008 c11-xopen-700 c11-bsd cxx17-strict)",
+        "readonly -a ORACLE_NOT_APPLICABLE_ROWS=(aio.h:c11-strict aio.h:cxx17-strict)",
+        "validate_profile_contract",
+        "validate_oracle_not_applicable_contract",
+        "profile count drifted",
+        "profile list contains duplicate",
+        "reference-not-applicable",
+        "expected exactly one $row record",
+        "observed an undeclared row",
+        "grep -Fq 'aio_sigevent'",
+        "grep -Fq 'incomplete type'",
+        "# schema=crabc.x86_64-candidate-header-closure/v3",
+        "# candidate_isolation=-nostdinc for all profiles",
+    ):
+        require(
+            phrase in closure_runner,
+            f"candidate-header closure runner omits fixed seven-profile contract: {phrase}",
+        )
 
     profiles = manifest["language_profile"]
     require(
@@ -2761,12 +2824,18 @@ def validate_header_layout_foundation_manifest(
         )
         require(
             tuple(string_list(entry["language_profiles"], f"{location}.language_profiles"))
-            == EXPECTED_HEADER_FOUNDATION_CURRENT_PROFILES,
+            == EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES,
             f"{location}.language_profiles drifted",
         )
         require(
-            tuple(string_list(entry["future_feature_profiles"], f"{location}.future_feature_profiles"))
-            == EXPECTED_HEADER_FOUNDATION_FUTURE_PROFILES,
+            tuple(
+                string_list(
+                    entry["future_feature_profiles"],
+                    f"{location}.future_feature_profiles",
+                    allow_empty=True,
+                )
+            )
+            == EXPECTED_HEADER_FOUNDATION_UNVERIFIED_FEATURE_PROFILES,
             f"{location}.future_feature_profiles drifted",
         )
         require(
@@ -3157,6 +3226,113 @@ def require_public_header_surface_artifact(family: Mapping[str, Any]) -> int:
     ):
         require(phrase in runner, f"public-header runner omits {phrase}")
     return len(names)
+
+
+def require_public_header_profile_consumability_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Ratchet the seven-profile empty-TU matrix without promoting headers.
+
+    The artifact is intentionally an isolated include-consumer contract. It
+    records a narrow pinned-musl applicability fact for two strict aio.h rows,
+    while keeping feature visibility, declarations, layouts, linkage, and
+    runtime ownership in their separate promotion gates.
+    """
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "public-header-profile-consumability"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one public-header-profile-consumability artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "seven-profile",
+        "1,337",
+        "183 pinned-musl public headers plus eight project-only headers",
+        "`aio.h:c11-strict`",
+        "`aio.h:cxx17-strict`",
+        "pinned-musl oracle-not-applicable",
+        "candidate still must compile",
+        "not feature-visibility, declaration/layout, callable-linkage, archive, runtime, installed-header, family-promotion, or public-x86 evidence",
+    ):
+        require(
+            phrase in description,
+            f"public-header-profile-consumability description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "public-header-profile-consumability.source_owners",
+        )
+    )
+    for owner in (
+        "compat/x86_64/public_headers.txt",
+        "compat/x86_64/headers-layouts-foundation.toml",
+        "compat/x86_64/run_candidate_header_closure.sh",
+        "compat/x86_64/header_cxx_closure.cpp",
+        "compat/x86_64/tests/test_candidate_header_closure.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"public-header-profile-consumability omits {owner}",
+        )
+
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any("183 + 8" in item and "7" in item and "1,337" in item for item in prerequisites),
+        "public-header-profile-consumability must state its closed row arithmetic",
+    )
+    require(
+        any("aio.h:c11-strict" in item and "aio.h:cxx17-strict" in item for item in prerequisites),
+        "public-header-profile-consumability must state both strict aio oracle rows",
+    )
+    header_prerequisites = artifact["x86_header_prerequisites"]
+    assert isinstance(header_prerequisites, list)
+    require(
+        any("-nostdinc" in item and "Linux 5.10 UAPI" in item for item in header_prerequisites),
+        "public-header-profile-consumability must retain its isolated header roots",
+    )
+    require(
+        any("feature visibility" in item and "declaration/layout" in item for item in header_prerequisites),
+        "public-header-profile-consumability must retain its non-completion boundary",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        [entry["command"] for entry in evidence]
+        == ["./scripts/dev-x86_64.sh candidate-header-closure"],
+        "public-header-profile-consumability must use the closed candidate-header-closure command",
+    )
+    scope = evidence[0]["scope"]
+    require(
+        isinstance(scope, str)
+        and "reference-not-applicable" in scope
+        and "candidate compilation" in scope
+        and "not feature visibility" in scope,
+        "public-header-profile-consumability evidence scope drifted",
+    )
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "candidate-header-closure)" in dispatch_source,
+        "public-header-profile-consumability command is absent from the native dispatcher",
+    )
 
 
 def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
@@ -8756,6 +8932,9 @@ def validate_ledger(
         by_id["libc.headers-layouts"], header_layout_manifest
     )
     public_header_inventory_count = require_public_header_surface_artifact(
+        by_id["libc.headers-layouts"]
+    )
+    require_public_header_profile_consumability_artifact(
         by_id["libc.headers-layouts"]
     )
     if header_layout_foundation_manifest is None:

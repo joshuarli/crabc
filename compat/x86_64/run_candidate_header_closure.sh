@@ -25,11 +25,56 @@ readonly LINUX_UAPI_INCLUDE="$LINUX_UAPI_ROOT/include"
 readonly EXPECTED_PINNED_PUBLIC_HEADER_COUNT=183
 readonly EXPECTED_CANDIDATE_PUBLIC_HEADER_COUNT=191
 readonly EXPECTED_CANDIDATE_ONLY_HEADER_COUNT=8
-readonly EXPECTED_RECORD_COUNT=382
+# One record is one resolved public header through one intentional language /
+# feature-profile consumer. Keep this closed seven-profile matrix distinct
+# from declaration, layout, linkage, and runtime evidence.
+readonly EXPECTED_PROFILE_COUNT=7
+readonly EXPECTED_RECORD_COUNT=1337
+readonly -a PROFILES=(c11-gnu cxx17-gnu c11-strict c11-posix-2008 c11-xopen-700 c11-bsd cxx17-strict)
+# Pinned musl 1.2.6 itself cannot consume <aio.h> in the macro-free C11/C++17
+# profiles: its public record embeds struct sigevent while <signal.h> keeps
+# that record incomplete without a POSIX/GNU feature request. The profile
+# matrix records those two oracle-not-applicable rows explicitly; it never
+# suppresses a candidate header failure or a new oracle failure.
+readonly -a ORACLE_NOT_APPLICABLE_ROWS=(aio.h:c11-strict aio.h:cxx17-strict)
 
 fail() {
     printf 'ERROR: x86 candidate header closure: %s\n' "$*" >&2
     exit 1
+}
+
+validate_profile_contract() {
+    local profile
+    declare -A observed_profiles=()
+
+    [ "${#PROFILES[@]}" -eq "$EXPECTED_PROFILE_COUNT" ] ||
+        fail "profile count drifted: expected $EXPECTED_PROFILE_COUNT, got ${#PROFILES[@]}"
+    for profile in "${PROFILES[@]}"; do
+        if [[ -v "observed_profiles[$profile]" ]]; then
+            fail "profile list contains duplicate $profile"
+        fi
+        observed_profiles["$profile"]=1
+    done
+}
+
+validate_oracle_not_applicable_contract() {
+    local row
+    local profile
+    declare -A declared_rows=()
+
+    for row in "${ORACLE_NOT_APPLICABLE_ROWS[@]}"; do
+        case "$row" in
+            *.h:*) profile="${row#*:}" ;;
+            *) fail "invalid oracle-not-applicable row: $row" ;;
+        esac
+        if [[ -v "declared_rows[$row]" ]]; then
+            fail "oracle-not-applicable row is duplicated: $row"
+        fi
+        declared_rows["$row"]=1
+        if ! [[ " ${PROFILES[*]} " == *" $profile "* ]]; then
+            fail "oracle-not-applicable row uses unknown profile: $row"
+        fi
+    done
 }
 
 require_native_linux_x86_64() {
@@ -76,10 +121,54 @@ run_compiler() {
         "$compiler" "$@"
 }
 
+profile_language() {
+    case "$1" in
+        c11-*) printf '%s\n' c ;;
+        cxx17-*) printf '%s\n' cxx ;;
+        *) fail "unknown language profile: $1" ;;
+    esac
+}
+
+profile_arguments() {
+    case "$1" in
+        c11-gnu|cxx17-gnu) printf '%s\n' '-D_GNU_SOURCE' ;;
+        c11-strict) ;;
+        c11-posix-2008) printf '%s\n' '-D_POSIX_C_SOURCE=200809L' ;;
+        c11-xopen-700) printf '%s\n' '-D_XOPEN_SOURCE=700' ;;
+        c11-bsd) printf '%s\n' '-D_BSD_SOURCE' ;;
+        # GCC otherwise predefines _GNU_SOURCE for C++ invocations; remove
+        # it so this profile exercises the declared macro-free C++17 form.
+        cxx17-strict) printf '%s\n' '-U_GNU_SOURCE' ;;
+        *) fail "unknown language profile: $1" ;;
+    esac
+}
+
+oracle_not_applicable() {
+    local header="$1"
+    local profile="$2"
+    local diagnostic="$3"
+    local row
+
+    for row in "${ORACLE_NOT_APPLICABLE_ROWS[@]}"; do
+        if [ "$row" = "$header:$profile" ]; then
+            # This is a pinned-musl source behavior, not a generic reference
+            # failure waiver: aio.h embeds aio_sigevent, whose type stays
+            # incomplete in signal.h without a POSIX/GNU feature request.
+            grep -Fq 'aio_sigevent' "$diagnostic" &&
+                grep -Fq 'incomplete type' "$diagnostic"
+            return
+        fi
+    done
+    return 1
+}
+
 write_source() {
     local header="$1"
-    local language="$2"
+    local profile="$2"
     local source="$3"
+    local language
+
+    language="$(profile_language "$profile")"
 
     case "$language" in
         c)
@@ -94,13 +183,18 @@ write_source() {
 
 compile_header() {
     local tree="$1"
-    local language="$2"
+    local profile="$2"
     local source="$3"
     local stdout_path="$4"
     local diagnostic_path="$5"
     local include_root
     local compiler
+    local language
+    local -a profile_args
     local -a arguments
+
+    language="$(profile_language "$profile")"
+    mapfile -t profile_args < <(profile_arguments "$profile")
 
     case "$tree" in
         candidate)
@@ -116,12 +210,12 @@ compile_header() {
 
     arguments=(
         -nostdinc
-        -D_GNU_SOURCE
         -I "$include_root"
         -isystem "$candidate_compiler_builtin_include"
         -isystem "$LINUX_UAPI_INCLUDE"
         -H
         -fsyntax-only
+        "${profile_args[@]}"
         "$source"
     )
     case "$language" in
@@ -272,6 +366,8 @@ done
 [ -d "$PROJECT_INCLUDE" ] || fail "missing project include tree"
 [ -f "$INVENTORY" ] || fail "missing checked-in public-header inventory"
 [ -f "$CXX_CLOSURE_PROBE" ] || fail "missing focused C++ header-closure probe"
+validate_profile_contract
+validate_oracle_not_applicable_contract
 
 # Verify both inputs before compiling. The UAPI verifier establishes a fixed
 # Linux 5.10 input. Candidate commands then use raw GCC plus -nostdinc, so
@@ -329,7 +425,7 @@ report_tmp="$(mktemp "$REPORT_DIR/.latest.tsv.tmp.XXXXXX")"
 # inventory. Keep this focused compile alongside them because it also names
 # the C++ spellings that previously regressed: alternative tokens, C++ builtin
 # character types, and the affected C declaration pointer types.
-if ! compile_header candidate cxx "$CXX_CLOSURE_PROBE" "$cxx_closure_stdout" \
+if ! compile_header candidate cxx17-gnu "$CXX_CLOSURE_PROBE" "$cxx_closure_stdout" \
     "$cxx_closure_diagnostic"; then
     fail "focused C++ header-closure probe failed: $(first_diagnostic "$cxx_closure_diagnostic")"
 fi
@@ -348,37 +444,44 @@ for header in aio.h err.h iso646.h regex.h stdatomic.h uchar.h; do
 done
 
 declare -A status_counts=()
+declare -A observed_oracle_not_applicable_rows=()
 record_count=0
 incomplete_count=0
 
 record_result() {
     local header="$1"
-    local language="$2"
-    local scope="$3"
-    local status="$4"
-    local reference="$5"
-    local reference_root="$6"
-    local candidate="$7"
-    local candidate_root="$8"
-    local candidate_bits="$9"
-    local uapi="${10}"
-    local detail="${11}"
+    local profile="$2"
+    local language="$3"
+    local scope="$4"
+    local status="$5"
+    local reference="$6"
+    local reference_root="$7"
+    local candidate="$8"
+    local candidate_root="$9"
+    local candidate_bits="${10}"
+    local uapi="${11}"
+    local detail="${12}"
 
     detail="$(printf '%s' "$detail" | tr '\t\r\n' ' ' )"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$header" "$language" "$scope" "$status" "$reference" "$reference_root" \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$header" "$profile" "$language" "$scope" "$status" "$reference" "$reference_root" \
         "$candidate" "$candidate_root" "$candidate_bits" "$uapi" "$detail" >> "$records"
     status_counts["$status"]=$(( ${status_counts["$status"]:-0} + 1 ))
+    if [ "$status" = reference-not-applicable ]; then
+        local row="$header:$profile"
+        observed_oracle_not_applicable_rows["$row"]=$(( ${observed_oracle_not_applicable_rows["$row"]:-0} + 1 ))
+    fi
     record_count=$((record_count + 1))
     case "$status" in
-        closure-ok|candidate-only-closure-ok) ;;
+        closure-ok|candidate-only-closure-ok|reference-not-applicable) ;;
         *) incomplete_count=$((incomplete_count + 1)) ;;
     esac
 }
 
 compile_pinned_header() {
     local header="$1"
-    local language="$2"
+    local profile="$2"
+    local language
     local reference_status
     local reference_root
     local candidate_status
@@ -388,22 +491,23 @@ compile_pinned_header() {
     local status
     local detail
 
+    language="$(profile_language "$profile")"
     validate_header_name "$header"
     if [ ! -f "$PROJECT_INCLUDE/$header" ]; then
-        record_result "$header" "$language" pinned candidate-missing \
+        record_result "$header" "$profile" "$language" pinned candidate-missing \
             not-run not-observed missing missing none not-observed \
             'project public header is absent'
         return
     fi
 
-    write_source "$header" "$language" "$source"
-    if compile_header reference "$language" "$source" "$compiler_stdout" \
+    write_source "$header" "$profile" "$source"
+    if compile_header reference "$profile" "$source" "$compiler_stdout" \
         "$reference_diagnostic"; then
         reference_status=compile-ok
     else
         reference_status=failed
     fi
-    if compile_header candidate "$language" "$source" "$compiler_stdout" \
+    if compile_header candidate "$profile" "$source" "$compiler_stdout" \
         "$candidate_diagnostic"; then
         candidate_status=compile-ok
     else
@@ -423,7 +527,7 @@ compile_pinned_header() {
     if trace_has_unapproved_reference_path "$reference_diagnostic"; then
         status=reference-include-escape
         detail='reference include trace escaped the pinned musl/builtin/Linux-5.10 roots'
-    elif [ "$reference_status" != compile-ok ]; then
+    elif [ "$reference_status" != compile-ok ] && ! oracle_not_applicable "$header" "$profile" "$reference_diagnostic"; then
         status=reference-compile-failed
         detail="$(first_diagnostic "$reference_diagnostic")"
     elif [ "$reference_root" = not-observed ]; then
@@ -447,18 +551,22 @@ compile_pinned_header() {
             cxx) status=candidate-cxx-compile-failed ;;
         esac
         detail="$(first_diagnostic "$candidate_diagnostic")"
+    elif [ "$reference_status" != compile-ok ]; then
+        status=reference-not-applicable
+        detail='pinned musl aio.h embeds incomplete struct sigevent without a POSIX/GNU feature request; candidate closure remains separately recorded'
     else
         status=closure-ok
         detail='isolated project-header closure'
     fi
-    record_result "$header" "$language" pinned "$status" "$reference_status" \
+    record_result "$header" "$profile" "$language" pinned "$status" "$reference_status" \
         "$reference_root" "$candidate_status" "$candidate_root" "$candidate_bits" \
         "$uapi" "$detail"
 }
 
 compile_candidate_only_header() {
     local header="$1"
-    local language="$2"
+    local profile="$2"
+    local language
     local candidate_status
     local candidate_root
     local candidate_bits
@@ -466,9 +574,10 @@ compile_candidate_only_header() {
     local status
     local detail
 
+    language="$(profile_language "$profile")"
     validate_header_name "$header"
-    write_source "$header" "$language" "$source"
-    if compile_header candidate "$language" "$source" "$compiler_stdout" \
+    write_source "$header" "$profile" "$source"
+    if compile_header candidate "$profile" "$source" "$compiler_stdout" \
         "$candidate_diagnostic"; then
         candidate_status=compile-ok
     else
@@ -504,22 +613,29 @@ compile_candidate_only_header() {
         status=candidate-only-closure-ok
         detail='isolated project-only header closure'
     fi
-    record_result "$header" "$language" candidate-only "$status" \
+    record_result "$header" "$profile" "$language" candidate-only "$status" \
         not-in-pinned-inventory not-applicable "$candidate_status" "$candidate_root" \
         "$candidate_bits" "$uapi" "$detail"
 }
 
-while IFS= read -r header; do
-    for language in c cxx; do
-        compile_pinned_header "$header" "$language"
-    done
-done < "$pinned_observed"
+for profile in "${PROFILES[@]}"; do
+    while IFS= read -r header; do
+        compile_pinned_header "$header" "$profile"
+    done < "$pinned_observed"
+done
 
-while IFS= read -r header; do
-    for language in c cxx; do
-        compile_candidate_only_header "$header" "$language"
-    done
-done < "$candidate_only"
+for profile in "${PROFILES[@]}"; do
+    while IFS= read -r header; do
+        compile_candidate_only_header "$header" "$profile"
+    done < "$candidate_only"
+done
+
+for row in "${ORACLE_NOT_APPLICABLE_ROWS[@]}"; do
+    [ "${observed_oracle_not_applicable_rows["$row"]:-0}" -eq 1 ] ||
+        fail "oracle-not-applicable row drifted: expected exactly one $row record"
+done
+[ "${#observed_oracle_not_applicable_rows[@]}" -eq "${#ORACLE_NOT_APPLICABLE_ROWS[@]}" ] ||
+    fail "oracle-not-applicable row drifted: observed an undeclared row"
 
 [ "$record_count" = "$EXPECTED_RECORD_COUNT" ] ||
     fail "header-closure record count drifted: expected $EXPECTED_RECORD_COUNT, got $record_count"
@@ -527,15 +643,15 @@ done < "$candidate_only"
 result=pass
 [ "$incomplete_count" -eq 0 ] || result=incomplete
 {
-    printf '# schema=crabc.x86_64-candidate-header-closure/v2\n'
+    printf '# schema=crabc.x86_64-candidate-header-closure/v3\n'
     printf '# target=x86_64-unknown-linux-musl\n'
     printf '# platform=Linux/x86-64 little-endian\n'
     printf '# oracle=Pinned musl 1.2.6\n'
     printf '# linux_uapi=hash-pinned Linux 5.10 exported headers at %s\n' "$LINUX_UAPI_INCLUDE"
-    printf '# profiles=C11+_GNU_SOURCE and C++17+_GNU_SOURCE\n'
+    printf '# profiles=%s\n' "${PROFILES[*]}"
     printf '# candidate_compiler=/usr/bin/gcc without musl specs; candidate_include_inputs=project include, raw-GCC builtin include, Linux 5.10 UAPI only\n'
     printf '# reference_compiler=crabc-x86_64-musl-gcc; reference_include_inputs=pinned musl include, raw-GCC builtin include, Linux 5.10 UAPI\n'
-    printf '# candidate_isolation=-nostdinc for both profiles; C++ also uses -nostdinc++; trace rejects any musl or non-project bits escape\n'
+    printf '# candidate_isolation=-nostdinc for all profiles; C++ also uses -nostdinc++; trace rejects any musl or non-project bits escape\n'
     printf '# scope=empty-TU include closure only; not declaration/layout/linkage/runtime/installed-header/public-support parity\n'
     printf '# pinned_public_header_count=%s\n' "$pinned_public_header_count"
     printf '# candidate_public_header_count=%s\n' "$candidate_public_header_count"
@@ -546,7 +662,7 @@ result=pass
     for status in "${!status_counts[@]}"; do
         printf '# status.%s=%s\n' "$status" "${status_counts["$status"]}"
     done | LC_ALL=C sort
-    printf 'header\tlanguage\tscope\tstatus\treference\treference_root\tcandidate\tcandidate_root\tcandidate_bits\tuapi\tdetail\n'
+    printf 'header\tprofile\tlanguage\tscope\tstatus\treference\treference_root\tcandidate\tcandidate_root\tcandidate_bits\tuapi\tdetail\n'
     cat "$records"
 } > "$report_tmp"
 

@@ -91,9 +91,19 @@ class CandidateHeaderClosureTests(unittest.TestCase):
             "readonly EXPECTED_PINNED_PUBLIC_HEADER_COUNT=183",
             "readonly EXPECTED_CANDIDATE_PUBLIC_HEADER_COUNT=191",
             "readonly EXPECTED_CANDIDATE_ONLY_HEADER_COUNT=8",
-            "readonly EXPECTED_RECORD_COUNT=382",
+            "readonly EXPECTED_PROFILE_COUNT=7",
+            "readonly EXPECTED_RECORD_COUNT=1337",
+            "readonly -a PROFILES=(c11-gnu cxx17-gnu c11-strict c11-posix-2008 c11-xopen-700 c11-bsd cxx17-strict)",
+            "readonly -a ORACLE_NOT_APPLICABLE_ROWS=(aio.h:c11-strict aio.h:cxx17-strict)",
+            "validate_profile_contract",
+            "validate_oracle_not_applicable_contract",
+            "profile count drifted",
+            "profile list contains duplicate",
+            "oracle-not-applicable row is duplicated",
+            "oracle-not-applicable row uses unknown profile",
             "-nostdinc",
             "-nostdinc++",
+            "-U_GNU_SOURCE",
             "run_linux_5_10_uapi.sh",
             "header_cxx_closure.cpp",
             "focused C++ header-closure probe failed",
@@ -101,13 +111,22 @@ class CandidateHeaderClosureTests(unittest.TestCase):
             "candidate include trace reached pinned musl despite -nostdinc",
             "candidate include trace escaped project/builtin/Linux-5.10 roots",
             "-u GCC_SPECS",
+            "grep -Fq 'aio_sigevent'",
+            "grep -Fq 'incomplete type'",
+            "reference-not-applicable",
+            "expected exactly one $row record",
+            "observed an undeclared row",
             "[ \"$record_count\" = \"$EXPECTED_RECORD_COUNT\" ]",
+            "# schema=crabc.x86_64-candidate-header-closure/v3",
+            "# candidate_isolation=-nostdinc for all profiles",
+            "header\\tprofile\\tlanguage\\tscope\\tstatus",
             "# scope=empty-TU include closure only; not declaration/layout/linkage/runtime/installed-header/public-support parity",
             "x86 isolated C/C++ candidate header closure: INCOMPLETE",
             "exit 1",
         ):
             self.assertIn(phrase, runner)
         self.assertNotIn("EXPECTED_CXX_FAILURE", runner)
+        self.assertNotIn("EXPECTED_REFERENCE_FAILURE", runner)
         self.assertNotIn("--report-only", runner)
         self.assertNotIn("--report-only", DISPATCHER.read_text(encoding="utf-8"))
 
