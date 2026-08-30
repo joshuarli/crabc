@@ -46,6 +46,26 @@ class SmokeError(RuntimeError):
     """A violated selected-shadow evidence precondition or fixture result."""
 
 
+class ArtifactAttestationError(SmokeError):
+    """The selected libc artifact cannot prove its native-shadow identity."""
+
+
+class AllocatorLivenessError(SmokeError):
+    """The fixture did not complete its required allocation ownership lifecycle."""
+
+
+class RssThresholdError(SmokeError):
+    """A completed fixture process exceeded the reviewed RSS ceiling."""
+
+    def __init__(self, *, observed_bytes: int, threshold_bytes: int) -> None:
+        self.observed_bytes = observed_bytes
+        self.threshold_bytes = threshold_bytes
+        super().__init__(
+            "fixture RSS high-water exceeded the configured threshold: "
+            f"observed {observed_bytes} bytes, threshold {threshold_bytes} bytes"
+        )
+
+
 def relative(path: Path) -> str:
     """Return a durable repository-relative spelling when possible."""
 
@@ -106,6 +126,15 @@ def require_string_list(value: Mapping[str, Any], key: str) -> list[str]:
     return list(result)
 
 
+def require_object(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """Read one required JSON object without accepting a mutable shape."""
+
+    result = value.get(key)
+    if not isinstance(result, dict):
+        raise SmokeError(f"contract field {key!r} must be an object")
+    return result
+
+
 def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     """Validate the fixed native-shadow workload and its honest boundaries."""
 
@@ -116,10 +145,13 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
     execution = contract.get("execution")
     boundary = contract.get("production_shadow_boundary")
     observation = contract.get("state_observation")
+    attestation = contract.get("selected_shadow_artifact_attestation")
     if not isinstance(fixture, dict) or not isinstance(execution, dict):
         raise SmokeError("contract must contain fixture and execution objects")
     if not isinstance(boundary, dict) or not isinstance(observation, dict):
         raise SmokeError("contract must contain production boundary and observation objects")
+    if not isinstance(attestation, dict):
+        raise SmokeError("contract must contain a selected-shadow artifact attestation object")
 
     fixture_path = ROOT / require_string(fixture, "path")
     if fixture_path != ROOT / "compat/allocator/native-churn-rss-smoke.c":
@@ -155,8 +187,37 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         raise SmokeError("link libraries changed")
     if require_string_list(execution, "expected_dynamic_dependencies") != ["libc.so"]:
         raise SmokeError("dynamic dependency boundary changed")
-    for key in ("seed", "cycles", "process_epochs", "watchdog_seconds"):
+    for key in ("seed", "cycles", "process_epochs", "watchdog_seconds", "rss_threshold_bytes"):
         require_positive_int(execution, key)
+
+    fingerprint = require_object(attestation, "cargo_fingerprint")
+    if require_string(fingerprint, "directory") != "target/debug/.fingerprint":
+        raise SmokeError("selected-shadow cargo fingerprint directory changed")
+    if require_string(fingerprint, "package_prefix") != "crabc-libc-":
+        raise SmokeError("selected-shadow cargo fingerprint package changed")
+    if require_string(fingerprint, "file") != "lib-c.json":
+        raise SmokeError("selected-shadow cargo fingerprint file changed")
+    if require_string_list(fingerprint, "exact_features") != [
+        "default",
+        "native-mimalloc-shadow",
+    ]:
+        raise SmokeError("selected-shadow cargo fingerprint feature identity changed")
+
+    exported_free = require_object(attestation, "exported_free_route")
+    if require_string(exported_free, "symbol") != "free":
+        raise SmokeError("selected-shadow exported free symbol changed")
+    if require_string(exported_free, "required_callee_suffix") != "native_free>":
+        raise SmokeError("selected-shadow exported free route changed")
+    if require_string(exported_free, "forbidden_callee_suffix") != "mi_free>":
+        raise SmokeError("selected-shadow exported free fallback exclusion changed")
+
+    rust_cleanup = require_object(attestation, "rust_cleanup_free_route")
+    if require_string(rust_cleanup, "helper_symbol") != "__crabc_interposable_free":
+        raise SmokeError("selected-shadow Rust cleanup helper changed")
+    if require_string(rust_cleanup, "required_branch_target") != "free@plt>":
+        raise SmokeError("selected-shadow Rust cleanup free route changed")
+    if require_string(rust_cleanup, "required_relocation") != "R_AARCH64_JUMP_SLOT":
+        raise SmokeError("selected-shadow Rust cleanup relocation changed")
 
     required_api = ["malloc", "free", "posix_memalign", "malloc_usable_size"]
     if require_string_list(boundary, "allowed_allocation_apis") != required_api:
@@ -204,9 +265,11 @@ def validate_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         "cycles": require_positive_int(execution, "cycles"),
         "process_epochs": require_positive_int(execution, "process_epochs"),
         "watchdog_seconds": require_positive_int(execution, "watchdog_seconds"),
+        "rss_threshold_bytes": require_positive_int(execution, "rss_threshold_bytes"),
         "compile_flags": require_string_list(execution, "compile_flags"),
         "link_flags": require_string_list(execution, "link_flags"),
         "link_libraries": require_string_list(execution, "link_libraries"),
+        "selected_shadow_artifact_attestation": attestation,
     }
 
 
@@ -258,6 +321,232 @@ def dynamic_dependencies(binary: Path) -> list[str]:
     return NEEDED_LIBRARY.findall(str(record["stdout"]))
 
 
+def sha256_text(value: str) -> str:
+    """Hash a textual tool observation without retaining its unstable addresses."""
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def cargo_fingerprint_features(value: Mapping[str, Any]) -> list[str]:
+    """Decode Cargo's JSON-encoded enabled-feature list exactly once."""
+
+    encoded = value.get("features")
+    if not isinstance(encoded, str):
+        raise ArtifactAttestationError("crabc-libc Cargo fingerprint omits its enabled features")
+    try:
+        features = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise ArtifactAttestationError(
+            "crabc-libc Cargo fingerprint has malformed enabled features"
+        ) from error
+    if (
+        not isinstance(features, list)
+        or not all(isinstance(feature, str) and feature for feature in features)
+        or len(features) != len(set(features))
+    ):
+        raise ArtifactAttestationError(
+            "crabc-libc Cargo fingerprint enabled features are not a unique string list"
+        )
+    return features
+
+
+def selected_shadow_fingerprint(
+    runtime: Path,
+    expectation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Select the one libc fingerprint with the reviewed native feature set."""
+
+    fingerprint = require_object(expectation, "cargo_fingerprint")
+    exact_features = require_string_list(fingerprint, "exact_features")
+    fingerprint_root = runtime / ".fingerprint"
+    candidates = sorted(
+        fingerprint_root.glob(f"{require_string(fingerprint, 'package_prefix')}*/{require_string(fingerprint, 'file')}")
+    )
+    matches: list[tuple[Path, Mapping[str, Any], list[str]]] = []
+    for candidate in candidates:
+        try:
+            value = read_json(candidate)
+            features = cargo_fingerprint_features(value)
+        except SmokeError:
+            continue
+        if sorted(features) == sorted(exact_features):
+            matches.append((candidate, value, features))
+    if len(matches) != 1:
+        raise ArtifactAttestationError(
+            "selected-shadow libc build identity is ambiguous: expected exactly one "
+            f"Cargo fingerprint with features {exact_features!r}, found {len(matches)}"
+        )
+    path, value, features = matches[0]
+    return {
+        "path": relative(path),
+        "sha256": sha256_file(path),
+        "features": features,
+        "declared_features": value.get("declared_features"),
+    }
+
+
+def require_attestation_success(record: Mapping[str, Any], subject: str) -> str:
+    """Turn an ELF-inspection failure into an explicit selected-artifact failure."""
+
+    if record.get("timed_out"):
+        raise ArtifactAttestationError(f"{subject} exceeded its inspection watchdog")
+    if record.get("status") != 0:
+        raise ArtifactAttestationError(
+            f"{subject} failed with status {record.get('status')}: "
+            f"stdout={record.get('stdout')!r} stderr={record.get('stderr')!r}"
+        )
+    stdout = record.get("stdout")
+    if not isinstance(stdout, str):
+        raise ArtifactAttestationError(f"{subject} omitted textual inspection output")
+    return stdout
+
+
+def attested_free_symbol(stdout: str, symbol: str) -> dict[str, str]:
+    """Require a default-visible, defined dynamic C allocation entry point."""
+
+    for line in stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 8:
+            continue
+        name = fields[-1].split("@@", 1)[0]
+        symbol_type, binding, visibility, section = fields[3:7]
+        if name != symbol:
+            continue
+        if (
+            symbol_type == "FUNC"
+            and binding in {"GLOBAL", "WEAK"}
+            and visibility == "DEFAULT"
+            and section != "UND"
+        ):
+            return {"binding": binding, "visibility": visibility, "section": section}
+    raise ArtifactAttestationError(
+        f"selected-shadow libc does not define default-visible dynamic {symbol}"
+    )
+
+
+def require_branch_target(stdout: str, target_suffix: str, subject: str) -> None:
+    """Require an AArch64 branch to one named disassembly target suffix."""
+
+    if not re.search(rf"\b(?:b|bl)\s+[^<]*<[^>]*{re.escape(target_suffix)}", stdout):
+        raise ArtifactAttestationError(f"{subject} does not branch to <{target_suffix}")
+
+
+def require_no_branch_target(stdout: str, target_suffix: str, subject: str) -> None:
+    """Reject a named allocator backend branch in one reviewed function body."""
+
+    if re.search(rf"\b(?:b|bl)\s+[^<]*<[^>]*{re.escape(target_suffix)}", stdout):
+        raise ArtifactAttestationError(f"{subject} branches to forbidden <{target_suffix}")
+
+
+def selected_shadow_artifact_attestation(
+    runtime: Path,
+    expectation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Attest the selected libc build and both Rust-to-C ``free`` routes.
+
+    The fixture's dynamic dependency check alone only proves that it loaded a
+    file named ``libc.so``.  This adds the selected Cargo feature identity, the
+    exported native-shadow ``free`` route, and the separate Rust cleanup thunk
+    that deliberately branches through ``free@plt`` for foreign C allocations.
+    """
+
+    libc = runtime / "libc.so"
+    if not libc.is_file():
+        raise ArtifactAttestationError("selected-shadow libc artifact is missing")
+    exported_free = require_object(expectation, "exported_free_route")
+    rust_cleanup = require_object(expectation, "rust_cleanup_free_route")
+
+    dyn_symbols_record = command_record(["readelf", "-W", "--dyn-syms", str(libc)])
+    dyn_symbols = require_attestation_success(
+        dyn_symbols_record, "selected-shadow libc dynamic symbol inspection"
+    )
+    exported_route_record = command_record(
+        ["objdump", "-d", f"--disassemble={require_string(exported_free, 'symbol')}", str(libc)]
+    )
+    exported_route = require_attestation_success(
+        exported_route_record, "selected-shadow exported free route inspection"
+    )
+    cleanup_route_record = command_record(
+        [
+            "objdump",
+            "-d",
+            f"--disassemble={require_string(rust_cleanup, 'helper_symbol')}",
+            str(libc),
+        ]
+    )
+    cleanup_route = require_attestation_success(
+        cleanup_route_record, "selected-shadow Rust cleanup free route inspection"
+    )
+    relocation_record = command_record(["readelf", "-Wr", str(libc)])
+    relocations = require_attestation_success(
+        relocation_record, "selected-shadow Rust cleanup relocation inspection"
+    )
+
+    exported_symbol = attested_free_symbol(dyn_symbols, require_string(exported_free, "symbol"))
+    require_branch_target(
+        exported_route,
+        require_string(exported_free, "required_callee_suffix"),
+        "selected-shadow exported free",
+    )
+    require_no_branch_target(
+        exported_route,
+        require_string(exported_free, "forbidden_callee_suffix"),
+        "selected-shadow exported free",
+    )
+    helper_symbol = require_string(rust_cleanup, "helper_symbol")
+    require_branch_target(
+        cleanup_route,
+        require_string(rust_cleanup, "required_branch_target"),
+        f"selected-shadow {helper_symbol}",
+    )
+    required_relocation = require_string(rust_cleanup, "required_relocation")
+    if not re.search(rf"{re.escape(required_relocation)}.*\bfree(?:\s|\+|$)", relocations):
+        raise ArtifactAttestationError(
+            "selected-shadow Rust cleanup free route lacks its required free PLT relocation"
+        )
+
+    return {
+        "status": "passed",
+        "build_identity": {
+            "libc": {"path": relative(libc), "sha256": sha256_file(libc), "size_bytes": libc.stat().st_size},
+            "cargo_fingerprint": selected_shadow_fingerprint(runtime, expectation),
+        },
+        "routes": {
+            "exported_free": {
+                "symbol": require_string(exported_free, "symbol"),
+                **exported_symbol,
+                "required_callee_suffix": require_string(exported_free, "required_callee_suffix"),
+                "forbidden_callee_suffix": require_string(exported_free, "forbidden_callee_suffix"),
+                "disassembly_sha256": sha256_text(exported_route),
+            },
+            "rust_cleanup_free": {
+                "helper_symbol": helper_symbol,
+                "required_branch_target": require_string(rust_cleanup, "required_branch_target"),
+                "required_relocation": required_relocation,
+                "disassembly_sha256": sha256_text(cleanup_route),
+                "relocations_sha256": sha256_text(relocations),
+            },
+        },
+    }
+
+
+def retain_selected_shadow_context(
+    error: SmokeError,
+    *,
+    binary: Path,
+    dependencies: Sequence[str],
+    attestation: Mapping[str, Any],
+) -> None:
+    """Keep completed artifact proof visible when a later fixture check fails."""
+
+    error.selected_shadow_artifact_attestation = dict(attestation)
+    error.artifact = {
+        "sha256": sha256_file(binary),
+        "size_bytes": binary.stat().st_size,
+    }
+    error.dynamic_dependencies = list(dependencies)
+
+
 def require_owned_shadow_environment() -> tuple[Path, Path, Path]:
     """Require the launcher-staged owned sysroot, loader, and debug runtime."""
 
@@ -292,9 +581,9 @@ def parse_fixture_output(
     try:
         value = json.loads(stdout)
     except json.JSONDecodeError as error:
-        raise SmokeError(f"fixture stdout is not one JSON result: {stdout!r}") from error
+        raise AllocatorLivenessError(f"fixture stdout is not one JSON result: {stdout!r}") from error
     if not isinstance(value, dict) or value.get("schema") != FIXTURE_SCHEMA:
-        raise SmokeError("fixture JSON schema changed")
+        raise AllocatorLivenessError("fixture JSON schema changed")
     expected = {
         "seed": seed,
         "cycles": cycles,
@@ -309,7 +598,7 @@ def parse_fixture_output(
     }
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
-            raise SmokeError(
+            raise AllocatorLivenessError(
                 f"fixture result field {key!r} differs: expected {expected_value!r}, got {value.get(key)!r}"
             )
     positive_fields = [
@@ -322,13 +611,13 @@ def parse_fixture_output(
     for key in positive_fields:
         result = value.get(key)
         if isinstance(result, bool) or not isinstance(result, int) or result <= 0:
-            raise SmokeError(f"fixture result field {key!r} must be a positive integer")
+            raise AllocatorLivenessError(f"fixture result field {key!r} must be a positive integer")
     for key in ("rss_initial_bytes", "rss_final_bytes", "rss_high_water_bytes"):
         result = value.get(key)
         if isinstance(result, bool) or not isinstance(result, int) or result < 0:
-            raise SmokeError(f"fixture result field {key!r} must be a nonnegative integer")
+            raise AllocatorLivenessError(f"fixture result field {key!r} must be a nonnegative integer")
     if value["rss_high_water_bytes"] < max(value["rss_initial_bytes"], value["rss_final_bytes"]):
-        raise SmokeError("fixture RSS high-water is below an observed RSS sample")
+        raise AllocatorLivenessError("fixture RSS high-water is below an observed RSS sample")
     return value
 
 
@@ -339,12 +628,15 @@ def run_smoke(
     cycles: int,
     epochs: int,
     watchdog_seconds: int,
+    rss_threshold_bytes: int,
 ) -> dict[str, Any]:
     """Build then run fresh selected-shadow fixture processes deterministically."""
 
     validated = validate_contract(contract)
-    if min(seed, cycles, epochs, watchdog_seconds) <= 0:
-        raise SmokeError("seed, cycles, epochs, and watchdog seconds must all be positive")
+    if min(seed, cycles, epochs, watchdog_seconds, rss_threshold_bytes) <= 0:
+        raise SmokeError(
+            "seed, cycles, epochs, watchdog seconds, and RSS threshold bytes must all be positive"
+        )
     _sysroot, compiler, runtime = require_owned_shadow_environment()
     fixture = validated["fixture"]
     assert isinstance(fixture, Path)
@@ -368,40 +660,75 @@ def run_smoke(
         require_success(build, "native churn/RSS smoke fixture build")
         dependencies = dynamic_dependencies(binary)
         if dependencies != ["libc.so"]:
-            raise SmokeError(
+            raise ArtifactAttestationError(
                 "selected-shadow fixture dynamic dependency set differs from the production boundary: "
                 f"{dependencies!r}"
             )
+        attestation = selected_shadow_artifact_attestation(
+            runtime, validated["selected_shadow_artifact_attestation"]
+        )
         environment = dict(os.environ)
         for key in ("LD_AUDIT", "LD_LIBRARY_PATH", "LD_PRELOAD"):
             environment.pop(key, None)
         environment["LD_LIBRARY_PATH"] = str(runtime)
         executions: list[dict[str, Any]] = []
-        for epoch in range(epochs):
-            epoch_seed = seed + epoch
-            run_command = [str(binary), str(epoch_seed), str(cycles)]
-            record = command_record(
-                run_command,
-                cwd=ROOT,
-                env=environment,
-                timeout=watchdog_seconds,
-            )
-            require_success(record, f"native churn/RSS smoke process epoch {epoch + 1}/{epochs}")
-            if record["stderr"]:
-                raise SmokeError(
-                    f"fixture emitted unexpected stderr at epoch {epoch + 1}/{epochs}: {record['stderr']!r}"
+        try:
+            for epoch in range(epochs):
+                epoch_seed = seed + epoch
+                run_command = [str(binary), str(epoch_seed), str(cycles)]
+                record = command_record(
+                    run_command,
+                    cwd=ROOT,
+                    env=environment,
+                    timeout=watchdog_seconds,
                 )
-            fixture_result = parse_fixture_output(
-                str(record["stdout"]), seed=epoch_seed, cycles=cycles
+                try:
+                    require_success(
+                        record, f"native churn/RSS smoke process epoch {epoch + 1}/{epochs}"
+                    )
+                except SmokeError as error:
+                    raise AllocatorLivenessError(str(error)) from error
+                if record["stderr"]:
+                    raise AllocatorLivenessError(
+                        f"fixture emitted unexpected stderr at epoch {epoch + 1}/{epochs}: "
+                        f"{record['stderr']!r}"
+                    )
+                fixture_result = parse_fixture_output(
+                    str(record["stdout"]), seed=epoch_seed, cycles=cycles
+                )
+                executions.append(
+                    {
+                        "epoch": epoch + 1,
+                        "seed": epoch_seed,
+                        "fixture": fixture_result,
+                        "watchdog": {"seconds": watchdog_seconds, "status": "passed"},
+                    }
+                )
+        except AllocatorLivenessError as error:
+            # The worker lifecycle can fail after all artifact proof has
+            # succeeded. Retain that proof in the failed JSON rather than
+            # making a liveness failure look like an unselected libc.
+            retain_selected_shadow_context(
+                error,
+                binary=binary,
+                dependencies=dependencies,
+                attestation=attestation,
             )
-            executions.append(
-                {
-                    "epoch": epoch + 1,
-                    "seed": epoch_seed,
-                    "fixture": fixture_result,
-                    "watchdog": {"seconds": watchdog_seconds, "status": "passed"},
-                }
+            raise
+        observed_rss = high_water(executions)["rss_bytes"]
+        if not isinstance(observed_rss, int):
+            raise SmokeError("RSS high-water aggregation did not produce an integer")
+        if observed_rss > rss_threshold_bytes:
+            error = RssThresholdError(
+                observed_bytes=observed_rss, threshold_bytes=rss_threshold_bytes
             )
+            retain_selected_shadow_context(
+                error,
+                binary=binary,
+                dependencies=dependencies,
+                attestation=attestation,
+            )
+            raise error
         return {
             "artifact": {
                 "sha256": sha256_file(binary),
@@ -410,6 +737,7 @@ def run_smoke(
             "build": {
                 "command": build_command,
                 "dynamic_dependencies": dependencies,
+                "selected_shadow_artifact_attestation": attestation,
             },
             "executions": executions,
         }
@@ -460,6 +788,7 @@ def report_for_success(
     cycles: int,
     epochs: int,
     watchdog_seconds: int,
+    rss_threshold_bytes: int,
 ) -> dict[str, Any]:
     """Create the durable report that a CI caller can consume directly."""
 
@@ -479,6 +808,7 @@ def report_for_success(
             "cycles_per_process": cycles,
             "fresh_process_epochs": epochs,
             "watchdog_seconds": watchdog_seconds,
+            "rss_threshold_bytes": rss_threshold_bytes,
         },
         "production_shadow_boundary": {
             "allocator_feature": "native-mimalloc-shadow",
@@ -486,6 +816,9 @@ def report_for_success(
             "allocator_private_hooks": False,
             "c_backend_fallback": False,
             "dynamic_dependencies": run["build"]["dynamic_dependencies"],
+            "selected_shadow_artifact_attestation": run["build"][
+                "selected_shadow_artifact_attestation"
+            ],
         },
         "artifact": run["artifact"],
         "executions": executions,
@@ -501,8 +834,44 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument("--cycles", type=int, help="owner/handoff churn cycles per process")
     parser.add_argument("--epochs", type=int, help="fresh process epochs")
     parser.add_argument("--watchdog-seconds", type=int, help="per-process watchdog")
+    parser.add_argument(
+        "--rss-threshold-bytes",
+        type=int,
+        help="maximum completed-process RSS high-water (default: manifest)",
+    )
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT, help="JSON report path")
     return parser.parse_args(arguments)
+
+
+def failure_report(error: SmokeError) -> dict[str, Any]:
+    """Record a machine-readable failure class without losing the diagnosis."""
+
+    failure: dict[str, Any] = {"kind": "harness", "message": str(error)}
+    if isinstance(error, AllocatorLivenessError):
+        failure["kind"] = "allocator_liveness"
+    elif isinstance(error, RssThresholdError):
+        failure["kind"] = "rss_threshold"
+        failure["rss"] = {
+            "observed_high_water_bytes": error.observed_bytes,
+            "threshold_bytes": error.threshold_bytes,
+        }
+    elif isinstance(error, ArtifactAttestationError):
+        failure["kind"] = "selected_shadow_attestation"
+    report: dict[str, Any] = {
+        "schema": REPORT_SCHEMA,
+        "status": "failed",
+        "contract": {"path": relative(CONTRACT_PATH)},
+        "failure": failure,
+        "error": str(error),
+    }
+    attestation = getattr(error, "selected_shadow_artifact_attestation", None)
+    if isinstance(attestation, dict):
+        report["production_shadow_boundary"] = {
+            "dynamic_dependencies": getattr(error, "dynamic_dependencies", None),
+            "selected_shadow_artifact_attestation": attestation,
+        }
+        report["artifact"] = getattr(error, "artifact", None)
+    return report
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -521,12 +890,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if args.watchdog_seconds is None
             else args.watchdog_seconds
         )
+        rss_threshold_bytes = (
+            validated["rss_threshold_bytes"]
+            if args.rss_threshold_bytes is None
+            else args.rss_threshold_bytes
+        )
         run = run_smoke(
             contract,
             seed=seed,
             cycles=cycles,
             epochs=epochs,
             watchdog_seconds=watchdog_seconds,
+            rss_threshold_bytes=rss_threshold_bytes,
         )
         report = report_for_success(
             contract,
@@ -535,14 +910,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
             cycles=cycles,
             epochs=epochs,
             watchdog_seconds=watchdog_seconds,
+            rss_threshold_bytes=rss_threshold_bytes,
         )
     except SmokeError as error:
-        report = {
-            "schema": REPORT_SCHEMA,
-            "status": "failed",
-            "contract": {"path": relative(CONTRACT_PATH)},
-            "error": str(error),
-        }
+        report = failure_report(error)
         atomic_write_json(report_path, report)
         print(f"native-churn-rss-smoke: {error}", file=sys.stderr)
         return 1

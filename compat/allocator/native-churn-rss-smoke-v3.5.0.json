@@ -38,7 +38,29 @@
     "seed": 1511506142,
     "cycles": 8,
     "process_epochs": 4,
-    "watchdog_seconds": 30
+    "watchdog_seconds": 30,
+    "rss_threshold_bytes": 16777216
+  },
+  "selected_shadow_artifact_attestation": {
+    "cargo_fingerprint": {
+      "directory": "target/debug/.fingerprint",
+      "package_prefix": "crabc-libc-",
+      "file": "lib-c.json",
+      "exact_features": [
+        "default",
+        "native-mimalloc-shadow"
+      ]
+    },
+    "exported_free_route": {
+      "symbol": "free",
+      "required_callee_suffix": "native_free>",
+      "forbidden_callee_suffix": "mi_free>"
+    },
+    "rust_cleanup_free_route": {
+      "helper_symbol": "__crabc_interposable_free",
+      "required_branch_target": "free@plt>",
+      "required_relocation": "R_AARCH64_JUMP_SLOT"
+    }
   },
   "production_shadow_boundary": {
     "allowed_allocation_apis": [

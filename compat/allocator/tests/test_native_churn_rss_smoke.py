@@ -61,6 +61,59 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         self.assertFalse(contract["production_shadow_boundary"]["allocator_private_hooks"])
         self.assertFalse(contract["production_shadow_boundary"]["c_backend_fallback"])
 
+    def test_contract_requires_selected_shadow_build_and_free_route_attestation(self) -> None:
+        contract = HARNESS.read_json(HARNESS.CONTRACT_PATH)
+        validated = HARNESS.validate_contract(contract)
+
+        attestation = validated["selected_shadow_artifact_attestation"]
+        self.assertEqual(
+            attestation["cargo_fingerprint"]["exact_features"],
+            ["default", "native-mimalloc-shadow"],
+        )
+        self.assertEqual(
+            attestation["exported_free_route"]["required_callee_suffix"], "native_free>"
+        )
+        self.assertEqual(
+            attestation["rust_cleanup_free_route"]["required_branch_target"], "free@plt>"
+        )
+        self.assertEqual(validated["rss_threshold_bytes"], 16777216)
+
+    def test_selected_shadow_fingerprint_requires_exact_feature_identity(self) -> None:
+        expectation = HARNESS.read_json(HARNESS.CONTRACT_PATH)[
+            "selected_shadow_artifact_attestation"
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary) / "target/debug"
+            fingerprint = runtime / ".fingerprint/crabc-libc-selected/lib-c.json"
+            fingerprint.parent.mkdir(parents=True)
+            fingerprint.write_text(
+                json.dumps(
+                    {
+                        "features": json.dumps(["default", "native-mimalloc-shadow"]),
+                        "declared_features": json.dumps(["default", "native-mimalloc-shadow"]),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = HARNESS.selected_shadow_fingerprint(runtime, expectation)
+
+        self.assertEqual(result["features"], ["default", "native-mimalloc-shadow"])
+        self.assertEqual(result["path"].endswith("lib-c.json"), True)
+
+    def test_free_route_attestation_rejects_the_c_backend_path(self) -> None:
+        dynamic_symbols = "  42: 0000000000001000    16 FUNC    WEAK   DEFAULT   12 free\n"
+        native_route = "    1000: 94000000 bl 2000 <_RNvNtCnative_free>\n"
+        fallback_route = "    1000: 94000000 bl 2000 <mi_free>\n"
+
+        self.assertEqual(
+            HARNESS.attested_free_symbol(dynamic_symbols, "free"),
+            {"binding": "WEAK", "visibility": "DEFAULT", "section": "12"},
+        )
+        HARNESS.require_branch_target(native_route, "native_free>", "exported free")
+        with self.assertRaisesRegex(HARNESS.ArtifactAttestationError, "forbidden"):
+            HARNESS.require_no_branch_target(fallback_route, "mi_free>", "exported free")
+
     def test_fixture_result_requires_initial_thread_post_exit_frees(self) -> None:
         result = fixture_result()
 
@@ -74,7 +127,9 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
         result = fixture_result()
         result["post_exit_initial_thread_frees"] = 0
 
-        with self.assertRaisesRegex(HARNESS.SmokeError, "post_exit_initial_thread_frees"):
+        with self.assertRaisesRegex(
+            HARNESS.AllocatorLivenessError, "post_exit_initial_thread_frees"
+        ):
             HARNESS.parse_fixture_output(json.dumps(result), seed=91, cycles=3)
 
     def test_high_water_preserves_unknown_allocator_metadata(self) -> None:
@@ -106,7 +161,28 @@ class NativeChurnRssSmokeContractTests(unittest.TestCase):
             value = json.loads(report.read_text(encoding="utf-8"))
             self.assertEqual(value["schema"], HARNESS.REPORT_SCHEMA)
             self.assertEqual(value["status"], "failed")
+            self.assertEqual(value["failure"]["kind"], "harness")
             self.assertIn("positive", value["error"])
+
+    def test_failure_report_distinguishes_liveness_from_rss_threshold(self) -> None:
+        liveness = HARNESS.failure_report(HARNESS.AllocatorLivenessError("owner handoff failed"))
+        threshold_error = HARNESS.RssThresholdError(observed_bytes=32768, threshold_bytes=16384)
+        threshold_error.selected_shadow_artifact_attestation = {"status": "passed"}
+        threshold_error.artifact = {"sha256": "a" * 64, "size_bytes": 1}
+        threshold_error.dynamic_dependencies = ["libc.so"]
+        threshold = HARNESS.failure_report(threshold_error)
+
+        self.assertEqual(liveness["failure"]["kind"], "allocator_liveness")
+        self.assertEqual(threshold["failure"]["kind"], "rss_threshold")
+        self.assertEqual(
+            threshold["failure"]["rss"],
+            {"observed_high_water_bytes": 32768, "threshold_bytes": 16384},
+        )
+        self.assertEqual(
+            threshold["production_shadow_boundary"]["selected_shadow_artifact_attestation"],
+            {"status": "passed"},
+        )
+        self.assertEqual(threshold["artifact"], {"sha256": "a" * 64, "size_bytes": 1})
 
 
 if __name__ == "__main__":
