@@ -51,52 +51,57 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     ]
 }
 
-fn publish_detached_owner() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
+fn publish_owner_exit_page_map_sources() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         sender
             .send(allocate_owner_exit_aggregate())
-            .expect("A publishes only its exact detached-route clients");
+            .expect("A publishes only its exact PageMap source clients before source owner exit");
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "A moves its aggregate into one private detached route"
+            "A's persistent owner completes source owner exit with PageMap-visible clients"
         );
     });
     let clients = receiver
         .recv()
-        .expect("the coordinator receives every detached A client before A exits");
+        .expect("the coordinator receives every exact A source client before A exits");
     owner
         .join()
-        .expect("A reaches its typed native owner-exit boundary");
+        .expect("A completes its source owner-exit boundary");
     clients
 }
 
-fn free_exact_native_route_client(address: usize) {
-    // SAFETY: A supplied this exact C-shaped address before its detached route
-    // entered the private dispatcher. The dispatcher validates it again
-    // against that route's private ledger.
+fn free_exact_post_exit_client(address: usize) {
+    // SAFETY: A supplied this exact C-shaped address before source owner exit.
+    // The generic pointer-first dispatcher must recover and consume its
+    // PageMap source state without recovering A's former owner.
     let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
     assert_eq!(
         unsafe { native_free(block) },
         NativePageFreeResult::Freed,
-        "B releases only an exact detached-route client"
+        "B releases only an exact post-exit PageMap source client"
     );
 }
 
 #[test]
-fn completed_post_exit_route_does_not_block_b_live_remote_publication() {
+fn post_exit_page_map_frees_do_not_block_live_remote_publication() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before the completed-route publication witness"
+        "the native runtime initializes before the post-exit publication witness"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero parks the first arena before the two independent A routes begin"
+        "the persistent initial owner readies the first arena before workers begin"
     );
 
-    let detached = publish_detached_owner();
+    let post_exit = publish_owner_exit_page_map_sources();
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        0,
+        "A's persistent source finish releases its admission before C and B attach"
+    );
     let (remote_sender, remote_receiver) = mpsc::sync_channel(0);
     let (resume_sender, resume_receiver) = mpsc::sync_channel(0);
     let live_owner = std::thread::spawn(move || {
@@ -109,8 +114,8 @@ fn completed_post_exit_route_does_not_block_b_live_remote_publication() {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!("C keeps one local client while B publishes its remote free"),
         };
-        // SAFETY: both blocks remain in C's private ledger until C's later
-        // all-free source finish. B receives only `remote`'s raw C address.
+        // SAFETY: both blocks remain in C's persistent owner until its later
+        // source finish. B receives only `remote`'s raw C address.
         unsafe {
             remote.as_ptr().write(0x61);
             remote.as_ptr().add(36).write(0x62);
@@ -122,9 +127,9 @@ fn completed_post_exit_route_does_not_block_b_live_remote_publication() {
             .expect("B receives only C's exact live client");
         resume_receiver
             .recv()
-            .expect("C waits until B has finished its own source teardown");
-        // SAFETY: C's local client was never offered to either route. C's
-        // all-free drain below force-collects B's already-published remote
+            .expect("C waits until B completes its foreign pointer operations");
+        // SAFETY: C's local client was never offered to a foreign operation.
+        // C's source finish below force-collects B's already-published remote
         // client before C releases its pages.
         unsafe {
             assert_eq!(local.as_ptr().read(), 0x63);
@@ -138,41 +143,42 @@ fn completed_post_exit_route_does_not_block_b_live_remote_publication() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "C's all-free finish collects B's publication and releases C's admission"
+            "C's source finish collects B's publication and releases C's admission"
         );
     });
     let live_remote = remote_receiver
         .recv()
-        .expect("C parks its live source session before B terminally frees A");
+        .expect("C keeps its live persistent owner while B frees A's post-exit sources");
 
     let releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            3,
-            "A's detached route, C's live route, and B's attachment are all admitted"
+            2,
+            "C's live persistent owner and B's attachment are the only admitted workers"
         );
         let local = match native_allocate_aligned(89, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!("B establishes its independently parked local session"),
+            _ => panic!("B establishes its independent persistent local owner"),
         };
-        for address in detached {
-            free_exact_native_route_client(address);
+        for address in post_exit {
+            free_exact_post_exit_client(address);
         }
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            3,
-            "A's terminal completion remains admitted beside C and B"
+            2,
+            "generic post-exit frees leave C and B as the only admitted workers"
         );
 
-        // SAFETY: C supplied this exact live client and remains parked until
-        // B completes the source-shaped remote publication. A's completion
-        // carries no C client and may not freeze this independent B session.
+        // SAFETY: C supplied this exact live client and remains in its
+        // persistent owner until B completes the generic PageMap publication.
+        // The prior post-exit source frees carry neither a C client nor a
+        // route/completion capability that can freeze B's local owner.
         let live_remote = unsafe { core::ptr::NonNull::new_unchecked(live_remote as *mut u8) };
         assert_eq!(
             unsafe { native_free(live_remote) },
             NativePageFreeResult::Freed,
-            "B publishes C's exact live client after A's completion is recorded"
+            "B publishes C's exact live client after generic post-exit frees"
         );
         assert_eq!(
             unsafe { native_free(local) },
@@ -182,33 +188,33 @@ fn completed_post_exit_route_does_not_block_b_live_remote_publication() {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "B finishes its own attachment before it settles A's completion"
+            "B finishes its own persistent owner after both foreign operations"
         );
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             1,
-            "only C's still-live source route remains admitted after B settles A"
+            "only C's still-live persistent owner remains admitted after B finishes"
         );
     });
     releaser
         .join()
-        .expect("B completes the completed-route and live-owner boundaries");
+        .expect("B completes generic post-exit and live-owner pointer operations");
 
     resume_sender
         .send(())
-        .expect("C may resume after B restored both source scheduler paths");
+        .expect("C may complete its source finish after B's pointer operations");
     live_owner
         .join()
         .expect("C collects B's publication and completes its own lifecycle");
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
         0,
-        "every typed route admission releases only after its matching owner finishes"
+        "both persistent worker admissions release at their own source finishes"
     );
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero resumes after the completed and live routes both finish"),
+        _ => panic!("the persistent initial owner remains usable after both worker finishes"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },
