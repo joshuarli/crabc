@@ -72,6 +72,16 @@ class BlockedPrerequisite(EvidenceError):
         self.details = dict(details)
 
 
+class ArtifactContractError(EvidenceError):
+    """A built fixture contradicted the selected executable contract."""
+
+    def __init__(self, boundary: str, observed: object, expected: object) -> None:
+        super().__init__(f"canonical stress fixture {boundary} mismatch")
+        self.boundary = boundary
+        self.observed = observed
+        self.expected = expected
+
+
 @dataclass(frozen=True)
 class RuntimeInputs:
     """The owned boundaries needed to compile and execute the source matrix."""
@@ -81,6 +91,7 @@ class RuntimeInputs:
     target_dir: Path
     manifest_path: Path
     purity_path: Path
+    canonical_loader_path: Path
     purity: dict[str, Any]
 
 
@@ -106,6 +117,47 @@ def file_record(path: Path, *, root: Path | None = None) -> dict[str, Any]:
         "path": relative_path(path, root),
         "sha256": sha256_file(path),
     }
+
+
+def stable_source_member_record(
+    path: Path, pin: Mapping[str, str], source_member: str
+) -> dict[str, Any]:
+    """Record an archive member without retaining its deleted extraction path."""
+
+    record = file_record(path)
+    record["path"] = str(PurePosixPath(pin["archive_root"]) / PurePosixPath(source_member))
+    return record
+
+
+def normalize_source_paths(
+    value: object, source_root: Path, pin: Mapping[str, str]
+) -> Any:
+    """Replace one random extraction root throughout a durable process record."""
+
+    source = str(source_root)
+    stable = str(PurePosixPath("<pinned-source>") / pin["archive_root"])
+
+    def normalize(item: object) -> Any:
+        if isinstance(item, str):
+            return item.replace(source, stable)
+        if isinstance(item, list):
+            return [normalize(element) for element in item]
+        if isinstance(item, tuple):
+            return tuple(normalize(element) for element in item)
+        if isinstance(item, dict):
+            if {"bytes", "sha256", "hex"}.issubset(item):
+                try:
+                    payload = bytes.fromhex(str(item["hex"]))
+                except ValueError as error:
+                    raise EvidenceError("process byte record contains invalid hex") from error
+                normalized = payload.replace(source.encode(), stable.encode())
+                record = dict(item)
+                record.update(bytes_record(normalized))
+                return record
+            return {key: normalize(element) for key, element in item.items()}
+        return item
+
+    return normalize(value)
 
 
 def relative_path(path: Path, root: Path | None = None) -> str:
@@ -220,7 +272,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
     target_id = "linux-aarch64-little-endian"
     backend_id = "crabc-libc-native-mimalloc-shadow"
     return {
-        "format": 3,
+        "format": 4,
         "schema": "crabc-mimalloc-canonical-upstream-stress",
         "scope": {
             "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -331,12 +383,21 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             ],
         },
         "report": {
-            "format": 2,
+            "format": 3,
             "schema": "crabc-mimalloc-canonical-upstream-stress-report",
             "path": "compat/reports/allocator/upstream-stress/latest.json",
             "atomic_publish": True,
             "file_artifact_record_fields": ["path", "bytes", "sha256"],
             "byte_stream_record_fields": ["bytes", "sha256", "hex"],
+            "fixture_elf_fields": [
+                "dynamic_dependencies",
+                "elf_identity",
+                "interpreter",
+            ],
+            "source_path_normalization": {
+                "artifact": "mimalloc-3.5.0/test/test-stress.c",
+                "extraction_root": "<pinned-source>/mimalloc-3.5.0",
+            },
             "artifact_ids": [
                 "contract",
                 "upstream_archive",
@@ -345,6 +406,7 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 "owned_sysroot_purity",
                 "owned_compiler",
                 "selected_loader",
+                "staged_canonical_loader",
                 "selected_libc",
                 "selected_backend_fingerprint",
                 "stress_binary",
@@ -359,6 +421,12 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             "link_flags": ["-Wl,--allow-shlib-undefined"],
             "link_libraries": ["-lc"],
             "expected_dynamic_dependencies": ["libc.so"],
+            "expected_elf_identity": {
+                "class": "ELF64",
+                "endianness": "little",
+                "machine": "AArch64",
+            },
+            "expected_interpreter": "/lib/ld-crabc-aarch64.so.1",
             "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
             "owned_test_launcher": "scripts/run_owned_test_suite.py",
             "selected_runtime_directory": "target/debug",
@@ -680,12 +748,28 @@ def require_runtime_inputs(
                 "required_launcher": "scripts/run_owned_test_suite.py",
             },
         )
+    selected_loader_sha256 = sha256_file(selected_loader)
+    canonical_loader_sha256 = sha256_file(CANONICAL_LOADER)
+    if canonical_loader_sha256 != selected_loader_sha256:
+        raise BlockedPrerequisite(
+            "owned-canonical-loader-staging",
+            "canonical upstream stress requires the staged canonical loader to "
+            "match the selected crabc loader exactly",
+            {
+                "canonical_loader": str(CANONICAL_LOADER),
+                "canonical_loader_sha256": canonical_loader_sha256,
+                "selected_loader": str(selected_loader),
+                "selected_loader_sha256": selected_loader_sha256,
+                "required_launcher": "scripts/run_owned_test_suite.py",
+            },
+        )
     return RuntimeInputs(
         sysroot=sysroot,
         compiler=compiler,
         target_dir=target_dir,
         manifest_path=manifest,
         purity_path=purity_path,
+        canonical_loader_path=CANONICAL_LOADER,
         purity=purity,
     )
 
@@ -804,6 +888,75 @@ def dynamic_dependencies(binary: Path) -> list[str]:
         raise EvidenceError("readelf wrote diagnostics while inspecting canonical stress fixture")
     output = bytes.fromhex(str(stdout["hex"])).decode("utf-8", errors="strict")
     return re.findall(r"\(NEEDED\).*?\[(.*?)\]", output)
+
+
+def parse_elf_identity(header: str) -> dict[str, object]:
+    """Normalize the three target identity fields emitted by ``readelf -h``."""
+
+    class_match = re.search(r"(?m)^\s*Class:\s*(\S+)\s*$", header)
+    data_match = re.search(r"(?m)^\s*Data:\s*(.+?)\s*$", header)
+    machine_match = re.search(r"(?m)^\s*Machine:\s*(.+?)\s*$", header)
+    data = data_match.group(1) if data_match is not None else None
+    if data is not None and "little endian" in data:
+        endianness: str | None = "little"
+    elif data is not None and "big endian" in data:
+        endianness = "big"
+    else:
+        endianness = None
+    return {
+        "class": class_match.group(1) if class_match is not None else None,
+        "endianness": endianness,
+        "machine": machine_match.group(1) if machine_match is not None else None,
+    }
+
+
+def parse_program_interpreters(program_headers: str) -> list[str]:
+    return [
+        value.strip()
+        for value in re.findall(
+            r"(?m)^\s*\[Requesting program interpreter:\s*([^\]]+)\]\s*$",
+            program_headers,
+        )
+    ]
+
+
+def audit_fixture_elf(binary: Path, contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Attest the exact executable the runner will pass to ``execve``."""
+
+    requirements = contract.get("compile_requirements")
+    if not isinstance(requirements, dict):
+        raise EvidenceError("canonical stress contract lacks compile requirements")
+    readelf = shutil.which("readelf")
+    if readelf is None:
+        raise EvidenceError("readelf is required to attest the canonical stress fixture")
+    header = command_text(
+        command_record((readelf, "-h", str(binary)), cwd=ROOT),
+        "canonical stress fixture ELF identity inspection",
+    )
+    identity = parse_elf_identity(header)
+    expected_identity = requirements["expected_elf_identity"]
+    if identity != expected_identity:
+        raise ArtifactContractError("elf-identity", identity, expected_identity)
+    program_headers = command_text(
+        command_record(
+            (readelf, "--wide", "--program-headers", str(binary)), cwd=ROOT
+        ),
+        "canonical stress fixture PT_INTERP inspection",
+    )
+    interpreters = parse_program_interpreters(program_headers)
+    expected_interpreter = requirements["expected_interpreter"]
+    if interpreters != [expected_interpreter]:
+        observed: object = interpreters[0] if len(interpreters) == 1 else interpreters
+        raise ArtifactContractError("pt-interp", observed, expected_interpreter)
+    dependencies = dynamic_dependencies(binary)
+    expected_dependencies = requirements["expected_dynamic_dependencies"]
+    if dependencies != expected_dependencies:
+        raise ArtifactContractError("dt-needed", dependencies, expected_dependencies)
+    return {
+        "dynamic_dependencies": dependencies,
+        "elf_identity": identity,
+        "interpreter": interpreters[0],
+    }
 
 
 def command_text(record: Mapping[str, Any], subject: str) -> str:
@@ -1209,6 +1362,9 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
             "selected_loader": file_record(
                 runtime_inputs.target_dir / "libldso.so", root=ROOT
             ),
+            "staged_canonical_loader": file_record(
+                runtime_inputs.canonical_loader_path, root=ROOT
+            ),
             "selected_libc": file_record(runtime_inputs.target_dir / "libc.so", root=ROOT),
             "selected_backend_fingerprint": backend_attestation["cargo_fingerprint"],
         }
@@ -1238,19 +1394,25 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
         source = source_root / str(fixture["archive_member"])
         if not source.is_file() or sha256_file(source) != fixture["sha256"]:
             raise EvidenceError("canonical stress source differs from the pinned archive member")
-        source_artifact = file_record(source)
+        source_artifact = stable_source_member_record(
+            source, pin, str(fixture["archive_member"])
+        )
         report["fixture"]["observed_source"] = source_artifact
         report["artifacts"]["source_member"] = source_artifact
-        build = command_record(
-            build_command(
-                runtime_inputs.compiler,
-                source_root,
-                str(fixture["archive_member"]),
-                runtime_inputs.target_dir,
-                binary,
-                contract,
+        build = normalize_source_paths(
+            command_record(
+                build_command(
+                    runtime_inputs.compiler,
+                    source_root,
+                    str(fixture["archive_member"]),
+                    runtime_inputs.target_dir,
+                    binary,
+                    contract,
+                ),
+                cwd=source_root,
             ),
-            cwd=source_root,
+            source_root,
+            pin,
         )
     report["build"] = build
     if build.get("kind") != "process" or build.get("status") != 0:
@@ -1263,17 +1425,20 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
         return
 
     report["artifacts"]["stress_binary"] = file_record(binary, root=ROOT)
-    dependencies = dynamic_dependencies(binary)
-    report["dynamic_dependencies"] = dependencies
-    if dependencies != requirements["expected_dynamic_dependencies"]:
+    try:
+        fixture_elf = audit_fixture_elf(binary, contract)
+    except ArtifactContractError as error:
         update_capability(report, contract, "failed")
         report["first_fact"] = {
             "kind": "first-failure",
-            "stage": "dynamic-link-boundary",
-            "observed_dependencies": dependencies,
-            "expected_dependencies": requirements["expected_dynamic_dependencies"],
+            "stage": "artifact-contract",
+            "boundary": error.boundary,
+            "observed": error.observed,
+            "expected": error.expected,
         }
         return
+    report["fixture_elf"] = fixture_elf
+    report["dynamic_dependencies"] = fixture_elf["dynamic_dependencies"]
 
     cases = execution_cases(contract)
     results = report["execution"]["case_results"]

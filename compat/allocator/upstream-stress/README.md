@@ -28,7 +28,10 @@ The owned-suite wrapper is required. It stages the owned canonical loader and
 debug libc aliases for the test process; the lane itself then selects the
 last-built `target/debug/libc.so` via `LD_LIBRARY_PATH`. Before execution it
 attests the exact `native-mimalloc-shadow` Cargo feature inventory and rejects
-an exported `free` route to the C `mi_free` backend. The runner writes its
+an exported `free` route to the C `mi_free` backend. It also requires the
+staged `/lib/ld-crabc-aarch64.so.1` bytes to match the selected loader, then
+attests that the compiled fixture is little-endian AArch64 ELF64 with that
+exact `PT_INTERP` and only the expected `libc.so` `DT_NEEDED` entry. The runner writes its
 binary only under `target/compat/allocator/upstream-stress/` and atomically
 publishes the report at
 `compat/reports/allocator/upstream-stress/latest.json`. Override those ignored
@@ -47,7 +50,12 @@ shadow backend, the source seed policy, per-process watchdog, and report
 schema. Every file artifact record has `path`, `bytes`, and `sha256`; captured
 stdout/stderr records have `bytes`, `sha256`, and `hex`. The report reserves
 named slots for the contract, pinned archive/source, owned sysroot inputs,
-selected loader/libc/backend fingerprint, and compiled stress binary.
+selected and staged loaders, libc/backend fingerprint, and compiled stress
+binary. The extracted source artifact is recorded as the stable archive member
+`mimalloc-3.5.0/test/test-stress.c`; compiler commands and diagnostics replace
+the deleted random extraction directory with
+`<pinned-source>/mimalloc-3.5.0`, so identical observations serialize
+deterministically.
 
 If a native prerequisite is unavailable, the runner still atomically writes a
 report with `status: "blocked"`. Its `blocked` record names the exact missing

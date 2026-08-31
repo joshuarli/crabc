@@ -31,6 +31,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             target_dir=root / "target",
             manifest_path=root / "sysroot/share/crabc/manifest.json",
             purity_path=root / "sysroot/share/crabc/purity.json",
+            canonical_loader_path=root / "canonical/ld-crabc-aarch64.so.1",
             purity={
                 "crt_sysroot_pure_rust": True,
                 "full_runtime_pure_rust": False,
@@ -112,9 +113,28 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         )
         report = contract["report"]
         self.assertEqual(report["schema"], "crabc-mimalloc-canonical-upstream-stress-report")
-        self.assertEqual(report["format"], 2)
+        self.assertEqual(report["format"], 3)
         self.assertEqual(report["file_artifact_record_fields"], ["path", "bytes", "sha256"])
         self.assertEqual(report["byte_stream_record_fields"], ["bytes", "sha256", "hex"])
+        self.assertEqual(
+            report["fixture_elf_fields"],
+            ["dynamic_dependencies", "elf_identity", "interpreter"],
+        )
+        self.assertEqual(
+            report["source_path_normalization"],
+            {
+                "artifact": "mimalloc-3.5.0/test/test-stress.c",
+                "extraction_root": "<pinned-source>/mimalloc-3.5.0",
+            },
+        )
+        self.assertEqual(
+            contract["compile_requirements"]["expected_elf_identity"],
+            {"class": "ELF64", "endianness": "little", "machine": "AArch64"},
+        )
+        self.assertEqual(
+            contract["compile_requirements"]["expected_interpreter"],
+            "/lib/ld-crabc-aarch64.so.1",
+        )
 
     def test_capability_policy_is_fail_closed_until_every_native_case_passes(self) -> None:
         contract, _ = RUNNER.load_contract()
@@ -247,6 +267,192 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
             with self.assertRaisesRegex(RUNNER.EvidenceError, "does not branch to"):
                 RUNNER.attest_selected_backend(Path("/target/debug"), contract)
 
+    def test_fixture_elf_attestation_rejects_the_wrong_exact_interpreter(self) -> None:
+        contract, _ = RUNNER.load_contract()
+        header = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(
+                b"  Class: ELF64\n  Data: 2's complement, little endian\n  Machine: AArch64\n"
+            ),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        program_headers = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(
+                b"      [Requesting program interpreter: /lib/ld-wrong-aarch64.so.1]\n"
+            ),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        with mock.patch.object(RUNNER.shutil, "which", return_value="readelf"), mock.patch.object(
+            RUNNER, "command_record", side_effect=[header, program_headers]
+        ):
+            with self.assertRaises(RUNNER.ArtifactContractError) as failure:
+                RUNNER.audit_fixture_elf(Path("/output/stress"), contract)
+        self.assertEqual(failure.exception.boundary, "pt-interp")
+        self.assertEqual(failure.exception.observed, "/lib/ld-wrong-aarch64.so.1")
+        self.assertEqual(failure.exception.expected, "/lib/ld-crabc-aarch64.so.1")
+
+    def test_wrong_fixture_interpreter_is_failed_contract_evidence_not_blocked(self) -> None:
+        contract, pin = RUNNER.load_contract()
+        build = {
+            "kind": "process",
+            "status": 0,
+            "stdout": RUNNER.bytes_record(b""),
+            "stderr": RUNNER.bytes_record(b""),
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_root = root / "source"
+            source = source_root / "test/test-stress.c"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"exact pinned source")
+            args = RUNNER.parse_arguments(
+                ["--target-dir", str(root / "target"), "--output-dir", str(root / "output")]
+            )
+            report = RUNNER.report_base(contract, pin, args)
+            with mock.patch.object(RUNNER, "require_native_aarch64"), mock.patch.object(
+                RUNNER, "fetch_archive", return_value=root / "mimalloc.tar.gz"
+            ), mock.patch.object(
+                RUNNER,
+                "cached_tag_attestation",
+                return_value={"format": 1, "revision": pin["revision"]},
+            ), mock.patch.object(
+                RUNNER,
+                "require_runtime_inputs",
+                return_value=self.native_runtime_inputs(root),
+            ), mock.patch.object(
+                RUNNER,
+                "attest_selected_backend",
+                return_value={
+                    "cargo_fingerprint": {
+                        "bytes": 1,
+                        "path": "fingerprint",
+                        "sha256": "0" * 64,
+                    },
+                    "status": "passed",
+                },
+            ), mock.patch.object(
+                RUNNER, "extract_exact_archive", return_value=source_root
+            ), mock.patch.object(
+                RUNNER, "sha256_file", return_value=contract["fixture"]["sha256"]
+            ), mock.patch.object(
+                RUNNER,
+                "file_record",
+                return_value={"bytes": 1, "path": "recorded", "sha256": "0" * 64},
+            ), mock.patch.object(
+                RUNNER, "command_record", return_value=build
+            ) as commands, mock.patch.object(
+                RUNNER,
+                "audit_fixture_elf",
+                side_effect=RUNNER.ArtifactContractError(
+                    "pt-interp",
+                    "/lib/ld-wrong-aarch64.so.1",
+                    "/lib/ld-crabc-aarch64.so.1",
+                ),
+            ):
+                RUNNER.execute(contract, pin, args, report)
+        self.assertEqual(commands.call_count, 1)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["first_fact"]["stage"], "artifact-contract")
+        self.assertEqual(report["first_fact"]["boundary"], "pt-interp")
+        self.assertIsNone(report["blocked"])
+        self.assertEqual(report["capability"]["status"], "failed")
+        self.assertFalse(report["capability"]["native_execution_started"])
+        self.assertFalse(report["execution"]["attempted"])
+
+    def test_ephemeral_source_paths_normalize_to_stable_report_records(self) -> None:
+        _, pin = RUNNER.load_contract()
+        first_root = Path("/output/pinned-source-first/mimalloc-3.5.0")
+        second_root = Path("/output/pinned-source-second/mimalloc-3.5.0")
+        member = "test/test-stress.c"
+        first = {
+            "command": [
+                "/sysroot/bin/crabc-cc",
+                "-I",
+                str(first_root / "include"),
+                str(first_root / member),
+            ],
+            "kind": "process",
+            "status": 1,
+            "stdout": RUNNER.bytes_record(b""),
+            "stderr": RUNNER.bytes_record(
+                f"{first_root / member}:1: failure\n".encode()
+            ),
+        }
+        second = {
+            "command": [
+                "/sysroot/bin/crabc-cc",
+                "-I",
+                str(second_root / "include"),
+                str(second_root / member),
+            ],
+            "kind": "process",
+            "status": 1,
+            "stdout": RUNNER.bytes_record(b""),
+            "stderr": RUNNER.bytes_record(
+                f"{second_root / member}:1: failure\n".encode()
+            ),
+        }
+        normalized_first = RUNNER.normalize_source_paths(first, first_root, pin)
+        normalized_second = RUNNER.normalize_source_paths(second, second_root, pin)
+        self.assertEqual(normalized_first, normalized_second)
+        serialized = json.dumps(normalized_first, sort_keys=True)
+        self.assertNotIn("pinned-source-first", serialized)
+        self.assertNotIn("pinned-source-second", serialized)
+        self.assertIn("<pinned-source>/mimalloc-3.5.0/test/test-stress.c", serialized)
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            first_source = Path(first) / member
+            second_source = Path(second) / member
+            first_source.parent.mkdir(parents=True)
+            second_source.parent.mkdir(parents=True)
+            first_source.write_bytes(b"exact source")
+            second_source.write_bytes(b"exact source")
+            first_artifact = RUNNER.stable_source_member_record(first_source, pin, member)
+            second_artifact = RUNNER.stable_source_member_record(second_source, pin, member)
+        self.assertEqual(first_artifact, second_artifact)
+        self.assertEqual(first_artifact["path"], "mimalloc-3.5.0/test/test-stress.c")
+
+    def test_canonical_loader_staging_mismatch_remains_a_blocked_prerequisite(self) -> None:
+        contract, _ = RUNNER.load_contract()
+        requirements = contract["compile_requirements"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sysroot = root / "sysroot"
+            target = root / "target"
+            canonical = root / "canonical/ld-crabc-aarch64.so.1"
+            (sysroot / "share/crabc").mkdir(parents=True)
+            (sysroot / "share/crabc/manifest.json").write_text("{}\n", encoding="utf-8")
+            (sysroot / "share/crabc/purity.json").write_text(
+                json.dumps(
+                    {
+                        "crt_sysroot_pure_rust": True,
+                        "full_runtime_pure_rust": False,
+                        "full_runtime_purity_status": "blocked_by_native_allocator",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            compiler = sysroot / "bin/crabc-cc"
+            compiler.parent.mkdir(parents=True)
+            compiler.write_text("#!/bin/sh\n", encoding="utf-8")
+            compiler.chmod(0o755)
+            target.mkdir()
+            (target / "libc.so").write_bytes(b"selected libc")
+            (target / "libldso.so").write_bytes(b"selected loader")
+            canonical.parent.mkdir(parents=True)
+            canonical.write_bytes(b"different loader")
+            with mock.patch.dict(
+                RUNNER.os.environ, {"CRABC_TEST_SYSROOT": str(sysroot)}, clear=False
+            ), mock.patch.object(RUNNER, "CANONICAL_LOADER", canonical):
+                with self.assertRaises(RUNNER.BlockedPrerequisite) as failure:
+                    RUNNER.require_runtime_inputs(target, requirements)
+        self.assertEqual(failure.exception.prerequisite, "owned-canonical-loader-staging")
+        self.assertEqual(
+            failure.exception.details["selected_loader"], str((target / "libldso.so").resolve())
+        )
+
     def test_tag_attestation_requires_the_annotated_tag_and_peeled_revision(self) -> None:
         _, pin = RUNNER.load_contract()
         reference = f"refs/tags/{pin['tag']}"
@@ -363,7 +569,17 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "command_record",
                 side_effect=[build, self.successful_process(cases[0]), failed_run],
             ) as commands, mock.patch.object(
-                RUNNER, "dynamic_dependencies", return_value=["libc.so"]
+                RUNNER,
+                "audit_fixture_elf",
+                return_value={
+                    "dynamic_dependencies": ["libc.so"],
+                    "elf_identity": {
+                        "class": "ELF64",
+                        "endianness": "little",
+                        "machine": "AArch64",
+                    },
+                    "interpreter": "/lib/ld-crabc-aarch64.so.1",
+                },
             ):
                 RUNNER.execute(contract, pin, args, report)
         self.assertEqual(commands.call_count, 3)
@@ -435,7 +651,17 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "command_record",
                 side_effect=[build, *(self.successful_process(case) for case in cases)],
             ) as commands, mock.patch.object(
-                RUNNER, "dynamic_dependencies", return_value=["libc.so"]
+                RUNNER,
+                "audit_fixture_elf",
+                return_value={
+                    "dynamic_dependencies": ["libc.so"],
+                    "elf_identity": {
+                        "class": "ELF64",
+                        "endianness": "little",
+                        "machine": "AArch64",
+                    },
+                    "interpreter": "/lib/ld-crabc-aarch64.so.1",
+                },
             ):
                 RUNNER.execute(contract, pin, args, report)
         self.assertEqual(commands.call_count, 1 + len(cases))
@@ -522,7 +748,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         contract, pin = RUNNER.load_contract()
         args = RUNNER.parse_arguments([])
         report = RUNNER.report_base(contract, pin, args)
-        self.assertEqual(report["format"], 2)
+        self.assertEqual(report["format"], 3)
         self.assertEqual(report["capability"]["status"], "not-run")
         self.assertFalse(report["capability"]["native_execution_started"])
         self.assertEqual(
@@ -535,6 +761,7 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
                 "owned_sysroot_purity",
                 "owned_compiler",
                 "selected_loader",
+                "staged_canonical_loader",
                 "selected_libc",
                 "selected_backend_fingerprint",
                 "stress_binary",

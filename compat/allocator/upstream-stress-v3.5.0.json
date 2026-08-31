@@ -1,5 +1,5 @@
 {
-  "format": 3,
+  "format": 4,
   "schema": "crabc-mimalloc-canonical-upstream-stress",
   "scope": {
     "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
@@ -249,7 +249,7 @@
     ]
   },
   "report": {
-    "format": 2,
+    "format": 3,
     "schema": "crabc-mimalloc-canonical-upstream-stress-report",
     "path": "compat/reports/allocator/upstream-stress/latest.json",
     "atomic_publish": true,
@@ -263,6 +263,15 @@
       "sha256",
       "hex"
     ],
+    "fixture_elf_fields": [
+      "dynamic_dependencies",
+      "elf_identity",
+      "interpreter"
+    ],
+    "source_path_normalization": {
+      "artifact": "mimalloc-3.5.0/test/test-stress.c",
+      "extraction_root": "<pinned-source>/mimalloc-3.5.0"
+    },
     "artifact_ids": [
       "contract",
       "upstream_archive",
@@ -271,6 +280,7 @@
       "owned_sysroot_purity",
       "owned_compiler",
       "selected_loader",
+      "staged_canonical_loader",
       "selected_libc",
       "selected_backend_fingerprint",
       "stress_binary"
@@ -300,6 +310,12 @@
     "expected_dynamic_dependencies": [
       "libc.so"
     ],
+    "expected_elf_identity": {
+      "class": "ELF64",
+      "endianness": "little",
+      "machine": "AArch64"
+    },
+    "expected_interpreter": "/lib/ld-crabc-aarch64.so.1",
     "canonical_loader": "/lib/ld-crabc-aarch64.so.1",
     "owned_test_launcher": "scripts/run_owned_test_suite.py",
     "selected_runtime_directory": "target/debug",
