@@ -1103,6 +1103,20 @@ reject weak compiler-builtins fallback, `ceill`, floor, fma, fmod, cbrt,
 fenv policy, special/complex/binary80 math, family completion, promotion, and
 public x86 support.
 
+The separate private `static-c-math-floor` artifact records only binary64
+`floor` and binary32 `floorf`: `./scripts/dev-x86_64.sh libc-math-floor` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `floor.c`/`floorf.c` retains binary64 raw
+IEEE classification plus `toint` add/subtract order and binary32 raw masking
+plus volatile `FORCE_EVAL`. The 216-record differential covers signed zero,
+normal and subnormal bounds, integral neighbors, large finite values,
+infinities, quiet/signaling NaNs, all four requested-and-observed rounding
+directions, and exception flags. Strong target-owned definitions and final ELF
+checks reject weak compiler-builtins fallback, `floorl`, ceiling, fma, fmod,
+cbrt, fenv policy, special/complex/binary80 math, family completion,
+promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

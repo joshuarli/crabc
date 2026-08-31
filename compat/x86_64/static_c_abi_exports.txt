@@ -280,6 +280,8 @@ finite
 finitef
 flistxattr
 flock
+floor
+floorf
 floorl
 fmal
 fmax

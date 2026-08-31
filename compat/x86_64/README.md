@@ -4619,6 +4619,22 @@ compiler-builtins fallback, `ceill`, floor, fma, fmod, cbrt, static
 rounding/fenv policy, special/complex/binary80 math, dynamic linkage, TLS,
 and ambient-libm surface. Family completion, promotion, full x86-64 parity,
 and public x86 support remain unselected.
+`libc-math-floor` is the separate non-promoting `static-c-math-floor` artifact
+for binary64/binary32 `floor`/`floorf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `floor.c`/`floorf.c`
+preserves binary64's raw IEEE classification and `toint` add/subtract order,
+alongside binary32's raw fraction-mask and volatile `FORCE_EVAL` path. The
+216-record raw differential compares signed zero, normal/subnormal and
+integral-neighbor boundaries, large finite values, infinities,
+quiet/signaling NaNs, exception flags, and requested versus observed MXCSR
+direction in all four modes. Final-link proof requires strong crabc-owned
+definitions and `addsd`/`subsd`/`addss`, while rejecting weak
+compiler-builtins fallback, `floorl`, ceiling, fma, fmod, cbrt, static
+rounding/fenv policy, special/complex/binary80 math, dynamic linkage, TLS,
+and ambient-libm surface. Family completion, promotion, full x86-64 parity,
+and public x86 support remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
