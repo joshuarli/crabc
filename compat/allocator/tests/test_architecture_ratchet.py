@@ -852,6 +852,49 @@ struct DisabledScaffold;
             forbidden = RATCHET.collect_forbidden_scaffolding(root, manifest)
         self.assertEqual(set(forbidden["found"]), {"production_only"})
 
+    def test_production_cfg_masks_many_excluded_items_without_repeated_full_source_rewrites(
+        self,
+    ) -> None:
+        excluded_items = 128
+        source_text = "\n".join(
+            f"""\
+#[cfg(test)]
+fn test_only_{index}() {{
+    let marker = {index};
+}}
+
+fn production_{index}() {{
+    let marker = {index};
+}}
+"""
+            for index in range(excluded_items)
+        )
+        original_mask = RATCHET.mask_source_range
+        original_strip = RATCHET.strip_rust_comments
+        with mock.patch.object(
+            RATCHET, "mask_source_range", wraps=original_mask
+        ) as single_range_mask, mock.patch.object(
+            RATCHET, "strip_rust_comments", wraps=original_strip
+        ) as comment_mask:
+            selected = RATCHET.production_rust_source(
+                source_text, self.manifest["phase_bc_call_graph"]["cfg_environment"]
+            )
+
+        self.assertLessEqual(single_range_mask.call_count, 1)
+        self.assertEqual(
+            sum(
+                call.args[0] is source_text
+                for call in comment_mask.call_args_list
+                if call.args
+            ),
+            1,
+        )
+        self.assertEqual(len(selected), len(source_text))
+        self.assertNotIn("test_only_0", selected)
+        self.assertNotIn(f"test_only_{excluded_items - 1}", selected)
+        self.assertIn("production_0", selected)
+        self.assertIn(f"production_{excluded_items - 1}", selected)
+
     def test_phase_ef_rejects_production_scaffolding_but_allows_test_only_audits(self) -> None:
         manifest = copy.deepcopy(self.manifest)
         policy = manifest["phase_ef_forbidden_scaffolding"]

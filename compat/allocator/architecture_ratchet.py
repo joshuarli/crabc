@@ -300,6 +300,38 @@ def mask_source_range(source: str, start: int, end: int) -> str:
     ) + source[end:]
 
 
+def mask_source_ranges(source: str, ranges: list[tuple[int, int]]) -> str:
+    """Mask the union of source spans with one linear reconstruction.
+
+    Cfg attributes can be numerous and nested in the selected allocator
+    sources. Applying a single-range mask for each one copies the entire
+    source repeatedly, so first merge the immutable source offsets and then
+    preserve every newline while rebuilding the result once.
+    """
+
+    if not ranges:
+        return source
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    if len(merged) == 1:
+        return mask_source_range(source, *merged[0])
+
+    parts: list[str] = []
+    cursor = 0
+    for start, end in merged:
+        parts.append(source[cursor:start])
+        parts.append(
+            "".join("\n" if character == "\n" else " " for character in source[start:end])
+        )
+        cursor = end
+    parts.append(source[cursor:])
+    return "".join(parts)
+
+
 def rust_cfg_attribute_spans(source: str) -> list[tuple[int, int, str]]:
     """Find balanced Rust attributes containing a `cfg(...)` predicate."""
 
@@ -520,17 +552,15 @@ def production_rust_source(
     the comment-masked delimiter walker to keep attribute boundaries stable.
     """
 
-    code = strip_rust_comments(source) if mask_comments else source
     boundary_code = strip_rust_comments(source)
-    cfg_code = strip_rust_comments(source, mask_literals=False)
+    code = boundary_code if mask_comments else source
     excluded_ranges: list[tuple[int, int]] = []
-    for start, end, attribute in rust_cfg_attribute_spans(cfg_code):
+    for start, end, _ in rust_cfg_attribute_spans(boundary_code):
+        attribute = strip_rust_comments(source[start:end], mask_literals=False)
         expression = cfg_attribute_expression(attribute)
         if not CfgParser(expression, cfg_environment).parse():
             excluded_ranges.append((start, excluded_cfg_item_end(boundary_code, end)))
-    for start, end in sorted(excluded_ranges, reverse=True):
-        code = mask_source_range(code, start, end)
-    return code
+    return mask_source_ranges(code, excluded_ranges)
 
 
 RUST_FUNCTION_HEADER = re.compile(
