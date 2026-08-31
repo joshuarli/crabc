@@ -9,7 +9,7 @@ use crabc_mimalloc::__crabc_runtime::{
 };
 
 #[cfg(feature = "native-runtime-test-audit")]
-use crabc_mimalloc::__crabc_runtime::native_runtime_fork_admission_test_audit;
+use crabc_mimalloc::__crabc_runtime::native_runtime_lifecycle_test_audit;
 
 const OWNER_EXIT_CLIENT_COUNT: usize = 6;
 
@@ -54,39 +54,43 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
     ]
 }
 
-fn free_exact_native_route_client(address: usize) {
-    // SAFETY: the test simulates one C `free` input after the source owner
-    // detached. The registry must still validate this exact address against
-    // its private ledger before the source page transition can run.
+fn free_post_exit_client(address: usize) {
+    // SAFETY: the test simulates one valid C `free` input after the source
+    // owner exited. It passes only the raw C-shaped address: `native_free`
+    // must derive its current source state from the PageMap rather than from
+    // a former-owner route or client ledger.
     let block = unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) };
     assert_eq!(
         unsafe { native_free(block) },
         NativePageFreeResult::Freed,
-        "an attached releaser consumes only its exact detached-route client"
+        "an attached releaser consumes the exited owner's client through page state"
     );
 }
 
 #[test]
-fn detached_route_releases_admission_only_after_its_terminal_releaser_finishes() {
+fn split_releasers_free_mixed_post_exit_clients_through_page_state() {
     assert!(
         initialize_process(current_page_size()),
-        "the native runtime initializes before the split-releaser lifecycle regression"
+        "the native runtime initializes before the split post-exit free regression"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "ticket zero parks the first arena before the detached owner begins"
+        "the initial persistent owner prepares the later-worker source arena"
     );
+    #[cfg(feature = "native-runtime-test-audit")]
+    let baseline = native_runtime_lifecycle_test_audit()
+        .expect("the initialized process exposes a quiescent source-state baseline");
 
     let (owner_sender, owner_receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
         owner_sender
             .send(allocate_owner_exit_aggregate())
-            .expect("A publishes only exact C-shaped detached-route inputs");
+            .expect("A publishes only exact C-shaped post-exit free inputs");
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "A transfers its mixed aggregate into the typed detached route"
+            "A completes its source owner-exit boundary before future frees"
         );
     });
     let clients = owner_receiver
@@ -97,85 +101,59 @@ fn detached_route_releases_admission_only_after_its_terminal_releaser_finishes()
         .expect("A completes the source owner-exit boundary");
 
     #[cfg(feature = "native-runtime-test-audit")]
-    assert_eq!(
-        native_runtime_fork_admission_test_audit().active_later_thread_count,
-        1,
-        "A's detached route alone keeps its worker-admission claim live"
-    );
+    {
+        let after_owner_exit = native_runtime_lifecycle_test_audit()
+            .expect("the exited source leaves its live clients PageMap-visible");
+        assert!(
+            after_owner_exit.page_map_registered_entry_count
+                > baseline.page_map_registered_entry_count,
+            "A's live clients remain registered for pointer-to-page post-exit dispatch"
+        );
+    }
 
     let first_releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-        #[cfg(feature = "native-runtime-test-audit")]
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "the nonterminal releaser attaches beside A's retained route admission"
-        );
 
-        // Preserve the source aggregate's terminal order for the singleton
-        // tails, but deliberately finish this whole worker before C releases
-        // the remaining regular pages. The registry must retain A's parked
-        // route token while B's own no-page attachment completes.
-        free_exact_native_route_client(clients[5]);
-        free_exact_native_route_client(clients[4]);
-        free_exact_native_route_client(clients[3]);
+        // Preserve the mixed aggregate's singleton/large release order, then
+        // let a separate worker consume the remaining regular-page clients.
+        free_post_exit_client(clients[5]);
+        free_post_exit_client(clients[4]);
+        free_post_exit_client(clients[3]);
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "the nonterminal B lifecycle releases only B's own admission"
-        );
-        #[cfg(feature = "native-runtime-test-audit")]
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            1,
-            "A's still-live route remains the one worker-admission claim after B finishes"
+            "B completes after its nonterminal post-exit frees"
         );
     });
     first_releaser
         .join()
-        .expect("B completes its nonterminal detached-route frees");
+        .expect("B completes its nonterminal post-exit frees");
 
-    // A's route is still source-active after B's nonterminal frees. Ticket
-    // zero may run its own private operation beside that route, but this
-    // cannot consume A's scheduler token or worker-admission claim.
+    // Three A clients remain PageMap-owned after B exits. Ticket zero's
+    // independent initial persistent owner may still complete its own local
+    // operation without changing those post-exit page states.
     let bookkeeping = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero runs only its private operation beside A's source-active route"),
+        _ => panic!("ticket zero remains independently usable beside A's post-exit pages"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(bookkeeping) },
         TicketZeroPageFreeResult::Freed,
-        "ticket zero returns its private client without settling A's live route"
+        "ticket zero returns its private client without changing A's post-exit pages"
     );
 
-    let (terminal_ready_sender, terminal_ready_receiver) = mpsc::sync_channel(0);
-    let (release_terminal_sender, release_terminal_receiver) = mpsc::sync_channel(0);
-    let terminal_releaser = std::thread::spawn(move || {
+    let second_releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
-        #[cfg(feature = "native-runtime-test-audit")]
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "C attaches beside A's remaining route admission"
-        );
 
-        free_exact_native_route_client(clients[2]);
-        free_exact_native_route_client(clients[1]);
-        free_exact_native_route_client(clients[0]);
-        #[cfg(feature = "native-runtime-test-audit")]
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "the terminal source free leaves A's proof and C's attachment admitted until C finishes"
-        );
+        free_post_exit_client(clients[2]);
+        free_post_exit_client(clients[1]);
+        free_post_exit_client(clients[0]);
         let continued = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
-            _ => panic!(
-                "C resumes only its independent local session while it holds A's typed terminal proof"
-            ),
+            _ => panic!("C starts its independent local owner after its post-exit frees"),
         };
-        // SAFETY: this is C's exact local client, distinct from every opaque
-        // A-route client consumed above.
+        // SAFETY: this is C's exact local client, distinct from every A
+        // client consumed through PageMap-derived post-exit dispatch above.
         unsafe {
             continued.as_ptr().write(0x59);
             continued.as_ptr().add(72).write(0x5a);
@@ -185,56 +163,55 @@ fn detached_route_releases_admission_only_after_its_terminal_releaser_finishes()
         assert_eq!(
             unsafe { native_free(continued) },
             NativePageFreeResult::Freed,
-            "C can free its independent local client before normal finish settles A's proof"
+            "C frees its independent local client through its current owner"
         );
-        terminal_ready_sender
-            .send(())
-            .expect("C reports its terminal source release before the ticket-zero probe");
-        release_terminal_receiver
-            .recv()
-            .expect("the initial thread releases C only after its ticket-zero probe");
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "only C's normal finish consumes A's terminal route proof"
-        );
-        #[cfg(feature = "native-runtime-test-audit")]
-        assert_eq!(
-            native_runtime_fork_admission_test_audit().active_later_thread_count,
-            0,
-            "C's terminal lifecycle releases both its own and A's exact admissions"
+            "C completes after the remaining post-exit frees and its own local work"
         );
     });
-
-    terminal_ready_receiver
-        .recv()
-        .expect("the initial thread observes C's terminal source release before its finish");
-    match ticket_zero_allocate(73, false) {
-        TicketZeroPageAllocationResult::Unavailable => {}
-        TicketZeroPageAllocationResult::Allocated(_) => {
-            panic!("ticket zero allocated before C completed its normal finish")
-        }
-        TicketZeroPageAllocationResult::AllocationFailed => {
-            panic!("ticket zero attempted allocation before C completed its normal finish")
-        }
-        TicketZeroPageAllocationResult::Retained => {
-            panic!("ticket zero became terminal before C completed its normal finish")
-        }
-    }
-    release_terminal_sender
-        .send(())
-        .expect("the initial thread releases C after proving ticket zero is unavailable");
-    terminal_releaser
+    second_releaser
         .join()
-        .expect("C completes the terminal detached-route lifecycle");
+        .expect("C completes the remaining post-exit frees");
 
     let resumed = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
-        _ => panic!("ticket zero reactivates only after the terminal releaser finishes"),
+        _ => panic!("ticket zero remains usable after every post-exit client is freed"),
     };
     assert_eq!(
         unsafe { ticket_zero_free(resumed) },
         TicketZeroPageFreeResult::Freed,
-        "the resumed ticket-zero client returns to the dormant pair"
+        "the final ticket-zero client returns through its independent owner"
     );
+    #[cfg(feature = "native-runtime-test-audit")]
+    {
+        let after = native_runtime_lifecycle_test_audit()
+            .expect("every releaser joined before the final source-state audit");
+        assert_eq!(
+            after.page_map_registered_entry_count,
+            baseline.page_map_registered_entry_count,
+            "all split post-exit clients release their PageMap registrations"
+        );
+        assert_eq!(
+            after.main_heap_abandoned_page_count,
+            baseline.main_heap_abandoned_page_count,
+            "no arena abandoned page remains after the final post-exit free"
+        );
+        assert_eq!(
+            after.main_heap_os_abandoned_pages_empty,
+            baseline.main_heap_os_abandoned_pages_empty,
+            "the OS abandoned-page list returns to its baseline state"
+        );
+        assert_eq!(
+            after.live_thread_count,
+            baseline.live_thread_count,
+            "A, B, and C leave no later-thread source identity behind"
+        );
+        assert_eq!(
+            after.shared_later_theap_count,
+            baseline.shared_later_theap_count,
+            "split releasers leave no shared later-Theap residue"
+        );
+    }
 }
