@@ -8,14 +8,17 @@ source: it verifies and compiles the archived ``test/test-stress.c`` with the
 upstream ``USE_STD_MALLOC`` conditional enabled, so standard allocation names
 bind to the selected native-mimalloc-shadow ``libc.so``.
 
-The lane runs exactly once at the smallest audited configuration, records the
-first runtime failure or pass fact atomically, and never retries with a changed
-schedule. It is a failure-preservation gate, not an allocator promotion claim.
+The lane compiles one attested binary and runs its closed, ordered source
+argument matrix. Each case receives a fresh process and watchdog. The runner
+stops at the first unavailable prerequisite or non-pass; it never retries,
+shrinks, or reschedules a source case. It is a failure-preservation gate, not
+an allocator promotion claim.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -62,11 +65,23 @@ class BlockedPrerequisite(EvidenceError):
     """A required native execution boundary was unavailable before stress began."""
 
     def __init__(
-        self, prerequisite: str, message: str, details: Mapping[str, str]
+        self, prerequisite: str, message: str, details: Mapping[str, Any]
     ) -> None:
         super().__init__(message)
         self.prerequisite = prerequisite
         self.details = dict(details)
+
+
+@dataclass(frozen=True)
+class RuntimeInputs:
+    """The owned boundaries needed to compile and execute the source matrix."""
+
+    sysroot: Path
+    compiler: Path
+    target_dir: Path
+    manifest_path: Path
+    purity_path: Path
+    purity: dict[str, Any]
 
 
 def sha256_file(path: Path) -> str:
@@ -155,6 +170,34 @@ def load_mimalloc_pin(path: Path = UPSTREAMS_PATH) -> dict[str, str]:
     return normalized
 
 
+def expected_matrix_case(workers: int, scale: int, iterations: int) -> dict[str, Any]:
+    """Describe one unchanged-source invocation from the closed stress matrix."""
+
+    arguments = [str(workers), str(scale), str(iterations)]
+    return {
+        "id": f"workers-{workers}-scale-{scale}-iterations-{iterations}",
+        "workers": workers,
+        "scale": scale,
+        "iterations": iterations,
+        "arguments": arguments,
+        "expected_stdout": (
+            f"Using {workers} threads with a {scale}% load-per-thread and {iterations} iterations\n"
+        ),
+        "expected_stderr": "",
+        "expected_exit_status": 0,
+    }
+
+
+def expected_execution_matrix() -> list[dict[str, Any]]:
+    """Return the source-argument progression required by the native contract."""
+
+    workers = (1, 2, 4, 8)
+    return [
+        *(expected_matrix_case(count, 1, 1) for count in workers),
+        *(expected_matrix_case(count, 2, 2) for count in workers),
+    ]
+
+
 def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
     """Return the closed contract this lane accepts.
 
@@ -174,15 +217,58 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
         "archive_root": pin["archive_root"],
         "archive_sha256": pin["sha256"],
     }
+    target_id = "linux-aarch64-little-endian"
+    backend_id = "crabc-libc-native-mimalloc-shadow"
     return {
-        "format": 1,
+        "format": 3,
         "schema": "crabc-mimalloc-canonical-upstream-stress",
         "scope": {
-            "claim": "one canonical executable of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
+            "claim": "one canonical executable inventory of the exact pinned upstream test/test-stress.c through the selected native-mimalloc-shadow crabc libc",
             "not_a_promotion_gate": True,
-            "purpose": "record the first smallest upstream failure or pass without changing upstream scheduling, transfer ownership, or initial-thread cleanup",
+            "purpose": "record the first unavailable prerequisite, build/link failure, or ordered matrix result without changing upstream scheduling, transfer ownership, or initial-thread cleanup",
+            "first_fact_rule": "Run each listed case in order in one fresh process with one watchdog. Stop after the first non-pass; do not retry, shrink, or reschedule a case. A blocked prerequisite starts no stress process.",
         },
         "upstream": upstream,
+        "target_inventory": {
+            "selected": target_id,
+            "targets": [
+                {
+                    "id": target_id,
+                    "architecture": "aarch64",
+                    "byte_order": "little",
+                    "execution": "native-only",
+                    "kernel_baseline": "5.10",
+                    "status": "applicable",
+                    "system": "Linux",
+                }
+            ],
+        },
+        "backend_inventory": {
+            "selected": backend_id,
+            "backends": [
+                {
+                    "id": backend_id,
+                    "target": target_id,
+                    "status": "applicable-nondefault",
+                    "allocator_feature": "native-mimalloc-shadow",
+                    "c_backend_fallback": False,
+                    "runtime_selection": "the selected target directory's libc.so via LD_LIBRARY_PATH",
+                    "artifact_attestation": {
+                        "cargo_fingerprint": {
+                            "directory": ".fingerprint",
+                            "package_prefix": "crabc-libc-",
+                            "file": "lib-c.json",
+                            "exact_features": ["default", "native-mimalloc-shadow"],
+                        },
+                        "exported_free_route": {
+                            "symbol": "free",
+                            "required_callee_suffix": "native_free>",
+                            "forbidden_callee_suffix": "mi_free>",
+                        },
+                    },
+                }
+            ],
+        },
         "fixture": {
             "archive_member": "test/test-stress.c",
             "sha256": "e2bed5f2be12239b1fa696dafffda384d19140cb50a6ee2f6e096f70934d73df",
@@ -200,20 +286,68 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
                 "post-worker cleanup relocation",
                 "initial-thread cleanup change",
             ],
-            "explanation": "USE_STD_MALLOC is an upstream conditional that binds custom allocation names to calloc, realloc, and free. The archived source is compiled byte-for-byte after its hash is verified.",
+            "explanation": "USE_STD_MALLOC is an upstream conditional that binds custom allocation names to calloc, realloc, and free. The archived source is compiled byte-for-byte after its hash is verified. Worker count, scale, and iteration are source command-line arguments, never replacement compile-time scheduler defines.",
         },
         "execution": {
-            "arguments": ["1", "1", "1"],
-            "watchdog_seconds": 30,
-            "process_attempt_count": 1,
-            "expected_stdout": "Using 1 threads with a 1% load-per-thread and 1 iterations\n",
-            "expected_stderr": "",
-            "expected_exit_status": 0,
+            "matrix": expected_execution_matrix(),
+            "source_randomness": {
+                "caller_override": "none",
+                "c_library_seed": "0x7feb352d",
+                "kind": "upstream-source-fixed",
+                "pthread_schedule": "nondeterministic",
+                "worker_seed_rule": "(tid + 1) * 43",
+            },
+            "watchdog": {
+                "process_retries": 0,
+                "scope": "each fresh matrix process",
+                "seconds": 30,
+                "timeout_result": "failed",
+            },
+            "process_attempts_per_case": 1,
+            "stop_after_first_nonpass": True,
+            "large_object_mode": {
+                "status": "not-claimed",
+                "reason": "The selected native-mimalloc-shadow boundary has no accepted upstream large-object stress claim. Every listed scale remains below the upstream source threshold that enables large objects.",
+            },
             "scheduler_and_ownership": [
                 "The unmodified upstream main_participates value remains false.",
                 "The unmodified upstream run_os_threads creates and joins the requested pthread workers before returning to test_stress.",
                 "The unmodified upstream shared transfer buffer carries live allocations between source workers and source iterations.",
                 "After run_os_threads returns, the unmodified initial thread performs free_items cleanup of transferred objects in test_stress.",
+            ],
+        },
+        "capability": {
+            "id": "canonical-unmodified-upstream-pthread-stress",
+            "checked_in_status": "not-run",
+            "status_values": ["not-run", "blocked", "failed", "passed"],
+            "required_worker_counts": [1, 2, 4, 8],
+            "evidence_scope": "shadow_subset",
+            "blocked_is_failure_closed": True,
+            "pass_condition": "Native Linux/AArch64 executes all matrix cases through the attested native-mimalloc-shadow backend with the expected exit status and exact streams before every watchdog expires.",
+            "non_claims": [
+                "Contract validation is not native runtime capability evidence.",
+                "A blocked prerequisite, build failure, link-boundary failure, timeout, signal, stream mismatch, or partial matrix is not a capability pass.",
+                "This nondefault shadow subset is not allocator promotion or large-object stress evidence.",
+            ],
+        },
+        "report": {
+            "format": 2,
+            "schema": "crabc-mimalloc-canonical-upstream-stress-report",
+            "path": "compat/reports/allocator/upstream-stress/latest.json",
+            "atomic_publish": True,
+            "file_artifact_record_fields": ["path", "bytes", "sha256"],
+            "byte_stream_record_fields": ["bytes", "sha256", "hex"],
+            "artifact_ids": [
+                "contract",
+                "upstream_archive",
+                "source_member",
+                "owned_sysroot_manifest",
+                "owned_sysroot_purity",
+                "owned_compiler",
+                "selected_loader",
+                "selected_libc",
+                "selected_backend_fingerprint",
+                "stress_binary",
             ],
         },
         "compile_requirements": {
@@ -229,7 +363,21 @@ def expected_contract(pin: Mapping[str, str]) -> dict[str, Any]:
             "owned_test_launcher": "scripts/run_owned_test_suite.py",
             "selected_runtime_directory": "target/debug",
             "isolated_output_directory": "target/compat/allocator/upstream-stress",
-            "notes": "The caller builds crabc-libc with native-mimalloc-shadow last. The lane then compiles the exact archive member through the owned driver, selects that debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol.",
+            "sysroot_purity": {
+                "required_crt_sysroot_pure_rust": True,
+                "allowed_full_runtime_purity": [
+                    {
+                        "full_runtime_pure_rust": True,
+                        "full_runtime_purity_status": "passed",
+                    },
+                    {
+                        "full_runtime_pure_rust": False,
+                        "full_runtime_purity_status": "blocked_by_native_allocator",
+                    },
+                ],
+                "reason": "The installed driver and CRT/sysroot boundary must pass their owned purity audit. The separately recorded native-allocator blocker is only accepted in its exact documented form because this lane dynamically selects the native-mimalloc-shadow libc after the owned sysroot is built.",
+            },
+            "notes": "The caller builds crabc-libc with native-mimalloc-shadow last. The lane then compiles the exact archive member through the owned driver, selects that debug libc with LD_LIBRARY_PATH, and has no source-level adaptation beyond the upstream USE_STD_MALLOC symbol. It records the owned sysroot purity record and blocks if that record is missing, rejected, or differs from the exact documented native-allocator exception.",
         },
     }
 
@@ -253,7 +401,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate the source, build, and ownership contract without compiling or running it",
+        help="validate the closed source/target/backend/report contract without compiling or running it",
     )
     parser.add_argument(
         "--target-dir",
@@ -364,21 +512,115 @@ def extract_exact_archive(archive: Path, pin: Mapping[str, str], destination: Pa
 
 
 def require_native_aarch64() -> None:
-    if platform.system() != "Linux" or platform.machine() != "aarch64":
+    if (
+        platform.system() != "Linux"
+        or platform.machine() != "aarch64"
+        or sys.byteorder != "little"
+    ):
         raise BlockedPrerequisite(
             "native-linux-aarch64",
-            "canonical upstream stress requires native Linux/AArch64; "
-            f"observed {platform.system()}/{platform.machine()}",
+            "canonical upstream stress requires native Linux/AArch64 little-endian; "
+            f"observed {platform.system()}/{platform.machine()}/{sys.byteorder}-endian",
             {
                 "observed_architecture": platform.machine(),
+                "observed_byte_order": sys.byteorder,
                 "observed_system": platform.system(),
                 "required_architecture": "aarch64",
+                "required_byte_order": "little",
                 "required_system": "Linux",
+            },
+        )
+    release = platform.release()
+    version = re.match(r"^(\d+)\.(\d+)", release)
+    if version is None or (int(version.group(1)), int(version.group(2))) < (5, 10):
+        raise BlockedPrerequisite(
+            "native-linux-kernel-baseline",
+            "canonical upstream stress requires the Linux 5.10 kernel baseline; "
+            f"observed {release}",
+            {
+                "observed_kernel_release": release,
+                "required_kernel_baseline": "5.10",
             },
         )
 
 
-def require_runtime_inputs(target_dir: Path) -> tuple[Path, Path, Path]:
+def require_owned_sysroot_purity(
+    sysroot: Path, requirements: Mapping[str, Any]
+) -> tuple[Path, dict[str, Any]]:
+    """Require the owned compiler boundary without relabeling its purity state."""
+
+    raw_requirement = requirements.get("sysroot_purity")
+    if not isinstance(raw_requirement, dict):
+        raise EvidenceError("canonical upstream stress contract lacks sysroot purity requirements")
+    purity_path = sysroot / "share/crabc/purity.json"
+    if not purity_path.is_file() or purity_path.is_symlink():
+        raise BlockedPrerequisite(
+            "owned-sysroot-purity",
+            "canonical upstream stress requires the owned sysroot purity record; "
+            f"unavailable: {purity_path}",
+            {"purity": str(purity_path), "sysroot": str(sysroot)},
+        )
+    try:
+        purity = json.loads(purity_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise BlockedPrerequisite(
+            "owned-sysroot-purity",
+            "canonical upstream stress cannot read the owned sysroot purity record; "
+            f"invalid: {purity_path}",
+            {"purity": str(purity_path), "sysroot": str(sysroot)},
+        ) from error
+    if not isinstance(purity, dict):
+        raise BlockedPrerequisite(
+            "owned-sysroot-purity",
+            "canonical upstream stress requires an object-shaped owned sysroot purity record",
+            {"purity": str(purity_path), "sysroot": str(sysroot)},
+        )
+    if purity.get("crt_sysroot_pure_rust") is not raw_requirement[
+        "required_crt_sysroot_pure_rust"
+    ]:
+        raise BlockedPrerequisite(
+            "owned-sysroot-purity",
+            "canonical upstream stress requires the owned CRT/sysroot purity contract to pass",
+            {
+                "purity": str(purity_path),
+                "required_crt_sysroot_pure_rust": raw_requirement[
+                    "required_crt_sysroot_pure_rust"
+                ],
+                "observed_crt_sysroot_pure_rust": purity.get("crt_sysroot_pure_rust"),
+            },
+        )
+    allowed = raw_requirement.get("allowed_full_runtime_purity")
+    if not isinstance(allowed, list) or not any(
+        exactly_matches(
+            {
+                "full_runtime_pure_rust": purity.get("full_runtime_pure_rust"),
+                "full_runtime_purity_status": purity.get("full_runtime_purity_status"),
+            },
+            candidate,
+        )
+        for candidate in allowed
+    ):
+        raise BlockedPrerequisite(
+            "owned-sysroot-full-runtime-purity",
+            "canonical upstream stress refuses an undocumented owned full-runtime purity state",
+            {
+                "purity": str(purity_path),
+                "observed_full_runtime_pure_rust": purity.get("full_runtime_pure_rust"),
+                "observed_full_runtime_purity_status": purity.get(
+                    "full_runtime_purity_status"
+                ),
+                "allowed_full_runtime_purity": allowed,
+            },
+        )
+    return purity_path, purity
+
+
+def require_runtime_inputs(
+    target_dir: Path, requirements: Mapping[str, Any] | None = None
+) -> RuntimeInputs:
+    if requirements is None:
+        requirements = expected_contract(FIXED_PIN)["compile_requirements"]
+        assert isinstance(requirements, dict)
     raw_sysroot = os.environ.get("CRABC_TEST_SYSROOT")
     if not raw_sysroot:
         raise BlockedPrerequisite(
@@ -393,13 +635,14 @@ def require_runtime_inputs(target_dir: Path) -> tuple[Path, Path, Path]:
     sysroot = Path(raw_sysroot).expanduser().resolve()
     manifest = sysroot / "share/crabc/manifest.json"
     compiler = sysroot / "bin/crabc-cc"
-    if not manifest.is_file():
+    if not manifest.is_file() or manifest.is_symlink():
         raise BlockedPrerequisite(
             "owned-sysroot-manifest",
             "canonical upstream stress requires a complete owned crabc sysroot; "
             f"missing manifest: {manifest}",
             {"manifest": str(manifest), "sysroot": str(sysroot)},
         )
+    purity_path, purity = require_owned_sysroot_purity(sysroot, requirements)
     if not compiler.is_file() or not os.access(compiler, os.X_OK):
         raise BlockedPrerequisite(
             "owned-sysroot-driver",
@@ -437,7 +680,14 @@ def require_runtime_inputs(target_dir: Path) -> tuple[Path, Path, Path]:
                 "required_launcher": "scripts/run_owned_test_suite.py",
             },
         )
-    return sysroot, compiler, target_dir
+    return RuntimeInputs(
+        sysroot=sysroot,
+        compiler=compiler,
+        target_dir=target_dir,
+        manifest_path=manifest,
+        purity_path=purity_path,
+        purity=purity,
+    )
 
 
 def command_record(
@@ -556,6 +806,158 @@ def dynamic_dependencies(binary: Path) -> list[str]:
     return re.findall(r"\(NEEDED\).*?\[(.*?)\]", output)
 
 
+def command_text(record: Mapping[str, Any], subject: str) -> str:
+    """Require one successful tool observation and decode its exact stdout."""
+
+    if record.get("kind") != "process" or record.get("status") != 0:
+        raise EvidenceError(f"{subject} failed: {record}")
+    stdout = record.get("stdout")
+    stderr = record.get("stderr")
+    if not isinstance(stdout, dict) or not isinstance(stderr, dict):
+        raise EvidenceError(f"{subject} omitted byte-stream records")
+    if stderr.get("bytes") != 0:
+        raise EvidenceError(f"{subject} wrote diagnostics: {record}")
+    try:
+        return bytes.fromhex(str(stdout["hex"])).decode("utf-8", errors="strict")
+    except (KeyError, ValueError, UnicodeDecodeError) as error:
+        raise EvidenceError(f"{subject} produced an invalid stdout record") from error
+
+
+def cargo_fingerprint_features(path: Path) -> list[str]:
+    """Decode one Cargo fingerprint's enabled-feature inventory fail closed."""
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise EvidenceError(f"cannot read crabc-libc Cargo fingerprint: {path}") from error
+    if not isinstance(value, dict) or not isinstance(value.get("features"), str):
+        raise EvidenceError("crabc-libc Cargo fingerprint omits its enabled features")
+    try:
+        features = json.loads(value["features"])
+    except json.JSONDecodeError as error:
+        raise EvidenceError("crabc-libc Cargo fingerprint has malformed enabled features") from error
+    if (
+        not isinstance(features, list)
+        or not all(isinstance(feature, str) and feature for feature in features)
+        or len(features) != len(set(features))
+    ):
+        raise EvidenceError("crabc-libc Cargo fingerprint features must be unique strings")
+    return features
+
+
+def selected_backend_fingerprint(
+    target_dir: Path, expectation: Mapping[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Select the one Cargo build identity with the reviewed native feature set."""
+
+    fingerprint = expectation.get("cargo_fingerprint")
+    if not isinstance(fingerprint, dict):
+        raise EvidenceError("native backend inventory lacks its Cargo fingerprint contract")
+    exact_features = fingerprint.get("exact_features")
+    if not isinstance(exact_features, list) or not all(
+        isinstance(feature, str) and feature for feature in exact_features
+    ):
+        raise EvidenceError("native backend inventory has invalid exact Cargo features")
+    directory = fingerprint.get("directory")
+    package_prefix = fingerprint.get("package_prefix")
+    filename = fingerprint.get("file")
+    if not all(isinstance(value, str) and value for value in (directory, package_prefix, filename)):
+        raise EvidenceError("native backend inventory has an invalid Cargo fingerprint locator")
+    candidates = sorted((target_dir / directory).glob(f"{package_prefix}*/{filename}"))
+    matches: list[tuple[Path, list[str]]] = []
+    for candidate in candidates:
+        try:
+            features = cargo_fingerprint_features(candidate)
+        except EvidenceError:
+            continue
+        if sorted(features) == sorted(exact_features):
+            matches.append((candidate, features))
+    if len(matches) != 1:
+        raise EvidenceError(
+            "selected native-shadow backend identity is ambiguous: expected exactly one "
+            f"Cargo fingerprint with features {exact_features!r}, found {len(matches)}"
+        )
+    path, features = matches[0]
+    return file_record(path, root=ROOT), features
+
+
+def selected_backend_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
+    inventory = contract.get("backend_inventory")
+    if not isinstance(inventory, dict) or not isinstance(inventory.get("selected"), str):
+        raise EvidenceError("canonical stress contract lacks a selected backend inventory")
+    backends = inventory.get("backends")
+    if not isinstance(backends, list):
+        raise EvidenceError("canonical stress contract has an invalid backend inventory")
+    selected = [
+        backend
+        for backend in backends
+        if isinstance(backend, dict) and backend.get("id") == inventory["selected"]
+    ]
+    if len(selected) != 1:
+        raise EvidenceError("canonical stress contract must select exactly one native backend")
+    return dict(selected[0])
+
+
+def attest_selected_backend(target_dir: Path, contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Prove that the selected ``libc.so`` routes public ``free`` to Rust."""
+
+    backend = selected_backend_contract(contract)
+    expectation = backend.get("artifact_attestation")
+    if not isinstance(expectation, dict):
+        raise EvidenceError("selected native backend lacks artifact attestation requirements")
+    fingerprint, features = selected_backend_fingerprint(target_dir, expectation)
+    route = expectation.get("exported_free_route")
+    if not isinstance(route, dict):
+        raise EvidenceError("selected native backend lacks its exported free route contract")
+    symbol = route.get("symbol")
+    required = route.get("required_callee_suffix")
+    forbidden = route.get("forbidden_callee_suffix")
+    if not all(isinstance(value, str) and value for value in (symbol, required, forbidden)):
+        raise EvidenceError("selected native backend has an invalid exported free route contract")
+    libc = target_dir / "libc.so"
+    readelf = shutil.which("readelf")
+    objdump = shutil.which("objdump")
+    if readelf is None or objdump is None:
+        raise EvidenceError("readelf and objdump are required to attest the native backend")
+    symbols = command_text(
+        command_record((readelf, "-W", "--dyn-syms", str(libc)), cwd=ROOT),
+        "selected libc dynamic-symbol inspection",
+    )
+    if not any(
+        len(fields := line.split()) >= 8
+        and fields[-1].split("@@", 1)[0] == symbol
+        and fields[3] == "FUNC"
+        and fields[4] in {"GLOBAL", "WEAK"}
+        and fields[5] == "DEFAULT"
+        and fields[6] != "UND"
+        for line in symbols.splitlines()
+    ):
+        raise EvidenceError(f"selected native backend does not define dynamic {symbol}")
+    disassembly = command_text(
+        command_record(
+            (objdump, "-d", f"--disassemble={symbol}", str(libc)), cwd=ROOT
+        ),
+        "selected libc exported free-route inspection",
+    )
+    branch = r"\b(?:b|bl)\s+[^<]*<[^>]*{}"
+    if not re.search(branch.format(re.escape(required)), disassembly):
+        raise EvidenceError(f"selected libc {symbol} does not branch to <{required}")
+    if re.search(branch.format(re.escape(forbidden)), disassembly):
+        raise EvidenceError(f"selected libc {symbol} branches to forbidden <{forbidden}")
+    return {
+        "backend": backend["id"],
+        "cargo_features": features,
+        "cargo_fingerprint": fingerprint,
+        "exported_free": {
+            "symbol": symbol,
+            "required_callee_suffix": required,
+            "forbidden_callee_suffix": forbidden,
+            "disassembly_sha256": hashlib.sha256(disassembly.encode("utf-8")).hexdigest(),
+        },
+        "status": "passed",
+    }
+
+
 def build_command(
     compiler: Path, source_root: Path, source_member: str, target_dir: Path, binary: Path, contract: Mapping[str, Any]
 ) -> list[str]:
@@ -592,19 +994,130 @@ def runtime_environment(target_dir: Path) -> dict[str, str]:
     return environment
 
 
+def execution_cases(contract: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the ordered source-argument cases without inventing a schedule."""
+
+    execution = contract.get("execution")
+    if not isinstance(execution, dict):
+        raise EvidenceError("canonical upstream stress contract lacks execution settings")
+    matrix = execution.get("matrix")
+    if not isinstance(matrix, list) or not matrix or not all(
+        isinstance(case, dict) for case in matrix
+    ):
+        raise EvidenceError("canonical upstream stress contract has an invalid execution matrix")
+    return [dict(case) for case in matrix]
+
+
+def case_inventory(case: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep report case identity separate from its observed process result."""
+
+    fields = ("id", "workers", "scale", "iterations", "arguments")
+    try:
+        return {field: case[field] for field in fields}
+    except KeyError as error:
+        raise EvidenceError("canonical upstream stress case lacks its source arguments") from error
+
+
+def run_command(binary: Path, case: Mapping[str, Any]) -> list[str]:
+    """Invoke the one compiled upstream binary with only source CLI arguments."""
+
+    arguments = case.get("arguments")
+    if not isinstance(arguments, list) or not all(isinstance(value, str) for value in arguments):
+        raise EvidenceError("canonical upstream stress case has invalid command-line arguments")
+    return [str(binary), *arguments]
+
+
+def selected_target_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
+    inventory = contract.get("target_inventory")
+    if not isinstance(inventory, dict) or not isinstance(inventory.get("selected"), str):
+        raise EvidenceError("canonical stress contract lacks a selected target inventory")
+    targets = inventory.get("targets")
+    if not isinstance(targets, list):
+        raise EvidenceError("canonical stress contract has an invalid target inventory")
+    selected = [
+        target
+        for target in targets
+        if isinstance(target, dict) and target.get("id") == inventory["selected"]
+    ]
+    if len(selected) != 1:
+        raise EvidenceError("canonical stress contract must select exactly one native target")
+    return dict(selected[0])
+
+
+def capability_record(contract: Mapping[str, Any]) -> dict[str, Any]:
+    capability = contract.get("capability")
+    if not isinstance(capability, dict):
+        raise EvidenceError("canonical stress contract lacks its capability policy")
+    return {
+        "id": capability["id"],
+        "status": capability["checked_in_status"],
+        "failure_closed": True,
+        "native_execution_started": False,
+        "native_execution_completed": False,
+        "passed_case_count": 0,
+        "required_case_count": len(execution_cases(contract)),
+        "fully_verified_worker_counts": [],
+        "required_worker_counts": list(capability["required_worker_counts"]),
+    }
+
+
+def update_capability(report: dict[str, Any], contract: Mapping[str, Any], status: str) -> None:
+    """Derive one conservative capability state from completed case records."""
+
+    policy = contract["capability"]
+    assert isinstance(policy, dict)
+    states = policy["status_values"]
+    if status not in states:
+        raise EvidenceError(f"invalid canonical stress capability status: {status}")
+    cases = execution_cases(contract)
+    results = report["execution"]["case_results"]
+    assert isinstance(results, list)
+    passed_ids = {
+        result["case"]["id"]
+        for result in results
+        if isinstance(result, dict)
+        and result.get("state") == "passed"
+        and isinstance(result.get("case"), dict)
+    }
+    verified_workers = [
+        worker
+        for worker in policy["required_worker_counts"]
+        if all(case["id"] in passed_ids for case in cases if case["workers"] == worker)
+    ]
+    capability = report["capability"]
+    assert isinstance(capability, dict)
+    capability.update(
+        {
+            "status": status,
+            "passed_case_count": len(passed_ids),
+            "fully_verified_worker_counts": verified_workers,
+            "native_execution_completed": status == "passed",
+        }
+    )
+
+
 def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.Namespace) -> dict[str, Any]:
     fixture = contract["fixture"]
     adaptation = contract["source_adaptation"]
     execution = contract["execution"]
     assert isinstance(fixture, dict) and isinstance(adaptation, dict) and isinstance(execution, dict)
+    cases = execution_cases(contract)
+    report_contract = contract["report"]
+    assert isinstance(report_contract, dict)
+    artifact_ids = report_contract["artifact_ids"]
+    assert isinstance(artifact_ids, list)
+    contract_artifact = file_record(CONTRACT_PATH, root=ROOT)
     return {
-        "format": 1,
-        "schema": "crabc-mimalloc-canonical-upstream-stress-report",
+        "format": report_contract["format"],
+        "schema": report_contract["schema"],
         "status": "failed",
         "contract": {
-            "path": relative_path(CONTRACT_PATH, ROOT),
-            "sha256": sha256_file(CONTRACT_PATH),
+            **contract_artifact,
             "upstream": dict(contract["upstream"]),
+        },
+        "artifacts": {
+            artifact_id: contract_artifact if artifact_id == "contract" else None
+            for artifact_id in artifact_ids
         },
         "fixture": {
             "archive_member": fixture["archive_member"],
@@ -615,17 +1128,33 @@ def report_base(contract: Mapping[str, Any], pin: Mapping[str, str], args: argpa
             },
         },
         "execution": {
-            "arguments": list(execution["arguments"]),
             "attempted": False,
-            "process_attempt_count": execution["process_attempt_count"],
-            "watchdog_seconds": execution["watchdog_seconds"],
+            "attempted_process_count": 0,
+            "case_count": len(cases),
+            "case_results": [
+                {"case": case_inventory(case), "state": "not-attempted"} for case in cases
+            ],
+            "process_attempts_per_case": execution["process_attempts_per_case"],
+            "source_randomness": dict(execution["source_randomness"]),
+            "watchdog": dict(execution["watchdog"]),
         },
         "requested_runtime": {
             "allocator_feature": contract["compile_requirements"]["allocator_feature"],
+            "backend": selected_backend_contract(contract)["id"],
             "target_dir": relative_path(args.target_dir, ROOT),
             "output_dir": relative_path(args.output_dir, ROOT),
         },
-        "target": {"architecture": platform.machine(), "system": platform.system()},
+        "selection": {
+            "target": selected_target_contract(contract),
+            "backend": selected_backend_contract(contract)["id"],
+        },
+        "observed_host": {
+            "architecture": platform.machine(),
+            "byte_order": sys.byteorder,
+            "kernel_release": platform.release(),
+            "system": platform.system(),
+        },
+        "capability": capability_record(contract),
         "blocked": None,
         "first_fact": None,
         "upstream_pin": dict(pin),
@@ -645,8 +1174,8 @@ def blocked_record(error: BlockedPrerequisite) -> dict[str, Any]:
     }
 
 
-def successful_run(record: Mapping[str, Any], execution: Mapping[str, Any]) -> bool:
-    if record.get("kind") != "process" or record.get("status") != execution["expected_exit_status"]:
+def successful_run(record: Mapping[str, Any], case: Mapping[str, Any]) -> bool:
+    if record.get("kind") != "process" or record.get("status") != case["expected_exit_status"]:
         return False
     stdout = record.get("stdout")
     stderr = record.get("stderr")
@@ -654,26 +1183,47 @@ def successful_run(record: Mapping[str, Any], execution: Mapping[str, Any]) -> b
         return False
     return (
         bytes.fromhex(str(stdout["hex"])).decode("utf-8", errors="strict")
-        == execution["expected_stdout"]
+        == case["expected_stdout"]
         and bytes.fromhex(str(stderr["hex"])).decode("utf-8", errors="strict")
-        == execution["expected_stderr"]
+        == case["expected_stderr"]
     )
 
 
 def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.Namespace, report: dict[str, Any]) -> None:
     require_native_aarch64()
     archive = fetch_archive(pin, offline=args.offline)
-    report["archive"] = file_record(archive, root=ROOT)
+    report["artifacts"]["upstream_archive"] = file_record(archive, root=ROOT)
     attestation = cached_tag_attestation(pin)
     if attestation is None:
         raise EvidenceError("pinned archive was accepted without a tag attestation")
     report["tag_attestation"] = attestation
-    sysroot, compiler, target_dir = require_runtime_inputs(args.target_dir)
+    requirements = contract["compile_requirements"]
+    assert isinstance(requirements, dict)
+    runtime_inputs = require_runtime_inputs(args.target_dir, requirements)
+    backend_attestation = attest_selected_backend(runtime_inputs.target_dir, contract)
+    report["artifacts"].update(
+        {
+            "owned_sysroot_manifest": file_record(runtime_inputs.manifest_path, root=ROOT),
+            "owned_sysroot_purity": file_record(runtime_inputs.purity_path, root=ROOT),
+            "owned_compiler": file_record(runtime_inputs.compiler, root=ROOT),
+            "selected_loader": file_record(
+                runtime_inputs.target_dir / "libldso.so", root=ROOT
+            ),
+            "selected_libc": file_record(runtime_inputs.target_dir / "libc.so", root=ROOT),
+            "selected_backend_fingerprint": backend_attestation["cargo_fingerprint"],
+        }
+    )
     report["runtime"] = {
-        "compiler": relative_path(compiler, ROOT),
-        "loader": file_record(target_dir / "libldso.so", root=ROOT),
-        "selected_libc": file_record(target_dir / "libc.so", root=ROOT),
-        "sysroot": relative_path(sysroot, ROOT),
+        "compiler": relative_path(runtime_inputs.compiler, ROOT),
+        "backend_attestation": backend_attestation,
+        "sysroot": relative_path(runtime_inputs.sysroot, ROOT),
+        "sysroot_purity": {
+            "crt_sysroot_pure_rust": runtime_inputs.purity["crt_sysroot_pure_rust"],
+            "full_runtime_pure_rust": runtime_inputs.purity["full_runtime_pure_rust"],
+            "full_runtime_purity_status": runtime_inputs.purity[
+                "full_runtime_purity_status"
+            ],
+        },
     }
 
     output_dir = args.output_dir.expanduser().resolve()
@@ -688,13 +1238,23 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
         source = source_root / str(fixture["archive_member"])
         if not source.is_file() or sha256_file(source) != fixture["sha256"]:
             raise EvidenceError("canonical stress source differs from the pinned archive member")
-        report["fixture"]["observed_source"] = file_record(source)
+        source_artifact = file_record(source)
+        report["fixture"]["observed_source"] = source_artifact
+        report["artifacts"]["source_member"] = source_artifact
         build = command_record(
-            build_command(compiler, source_root, str(fixture["archive_member"]), target_dir, binary, contract),
+            build_command(
+                runtime_inputs.compiler,
+                source_root,
+                str(fixture["archive_member"]),
+                runtime_inputs.target_dir,
+                binary,
+                contract,
+            ),
             cwd=source_root,
         )
     report["build"] = build
     if build.get("kind") != "process" or build.get("status") != 0:
+        update_capability(report, contract, "failed")
         report["first_fact"] = {
             "kind": "first-failure",
             "stage": "build",
@@ -702,12 +1262,11 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
         }
         return
 
-    report["artifact"] = file_record(binary, root=ROOT)
+    report["artifacts"]["stress_binary"] = file_record(binary, root=ROOT)
     dependencies = dynamic_dependencies(binary)
     report["dynamic_dependencies"] = dependencies
-    requirements = contract["compile_requirements"]
-    assert isinstance(requirements, dict)
     if dependencies != requirements["expected_dynamic_dependencies"]:
+        update_capability(report, contract, "failed")
         report["first_fact"] = {
             "kind": "first-failure",
             "stage": "dynamic-link-boundary",
@@ -716,33 +1275,51 @@ def execute(contract: Mapping[str, Any], pin: Mapping[str, str], args: argparse.
         }
         return
 
-    run = command_record(
-        [str(binary), *execution["arguments"]],
-        cwd=output_dir,
-        environment=runtime_environment(target_dir),
-        timeout=int(execution["watchdog_seconds"]),
-    )
-    report["execution"]["attempted"] = True
-    report["execution"]["attempts"] = [run]
-    if successful_run(run, execution):
-        report["status"] = "passed"
-        report["first_fact"] = {
-            "kind": "pass",
-            "stage": "run",
-            "process_attempt": 1,
+    cases = execution_cases(contract)
+    results = report["execution"]["case_results"]
+    assert isinstance(results, list)
+    for process_attempt, case in enumerate(cases, start=1):
+        case_directory = output_dir / "cases" / str(case["id"])
+        case_directory.mkdir(parents=True, exist_ok=True)
+        run = command_record(
+            run_command(binary, case),
+            cwd=case_directory,
+            environment=runtime_environment(runtime_inputs.target_dir),
+            timeout=int(execution["watchdog"]["seconds"]),
+        )
+        if run.get("kind") in {"process", "timeout"}:
+            report["capability"]["native_execution_started"] = True
+        report["execution"]["attempted"] = True
+        report["execution"]["attempted_process_count"] = process_attempt
+        state = "passed" if successful_run(run, case) else "failed"
+        results[process_attempt - 1] = {
+            "case": case_inventory(case),
+            "process_attempt": process_attempt,
+            "state": state,
             "observation": run,
         }
-        return
+        if state == "failed":
+            update_capability(report, contract, "failed")
+            report["first_fact"] = {
+                "kind": "first-failure",
+                "stage": "run",
+                "case": case_inventory(case),
+                "process_attempt": process_attempt,
+                "observation": run,
+                "expected": {
+                    "exit_status": case["expected_exit_status"],
+                    "stderr": case["expected_stderr"],
+                    "stdout": case["expected_stdout"],
+                },
+            }
+            return
+
+    report["status"] = "passed"
+    update_capability(report, contract, "passed")
     report["first_fact"] = {
-        "kind": "first-failure",
-        "stage": "run",
-        "process_attempt": 1,
-        "observation": run,
-        "expected": {
-            "exit_status": execution["expected_exit_status"],
-            "stderr": execution["expected_stderr"],
-            "stdout": execution["expected_stdout"],
-        },
+        "kind": "pass",
+        "stage": "matrix",
+        "completed_case_count": len(cases),
     }
 
 
@@ -763,7 +1340,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         contract, pin = load_contract()
         if args.check:
-            print(json.dumps({"contract": relative_path(CONTRACT_PATH, ROOT), "status": "passed"}, sort_keys=True))
+            print(
+                json.dumps(
+                    {
+                        "capability_status": contract["capability"]["checked_in_status"],
+                        "contract": relative_path(CONTRACT_PATH, ROOT),
+                        "contract_status": "passed",
+                        "native_execution_started": False,
+                    },
+                    sort_keys=True,
+                )
+            )
             return 0
         report = report_base(contract, pin, args)
         try:
@@ -771,7 +1358,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         except BlockedPrerequisite as error:
             report["status"] = "blocked"
             report["blocked"] = blocked_record(error)
+            update_capability(report, contract, "blocked")
         except EvidenceError as error:
+            report["status"] = "failed"
+            update_capability(report, contract, "failed")
             report["first_fact"] = {
                 "kind": "first-failure",
                 "stage": "harness",

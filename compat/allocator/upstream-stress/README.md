@@ -8,46 +8,56 @@ only the upstream `USE_STD_MALLOC` preprocessor symbol. This selects standard
 apply a patch, copy a source fixture, alter worker scheduling, or move the
 upstream initial-thread transfer cleanup into another thread.
 
-The current canonical invocation is intentionally the smallest audited
-configuration: one worker, scale one, and one iteration. The report records
-the one attempted process as the first failure or pass fact. It does not retry
-or shrink the workload, and it is not a claim that the mandatory larger
-upstream stress matrix has passed.
+The closed applicable matrix invokes that one binary in fresh processes with
+1, 2, 4, and 8 pthread workers, first at scale/iterations `1 1` and then at
+`2 2`. Each case has one 30-second watchdog and no retry. Cases run in manifest
+order and dispatch stops at the first non-pass; the runner never shrinks or
+reschedules a source case. The source itself fixes `srand(0x7feb352d)` and each
+worker's local state starts from `(tid + 1) * 43`; pthread scheduling remains
+nondeterministic and there is no harness seed override. Large-object mode is
+explicitly not claimed.
 
-Run this from the native Linux/AArch64 development image after building the
-owned sysroot and then building the selected shadow libc last:
+The canonical Docker-first dispatch builds the owned sysroot, builds the
+selected shadow libc last, stages the owned loader, and runs the matrix:
 
 ```sh
-./scripts/dev.sh shell
-
-cargo build --workspace
-cargo build --workspace --release
-python3 scripts/build_owned_sysroot.py
-cargo build -p crabc-libc --features native-mimalloc-shadow
-python3 scripts/run_owned_test_suite.py \
-  --sysroot target/crabc-sysroot \
-  --loader target/debug/libldso.so \
-  -- python3 compat/allocator/upstream-stress/run.py
+./scripts/dev.sh allocator-upstream
 ```
 
 The owned-suite wrapper is required. It stages the owned canonical loader and
 debug libc aliases for the test process; the lane itself then selects the
-last-built `target/debug/libc.so` via `LD_LIBRARY_PATH`. The runner writes its
+last-built `target/debug/libc.so` via `LD_LIBRARY_PATH`. Before execution it
+attests the exact `native-mimalloc-shadow` Cargo feature inventory and rejects
+an exported `free` route to the C `mi_free` backend. The runner writes its
 binary only under `target/compat/allocator/upstream-stress/` and atomically
 publishes the report at
 `compat/reports/allocator/upstream-stress/latest.json`. Override those ignored
 outputs with `CRABC_UPSTREAM_STRESS_OUTPUT_DIR` and
-`CRABC_UPSTREAM_STRESS_REPORT`. `--offline` requires both the verified source
-archive and annotated-tag attestation already present in
-`compat/allocator/.cache/`; `--check` validates the closed source/build/ownership
-contract without compiling or executing it.
+`CRABC_UPSTREAM_STRESS_REPORT`. Pass runner options through the canonical
+dispatch, for example `./scripts/dev.sh allocator-upstream --offline`.
+`--offline` requires both the verified source archive and annotated-tag
+attestation already present in `compat/allocator/.cache/`; direct host
+`python3 compat/allocator/upstream-stress/run.py --check` validates only the
+closed contract and reports capability `not-run`, without compiling or
+executing it.
+
+The checked-in manifest inventories the sole applicable target
+(`Linux/AArch64` little-endian, kernel baseline 5.10), the nondefault native
+shadow backend, the source seed policy, per-process watchdog, and report
+schema. Every file artifact record has `path`, `bytes`, and `sha256`; captured
+stdout/stderr records have `bytes`, `sha256`, and `hex`. The report reserves
+named slots for the contract, pinned archive/source, owned sysroot inputs,
+selected loader/libc/backend fingerprint, and compiled stress binary.
 
 If a native prerequisite is unavailable, the runner still atomically writes a
 report with `status: "blocked"`. Its `blocked` record names the exact missing
 boundary—such as the owned-sysroot manifest/driver, selected shadow libc,
 selected loader, owned canonical-loader staging, or native Linux/AArch64 host—
-and declares that no stress process started. A blocked report is neither a
-pass nor a skipped workload result.
+and declares that no stress process started. Capability status is fail-closed:
+`not-run`, `blocked`, and `failed` are all non-success states, and `passed` is
+published only after every listed case completes natively with its exact
+expected status and streams. A blocked or partial report is neither a pass nor
+a skipped workload result.
 
 This is intentionally separate from `native-shadow-stress-v3.5.0.json` and
 its patched fresh-pthread cleanup witness. That witness may remain useful as a

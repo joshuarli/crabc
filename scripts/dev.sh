@@ -45,6 +45,8 @@ Commands:
   lua [options]       build Lua 5.4 through the owned crabc sysroot
   allocator --quick|--full|--churn|--soak
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
+  allocator-upstream [options]
+                      run exact pinned upstream pthread stress on the native shadow libc
   allocator-shadow    run the nondefault native-mimalloc libc ABI/pthread shadow gate
   allocator-tls       prove private initial-exec allocator TLS codegen
   allocator-perf --smoke|--full
@@ -467,6 +469,19 @@ case "$command" in
                 exit 2
                 ;;
         esac
+        ;;
+    allocator-upstream)
+        ensure_image
+        # Build the owned runtime first and the selected nondefault libc last;
+        # the runner then attests that exact backend before starting stress.
+        run_in_container cargo build --workspace
+        run_in_container cargo build --workspace --release
+        run_in_container python3 scripts/build_owned_sysroot.py
+        run_in_container cargo build -p crabc-libc --features native-mimalloc-shadow
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- python3 compat/allocator/upstream-stress/run.py "$@"
         ;;
     allocator-shadow)
         ensure_image
