@@ -876,6 +876,358 @@ fn claim_after_stale_live_snapshot(
     (model, claim)
 }
 
+// This is the atomic source tail of one hypothetical pointer-centered
+// replacement realloc, not a model of a supported nonlocal-realloc route.
+// Pinned `alloc.c:379-451` makes the replacement/copy decision before it
+// routes the old pointer through `mi_free`; the old pointer then reaches the
+// `free.c:62-97` `allow_collect=true` publication and the `arena.c` unown
+// loop mapped above. The current direct native boundary intentionally rejects
+// foreign and detached replacement reallocs. This witness only records the
+// source property a future pointer-first route would have to preserve: a
+// separately allocated replacement never substitutes for, republishes, or
+// loses the old allocation's canonical block.
+const NONLOCAL_REALLOC_OLD_SOURCE_BLOCK: ThreadFree = ModelBlocks::address(0);
+const NONLOCAL_REALLOC_REPLACEMENT_BLOCK: ThreadFree = ModelBlocks::address(1);
+
+/// One coherent old-pointer observation retained across replacement work.
+/// It intentionally carries only the canonical source-block identity: PageMap
+/// lookup, allocation, copy extent, and byte preservation are outside this
+/// source-head model and have their own deterministic evidence.
+struct NonlocalReallocOldSourceSnapshot {
+    canonical_block: ThreadFree,
+}
+
+/// The old pointer's one source `mi_free_block_mt(..., true)` outcome after a
+/// replacement allocation. `ClaimedAbandoned` carries the exact canonical
+/// block that changed an unowned head back to owned; it is not a reconstructed
+/// page/block capability.
+enum NonlocalReallocOldSourcePublication {
+    PublishedToSourceOwner,
+    ClaimedAbandoned(NonlocalReallocClaimedAbandonedContinuation),
+}
+
+/// The exiting source owner either collected the old canonical block itself,
+/// or released its empty abandoned head before the producer's old-pointer CAS.
+/// In the latter case, that CAS must return the claimed continuation above.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NonlocalReallocOwnerExitOutcome {
+    CollectedOldSource,
+    UnownedBeforeOldSourcePublication,
+}
+
+/// Test-only move witness for the old source block after its publication won
+/// the abandoned unowned head. It is deliberately non-`Copy` and has no
+/// replacement-block projection, mirroring the production W07 rule that the
+/// successful CAS—not a later lookup—selects the source continuation.
+#[must_use = "a claimed nonlocal-realloc old source must finish its abandoned continuation"]
+struct NonlocalReallocClaimedAbandonedContinuation {
+    model: Arc<NonlocalReallocSourceTailModel>,
+    canonical_block: ThreadFree,
+}
+
+impl NonlocalReallocClaimedAbandonedContinuation {
+    /// Runs only the source atomic tail of the claimed abandoned continuation:
+    /// detach the already-published old canonical block, then unown its empty
+    /// head. Geometry, PageMap teardown, and replacement lifetime are not
+    /// inferred from this finite witness.
+    fn finish_source_tail(self) {
+        assert_eq!(self.canonical_block, NONLOCAL_REALLOC_OLD_SOURCE_BLOCK);
+        assert_eq!(
+            self.model.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_ABANDONED,
+            "only the owner-exit unowned state may produce this continuation"
+        );
+        assert_eq!(
+            self.model.head.load(Ordering::Acquire),
+            self.canonical_block | THREAD_FREE_OWNED,
+            "the continuation retains the exact old canonical block in the source head"
+        );
+        assert_eq!(
+            self.model.claimed_continuation_finished.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the claimed old source has one continuation tail"
+        );
+        assert_eq!(
+            self.model.collect_old_source_once(),
+            1,
+            "the claimed continuation detaches its old canonical block once"
+        );
+        self.model.release_empty_abandoned_head();
+    }
+}
+
+/// Finite identity and source-head evidence for the tail after one replacement
+/// allocation has succeeded. It deliberately executes the production
+/// `publish_to_head_with_owner`, `detach_from_head`, and
+/// `try_unown_abandoned_head_with` transitions. The scalar replacement field
+/// is only an ordering/distinctness witness; this is not a replacement
+/// allocator, copy model, PageMap implementation, or general correctness
+/// claim for cross-thread realloc.
+struct NonlocalReallocSourceTailModel {
+    head: AtomicUsize,
+    blocks: ModelBlocks,
+    owner_identity: AtomicUsize,
+    owner_exit_started: AtomicBool,
+    old_source_snapshot_count: AtomicUsize,
+    replacement_block: AtomicUsize,
+    old_source_publication_count: AtomicUsize,
+    old_client_count: AtomicUsize,
+    owner_collection_count: AtomicUsize,
+    claimed_continuation_count: AtomicUsize,
+    claimed_continuation_finished: AtomicUsize,
+}
+
+impl NonlocalReallocSourceTailModel {
+    fn new() -> Self {
+        Self {
+            head: AtomicUsize::new(OWNER_EMPTY_HEAD),
+            blocks: ModelBlocks::new(),
+            owner_identity: AtomicUsize::new(MODEL_OWNER_LIVE),
+            owner_exit_started: AtomicBool::new(false),
+            old_source_snapshot_count: AtomicUsize::new(0),
+            replacement_block: AtomicUsize::new(0),
+            old_source_publication_count: AtomicUsize::new(0),
+            // The old client stays counted until the real source head is
+            // detached by either the exiting owner or its claimed tail.
+            old_client_count: AtomicUsize::new(1),
+            owner_collection_count: AtomicUsize::new(0),
+            claimed_continuation_count: AtomicUsize::new(0),
+            claimed_continuation_finished: AtomicUsize::new(0),
+        }
+    }
+
+    /// Pointer dispatch has recovered the old allocation's canonical block
+    /// while its source owner is still live. Owner exit may make this identity
+    /// stale before the later source publication, exactly as `allow_collect`
+    /// is intended to handle.
+    fn snapshot_live_old_source(&self) -> NonlocalReallocOldSourceSnapshot {
+        assert_eq!(
+            self.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_LIVE,
+            "the bounded old-pointer observation starts before source owner exit"
+        );
+        assert_eq!(
+            self.old_source_snapshot_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "one nonlocal replacement owns one old-pointer observation"
+        );
+        NonlocalReallocOldSourceSnapshot {
+            canonical_block: NONLOCAL_REALLOC_OLD_SOURCE_BLOCK,
+        }
+    }
+
+    /// Represents a successful replacement allocation on a distinct target.
+    /// It intentionally touches no old-page state: only the later old-pointer
+    /// free is allowed to use the old source head.
+    fn allocate_replacement_before_old_source_publication(&self) {
+        assert_eq!(
+            self.old_source_snapshot_count.load(Ordering::Acquire),
+            1,
+            "replacement starts from the one retained old-pointer observation"
+        );
+        assert_eq!(
+            self.replacement_block.compare_exchange(
+                0,
+                NONLOCAL_REALLOC_REPLACEMENT_BLOCK,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ),
+            Ok(0),
+            "the bounded replacement allocation occurs once"
+        );
+        assert_ne!(
+            NONLOCAL_REALLOC_REPLACEMENT_BLOCK,
+            NONLOCAL_REALLOC_OLD_SOURCE_BLOCK,
+            "a replacement allocation cannot reuse the still-live old canonical block"
+        );
+    }
+
+    /// Executes the production `allow_collect=true` old-pointer publication
+    /// only after replacement allocation. Returning `false` from the helper
+    /// means this exact old canonical block claimed an abandoned unowned head.
+    fn publish_old_source_after_replacement(
+        model: &Arc<Self>,
+        snapshot: NonlocalReallocOldSourceSnapshot,
+    ) -> NonlocalReallocOldSourcePublication {
+        assert_eq!(snapshot.canonical_block, NONLOCAL_REALLOC_OLD_SOURCE_BLOCK);
+        assert_eq!(
+            model.replacement_block.load(Ordering::Acquire),
+            NONLOCAL_REALLOC_REPLACEMENT_BLOCK,
+            "the replacement allocation completes before old-source publication"
+        );
+        assert_eq!(
+            model.old_source_publication_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the old canonical block reaches one source publication attempt"
+        );
+        let was_owned = model
+            .blocks
+            .publish_abandoned(&model.head, 0);
+        if was_owned {
+            NonlocalReallocOldSourcePublication::PublishedToSourceOwner
+        } else {
+            assert_eq!(
+                model.owner_identity.load(Ordering::Acquire),
+                MODEL_OWNER_ABANDONED,
+                "only the owner's released abandoned head yields the W07 continuation"
+            );
+            assert_eq!(
+                model.claimed_continuation_count.fetch_add(1, Ordering::AcqRel),
+                0,
+                "the unowned-head CAS creates one claimed continuation"
+            );
+            NonlocalReallocOldSourcePublication::ClaimedAbandoned(
+                NonlocalReallocClaimedAbandonedContinuation {
+                    model: Arc::clone(model),
+                    canonical_block: snapshot.canonical_block,
+                },
+            )
+        }
+    }
+
+    /// Uses the real owner-side detach and verifies that its one old canonical
+    /// client is neither lost nor replaced by the new allocation identity.
+    fn collect_old_source_once(&self) -> usize {
+        let collected = self.blocks.collect_once(&self.head);
+        assert!(
+            collected <= 1,
+            "the replacement identity never enters the old source remote list"
+        );
+        if collected != 0 {
+            assert_eq!(collected, 1);
+            assert_eq!(
+                self.old_client_count.fetch_sub(1, Ordering::AcqRel),
+                1,
+                "one source collection consumes the still-counted old client"
+            );
+        }
+        collected
+    }
+
+    fn release_empty_abandoned_head(&self) {
+        let mut no_hook: Option<fn()> = None;
+        assert_eq!(
+            try_unown_abandoned_head_with(&self.head, &mut no_hook),
+            AbandonedOwnerHeadTransition::Released,
+            "only an owned empty head may transfer the source owner bit"
+        );
+        assert_eq!(self.head.load(Ordering::Acquire), 0);
+    }
+
+    /// Models source owner exit after the old-pointer snapshot. It first uses
+    /// the production detach; if that finds no block, the production unown CAS
+    /// races the producer's later old-pointer publication. A failed unown CAS
+    /// must make this owner collect the exact old block instead of dropping it.
+    fn exit_collect_and_unown(&self) -> NonlocalReallocOwnerExitOutcome {
+        assert!(
+            !self.owner_exit_started.swap(true, Ordering::AcqRel),
+            "one source owner performs the exit transition"
+        );
+
+        // `theap.c` collects the live owner's remote head before `arena.c`
+        // publishes the abandoned identity and enters its common unown loop.
+        // Keeping that scalar order visible prevents this atomic-tail witness
+        // from silently treating an abandoned identity as authority for the
+        // live owner collection.
+        let initially_collected = self.collect_old_source_once();
+        assert_eq!(
+            self.owner_identity.compare_exchange(
+                MODEL_OWNER_LIVE,
+                MODEL_OWNER_ABANDONED,
+                Ordering::Release,
+                Ordering::Acquire,
+            ),
+            Ok(MODEL_OWNER_LIVE),
+            "owner exit publishes the abandoned identity after source collection"
+        );
+
+        if initially_collected == 1 {
+            assert_eq!(
+                self.owner_collection_count.fetch_add(1, Ordering::AcqRel),
+                0,
+                "the exiting owner collects the old block once"
+            );
+            self.release_empty_abandoned_head();
+            return NonlocalReallocOwnerExitOutcome::CollectedOldSource;
+        }
+
+        let mut no_hook: Option<fn()> = None;
+        match try_unown_abandoned_head_with(&self.head, &mut no_hook) {
+            AbandonedOwnerHeadTransition::Released => {
+                assert_eq!(
+                    self.old_client_count.load(Ordering::Acquire),
+                    1,
+                    "unown does not release the still-live old client before its source publication"
+                );
+                NonlocalReallocOwnerExitOutcome::UnownedBeforeOldSourcePublication
+            }
+            AbandonedOwnerHeadTransition::RemotePublished(observed) => {
+                assert_eq!(
+                    thread_free_block_address(observed),
+                    NONLOCAL_REALLOC_OLD_SOURCE_BLOCK,
+                    "a failed unown CAS observes the old canonical block, not the replacement"
+                );
+                assert_eq!(
+                    self.collect_old_source_once(),
+                    1,
+                    "the owner retries through source collection after a late old-pointer publication"
+                );
+                assert_eq!(
+                    self.owner_collection_count.fetch_add(1, Ordering::AcqRel),
+                    0,
+                    "the owner has one collection responsibility after the failed unown"
+                );
+                self.release_empty_abandoned_head();
+                NonlocalReallocOwnerExitOutcome::CollectedOldSource
+            }
+            AbandonedOwnerHeadTransition::NotOwned => {
+                panic!("no other transition may release the exiting owner's source head")
+            }
+        }
+    }
+
+    fn assert_owner_collected_old_source(&self) {
+        self.assert_common_old_source_tail();
+        assert_eq!(self.owner_collection_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.claimed_continuation_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.claimed_continuation_finished.load(Ordering::Acquire), 0);
+    }
+
+    fn assert_claimed_continuation_finished(&self) {
+        self.assert_common_old_source_tail();
+        assert_eq!(self.owner_collection_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.claimed_continuation_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.claimed_continuation_finished.load(Ordering::Acquire), 1);
+    }
+
+    fn assert_common_old_source_tail(&self) {
+        assert!(self.owner_exit_started.load(Ordering::Acquire));
+        assert_eq!(self.old_source_snapshot_count.load(Ordering::Acquire), 1);
+        assert_eq!(
+            self.replacement_block.load(Ordering::Acquire),
+            NONLOCAL_REALLOC_REPLACEMENT_BLOCK
+        );
+        assert_eq!(self.old_source_publication_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.old_client_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.head.load(Ordering::Acquire), 0);
+        assert_eq!(
+            self.blocks.next[0].load(Ordering::Relaxed),
+            0,
+            "the old canonical block never links to the replacement identity"
+        );
+        assert!(self.blocks.published[0].load(Ordering::Acquire));
+        assert!(self.blocks.collected[0].load(Ordering::Acquire));
+        assert!(
+            !self.blocks.published[1].load(Ordering::Acquire),
+            "the replacement allocation is never published to the old source head"
+        );
+        assert!(
+            !self.blocks.collected[1].load(Ordering::Acquire),
+            "owner collection never reuses the replacement identity as the old block"
+        );
+    }
+}
+
 /// Compile-time guard for the concrete W07 boundary that this address-free
 /// model represents. Either `Copy` or `Clone` would make the implementation
 /// choice below ambiguous, so this test stops compiling if the real claim can
@@ -939,6 +1291,66 @@ fn loom_claimed_abandoned_remote_free_fault_retains_the_exact_token_without_repu
             "the retained claim still names the stale-snapshot client"
         );
         model.assert_retained_after_detach();
+    });
+}
+
+#[test]
+fn loom_nonlocal_realloc_replacement_precedes_one_old_source_tail() {
+    loom::model(|| {
+        let model = Arc::new(NonlocalReallocSourceTailModel::new());
+        let producer_model = Arc::clone(&model);
+        let (snapshot_ready_send, snapshot_ready_receive) = mpsc::channel();
+
+        // The old pointer is resolved first. The producer then allocates a
+        // distinct replacement before it can execute the source `mi_free` CAS
+        // for that old pointer. The send makes the snapshot's stale-owner gap
+        // explicit without ordering either later replacement work or the CAS
+        // against the owner-exit thread.
+        let producer = thread::spawn(move || {
+            let snapshot = producer_model.snapshot_live_old_source();
+            snapshot_ready_send
+                .send(())
+                .expect("owner exit waits for the old-pointer snapshot");
+            producer_model.allocate_replacement_before_old_source_publication();
+            NonlocalReallocSourceTailModel::publish_old_source_after_replacement(
+                &producer_model,
+                snapshot,
+            )
+        });
+
+        snapshot_ready_receive
+            .recv()
+            .expect("the producer retains its old-pointer observation");
+
+        // This is the exiting source owner: collection may see the old block
+        // before the common unown loop, or it may observe an empty head and
+        // race the producer's source CAS while trying to unown. Loom explores
+        // both without replacing any production atomic transition.
+        let owner_model = Arc::clone(&model);
+        let owner = thread::spawn(move || owner_model.exit_collect_and_unown());
+
+        let publication = producer.join().expect("old-source producer completes");
+        let owner_outcome = owner.join().expect("source owner exit completes");
+
+        match (owner_outcome, publication) {
+            (
+                NonlocalReallocOwnerExitOutcome::CollectedOldSource,
+                NonlocalReallocOldSourcePublication::PublishedToSourceOwner,
+            ) => model.assert_owner_collected_old_source(),
+            (
+                NonlocalReallocOwnerExitOutcome::UnownedBeforeOldSourcePublication,
+                NonlocalReallocOldSourcePublication::ClaimedAbandoned(continuation),
+            ) => {
+                // The unowned-head winner owns the exact old block and must
+                // take a W07-style continuation rather than retrying the
+                // publication or treating the new replacement as that block.
+                continuation.finish_source_tail();
+                model.assert_claimed_continuation_finished();
+            }
+            _ => panic!(
+                "an old-pointer source CAS either hands its exact block to the exiting owner or claims its abandoned continuation"
+            ),
+        }
     });
 }
 
