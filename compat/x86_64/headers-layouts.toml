@@ -266,6 +266,30 @@ sources = [
 headers = ["include/strings.h"]
 
 [[probe]]
+id = "memccpy"
+command = "./scripts/dev-x86_64.sh memccpy-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/memccpy_header_abi_probe.c",
+  "compat/x86_64/memccpy_header_abi_probe.cpp",
+  "compat/x86_64/run_memccpy_header_abi.sh",
+]
+headers = ["include/string.h"]
+
+[[probe]]
+id = "aio-error"
+command = "./scripts/dev-x86_64.sh aio-error-header-abi"
+state = "required"
+kind = "compile-only"
+sources = [
+  "compat/x86_64/aio_error_header_abi_probe.c",
+  "compat/x86_64/aio_error_header_abi_probe.cpp",
+  "compat/x86_64/run_aio_error_header_abi.sh",
+]
+headers = ["include/aio.h"]
+
+[[probe]]
 id = "byte-strings"
 command = "./scripts/dev-x86_64.sh byte-strings-header-abi"
 state = "required"

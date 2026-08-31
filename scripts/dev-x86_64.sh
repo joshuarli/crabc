@@ -117,6 +117,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
   callback-algorithms-header-abi  compile the staged x86 C/C++ stdlib callback-algorithm declarations
   ffs-header-abi  compile the staged x86 C/C++ strings.h find-first-set declarations
+  memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declarations
+  aio-error-header-abi  verify x86 <aio.h> aio_error C/C++ declaration and layout
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
   memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declaration
@@ -446,6 +448,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-intmax-arithmetic  run the static x86 crabc-libc intmax-arithmetic slice
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
+  libc-memccpy  run the archive-free static x86 crabc-libc memccpy slice
+  libc-aio-error  run the archive-free static x86 crabc-libc aio_error slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
   libc-legacy-memory  run the static x86 crabc-libc bcopy/bzero adapter slice
   libc-memccpy  run the static x86 crabc-libc memccpy slice
@@ -2112,6 +2116,10 @@ general facade admission, or C ABI support claim.
   math-log-header-abi  verify x86 log/logf C++ ABI/linkage
   math-sin-header-abi  verify x86 sin/sinf C++ ABI/linkage
   math-tan-header-abi  verify x86 tan/tanf C++ ABI/linkage
+  libc-inet-netof  run the archive-free static x86 crabc-libc classful IPv4 network-part slice
+  libc-inet-network  run the static x86 crabc-libc inet_network parser-composition slice
+  libc-ns-put32  run the archive-free static x86 crabc-libc DNS 32-bit wire-write slice
+  libc-ns-skiprr  run the static x86 crabc-libc DNS resource-record span slice
 EOF
 }
 
@@ -2759,6 +2767,14 @@ run_libc_lchmod_unsupported() {
 
 run_ffs_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ffs_header_abi.sh
+}
+
+run_memccpy_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_memccpy_header_abi.sh
+}
+
+run_aio_error_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_aio_error_header_abi.sh
 }
 
 run_byte_strings_header_abi() {
@@ -4212,7 +4228,7 @@ case "$command" in
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
     inet-address-header-abi|nameser-header-abi|endservent-header-abi) ;;
-    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
+    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
@@ -4253,6 +4269,8 @@ case "$command" in
     integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
     ffs-header-abi) ;;
+    memccpy-header-abi) ;;
+    aio-error-header-abi) ;;
     byte-strings-header-abi) ;;
     memory-search-header-abi) ;;
     memccpy-header-abi) ;;
@@ -4293,7 +4311,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4711,6 +4729,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ffs-header-abi takes no arguments"
         ensure_image
         run_ffs_header_abi
+        ;;
+    memccpy-header-abi)
+        [ "$#" -eq 0 ] || fail "memccpy-header-abi takes no arguments"
+        ensure_image
+        run_memccpy_header_abi
+        ;;
+    aio-error-header-abi)
+        [ "$#" -eq 0 ] || fail "aio-error-header-abi takes no arguments"
+        ensure_image
+        run_aio_error_header_abi
         ;;
     byte-strings-header-abi)
         [ "$#" -eq 0 ] || fail "byte-strings-header-abi takes no arguments"
@@ -6442,6 +6470,16 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_ffs.sh
         ;;
+    libc-memccpy)
+        [ "$#" -eq 0 ] || fail "libc-memccpy takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_memccpy.sh
+        ;;
+    libc-aio-error)
+        [ "$#" -eq 0 ] || fail "libc-aio-error takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_aio_error.sh
+        ;;
     libc-byte-strings)
         [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"
         ensure_image
@@ -7131,5 +7169,25 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "math-tanh-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_math_tanh_header_abi.sh
+        ;;
+    libc-inet-netof)
+        [ "$#" -eq 0 ] || fail "libc-inet-netof takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_inet_netof.sh
+        ;;
+    libc-inet-network)
+        [ "$#" -eq 0 ] || fail "libc-inet-network takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_inet_network.sh
+        ;;
+    libc-ns-put32)
+        [ "$#" -eq 0 ] || fail "libc-ns-put32 takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_ns_put32.sh
+        ;;
+    libc-ns-skiprr)
+        [ "$#" -eq 0 ] || fail "libc-ns-skiprr takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_ns_skiprr.sh
         ;;
 esac

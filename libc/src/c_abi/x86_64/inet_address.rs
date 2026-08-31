@@ -690,6 +690,9 @@ pub unsafe extern "C" fn __inet_aton(
 ///
 /// `source` must designate a readable NUL-terminated C string. This follows
 /// musl by calling the hidden strong `__inet_aton` implementation directly.
+/// Keep this C ABI boundary materialized for the separate legacy
+/// `inet_network` wrapper, whose exact musl source dependency is `inet_addr`.
+#[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn inet_addr(source: *const c_char) -> u32 {
     let mut address = [0u8; 4];

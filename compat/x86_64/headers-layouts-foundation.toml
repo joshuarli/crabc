@@ -1617,8 +1617,8 @@ state = "partial-verified"
 scope = "v1-direct-probe-union"
 owner = "libc.headers-layouts"
 evidence = ["headers-layouts.toml"]
-legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "pthread-cancellation", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "login-name", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "nameser", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
-description = "The existing forty-seven direct gates remain required inputs and retain their bounded declaration/layout scopes."
+legacy_probes = ["project", "math-complex", "sys-reg", "types", "stat", "utime", "pthread-c11", "pthread-cancellation", "stdio-standard", "ctype", "integer-arithmetic", "integer-parse", "float-parse", "intmax-arithmetic", "credential-observation", "login-name", "child-reaping", "immediate-termination", "callback-algorithms", "ffs", "memccpy", "aio-error", "byte-strings", "memory-search", "string-copy", "random-entropy", "time", "poll", "select", "fcntl", "ioctl", "unistd", "system", "syscall", "signal", "termios", "mman", "resource", "socket", "nameser", "inet-address", "epoll", "timeval-transitive", "sys-time-direct", "access-header", "xattr-header", "machine-context", "event-descriptors", "dirent"]
+description = "The existing forty-nine direct gates remain required inputs and retain their bounded declaration/layout scopes."
 
 [[abi_facet]]
 id = "static-c-cxx-composition"

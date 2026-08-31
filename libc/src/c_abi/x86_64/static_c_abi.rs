@@ -528,6 +528,8 @@ mod memfd_create;
 mod readiness_waits;
 #[path = "event_descriptors.rs"]
 mod event_descriptors;
+#[path = "aio_error.rs"]
+mod aio_error;
 #[path = "timer_fd.rs"]
 mod timer_fd;
 #[path = "signal_fd.rs"]
@@ -698,6 +700,14 @@ mod math_acosh;
 mod math_sincos;
 #[path = "math_pow.rs"]
 mod math_pow;
+#[path = "ns_put32.rs"]
+mod ns_put32;
+#[path = "ns_skiprr.rs"]
+mod ns_skiprr;
+#[path = "inet_netof.rs"]
+mod inet_netof;
+#[path = "inet_network.rs"]
+mod inet_network;
 
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps

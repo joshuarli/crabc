@@ -133,7 +133,7 @@ grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$archive_elf_symbols" ||
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __aio_atfork binding'
 for unselected in _Fork vfork clone execve posix_spawn wait3 malloc free calloc realloc \
-    aio_read aio_write aio_fsync aio_error aio_return aio_cancel lio_listio aio_suspend; do
+    aio_read aio_write aio_fsync aio_return aio_cancel lio_listio aio_suspend; do
     ! grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols" ||
         fail "archive exports unselected ${unselected}"
 done

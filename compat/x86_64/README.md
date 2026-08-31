@@ -264,6 +264,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sched-yield-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
+./scripts/dev-x86_64.sh memccpy-header-abi
+./scripts/dev-x86_64.sh aio-error-header-abi
 ./scripts/dev-x86_64.sh byte-strings-header-abi
 ./scripts/dev-x86_64.sh memory-search-header-abi
 ./scripts/dev-x86_64.sh memccpy-header-abi
@@ -542,6 +544,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ns-get16
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
+./scripts/dev-x86_64.sh libc-memccpy
+./scripts/dev-x86_64.sh libc-aio-error
 ./scripts/dev-x86_64.sh libc-byte-strings
 ./scripts/dev-x86_64.sh libc-legacy-memory
 ./scripts/dev-x86_64.sh libc-memccpy
@@ -679,7 +683,7 @@ report and not a substitute for the canonical dynamic x86 `os-test`,
 prerequisites, the remaining ABI contract, family completion, promotion, and
 public x86 support remain required.
 
-`headers-layouts.toml` is the checked-in contract for the forty-four selected
+`headers-layouts.toml` is the checked-in contract for the forty-nine selected
 native header gates. It names each dispatcher command, direct C/C++ probe and
 runner, and only the project headers explicitly included by those probes. It
 does not claim a transitive include closure, complete installed headers,
@@ -1556,6 +1560,20 @@ declarations for `ffs`, `ffsl`, and `ffsll`. It verifies their XOPEN/GNU/BSD
 feature gate, strict/POSIX hiding, exact signatures, and unmangled C++ symbol
 references. This is compile-only header evidence; it does not select C text,
 general bit operations, or `crabc-libc`.
+
+`memccpy-header-abi` compiles project-first and pinned-musl C/C++ `<string.h>`
+declarations for `memccpy(void *restrict, const void *restrict, int, size_t)`.
+It proves X/Open/GNU/BSD visibility, strict/POSIX hiding, the exact pointer
+signature, and unmangled C++ C linkage. This is header-only evidence, not a
+general memory or C-string capability.
+
+`aio-error-header-abi` compiles project-first and pinned-musl GNU-profile
+C/C++ `<aio.h>` observations for `aio_error(const struct aiocb *)`. It proves
+the exact function-pointer type, 168-byte align-8 `struct aiocb`, volatile
+`__err` at offset 112, `_LARGEFILE64_SOURCE` alias, and unmangled C++ C
+linkage. It is header evidence only: pinned musl's macro-free `<aio.h>` leaves
+its embedded `struct sigevent` incomplete, and no AIO lifecycle/runtime claim
+is selected.
 
 `byte-strings-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>`/`<strings.h>` declarations for the closed byte-string set: `index`, `rindex`,
@@ -4954,6 +4972,29 @@ null-buffer `getcwd` allocation extension. It excludes allocation, pathname
 canonicalization, directory streams, xattr/ACL, mount/namespace policy,
 cancellation, dynamic runtime, header/runtime family completion, promotion,
 full x86-64 parity, and public x86 support.
+
+`libc-memccpy` is a separately recorded `static-c-memccpy`
+`verified_artifact` inside still-planned `libc.posix-runtime`, not a general
+memory or C-string capability. Its project-header fixture runs through pinned
+musl 1.2.6, then through a true archive-free `-nostdlib -static` candidate
+linked from exactly one extracted `memccpy` object, never `libc.a`.
+It preserves musl `src/string/memccpy.c`'s equally misaligned byte prefix and
+`ONES`/`HIGHS` marker-word check, low-eight-bit marker conversion, exact-range
+return-after-marker/null behavior, and bounded page-edge input. It excludes
+overlap support, `memcpy`/`memmove`/`memset`/`mempcpy`, errno/TLS, allocation,
+syscalls, stdio, resolver/DNS/netdb, sockets, family completion, promotion,
+and public x86 support.
+
+`libc-aio-error` is a separately recorded `static-c-aio-error`
+`verified_artifact` inside still-planned `libc.posix-runtime`, not AIO runtime
+support. Its project-header fixture runs through pinned musl 1.2.6 and then a
+true archive-free `-nostdlib -static` candidate linked from exactly one
+extracted `aio_error` object, never `libc.a`. It preserves musl
+`src/aio/aio.c`'s compiler-only barrier, volatile `__err` observation at the
+x86 168-byte `aiocb`'s offset 112, and `0x7fffffff` sign-bit mask. AIO
+submission, `aio_return`, waits, cancellation, completion, I/O, state,
+errno/TLS, resolver/DNS/netdb, sockets, promotion, and public support remain
+excluded.
 
 `libc-byte-strings` is a separately recorded
 `static-c-byte-strings` `verified_artifact` gate over that archive, not a

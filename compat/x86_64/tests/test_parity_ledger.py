@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 277)
+        self.assertEqual(report["verified_artifact_count"], 283)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -1925,6 +1925,18 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/event_descriptors_header_abi_probe.c",
                 "compat/x86_64/event_descriptors_header_abi_probe.cpp",
                 "compat/x86_64/run_event_descriptors_header_abi.sh",
+            ],
+        )
+        aio_error = next(probe for probe in probes if probe["id"] == "aio-error")
+        assert isinstance(aio_error, dict)
+        self.assertEqual(aio_error["kind"], "compile-only")
+        self.assertEqual(aio_error["headers"], ["include/aio.h"])
+        self.assertEqual(
+            aio_error["sources"],
+            [
+                "compat/x86_64/aio_error_header_abi_probe.c",
+                "compat/x86_64/aio_error_header_abi_probe.cpp",
+                "compat/x86_64/run_aio_error_header_abi.sh",
             ],
         )
         dirent = next(probe for probe in probes if probe["id"] == "dirent")
@@ -10550,6 +10562,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/ffs_header_abi_probe.c",
             "compat/x86_64/ffs_header_abi_probe.cpp",
             "compat/x86_64/run_ffs_header_abi.sh",
+            "compat/x86_64/memccpy_header_abi_probe.c",
+            "compat/x86_64/memccpy_header_abi_probe.cpp",
+            "compat/x86_64/run_memccpy_header_abi.sh",
+            "include/aio.h",
+            "compat/x86_64/aio_error_header_abi_probe.c",
+            "compat/x86_64/aio_error_header_abi_probe.cpp",
+            "compat/x86_64/run_aio_error_header_abi.sh",
             "compat/x86_64/memory_search_header_abi_probe.c",
             "compat/x86_64/memory_search_header_abi_probe.cpp",
             "compat/x86_64/run_memory_search_header_abi.sh",
@@ -10561,6 +10580,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("./scripts/dev-x86_64.sh poll-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh select-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh byte-strings-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh memccpy-header-abi", header_commands)
+        self.assertIn("./scripts/dev-x86_64.sh aio-error-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh integer-parse-header-abi", header_commands)
         self.assertIn("./scripts/dev-x86_64.sh intmax-arithmetic-header-abi", header_commands)
         self.assertIn(
@@ -22015,9 +22036,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("dn_skipname", exports)
-        self.assertFalse(
-            exports & {"ns_skiprr", "ns_name_uncompress", "res_init"}
-        )
+        self.assertFalse(exports & {"ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -22128,7 +22147,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertTrue({"__dn_expand", "dn_expand"} <= exports)
-        self.assertFalse(exports & {"ns_skiprr", "ns_name_uncompress", "res_init"})
+        self.assertFalse(exports & {"ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -22261,9 +22280,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("_ns_flagdata", exports)
-        self.assertFalse(
-            exports & {"ns_initparse", "ns_parserr", "ns_skiprr", "ns_name_uncompress"}
-        )
+        self.assertFalse(exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -22396,10 +22413,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_get16", exports)
-        self.assertFalse(
-            exports
-            & {"ns_put32", "ns_skiprr"}
-        )
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -22512,7 +22525,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_get32", exports)
-        self.assertFalse(exports & {"ns_put32", "ns_skiprr"})
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -22624,9 +22636,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             .splitlines()
         )
         self.assertIn("ns_put16", exports)
-        self.assertFalse(
-            exports & {"ns_put32", "ns_skiprr"}
-        )
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -24135,6 +24144,320 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-getloadavg evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
+
+    def test_aio_error_artifact_keeps_its_archive_free_observation_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-aio-error"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/aio_error.rs",
+            "include/aio.h",
+            "compat/x86_64/aio_error_header_abi_probe.c",
+            "compat/x86_64/aio_error_header_abi_probe.cpp",
+            "compat/x86_64/run_aio_error_header_abi.sh",
+            "compat/x86_64/libc_aio_error_probe.c",
+            "compat/x86_64/libc_aio_error_start.S",
+            "compat/x86_64/run_libc_aio_error.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-aio-error"},
+        )
+        for phrase in (
+            "archive-free `-nostdlib -static` candidate",
+            "exactly one extracted `aio_error` object",
+            "never `libc.a`",
+            "volatile `struct aiocb::__err` load",
+            "168-byte align-8",
+            "AIO request submission",
+            "resolver/DNS/netdb",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        mapping = next(entry for entry in artifact["oracle"] if entry["kind"] == "c-posix")
+        self.assertIn("src/aio/aio.c::aio_error", mapping["role"])
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-aio-error"
+        )
+        changed_artifact["description"] = changed_artifact["description"].replace(
+            "never `libc.a`", "uses `libc.a`"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "never `libc.a`"):
+            ledger.validate_ledger(changed)
+
+        changed = copy.deepcopy(data)
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-aio-error"
+        )
+        evidence = changed_artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-memccpy"
+        with self.assertRaisesRegex(ledger.LedgerError, "closed libc-aio-error command"):
+            ledger.validate_ledger(changed)
+
+
+    def test_ns_put32_artifact_keeps_its_private_codec_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/ns_put32.rs", family["source_owners"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-put32"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/ns_put32.rs",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "compat/x86_64/nameser_header_abi_probe.c",
+            "compat/x86_64/nameser_header_abi_probe.cpp",
+            "compat/x86_64/run_nameser_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_ns_put32_probe.c",
+            "compat/x86_64/libc_ns_put32_start.S",
+            "compat/x86_64/run_libc_ns_put32.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ns-put32"},
+        )
+        for phrase in (
+            "Private native x86 static `ns_put32` caller-owned 32-bit nameserver wire-write C ABI artifact",
+            "still-planned `libc.resolver`",
+            "archive-free true `-nostdlib -static` candidate",
+            "exactly one extracted crabc object",
+            "never `libc.a`",
+            "C `unsigned long`'s low 32 bits",
+            "NS_PUT32",
+            "`/etc/hosts`",
+            "`/etc/resolv.conf`",
+            "DNS packet I/O",
+            "netdb/database",
+            "byte-order helper",
+            "Ethernet",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("ns_put32", exports)
+        self.assertFalse(exports & {"ns_name_uncompress"})
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "SysV AMD64 LP64" in item)
+        assert isinstance(c_abi, str)
+        for phrase in (
+            "rdi",
+            "rsi",
+            "returns void",
+            "at least four writable bytes in one allocation",
+            "no alignment",
+            "without reading memory",
+        ):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/ns_parse.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "5-byte `.text.ns_put32` section",
+            "no relocation, call, or syscall",
+            "ns_get16, ns_get32, and ns_put16 are separately selected artifacts",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-put32"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "byte-order helper", "integer conversion"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits byte-order helper"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-put32"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static nameserver dword helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl project-header C execution"
+        ):
+            ledger.validate_ledger(data)
+
+
+    def test_ns_skiprr_artifact_keeps_its_private_parser_boundary(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.resolver")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/ns_skiprr.rs", family["source_owners"])
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-skiprr"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/ns_skiprr.rs",
+            "libc/src/c_abi/x86_64/dn_skipname.rs",
+            "libc/src/c_abi/x86_64/ns_get16.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/static_tls.rs",
+            "include/errno.h",
+            "include/resolv.h",
+            "include/arpa/nameser.h",
+            "compat/x86_64/nameser_header_abi_probe.c",
+            "compat/x86_64/nameser_header_abi_probe.cpp",
+            "compat/x86_64/run_nameser_header_abi.sh",
+            "compat/x86_64/libc_ns_skiprr_probe.c",
+            "compat/x86_64/libc_ns_skiprr_start.S",
+            "compat/x86_64/run_libc_ns_skiprr.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/dev-x86_64.sh",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-ns-skiprr"},
+        )
+        for phrase in (
+            "Private native x86 static `ns_skiprr` caller-owned DNS resource-record span C ABI artifact",
+            "still-planned `libc.resolver`",
+            "separately selected `dn_skipname`",
+            "separately selected `ns_get16`",
+            "`EMSGSIZE`",
+            "initial-TLS `errno`",
+            "deliberately not archive-free",
+            "`ns_initparse`",
+            "`ns_parserr`",
+            "`ns_name_uncompress`",
+            "`dn_expand`",
+            "DNS packet I/O",
+            "netdb/database",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertIn("ns_skiprr", exports)
+        self.assertFalse(exports & {"ns_initparse", "ns_parserr", "ns_name_uncompress"})
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        c_abi = next(item for item in prerequisites if "SysV AMD64 LP64" in item)
+        assert isinstance(c_abi, str)
+        for phrase in (
+            "rdi/rsi",
+            "edx",
+            "ecx",
+            "eax",
+            "ordered readable ptr..eom range in one allocation",
+            "nonnegative count",
+        ):
+            self.assertIn(phrase, c_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/ns_parse.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "ns_parse.lo",
+            "dn_skipname",
+            "NS_GET16",
+            "errno=EMSGSIZE",
+            "ns_initparse",
+            "ns_parserr",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-skiprr"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "deliberately not archive-free", "archive-free"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits deliberately not archive-free"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.resolver")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-ns-skiprr"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "static parser span helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "Pinned-musl/project C/C\\+\\+ nameser header proof"
+        ):
+            ledger.validate_ledger(data)
+
 
     def test_rejects_an_unknown_aarch64_gate(self) -> None:
         data = self.data()
