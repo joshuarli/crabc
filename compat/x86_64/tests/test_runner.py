@@ -1370,7 +1370,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|membarrier-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-membarrier|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -18633,6 +18633,152 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "/workspace/compat/x86_64/run_libc_memory_locking.sh",
             '    memory-locking-header-abi)\n        [ "$#" -eq 0 ] || fail "memory-locking-header-abi takes no arguments"',
             '    libc-memory-locking)\n        [ "$#" -eq 0 ] || fail "libc-memory-locking takes no arguments"',
+        ):
+            self.assertIn(required, runner)
+
+    def test_libc_static_c_abi_membarrier_artifact_stays_direct_branch_only(
+        self,
+    ) -> None:
+        """The direct Linux branch must not become musl's fallback lifecycle."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "membarrier.rs"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "membarrier_header_abi_probe.c"
+        )
+        header_cpp_path = (
+            ROOT / "compat" / "x86_64" / "membarrier_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_membarrier_header_abi.sh"
+        )
+        fixture_path = ROOT / "compat" / "x86_64" / "libc_membarrier_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_membarrier_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_membarrier.sh"
+        )
+        for path in (
+            implementation_path,
+            header_c_path,
+            header_cpp_path,
+            header_runner_path,
+            fixture_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing membarrier artifact input: {path}")
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cpp = header_cpp_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        fixture = fixture_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "membarrier.rs"]', static_root)
+        self.assertIn("SYS_MEMBARRIER: i64 = 324", syscall)
+        for required in (
+            "direct-branch C ABI boundary",
+            "src/linux/membarrier.c",
+            "old-kernel `MEMBARRIER_CMD_PRIVATE_EXPEDITED` signal/semaphore",
+            "`__membarrier_init` registration hook",
+            "weak-alias relationship",
+            "raw_syscall::SYS_MEMBARRIER",
+            "raw_syscall::syscall2(",
+            "c_status(result)",
+            '#[linkage = "weak"]',
+            'pub unsafe extern "C" fn membarrier',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            'fn __membarrier',
+            'fn __membarrier_init',
+            'fn __tl_lock',
+            'fn __tl_unlock',
+            "crabc_mimalloc",
+            "pthread_",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for header in (header_c, header_cpp):
+            for required in (
+                "membarrier_signature",
+                "MEMBARRIER_CMD_QUERY",
+                "MEMBARRIER_CMD_GLOBAL",
+                "MEMBARRIER_CMD_FLAG_CPU",
+                "membarrier_function",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "membarrier_header_abi_probe.c",
+            "membarrier_header_abi_probe.cpp",
+            "_Z10membarrierii",
+            "unmangled C bridge",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_membarrier == 324",
+            "check_query_direct_and_indirect",
+            "check_invalid_command",
+            "check_invalid_query_flag",
+            "PRIVATE_EXPEDITED fallback",
+            "__membarrier_init registration hook",
+            "CRABC_MEMBARRIER_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_membarrier_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_membarrier_header_abi.sh",
+            "membarrier\\tmembarrier.lo",
+            "-nostdlib -static",
+            "-Wl,--gc-sections",
+            "--disassemble=membarrier",
+            "__membarrier __membarrier_init __tl_lock __tl_unlock",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("membarrier", static_exports)
+        self.assertIn('id = "static-c-membarrier"', parity_ledger)
+        for command in (
+            "./scripts/dev-x86_64.sh membarrier-header-abi",
+            "./scripts/dev-x86_64.sh libc-membarrier",
+        ):
+            self.assertIn(command, parity_ledger)
+        for required in (
+            "run_membarrier_header_abi()",
+            "/workspace/compat/x86_64/run_membarrier_header_abi.sh",
+            "run_libc_membarrier()",
+            "/workspace/compat/x86_64/run_libc_membarrier.sh",
+            '    membarrier-header-abi)\n        [ "$#" -eq 0 ] || fail "membarrier-header-abi takes no arguments"',
+            '    libc-membarrier)\n        [ "$#" -eq 0 ] || fail "libc-membarrier takes no arguments"',
         ):
             self.assertIn(required, runner)
 

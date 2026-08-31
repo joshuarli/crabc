@@ -51,6 +51,7 @@
 //! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
 //! system-configuration, caller-owned mapping-core, per-range memory locking,
+//! one direct Linux 5.10 membarrier branch with no fallback/init lifecycle,
 //! direct no-cancellation mapping synchronization, direct anonymous-memory
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
@@ -437,6 +438,8 @@ mod system_configuration;
 mod memory_mapping;
 #[path = "memory_locking.rs"]
 mod memory_locking;
+#[path = "membarrier.rs"]
+mod membarrier;
 #[path = "memory_sync.rs"]
 mod memory_sync;
 #[path = "memfd_create.rs"]

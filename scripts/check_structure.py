@@ -3797,6 +3797,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memory_mapping.rs"]',
         '#[path = "memory_sync.rs"]',
         '#[path = "memory_locking.rs"]',
+        '#[path = "membarrier.rs"]',
         '#[path = "memfd_create.rs"]',
         '#[path = "readiness_waits.rs"]',
         '#[path = "socket_transport.rs"]',
@@ -8553,6 +8554,56 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"locking boundary is missing {required!r}"
             )
 
+    membarrier_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "membarrier.rs"
+    membarrier_text = membarrier_source.read_text(errors="replace")
+    for required in (
+        "direct-branch C ABI boundary",
+        "musl 1.2.6 release commit",
+        "src/linux/membarrier.c",
+        "old-kernel `MEMBARRIER_CMD_PRIVATE_EXPEDITED` signal/semaphore",
+        "`__membarrier_init` registration hook",
+        "weak-alias relationship",
+        "raw_syscall::SYS_MEMBARRIER",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        '#[linkage = "weak"]',
+        'pub unsafe extern "C" fn membarrier',
+    ):
+        if required not in membarrier_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/membarrier.rs: selected static "
+                f"direct-branch boundary is missing {required!r}"
+            )
+    membarrier_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            membarrier_text,
+        )
+    )
+    if membarrier_exports != {"membarrier"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/membarrier.rs: selected static artifact "
+            "must export only the weak public membarrier spelling"
+        )
+    for forbidden in (
+        "fn __membarrier",
+        "fn __membarrier_init",
+        "fn __tl_lock",
+        "fn __tl_unlock",
+        "crabc_mimalloc",
+        "pthread_",
+    ):
+        if forbidden in membarrier_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/membarrier.rs: selected direct branch "
+                f"must not translate {forbidden!r}"
+            )
+    if "pub(crate) const SYS_MEMBARRIER: i64 = 324;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static membarrier "
+            "direct branch requires SYS_MEMBARRIER=324"
+        )
+
     memfd_create_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "memfd_create.rs"
     memfd_create_text = memfd_create_source.read_text(errors="replace")
     for required in (
@@ -10957,6 +11008,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         memory_mapping_text,
         memory_sync_text,
         memory_locking_text,
+        membarrier_text,
         memfd_create_text,
         nanosleep_text,
         descriptor_entry_text,
@@ -11559,6 +11611,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memory_mapping.rs", memory_mapping_text),
         ("memory_sync.rs", memory_sync_text),
         ("memory_locking.rs", memory_locking_text),
+        ("membarrier.rs", membarrier_text),
         ("memfd_create.rs", memfd_create_text),
         ("nanosleep.rs", nanosleep_text),
         ("descriptor_entry.rs", descriptor_entry_text),

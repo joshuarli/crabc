@@ -286,6 +286,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh sysconf-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
 ./scripts/dev-x86_64.sh getdtablesize-header-abi
+./scripts/dev-x86_64.sh membarrier-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
@@ -471,6 +472,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-sysconf
 ./scripts/dev-x86_64.sh libc-getpagesize
 ./scripts/dev-x86_64.sh libc-getdtablesize
+./scripts/dev-x86_64.sh libc-membarrier
 ./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
@@ -1547,6 +1549,14 @@ strict/POSIX/GNU C/C++ `<sys/mman.h>` profiles for exactly `mlock`, `munlock`,
 and GNU `mlock2`/`MLOCK_ONFAULT`, including GNU hiding and unmangled C++
 linkage. It is compile-only evidence, not archive linkage, locking behavior,
 complete `sys/mman.h`, family completion, or public x86 support.
+
+`membarrier-header-abi` separately compares project-first and pinned-musl
+all-profile C/C++ `<sys/membarrier.h>` declarations for exactly
+`int membarrier(int, int)` and `QUERY`/`GLOBAL`/`FLAG_CPU=0/1/1`. It records
+one deliberate header-only distinction: pinned musl leaves the C++ reference
+mangled, while the preexisting project header supplies an unmangled C bridge.
+This is not source-level C++ header parity, archive linkage, a barrier command,
+registration, runtime behavior, or general C++ runtime evidence.
 
 `memfd-create-header-abi` separately compares project-first and pinned-musl
 eight-profile C/C++ `<sys/mman.h>` GNU visibility for exactly
@@ -3956,6 +3966,22 @@ policy, allocator, libc.so, CRT, loader, sysroot, and public x86 support. This
 is one artifact within planned `libc.posix-runtime`, not full `<sys/mman.h>`,
 family, C-runtime, or platform completion.
 
+`libc-membarrier` is a separate capability-free
+`static-c-membarrier` artifact over that archive, not broad barrier or runtime
+support. Its project-header fixture first runs through pinned musl and then a
+true `-nostdlib -static` candidate. It proves only the direct Linux 5.10
+`membarrier=324` branch for `QUERY` and direct invalid-command/invalid-flag
+`EINVAL`, including a weak public `membarrier` binding and initial-TLS `errno`.
+Pinned musl's source aliases that spelling to `__membarrier` and also carries a
+PRIVATE_EXPEDITED old-kernel signal/semaphore fallback plus
+`__membarrier_init` registration; this candidate rejects that internal
+fallback/init/weak-alias closure and does not issue a barrier, register a
+command, or establish RSEQ or synchronization semantics. Its C++ header
+spelling distinction is documented, not C++ source/header parity. It does not
+select barrier lifecycle, pthread/signal/semaphore coordination, allocator or
+runtime behavior, C runtime/family/platform parity, promotion, or public x86
+support.
+
 `libc-memfd-create` is a separately recorded private planned
 `static-c-memfd-create` evidence artifact over that archive, not a descriptor,
 filesystem, or C-runtime capability. Its GNU project-header C body first
@@ -5746,6 +5772,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-sysconf`,
 `libc-getpagesize`,
 `libc-getdtablesize`,
+`libc-membarrier`,
 `libc-mapping-core`,
 `libc-memory-sync`,
 `libc-memory-locking`,

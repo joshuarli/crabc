@@ -1884,6 +1884,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh mman-header-abi", scope = "This compile-only C/C++ sys/mman declaration and value slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh memory-sync-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ sys/mman.h matrix checks only the unconditional `msync(void *, size_t, int)` declaration, MS_ASYNC/MS_INVALIDATE/MS_SYNC=1/2/4 values, and unmangled C++ linkage. It does not select archive linkage, runtime behavior, cancellation, complete sys/mman.h coverage, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh memory-locking-header-abi", scope = "This project-first/pinned-musl strict/POSIX/GNU C/C++ per-range locking matrix checks only `mlock`/`munlock` declarations, GNU `mlock2`/`MLOCK_ONFAULT` visibility, strict/POSIX GNU hiding, and unmangled C++ linkage. It does not select archive linkage, runtime behavior, installed-header completion, family completion, or public support." },
+  { state = "required", command = "./scripts/dev-x86_64.sh membarrier-header-abi", scope = "This project-first/pinned-musl all-profile C/C++ sys/membarrier.h matrix checks only `int membarrier(int, int)`, MEMBARRIER_CMD_QUERY/GLOBAL/FLAG_CPU=0/1/1, and the documented C++ spelling difference: pinned musl retains a mangled declaration while the existing project header supplies an unmangled C bridge. It does not select archive linkage, runtime behavior, barrier commands, registration, source-level C++ header parity, general C++ runtime, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh memfd-create-header-abi", scope = "This project-first/pinned-musl eight-profile C/C++ sys/mman.h matrix checks only GNU `memfd_create(const char *, unsigned)`, MFD_CLOEXEC/MFD_ALLOW_SEALING/MFD_HUGETLB=1/2/4 values, GNU visibility, hiding in default/strict/POSIX/XOPEN/BSD and macro-free C++ selections, and unmangled GNU C++ linkage. It does not select archive linkage, runtime behavior, seals/fcntl, installed-header completion, family completion, or public support." },
   { state = "required", command = "./scripts/dev-x86_64.sh resource-header-abi", scope = "This compile-only C/C++ sys/resource strict/GNU/LFS layout, declaration, and alias slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh socket-header-abi", scope = "This project-first/pinned-musl C/C++ base socket transport declaration/layout plus tiny native IPv6 address-classification macro-behavior and immutable `in6addr_any`/`in6addr_loopback` union-layout/C++ data-linkage slice is partial evidence; it does not select socket options, vectored/ancillary messages, address conversion, or C networking runtime behavior." },
@@ -3793,6 +3794,55 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, declaration, and behavior oracle for src/mman/mlock.c, src/mman/munlock.c, and src/linux/mlock2.c; cancellation and whole-process locking remain unselected." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "mlock=149, munlock=150, mlock2=325, rdi/rsi/rdx, raw errno, MLOCK_ONFAULT, range, and memlock-limit contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 C pointer/size/flag calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-membarrier"
+description = "Private native x86 selected-static-archive direct Linux 5.10 `membarrier` C ABI artifact inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive defines only a weak public `membarrier` spelling and resolves a freestanding C fixture after equivalent pinned-musl execution. It carries the caller's signed command and flags unchanged through Linux/x86-64 `membarrier=324` in rdi/rsi and maps raw errors to -1 through the selected initial-TLS errno slot; success preserves stale errno. The fixture compares only MEMBARRIER_CMD_QUERY=0 with flags zero and invalid command/QUERY-with-CPU-flag EINVAL results against adjacent raw syscalls. It does not issue a barrier, register a command, establish RSEQ state, or claim memory-ordering or policy semantics. Pinned musl 1.2.6 `src/linux/membarrier.c` makes weak `membarrier` an alias of `__membarrier`, whose direct syscall/__syscall_ret branch is selected here; its old-kernel PRIVATE_EXPEDITED signal/semaphore fallback, `__membarrier_init` registration hook, internal alias target, and tl-lock aliases are rejected from the final ELF. Thus this preserves a standalone weak public binding, not the musl weak-alias relationship or full musl membarrier parity. Pinned musl's bare header gives C++ a mangled spelling while the preexisting project header deliberately adds an unmangled C bridge; that header-only difference is recorded separately and is not C++ source/header parity or a general C++ runtime claim. This capability-free artifact does not select barrier lifecycle, global/private expedited behavior, registration, old-kernel fallback, signal/semaphore/pthread/TLS coordination, allocator/runtime behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/membarrier.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/stdint.h",
+  "include/sys/membarrier.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/membarrier_header_abi_probe.c",
+  "compat/x86_64/membarrier_header_abi_probe.cpp",
+  "compat/x86_64/run_membarrier_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_membarrier_probe.c",
+  "compat/x86_64/libc_membarrier_start.S",
+  "compat/x86_64/run_libc_membarrier.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the two signed C int words in rdi/rsi and returns signed int in eax. Linux/x86-64 `membarrier=324` consumes those same words; the direct wrapper changes only raw -4095 through -1 into C -1 plus the selected initial-TLS errno, while direct success preserves stale errno.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/linux/membarrier.c::{__membarrier,__membarrier_init}; its AArch64 static inventory has `membarrier\tmembarrier.lo\tW\tWEAK\t0\t15c`. This leaf selects only __membarrier's initial SYS_membarrier/__syscall_ret branch for Linux 5.10 QUERY and direct EINVAL cases, retaining weak public membarrier but not the weak_alias relationship to __membarrier.",
+  "Musl's PRIVATE_EXPEDITED-on-old-kernel ENOSYS signal/semaphore fallback, __membarrier_init registration request, __membarrier internal target, and __tl_lock/__tl_unlock aliases are intentionally absent. The fixture never requests GLOBAL, GLOBAL_EXPEDITED, PRIVATE_EXPEDITED, registration, CPU-targeted, or RSEQ commands; it does not issue any barrier or establish synchronization semantics.",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl all-profile C/C++ `<sys/membarrier.h>` matrix proves unconditional `int membarrier(int, int)` and MEMBARRIER_CMD_QUERY/GLOBAL/FLAG_CPU=0/1/1. Pinned musl leaves the C++ reference mangled, whereas the existing project header deliberately uses an unmangled C bridge; that recorded header-only difference is not source-level C++ header parity or a general C++ runtime claim. The static fixture additionally preprocesses project errno.h, stdint.h, sys/membarrier.h, sys/syscall.h, and bits/syscall.h. This is a selected declaration plus archive-linkage boundary, not complete `<sys/membarrier.h>`, installed-header, C ABI, or runtime completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-membarrier", scope = "Pinned-musl/project C/C++ sys/membarrier header proof plus a true dependency-free x86 crabc-libc `-nostdlib -static -Wl,--gc-sections` candidate. The gate checks C/C++ declaration/value profiles and records musl's mangled versus the project header's unmangled C++ spelling; ratchets exact crate-owned exports; requires only weak membarrier plus selected initial-TLS errno; rejects dynamic interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime dependencies; rejects musl's __membarrier/__membarrier_init/weak-alias target/tl-lock fallback closure; disassembles membarrier=324; and executes QUERY direct/function-pointer stale-errno success with invalid command and QUERY CPU-flag EINVAL results. It does not issue a barrier, select GLOBAL/private expedited/registration/RSEQ commands, old-kernel fallback, signal/semaphore/pthread coordination, source-level C++ header parity, general C++ runtime, allocator/runtime behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/header mapping for src/linux/membarrier.c::{__membarrier,__membarrier_init} and include/sys/membarrier.h. The selected Linux 5.10 direct syscall branch excludes musl's weak-alias relationship, old-kernel PRIVATE_EXPEDITED signal/semaphore fallback, and registration hook." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "membarrier=324 rdi/rsi, QUERY=0, invalid-command/QUERY-CPU-flag EINVAL, raw errno, and direct syscall-result contract; no barrier or registration command is issued." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 signed-int calling convention, weak public symbol binding, and static initial-TLS Variant-II fixture contract." },
 ]
 
 [[family.verified_artifact]]

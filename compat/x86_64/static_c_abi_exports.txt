@@ -529,6 +529,7 @@ mbsinit
 mbsrtowcs
 mbstowcs
 mbtowc
+membarrier
 memccpy
 memchr
 memcmp

@@ -127,6 +127,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
   getpagesize-header-abi  compile the staged x86 C/C++ GNU/BSD getpagesize declaration
   getdtablesize-header-abi  compile the staged x86 C/C++ GNU/BSD getdtablesize declaration
+  membarrier-header-abi  verify x86 C/C++ sys/membarrier.h declaration and linkage
   confstr-header-abi  verify x86 C/C++ unconditional confstr declaration and linkage
   fpathconf-header-abi  verify x86 C/C++ unconditional fpathconf declaration and linkage
   pathconf-header-abi  verify x86 C/C++ unconditional pathconf declaration and linkage
@@ -327,6 +328,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-system-configuration  run the static x86 crabc-libc system-configuration slice
   libc-getpagesize  run the static x86 crabc-libc getpagesize slice
   libc-getdtablesize  run the static x86 crabc-libc getdtablesize slice
+  libc-membarrier  run the static x86 crabc-libc membarrier slice
   libc-confstr  run the static x86 crabc-libc confstr slice
   libc-fpathconf  run the static x86 crabc-libc fpathconf slice
   libc-pathconf  run the static x86 crabc-libc pathconf slice
@@ -955,6 +957,13 @@ memory-locking, GNU memfd_create, and strict/GNU/LFS resource declarations.
 `termios-header-abi` remains a header-only C/C++ layout/declaration gate, not
 a general C terminal/runtime claim. `resource-header-abi` is likewise
 header-only and does not select process-resource behavior or a C runtime.
+`membarrier-header-abi` separately compares only the unconditional two-int
+`<sys/membarrier.h>` declaration and QUERY/GLOBAL/FLAG_CPU values across
+project/pinned-musl C/C++ profiles. It records that pinned musl leaves the C++
+spelling mangled while the project header deliberately supplies an unmangled C
+bridge; that distinction is not source-level C++ header parity, archive
+linkage, runtime behavior, barrier/registration behavior, or general C++
+runtime evidence.
 `socket-header-abi` compile-checks only staged C/C++ base transport
 declarations, `socklen_t` and generic/IPv4/IPv6 socket-address layouts, and
 creation, shutdown, and basic send/receive constants, then executes the
@@ -1477,6 +1486,17 @@ overflow-range `EINVAL`. The direct musl-shaped wrappers deliberately omit a
 cancellation path. It does not select `mlockall`/`munlockall`, `msync`,
 `mremap`, mapping policy, allocator, dynamic libc, CRT/TLS lifecycle, loader,
 sysroot, or public x86 support.
+`libc-membarrier` separately runs the all-profile project/pinned-musl
+`<sys/membarrier.h>` matrix and one freestanding static candidate. It selects
+only Linux 5.10's direct `membarrier=324` branch for QUERY and direct
+invalid-command/invalid-flag results, retaining a weak public `membarrier`
+spelling and initial-TLS errno. Pinned musl aliases that spelling to
+`__membarrier` and provides an old-kernel PRIVATE_EXPEDITED
+signal/semaphore fallback plus `__membarrier_init` registration; this artifact
+rejects that fallback/init/internal weak-alias closure. It does not issue a
+barrier, register a command, establish RSEQ/synchronization semantics, claim
+source-level C++ header parity, or select allocator/runtime behavior, dynamic
+libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
 `libc-memfd-create` separately links that archive into one freestanding
 project-header C fixture after an equivalent pinned-musl run, and runs the
 eight-profile GNU-only C/C++ declaration gate first. It selects only direct
@@ -2337,6 +2357,10 @@ run_libc_getpagesize() {
     run_in_container bash /workspace/compat/x86_64/run_libc_getpagesize.sh
 }
 
+run_libc_membarrier() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_membarrier.sh
+}
+
 run_libc_getdtablesize() {
     run_in_container bash /workspace/compat/x86_64/run_libc_getdtablesize.sh
 }
@@ -2595,6 +2619,10 @@ run_unistd_header_abi() {
 
 run_getpagesize_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_getpagesize_header_abi.sh
+}
+
+run_membarrier_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_membarrier_header_abi.sh
 }
 
 run_getdtablesize_header_abi() {
@@ -3826,7 +3854,7 @@ shift
 case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
-    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|membarrier-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-membarrier|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4350,6 +4378,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "getpagesize-header-abi takes no arguments"
         ensure_image
         run_getpagesize_header_abi
+        ;;
+    membarrier-header-abi)
+        [ "$#" -eq 0 ] || fail "membarrier-header-abi takes no arguments"
+        ensure_image
+        run_membarrier_header_abi
         ;;
     getdtablesize-header-abi)
         [ "$#" -eq 0 ] || fail "getdtablesize-header-abi takes no arguments"
@@ -5570,6 +5603,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-getpagesize takes no arguments"
         ensure_image
         run_libc_getpagesize
+        ;;
+    libc-membarrier)
+        [ "$#" -eq 0 ] || fail "libc-membarrier takes no arguments"
+        ensure_image
+        run_libc_membarrier
         ;;
     libc-getdtablesize)
         [ "$#" -eq 0 ] || fail "libc-getdtablesize takes no arguments"

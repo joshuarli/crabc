@@ -1375,6 +1375,23 @@ bounded `static-c-memory-locking` artifact inside planned
 or public x86 support; `mlockall`/`munlockall`, the separate direct `msync`
 sibling, `mremap`, cancellation, and mapping policy remain unselected here.
 
+The same archive also carries the capability-free private
+`static-c-membarrier` artifact:
+`./scripts/dev-x86_64.sh membarrier-header-abi` records only the all-profile
+C/C++ `<sys/membarrier.h>` declaration/value matrix and its documented C++
+spelling distinction (pinned musl is mangled; the existing project header is
+an unmangled C bridge). `./scripts/dev-x86_64.sh libc-membarrier` then proves
+only the direct Linux 5.10 `membarrier=324` branch for `QUERY`, stale-`errno`
+success, and direct invalid-command/invalid-flag `EINVAL` in a true static
+candidate. Musl's weak public spelling aliases `__membarrier` and its source
+also has an old-kernel PRIVATE_EXPEDITED signal/semaphore fallback and
+`__membarrier_init` registration hook; this candidate preserves only a weak
+public spelling and rejects that fallback/init/internal weak-alias closure.
+It never issues a barrier, registers a command, or establishes RSEQ or
+synchronization semantics. This is not full musl membarrier, source-level C++
+header parity, a barrier/runtime lifecycle, allocator behavior, C-runtime or
+family/platform parity, promotion, or public x86 support.
+
 The same archive also has a private planned GNU memory-file-descriptor
 creation evidence artifact: `./scripts/dev-x86_64.sh memfd-create-header-abi`
 and `./scripts/dev-x86_64.sh libc-memfd-create` compare the GNU-only

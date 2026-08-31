@@ -1212,6 +1212,8 @@ UMASK_SYMBOLS = ("umask",)
 
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
+MEMBARRIER_SYMBOLS = ("membarrier",)
+
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
 
 FILESYSTEM_ACCESS_SYMBOLS = ("access", "faccessat", "euidaccess", "eaccess")
@@ -19528,6 +19530,336 @@ def require_memory_locking_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_membarrier_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the Linux-5.10 direct membarrier branch below runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-membarrier"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-membarrier artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-membarrier must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-membarrier must remain capability-free",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-membarrier needs a description")
+    for phrase in (
+        "direct Linux 5.10 `membarrier` C ABI artifact",
+        "weak public `membarrier` spelling",
+        "`membarrier=324`",
+        "MEMBARRIER_CMD_QUERY=0",
+        "invalid command/QUERY-with-CPU-flag EINVAL",
+        "old-kernel PRIVATE_EXPEDITED signal/semaphore fallback",
+        "`__membarrier_init` registration hook",
+        "internal alias target",
+        "weak-alias relationship",
+        "full musl membarrier parity",
+        "mangled spelling",
+        "unmangled C bridge",
+        "allocator/runtime behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-membarrier description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-membarrier.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/membarrier.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/stdint.h",
+        "include/sys/membarrier.h",
+        "include/sys/syscall.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/membarrier_header_abi_probe.c",
+        "compat/x86_64/membarrier_header_abi_probe.cpp",
+        "compat/x86_64/run_membarrier_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_membarrier_probe.c",
+        "compat/x86_64/libc_membarrier_start.S",
+        "compat/x86_64/run_libc_membarrier.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-membarrier source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-membarrier.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "membarrier=324" in item
+            and "rdi/rsi" in item
+            and "initial-TLS errno" in item
+            and "stale errno" in item
+            for item in prerequisites
+        ),
+        "static-c-membarrier must record its x86 syscall ABI",
+    )
+    require(
+        any(
+            "src/linux/membarrier.c::{__membarrier,__membarrier_init}" in item
+            and "membarrier.lo" in item
+            and "W" in item
+            and "WEAK" in item
+            and "weak_alias relationship" in item
+            for item in prerequisites
+        ),
+        "static-c-membarrier must record its exact selected musl source boundary",
+    )
+    require(
+        any(
+            "PRIVATE_EXPEDITED-on-old-kernel ENOSYS signal/semaphore fallback" in item
+            and "__membarrier_init registration request" in item
+            and "__membarrier internal target" in item
+            and "__tl_lock/__tl_unlock aliases" in item
+            and "does not issue any barrier" in item
+            for item in prerequisites
+        ),
+        "static-c-membarrier must retain its fallback/init exclusion boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-membarrier.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "all-profile C/C++ `<sys/membarrier.h>` matrix" in item
+            and "`int membarrier(int, int)`" in item
+            and "MEMBARRIER_CMD_QUERY/GLOBAL/FLAG_CPU=0/1/1" in item
+            and "mangled" in item
+            and "unmangled C bridge" in item
+            and "source-level C++ header parity" in item
+            for item in headers
+        ),
+        "static-c-membarrier must record its bounded C/C++ header distinction",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-membarrier needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-membarrier"},
+        "static-c-membarrier must use the closed libc-membarrier command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ sys/membarrier header proof",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "mangled versus the project header's unmangled C++ spelling",
+                "weak membarrier",
+                "__membarrier/__membarrier_init/weak-alias target/tl-lock fallback closure",
+                "membarrier=324",
+                "QUERY direct/function-pointer stale-errno success",
+                "QUERY CPU-flag EINVAL",
+                "does not issue a barrier",
+                "old-kernel fallback",
+                "source-level C++ header parity",
+                "allocator/runtime behavior",
+                "public x86 support",
+            )
+        ),
+        "static-c-membarrier evidence must retain its direct-branch static closure",
+    )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-membarrier needs oracles")
+    require(
+        any(
+            entry.get("kind") == "c-posix"
+            and "src/linux/membarrier.c::{__membarrier,__membarrier_init}" in entry.get("role", "")
+            and "weak-alias relationship" in entry.get("role", "")
+            and "old-kernel PRIVATE_EXPEDITED" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-membarrier must retain its musl source mapping",
+    )
+    require(
+        any(
+            entry.get("kind") == "kernel-abi"
+            and "membarrier=324" in entry.get("role", "")
+            and "QUERY=0" in entry.get("role", "")
+            and "no barrier or registration command" in entry.get("role", "")
+            for entry in oracle
+            if isinstance(entry, Mapping)
+        ),
+        "static-c-membarrier must retain its Linux direct-branch oracle",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(MEMBARRIER_SYMBOLS) <= exports,
+        "static-c-membarrier must retain its selected public weak export",
+    )
+    require(
+        {symbol for symbol in exports if symbol in MEMBARRIER_SYMBOLS}
+        == set(MEMBARRIER_SYMBOLS),
+        "static-c-membarrier must retain exactly its public symbol",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "membarrier.rs"]\nmod membarrier;' in static_root,
+        "x86 static C ABI must compose the standalone membarrier leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "membarrier.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "direct-branch C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "src/linux/membarrier.c",
+        "old-kernel `MEMBARRIER_CMD_PRIVATE_EXPEDITED` signal/semaphore",
+        "`__membarrier_init` registration hook",
+        "weak-alias relationship",
+        "raw_syscall::SYS_MEMBARRIER",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        '#[linkage = "weak"]',
+        'pub unsafe extern "C" fn membarrier',
+    ):
+        require(snippet in source, f"membarrier implementation omits {snippet}")
+    source_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source
+        )
+    )
+    require(
+        source_exports == set(MEMBARRIER_SYMBOLS),
+        "membarrier implementation must expose only membarrier",
+    )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_membarrier.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_membarrier_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,--gc-sections",
+        "membarrier\\tmembarrier.lo",
+        "weak membarrier",
+        "__membarrier __membarrier_init __tl_lock __tl_unlock",
+        "--disassemble=membarrier",
+        "outside the test entry shim",
+    ):
+        require(snippet in runner, f"membarrier runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "membarrier runner must preserve archive-member extraction",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_membarrier_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "membarrier_signature",
+        "check_query_direct_and_indirect",
+        "check_invalid_command",
+        "check_invalid_query_flag",
+        "PRIVATE_EXPEDITED fallback",
+        "__membarrier_init registration hook",
+        "CRABC_MEMBARRIER_FREESTANDING",
+    ):
+        require(snippet in probe, f"membarrier probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "membarrier_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "membarrier_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "membarrier_signature",
+        "MEMBARRIER_CMD_QUERY",
+        "MEMBARRIER_CMD_GLOBAL",
+        "MEMBARRIER_CMD_FLAG_CPU",
+        "membarrier_function",
+    ):
+        require(snippet in header_c, f"membarrier C header probe omits {snippet}")
+        require(snippet in header_cxx, f"membarrier C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_membarrier_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "membarrier_header_abi_probe.c",
+        "membarrier_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "_Z10membarrierii",
+        "unmangled C bridge",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+    ):
+        require(
+            snippet in header_runner,
+            f"membarrier header runner omits {snippet}",
+        )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "membarrier-header-abi)",
+        "run_membarrier_header_abi",
+        "libc-membarrier)",
+        "run_libc_membarrier",
+    ):
+        require(
+            snippet in dispatcher,
+            f"membarrier dispatcher omits {snippet}",
+        )
+
+
 def require_memory_sync_header_evidence(family: Mapping[str, Any]) -> None:
     """Keep the artifact-local unconditional msync declaration gate explicit."""
     evidence = family.get("native_evidence")
@@ -19651,6 +19983,51 @@ def require_memory_locking_header_evidence(family: Mapping[str, Any]) -> None:
         require(
             phrase in scope,
             f"memory-locking-header-abi evidence scope omits {phrase}",
+        )
+
+
+def require_membarrier_header_evidence(family: Mapping[str, Any]) -> None:
+    """Keep the documented musl/project C++ spelling distinction explicit."""
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list),
+        "libc.headers-layouts must retain native evidence",
+    )
+    matching = [
+        entry
+        for entry in evidence
+        if isinstance(entry, Mapping)
+        and entry.get("command")
+        == "./scripts/dev-x86_64.sh membarrier-header-abi"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must retain exactly one membarrier-header-abi evidence command",
+    )
+    entry = matching[0]
+    scope = entry.get("scope")
+    require(
+        entry.get("state") == "required" and isinstance(scope, str),
+        "membarrier-header-abi evidence must remain required text",
+    )
+    for phrase in (
+        "all-profile C/C++ sys/membarrier.h matrix",
+        "`int membarrier(int, int)`",
+        "MEMBARRIER_CMD_QUERY/GLOBAL/FLAG_CPU=0/1/1",
+        "mangled declaration",
+        "unmangled C bridge",
+        "archive linkage",
+        "runtime behavior",
+        "barrier commands",
+        "registration",
+        "source-level C++ header parity",
+        "general C++ runtime",
+        "installed-header completion",
+        "public support",
+    ):
+        require(
+            phrase in scope,
+            f"membarrier-header-abi evidence scope omits {phrase}",
         )
 
 
@@ -42665,6 +43042,7 @@ def validate_ledger(
     require_uio_cxx_archive_linkage_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
+    require_membarrier_header_evidence(by_id["libc.headers-layouts"])
     require_memfd_create_header_evidence(by_id["libc.headers-layouts"])
     require_inet_address_header_evidence(by_id["libc.headers-layouts"])
 
@@ -42755,6 +43133,7 @@ def validate_ledger(
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])
     require_memory_locking_artifact(by_id["libc.posix-runtime"])
+    require_membarrier_artifact(by_id["libc.posix-runtime"])
     require_memfd_create_artifact(by_id["libc.posix-runtime"])
     require_signal_altstack_artifact(by_id["libc.posix-runtime"])
     require_signal_execution_artifact(by_id["libc.posix-runtime"])

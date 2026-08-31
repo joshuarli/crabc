@@ -14345,6 +14345,98 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_membarrier_artifact_keeps_its_direct_branch_contract(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-membarrier"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("direct Linux 5.10 `membarrier` C ABI artifact", artifact["description"])
+        self.assertIn("weak-alias relationship", artifact["description"])
+        self.assertIn("old-kernel PRIVATE_EXPEDITED signal/semaphore fallback", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/membarrier.rs",
+            "include/sys/membarrier.h",
+            "compat/x86_64/membarrier_header_abi_probe.c",
+            "compat/x86_64/membarrier_header_abi_probe.cpp",
+            "compat/x86_64/run_membarrier_header_abi.sh",
+            "compat/x86_64/libc_membarrier_probe.c",
+            "compat/x86_64/libc_membarrier_start.S",
+            "compat/x86_64/run_libc_membarrier.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[0], str)
+        prerequisites[0] = prerequisites[0].replace("membarrier=324", "membarrier=999")
+        with self.assertRaisesRegex(ledger.LedgerError, "x86 syscall ABI"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-membarrier"
+        )
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list) and isinstance(prerequisites[2], str)
+        prerequisites[2] = prerequisites[2].replace(
+            "__membarrier_init registration request", "registration omitted"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "fallback/init exclusion boundary"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-membarrier"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh membarrier-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-membarrier command"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        headers = self.family(data, "libc.headers-layouts")
+        evidence = headers["native_evidence"]
+        assert isinstance(evidence, list)
+        header_evidence = next(
+            entry
+            for entry in evidence
+            if isinstance(entry, dict)
+            and entry["command"] == "./scripts/dev-x86_64.sh membarrier-header-abi"
+        )
+        header_evidence["command"] = (
+            "./scripts/dev-x86_64.sh membarrier-header-abi-broken"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "membarrier-header-abi evidence command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_memory_sync_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
