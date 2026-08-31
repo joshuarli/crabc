@@ -7017,6 +7017,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "`dlinfo(RTLD_DI_LINKMAP)`",
         "exact one-shot `Unsupported request %d` diagnostic",
         "a subsequent valid link-map query preserves that pending error",
+        "`dlclose` returns exactly one",
+        "exact `Invalid library handle 0`",
+        "The bridge admits only this null close diagnostic",
         "`RTLD_NEXT`",
         "`RTLD_GLOBAL`",
         "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -7068,10 +7071,14 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "32 fixed diagnostic slots",
         "tgkill=234",
         "RTLD_DEFAULT",
-        "AArch64 libc.so and libc.a ABI manifests retain both dlinfo and dlerror exports",
+        "AArch64 libc.so and libc.a ABI manifests retain dlclose, dlinfo, and dlerror exports",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
+        "src/ldso/dlclose.c:dlclose",
+        "ldso/dynlink.c:__dl_invalid_handle",
+        "Invalid library handle 0",
+        "non-null forged/stale close handling remains loader-owned",
         "never searched, mapped, finalized, or unmapped",
     ):
         require(
@@ -7102,6 +7109,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "leaves its result pointer untouched",
         "exact `Unsupported request -7`",
         "valid RTLD_DI_LINKMAP query leaves that error pending",
+        "dlclose(NULL) returns exactly one",
+        "exact `Invalid library handle 0`",
+        "non-null forged/stale close handling remains loader-owned",
         "loader.dlfcn-basic",
         "public x86 support",
     ):
@@ -7141,6 +7151,11 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "set_dlinfo_unsupported_request",
         "Unsupported request ",
         "if request != RTLD_DI_LINKMAP",
+        "DLCLOSE_NULL_HANDLE",
+        "src/ldso/dlclose.c:dlclose",
+        "ldso/dynlink.c:__dl_invalid_handle",
+        "Invalid library handle 0",
+        "if handle.is_null()",
     ):
         require(
             snippet in bridge,
@@ -7155,6 +7170,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         '"Unsupported request -7"',
         "typed_dlinfo(mid_one, RTLD_DI_LINKMAP, &map) != 0",
         "typed_dlerror() != NULL",
+        "typed_dlclose(NULL) != 1",
+        '"Invalid library handle 0"',
     ):
         require(
             snippet in probe,
@@ -7166,7 +7183,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
     aarch64_dynamic = (
         ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.so.dynamic.tsv"
     ).read_text(encoding="utf-8")
-    for symbol in ("dlerror", "dlinfo"):
+    for symbol in ("dlclose", "dlerror", "dlinfo"):
         require(
             f"\n{symbol}\t" in aarch64_static,
             f"pinned AArch64 musl static manifest omits {symbol}",
@@ -7183,11 +7200,13 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and entry.get("kind") == "c-posix"
             and isinstance(entry.get("source"), str)
             and "src/ldso/dlinfo.c" in entry["source"]
+            and "src/ldso/dlclose.c" in entry["source"]
             and isinstance(entry.get("role"), str)
             and "exact live-handle unsupported-dlinfo diagnostic" in entry["role"]
+            and "exact null-dlclose return/diagnostic" in entry["role"]
             for entry in oracle
         ),
-        "ldso-public-fixed-graph-dlfcn must retain the pinned musl dlinfo oracle",
+        "ldso-public-fixed-graph-dlfcn must retain its pinned musl dlinfo/dlclose oracle",
     )
     require(
         any(

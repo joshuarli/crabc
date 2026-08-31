@@ -42,6 +42,7 @@ const ESRCH: i64 = 3;
 const UNAVAILABLE: &[u8] = b"crabc fixed-graph loader runtime unavailable";
 const NEXT_UNSUPPORTED: &[u8] = b"crabc fixed graph does not support RTLD_NEXT";
 const DLINFO_UNSUPPORTED_REQUEST: &[u8] = b"Unsupported request ";
+const DLCLOSE_NULL_HANDLE: &[u8] = b"Invalid library handle 0";
 static EXHAUSTED: &[u8] = b"crabc dlfcn diagnostic slots exhausted\0";
 
 #[repr(C)]
@@ -451,12 +452,21 @@ pub unsafe extern "C" fn dlsym(
 ///
 /// # Safety
 ///
-/// `handle` must be a live loader-owned handle returned by `dlopen`.
+/// A non-null `handle` must be a live loader-owned handle returned by
+/// `dlopen`. `NULL` is the one bounded invalid-handle diagnostic admitted by
+/// this bridge: pinned musl 1.2.6 commit
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/ldso/dlclose.c:dlclose`
+/// delegates to `ldso/dynlink.c:__dl_invalid_handle`, which returns one and
+/// records `Invalid library handle 0` through `dlerror`.
 #[no_mangle]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
     let Some(slot) = diagnostic_slot() else {
         return -1;
     };
+    if handle.is_null() {
+        set_error_bytes(slot, DLCLOSE_NULL_HANDLE);
+        return 1;
+    }
     let Some(record) = runtime_record() else {
         unavailable(slot);
         return -1;
