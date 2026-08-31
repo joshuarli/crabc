@@ -222,6 +222,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ulimit.rs"),
     Path("libc/src/c_abi/x86_64/sched_yield.rs"),
     Path("libc/src/c_abi/x86_64/sched_get_priority_max.rs"),
+    Path("libc/src/c_abi/x86_64/sched_get_priority_min.rs"),
     Path("libc/src/c_abi/x86_64/posix_semaphore.rs"),
     Path("libc/src/c_abi/x86_64/c11_thread_lifecycle.rs"),
     Path("libc/src/c_abi/x86_64/c11_sync.rs"),
@@ -3791,6 +3792,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "timegm.rs"]',
         '#[path = "sched_yield.rs"]',
         '#[path = "sched_get_priority_max.rs"]',
+        '#[path = "sched_get_priority_min.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
         '#[path = "sleep.rs"]',
@@ -7836,6 +7838,56 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"priority-maximum boundary must not select {forbidden!r}"
             )
 
+    sched_get_priority_min_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_get_priority_min.rs"
+    )
+    sched_get_priority_min_text = sched_get_priority_min_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 C `sched_get_priority_min` boundary",
+        "musl 1.2.6 release commit",
+        "src/sched/sched_get_priority_max.c::sched_get_priority_min",
+        "sched_get_priority_min=147",
+        "raw_syscall::SYS_SCHED_GET_PRIORITY_MIN",
+        "raw_syscall::syscall1",
+        "c_status(result)",
+        "sched_get_priority_max",
+        "initial-TLS",
+        "scheduler policy",
+        "process lifecycle",
+    ):
+        if required not in sched_get_priority_min_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_get_priority_min.rs: selected static "
+                f"scheduler priority-minimum boundary is missing {required!r}"
+            )
+    sched_get_priority_min_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sched_get_priority_min_text,
+        )
+    )
+    if sched_get_priority_min_exports != {"sched_get_priority_min"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sched_get_priority_min.rs: selected static "
+            "artifact must export only sched_get_priority_min"
+        )
+    for forbidden in (
+        "fn sched_get_priority_max",
+        "SYS_SCHED_GET_PRIORITY_MAX",
+        "sched_getparam",
+        "sched_setparam",
+        "sched_getaffinity",
+        "sched_setaffinity",
+        "crabc_core",
+        "crabc_mimalloc",
+        "alloc::",
+    ):
+        if forbidden in sched_get_priority_min_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sched_get_priority_min.rs: selected static "
+                f"priority-minimum boundary must not select {forbidden!r}"
+            )
+
     timegm_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timegm.rs"
     timegm_text = timegm_source.read_text(errors="replace")
     for required in (
@@ -10675,6 +10727,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         timegm_text,
         sched_yield_text,
         sched_get_priority_max_text,
+        sched_get_priority_min_text,
         clock_nanosleep_text,
         memory_mapping_text,
         memory_sync_text,
@@ -10999,6 +11052,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "timegm",
         "sched_yield",
         "sched_get_priority_max",
+        "sched_get_priority_min",
         "clock_nanosleep",
         "mmap",
         "munmap",
@@ -11220,7 +11274,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, caller-buffer mntent option parsing, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, a private scheduler-priority maximum query leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, sleep, and clock_nanosleep, selected "
+            "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, caller-buffer mntent option parsing, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, separate private scheduler-priority maximum/minimum query leaves, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, sleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, direct global-sync void boundary, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -11291,6 +11345,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("clock_gettime.rs", clock_gettime_text),
         ("sched_yield.rs", sched_yield_text),
         ("sched_get_priority_max.rs", sched_get_priority_max_text),
+        ("sched_get_priority_min.rs", sched_get_priority_min_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),
         ("memory_sync.rs", memory_sync_text),

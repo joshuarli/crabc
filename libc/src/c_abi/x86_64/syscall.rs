@@ -33,7 +33,8 @@
 //! identity validation, the selected raw thread exit, the direct C11
 //! `thrd_yield` sched_yield=24 boundary, the separate status-returning
 //! POSIX `sched_yield` boundary, and the private one-word
-//! `sched_get_priority_max=146` query boundary here. The separately selected
+//! `sched_get_priority_max=146`/`sched_get_priority_min=147` query boundaries
+//! here. The separately selected
 //! bootstrapped-main pthread task-name pair uses direct prctl=157 here;
 //! it does not expose a general prctl C API. Static Initial
 //! TLS v1 additionally uses arch_prctl(ARCH_SET_FS) while it validates and
@@ -382,6 +383,7 @@ pub(crate) const SYS_SIGALTSTACK: i64 = 131;
 pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
 pub(crate) const SYS_SCHED_GET_PRIORITY_MAX: i64 = 146;
+pub(crate) const SYS_SCHED_GET_PRIORITY_MIN: i64 = 147;
 pub(crate) const SYS_MLOCK: i64 = 149;
 pub(crate) const SYS_MUNLOCK: i64 = 150;
 pub(crate) const SYS_PRCTL: i64 = 157;

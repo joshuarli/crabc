@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc sched_get_priority_max ABI.
+# Native Linux/x86-64 selected static crabc-libc sched_get_priority_min ABI.
 #
 # The same project-header C fixture first runs through pinned musl 1.2.6,
 # then through a true dependency-free x86 archive and -nostdlib -static
-# candidate. It selects only the maximum-priority query for SCHED_OTHER,
+# candidate. It selects only the minimum-priority query for SCHED_OTHER,
 # SCHED_FIFO, SCHED_RR, and a rejected invalid policy. The source sibling
-# sched_get_priority_min is a separate artifact; policy mutation/parameters,
-# affinity, scheduling guarantees, C11/pthread lifecycle, process lifecycle, CRT,
-# loader, sysroot, family completion, promotion, or public x86 support.
+# sched_get_priority_max is a separate artifact; policy mutation/parameters,
+# affinity, scheduling guarantees, C11/pthread lifecycle, process lifecycle,
+# CRT, loader, sysroot, family completion, promotion, and public x86 support
+# remain excluded.
 set -euo pipefail
 export LC_ALL=C
 
@@ -16,7 +17,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
-    printf 'ERROR: x86 static libc sched_get_priority_max: %s\n' "$*" >&2
+    printf 'ERROR: x86 static libc sched_get_priority_min: %s\n' "$*" >&2
     exit 1
 }
 
@@ -54,18 +55,18 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-assert_sched_get_priority_max_syscall() {
-    local disassembly="$work_dir/sched-priority-max-disassembly"
+assert_sched_get_priority_min_syscall() {
+    local disassembly="$work_dir/sched-priority-min-disassembly"
 
-    objdump -d --disassemble=sched_get_priority_max "$candidate" >"$disassembly"
+    objdump -d --disassemble=sched_get_priority_min "$candidate" >"$disassembly"
     # The one C int argument arrives in rdi, already the Linux first syscall
     # register. The optimized wrapper may therefore omit a register move.
-    grep -Eq '\$0x92(,|[[:space:]]|$)' "$disassembly" ||
-        fail "sched_get_priority_max lacks fixed Linux syscall 146"
+    grep -Eq '\$0x93(,|[[:space:]]|$)' "$disassembly" ||
+        fail "sched_get_priority_min lacks fixed Linux syscall 147"
     grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "sched_get_priority_max lacks the Linux syscall instruction"
+        fail "sched_get_priority_min lacks the Linux syscall instruction"
     grep -Eq '%fs:|__errno_location' "$disassembly" ||
-        fail "sched_get_priority_max must publish raw failure through errno TLS"
+        fail "sched_get_priority_min must publish raw failure through errno TLS"
 }
 
 require_native_linux_x86_64
@@ -75,14 +76,14 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_sched_get_priority_max_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_sched_get_priority_min_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sched-priority-max.XXXXXX)"
+work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-sched-priority-min.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
-reference="$work_dir/musl-sched-priority-max-reference"
-candidate="$work_dir/crabc-static-sched-priority-max-candidate"
+reference="$work_dir/musl-sched-priority-min-reference"
+candidate="$work_dir/crabc-static-sched-priority-min-candidate"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"
@@ -97,15 +98,15 @@ errno_disassembly="$work_dir/errno-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I "$ROOT_DIR/include" -E -H \
-    compat/x86_64/libc_sched_get_priority_max_probe.c >/dev/null 2>"$header_trace"
+    compat/x86_64/libc_sched_get_priority_min_probe.c >/dev/null 2>"$header_trace"
 for header in errno.h sched.h sys/syscall.h features.h bits/alltypes.h bits/syscall.h sys/types.h time.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project <$header>"
 done
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fno-builtin \
     -fno-stack-protector -I "$ROOT_DIR/include" \
-    compat/x86_64/libc_sched_get_priority_max_probe.c -o "$reference"
-env -i LC_ALL=C "$reference" || fail "pinned-musl sched_get_priority_max fixture failed"
+    compat/x86_64/libc_sched_get_priority_min_probe.c -o "$reference"
+env -i LC_ALL=C "$reference" || fail "pinned-musl sched_get_priority_min fixture failed"
 
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -113,14 +114,14 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for selected in __errno_location sched_get_priority_max; do
+for selected in __errno_location sched_get_priority_min; do
     grep -Eq "[[:space:]][TW][[:space:]]${selected}$" "$archive_symbols" ||
         fail "archive does not define ${selected}"
 done
-for marker in 'src/sched/sched_get_priority_max.c::sched_get_priority_max' \
-    'SYS_SCHED_GET_PRIORITY_MAX' 'raw_syscall::syscall1' 'c_status(result)'; do
-    grep -Fq "$marker" libc/src/c_abi/x86_64/sched_get_priority_max.rs ||
-        fail "sched_get_priority_max source lacks ${marker}"
+for marker in 'src/sched/sched_get_priority_max.c::sched_get_priority_min' \
+    'SYS_SCHED_GET_PRIORITY_MIN' 'raw_syscall::syscall1' 'c_status(result)'; do
+    grep -Fq "$marker" libc/src/c_abi/x86_64/sched_get_priority_min.rs ||
+        fail "sched_get_priority_min source lacks ${marker}"
 done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
@@ -131,18 +132,18 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
 fi
 
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
-    -DCRABC_SCHED_GET_PRIORITY_MAX_FREESTANDING -I "$ROOT_DIR/include" \
+    -DCRABC_SCHED_GET_PRIORITY_MIN_FREESTANDING -I "$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
-    compat/x86_64/libc_sched_get_priority_max_probe.c \
-    compat/x86_64/libc_sched_get_priority_max_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_sched_get_priority_min_probe.c \
+    compat/x86_64/libc_sched_get_priority_min_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for selected in __errno_location sched_get_priority_max; do
+for selected in __errno_location sched_get_priority_min; do
     grep -Eq "[[:space:]]${selected}$" "$candidate_symbols" ||
         fail "candidate does not define ${selected}"
 done
@@ -161,7 +162,7 @@ fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-for unselected in sched_get_priority_min sched_yield thrd_yield \
+for unselected in sched_get_priority_max sched_yield thrd_yield \
     sched_getparam sched_setparam sched_getscheduler sched_setscheduler \
     sched_rr_get_interval sched_getaffinity sched_setaffinity \
     pthread_create pthread_join pthread_getschedparam pthread_setschedparam \
@@ -175,6 +176,6 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 
-assert_sched_get_priority_max_syscall
-env -i LC_ALL=C "$candidate" || fail "freestanding sched_get_priority_max fixture failed"
-printf 'x86 static crabc-libc sched_get_priority_max: PASS\n'
+assert_sched_get_priority_min_syscall
+env -i LC_ALL=C "$candidate" || fail "freestanding sched_get_priority_min fixture failed"
+printf 'x86 static crabc-libc sched_get_priority_min: PASS\n'

@@ -1405,9 +1405,21 @@ Its strict/POSIX/XOPEN/GNU C/C++ header matrix and pinned-musl/freestanding
 static fixture map only to musl 1.2.6
 `src/sched/sched_get_priority_max.c::sched_get_priority_max`: SCHED_OTHER is
 0, SCHED_FIFO/SCHED_RR are 99, success preserves stale `errno`, and an invalid
-selector is `-1`/EINVAL. It excludes the source sibling
-`sched_get_priority_min`, scheduler policy/parameters/affinity, scheduling
-guarantees, lifecycle, family completion, promotion, and public x86 support.
+selector is `-1`/EINVAL. The source sibling `sched_get_priority_min` is a
+separate artifact; scheduler policy/parameters/affinity, scheduling guarantees,
+lifecycle, family completion, promotion, and public x86 support remain
+excluded.
+
+`./scripts/dev-x86_64.sh sched-get-priority-min-header-abi` and
+`./scripts/dev-x86_64.sh libc-sched-get-priority-min` provide the complementary
+private `static-c-sched-get-priority-min` artifact in the same planned family.
+Its strict/POSIX/XOPEN/GNU C/C++ header matrix and pinned-musl/freestanding
+static fixture map only to musl 1.2.6
+`src/sched/sched_get_priority_max.c::sched_get_priority_min`: SCHED_OTHER is
+0, SCHED_FIFO/SCHED_RR are 1, success preserves stale `errno`, and an invalid
+selector is `-1`/EINVAL. The maximum sibling remains a separate artifact; this
+one does not select scheduler policy/parameters/affinity, scheduling
+guarantees, lifecycle, family completion, promotion, or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its

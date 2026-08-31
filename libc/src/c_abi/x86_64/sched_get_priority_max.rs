@@ -4,8 +4,8 @@
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //! `src/sched/sched_get_priority_max.c::sched_get_priority_max` is the direct
 //! `syscall(SYS_sched_get_priority_max, policy)` wrapper below. That source
-//! also defines `sched_get_priority_min`, but this artifact deliberately does
-//! not select that sibling.
+//! also defines `sched_get_priority_min`, which is a separate private
+//! artifact and is not linked by this leaf's static fixture.
 //!
 //! Linux 5.10 x86-64 `sched_get_priority_max=146` receives the signed C `int`
 //! policy in `rdi`.

@@ -7459,6 +7459,43 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/sched_get_priority_max.rs",
             posix_runtime["source_owners"],
         )
+        sched_get_priority_min = artifacts_by_id["static-c-sched-get-priority-min"]
+        assert isinstance(sched_get_priority_min, dict)
+        self.assertNotIn("capabilities", sched_get_priority_min)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/sched_get_priority_min.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_get_priority_min_header_abi_probe.c",
+            "compat/x86_64/sched_get_priority_min_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_get_priority_min_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_sched_get_priority_min_probe.c",
+            "compat/x86_64/libc_sched_get_priority_min_start.S",
+            "compat/x86_64/run_libc_sched_get_priority_min.sh",
+        ):
+            self.assertIn(owner, sched_get_priority_min["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in sched_get_priority_min["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-sched-get-priority-min"},
+        )
+        for phrase in (
+            "`sched_get_priority_min` query leaf",
+            "SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=1",
+            "stale errno",
+            "invalid-policy `-1`/EINVAL",
+            "sched_get_priority_max",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, sched_get_priority_min["description"])
+        self.assertIn(
+            "libc/src/c_abi/x86_64/sched_get_priority_min.rs",
+            posix_runtime["source_owners"],
+        )
         readiness_waits = artifacts_by_id["static-c-readiness-signal-waits"]
         assert isinstance(readiness_waits, dict)
         self.assertNotIn("capabilities", readiness_waits)
@@ -13995,6 +14032,42 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-sched-yield"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-sched-get-priority-max command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sched_get_priority_min_artifact_keeps_its_query_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-get-priority-min"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=1",
+            "SCHED_OTHER=0, SCHED_FIFO=2, SCHED_RR=1",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "SCHED_OTHER=0, SCHED_FIFO=1, SCHED_RR=1"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-get-priority-min"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-sched-get-priority-max"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sched-get-priority-min command"
         ):
             ledger.validate_ledger(data)
 

@@ -96,6 +96,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   posix-exit-header-abi  compile the staged x86 C/C++ unistd POSIX _exit declaration
   sched-yield-header-abi  verify selected x86 sched_yield C/C++ ABI profiles
   sched-get-priority-max-header-abi  verify selected x86 sched_get_priority_max C/C++ ABI profiles
+  sched-get-priority-min-header-abi  verify selected x86 sched_get_priority_min C/C++ ABI profiles
   bsearch-header-abi  verify staged x86 C/C++ stdlib bsearch declaration and linkage
   linear-search-header-abi  verify staged x86 C/C++ search.h lfind/lsearch declarations and linkage
   qsort-header-abi  verify staged x86 C/C++ stdlib qsort declaration and linkage
@@ -361,6 +362,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-process-resources  run the static x86 crabc-libc selected resource slice
   libc-sched-yield  run the static x86 crabc-libc POSIX scheduler-yield slice
   libc-sched-get-priority-max  run the static x86 crabc-libc scheduler priority-maximum slice
+  libc-sched-get-priority-min  run the static x86 crabc-libc scheduler priority-minimum slice
   libc-readiness-waits  run the static x86 crabc-libc readiness/signal-waits slice
   libc-system-observation  run the static x86 crabc-libc uname/sysinfo slice
   libc-system-information  run the static x86 crabc-libc processor/page slice
@@ -2293,6 +2295,10 @@ run_sched_get_priority_max_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sched_get_priority_max_header_abi.sh
 }
 
+run_sched_get_priority_min_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sched_get_priority_min_header_abi.sh
+}
+
 run_callback_algorithms_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_callback_algorithms_header_abi.sh
 }
@@ -3637,6 +3643,10 @@ run_libc_sched_get_priority_max_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sched_get_priority_max.sh
 }
 
+run_libc_sched_get_priority_min_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sched_get_priority_min.sh
+}
+
 run_libc_readiness_waits_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_readiness_waits.sh
 }
@@ -3869,7 +3879,7 @@ case "$command" in
     libc-sleep) ;;
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
-    libc-sched-yield|libc-sched-get-priority-max) ;;
+    libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     ctermid-header-abi|gethostid-header-abi|hasmntopt-header-abi|fchdir-header-abi|ulimit-header-abi|sync-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-hasmntopt|libc-fchdir|libc-ulimit|libc-sync|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -3920,7 +3930,7 @@ case "$command" in
     xattr-header-abi) ;;
     madvise-reference) ;;
     ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi) ;;
-    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|sched-get-priority-max-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
+    integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi) ;;
     posix-exit-header-abi) ;;
     ffs-header-abi) ;;
     byte-strings-header-abi) ;;
@@ -4282,6 +4292,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "sched-get-priority-max-header-abi takes no arguments"
         ensure_image
         run_sched_get_priority_max_header_abi
+        ;;
+    sched-get-priority-min-header-abi)
+        [ "$#" -eq 0 ] || fail "sched-get-priority-min-header-abi takes no arguments"
+        ensure_image
+        run_sched_get_priority_min_header_abi
         ;;
     callback-algorithms-header-abi)
         [ "$#" -eq 0 ] || fail "callback-algorithms-header-abi takes no arguments"
@@ -5306,6 +5321,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sched-get-priority-max takes no arguments"
         ensure_image
         run_libc_sched_get_priority_max_probe
+        ;;
+    libc-sched-get-priority-min)
+        [ "$#" -eq 0 ] || fail "libc-sched-get-priority-min takes no arguments"
+        ensure_image
+        run_libc_sched_get_priority_min_probe
         ;;
     libc-readiness-waits)
         [ "$#" -eq 0 ] || fail "libc-readiness-waits takes no arguments"

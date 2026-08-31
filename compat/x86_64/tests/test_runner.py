@@ -1372,7 +1372,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-getloadavg",
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
-            "libc-sched-yield|libc-sched-get-priority-max",
+            "libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
             "ctermid-header-abi|gethostid-header-abi|sync-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-sync|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -1423,7 +1423,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|sched-get-priority-max-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|sched-yield-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|bsearch-header-abi|linear-search-header-abi|qsort-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1540,6 +1540,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-process-resources", source)
         self.assertIn("libc-sched-yield", source)
         self.assertIn("libc-sched-get-priority-max", source)
+        self.assertIn("libc-sched-get-priority-min", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
@@ -7195,6 +7196,154 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("sched-get-priority-max-header-abi", runner)
         self.assertIn("libc-sched-get-priority-max", runner)
+
+    def test_libc_static_c_abi_sched_get_priority_min_artifact_stays_query_only(
+        self,
+    ) -> None:
+        """Keep the selected minimum query apart from scheduler support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        query_path = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "sched_get_priority_min.rs"
+        )
+        probe_path = (
+            ROOT / "compat" / "x86_64" / "libc_sched_get_priority_min_probe.c"
+        )
+        start_path = (
+            ROOT / "compat" / "x86_64" / "libc_sched_get_priority_min_start.S"
+        )
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_get_priority_min.sh"
+        )
+        header_c_path = (
+            ROOT / "compat" / "x86_64" / "sched_get_priority_min_header_abi_probe.c"
+        )
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "sched_get_priority_min_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_sched_get_priority_min_header_abi.sh"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (
+            query_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+        ):
+            self.assertTrue(
+                path.is_file(), f"missing sched_get_priority_min artifact input: {path}"
+            )
+
+        query = query_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_get_priority_min.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/sched/sched_get_priority_max.c::sched_get_priority_min",
+            "sched_get_priority_min=147",
+            'pub extern "C" fn sched_get_priority_min(policy: c_int) -> c_int',
+            "raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MIN",
+            "c_status(result)",
+            "sched_get_priority_max",
+            "scheduler policy",
+            "process lifecycle",
+            "public x86 support",
+        ):
+            self.assertIn(required, query)
+        for forbidden in (
+            "fn sched_get_priority_max",
+            "SYS_SCHED_GET_PRIORITY_MAX",
+            "sched_getaffinity",
+            "sched_setaffinity",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, query)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <sched.h>",
+            "SYS_sched_get_priority_min == 147",
+            "sched_get_priority_min_signature",
+            "SCHED_OTHER == 0 && SCHED_FIFO == 1 && SCHED_RR == 2",
+            "check_success",
+            "SCHED_FIFO, 1, ERANGE",
+            "SCHED_RR, 1, EILSEQ",
+            "check_invalid_policy",
+            "CRABC_SCHED_GET_PRIORITY_MIN_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_sched_get_priority_min_probe",
+        ):
+            self.assertIn(required, start)
+        for header_path in (header_c_path, header_cxx_path):
+            header_probe = header_path.read_text(encoding="utf-8")
+            self.assertIn("sched_get_priority_min_signature", header_probe)
+            self.assertIn("sched_get_priority_min", header_probe)
+            self.assertIn("SCHED_FIFO", header_probe)
+        for required in (
+            "-std=c++17",
+            "nm --undefined-only",
+            "sched.h",
+            "sched_get_priority_min",
+            "POSIX",
+            "GNU",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sched_get_priority_min_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_sched_get_priority_min_syscall",
+            "fixed Linux syscall 147",
+            "must publish raw failure through errno TLS",
+            "src/sched/sched_get_priority_max.c",
+            "sched_get_priority_max",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_get_priority_min", static_exports)
+        self.assertIn('id = "static-c-sched-get-priority-min"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-get-priority-min"',
+            parity_ledger,
+        )
+        self.assertIn("sched-get-priority-min-header-abi", runner)
+        self.assertIn("libc-sched-get-priority-min", runner)
 
     def test_libc_static_c_abi_pthread_cpuclock_artifact_stays_self_only(
         self,
