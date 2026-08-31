@@ -288,6 +288,8 @@ hdestroy
 hdestroy_r
 hsearch
 hsearch_r
+htonl
+htons
 hypotl
 iconv
 iconv_close
@@ -465,6 +467,8 @@ nexttowardl
 nice
 nl_langinfo
 nl_langinfo_l
+ntohl
+ntohs
 open
 openat
 opendir

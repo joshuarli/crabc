@@ -311,6 +311,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-credential-observation  run the static x86 crabc-libc credential-observation slice
   libc-ffs  run the static x86 crabc-libc find-first-set slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
+  libc-network-byte-order  run the static x86 crabc-libc network byte-order slice
   libc-process-globals-getopt  run the static x86 crabc-libc program-name/getopt slice
   libc-auxv-observation  run the static x86 crabc-libc initial aux-vector lookup slice
   libc-inet-address  run the static x86 crabc-libc numeric Internet-address codec slice
@@ -3145,6 +3146,7 @@ case "$command" in
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
     inet-address-header-abi) ;;
+    libc-network-byte-order) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-fdim) ;;
@@ -4600,6 +4602,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-byte-strings takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_byte_strings.sh
+        ;;
+    libc-network-byte-order)
+        [ "$#" -eq 0 ] || fail "libc-network-byte-order takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_network_byte_order.sh
         ;;
     libc-process-globals-getopt)
         [ "$#" -eq 0 ] || fail "libc-process-globals-getopt takes no arguments"

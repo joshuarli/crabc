@@ -1135,6 +1135,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    installed-header-tree-closure) ;;", source)
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    inet-address-header-abi) ;;", source)
+        self.assertIn("    libc-network-byte-order) ;;", source)
         self.assertIn("    math-special-header-abi|libc-math-special) ;;", source)
         self.assertIn(
             "    math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;",
@@ -1170,6 +1171,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
             "inet-address-header-abi",
+            "libc-network-byte-order",
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-fdim",
@@ -8602,6 +8604,98 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             '"$project_ipv6_macro"',
         ):
             self.assertIn(required, runner)
+
+    def test_libc_static_c_abi_network_byte_order_artifact_stays_isolated(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        network_byte_order = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "network_byte_order.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_network_byte_order_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_network_byte_order_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_network_byte_order.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = [
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        ]
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "network_byte_order.rs"]', static_root)
+        for symbol in ("htonl", "htons", "ntohl", "ntohs"):
+            self.assertIn(f"fn {symbol}", network_byte_order)
+            self.assertIn(symbol, static_export_names)
+        self.assertEqual(network_byte_order.count("swap_bytes()"), 4)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/network/htonl.c",
+            "src/network/htons.c",
+            "src/network/ntohl.c",
+            "src/network/ntohs.c",
+            "runtime endian-union branch",
+            "bswap_16",
+            "bswap_32",
+        ):
+            self.assertIn(required, network_byte_order)
+        for forbidden in (
+            "raw_syscall",
+            "__errno_location",
+            "crabc_core",
+            "mimalloc",
+            "std::",
+        ):
+            self.assertNotIn(forbidden, network_byte_order)
+        for required in (
+            "#include <arpa/inet.h>",
+            "network_u32_function",
+            "network_u16_function",
+            "host_to_network_u32",
+            "network_to_host_u32",
+            "host_to_network_u16",
+            "network_to_host_u16",
+            "0x01020304",
+            "0x0102",
+            "wire.bytes[0] != 0x01",
+            "CRABC_NETWORK_BYTE_ORDER_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_network_byte_order_probe", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "candidate unexpectedly selects TLS",
+            "candidate accidentally selects",
+            "unexpectedly calls an ambient runtime",
+            "arpa/inet.h",
+            "sys/socket.h",
+            "htonl htons ntohl ntohs",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-network-byte-order"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-network-byte-order"',
+            parity_ledger,
+        )
+        self.assertIn("libc-network-byte-order)", dispatcher)
 
     def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
         static_root = (

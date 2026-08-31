@@ -38,7 +38,7 @@
 //! direct no-cancellation mapping synchronization, direct anonymous-memory
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
-//! padded socket messages/options,
+//! scalar network byte-order conversion, padded socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
@@ -339,6 +339,8 @@ mod system_information;
 mod uts_identity;
 #[path = "socket_transport.rs"]
 mod socket_transport;
+#[path = "network_byte_order.rs"]
+mod network_byte_order;
 #[path = "inet_address.rs"]
 mod inet_address;
 #[path = "numeric_netdb.rs"]

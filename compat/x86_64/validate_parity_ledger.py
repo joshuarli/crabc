@@ -1379,6 +1379,13 @@ INET_ADDRESS_SYMBOLS = (
     "inet_pton",
 )
 
+NETWORK_BYTE_ORDER_SYMBOLS = (
+    "htonl",
+    "htons",
+    "ntohl",
+    "ntohs",
+)
+
 NUMERIC_NETDB_SYMBOLS = (
     "freeaddrinfo",
     "gai_strerror",
@@ -14256,6 +14263,297 @@ def require_generic_ioctl_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_network_byte_order_artifact(family: Mapping[str, Any]) -> None:
+    """Keep scalar byte order separate from resolver and transport work."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-network-byte-order"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-network-byte-order artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-network-byte-order must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(
+        isinstance(description, str),
+        "static-c-network-byte-order needs a description",
+    )
+    for symbol in NETWORK_BYTE_ORDER_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"static-c-network-byte-order description omits {symbol}",
+        )
+    for phrase in (
+        "Private native x86 static network byte-order artifact",
+        "still-planned `libc.posix-runtime`",
+        "little-endian scalar 32-bit and 16-bit byte reversals",
+        "`01 02 03 04` and `01 02` network-byte results",
+        "inverse round trips",
+        "zero/all-one fixed points",
+        "resolver configuration",
+        "DNS",
+        "netdb",
+        "database",
+        "Ethernet",
+        "interface",
+        "address-codec",
+        "socket-transport",
+        "errno",
+        "TLS",
+        "syscall",
+        "allocation",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-network-byte-order description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-network-byte-order.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/network_byte_order.rs",
+        "include/arpa/inet.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_network_byte_order_probe.c",
+        "compat/x86_64/libc_network_byte_order_start.S",
+        "compat/x86_64/run_libc_network_byte_order.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"static-c-network-byte-order source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-network-byte-order.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64 LP64" in item
+            and "`uint32_t`" in item
+            and "`uint16_t`" in item
+            and "little-endian" in item
+            and "0x01020304" in item
+            and "01 02 03 04" in item
+            and "0x0102" in item
+            and "01 02" in item
+            for item in prerequisites
+        ),
+        "static-c-network-byte-order must record its x86 scalar and wire-byte ABI",
+    )
+    require(
+        any(
+            "src/network/htonl.c" in item
+            and "htons.c" in item
+            and "ntohl.c" in item
+            and "ntohs.c" in item
+            and "runtime endian-union" in item
+            and "bswap_32" in item
+            and "bswap_16" in item
+            and "`swap_bytes`" in item
+            for item in prerequisites
+        ),
+        "static-c-network-byte-order must record its pinned-musl endian mapping",
+    )
+    require(
+        any(
+            "no PT_TLS segment" in item
+            and "errno" in item
+            and "raw syscall" in item
+            and "resolver/configuration/DNS/netdb/database/interface/Ethernet" in item
+            and "socket call" in item
+            and "test-only `_start`" in item
+            for item in prerequisites
+        ),
+        "static-c-network-byte-order must retain its no-ambient-runtime boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-network-byte-order.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<arpa/inet.h>" in item
+            and "`stdint.h`" in item
+            and "`sys/socket.h`" in item
+            and "`sys/types.h`" in item
+            and "`bits/alltypes.h`" in item
+            and "function-pointer declarations" in item
+            and "C declaration and scalar-layout proof" in item
+            and "resolver behavior" in item
+            and "public x86 support" in item
+            for item in headers
+        ),
+        "static-c-network-byte-order must retain its direct C header proof",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(NETWORK_BYTE_ORDER_SYMBOLS) <= static_exports,
+        "static-c-network-byte-order must retain all four selected exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "network_byte_order.rs"]\nmod network_byte_order;' in static_root,
+        "x86 static C ABI must compose the network_byte_order leaf",
+    )
+    leaf = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "network_byte_order.rs"
+    ).read_text(encoding="utf-8")
+    for symbol in NETWORK_BYTE_ORDER_SYMBOLS:
+        require(
+            f"fn {symbol}" in leaf,
+            f"network_byte_order leaf omits {symbol}",
+        )
+    require(
+        leaf.count("swap_bytes()") == 4,
+        "network_byte_order leaf must use one scalar swap_bytes conversion per export",
+    )
+    for forbidden in (
+        "raw_syscall",
+        "__errno_location",
+        "crabc_core",
+        "mimalloc",
+        "std::",
+    ):
+        require(
+            forbidden not in leaf,
+            f"network_byte_order leaf selects forbidden {forbidden}",
+        )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and all(
+                source in entry["role"]
+                for source in (
+                    "src/network/htonl.c",
+                    "htons.c",
+                    "ntohl.c",
+                    "ntohs.c",
+                )
+            )
+            and "runtime-endian bswap-or-identity" in entry["role"]
+            and "little-endian bswap route" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-network-byte-order must retain its musl conversion oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "Fixed-width unsigned scalar C argument/return ABI" in entry["role"]
+            and "no-ambient-runtime final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-network-byte-order must retain its scalar ELF ABI oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-network-byte-order"},
+        "static-c-network-byte-order must use the closed libc-network-byte-order command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C execution",
+                "`-nostdlib -static` candidate",
+                "`htonl`/`htons`/`ntohl`/`ntohs`",
+                "little-endian 32-bit and 16-bit wire bytes",
+                "inverse round trips",
+                "zero/all-one fixed points",
+                "no calls or syscalls",
+                "no interpreter/DT_NEEDED/unresolved symbol",
+                "TLS",
+                "errno",
+                "allocation",
+                "address codecs",
+                "resolver configuration/DNS/netdb/database",
+                "Ethernet/interface",
+                "socket transport",
+                "public x86 support",
+            )
+        ),
+        "static-c-network-byte-order evidence must retain its isolated runtime regression",
+    )
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_network_byte_order.sh"
+    ).read_text(encoding="utf-8")
+    for required in (
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,-e,_start",
+        "-Wl,--no-undefined",
+        "candidate unexpectedly selects TLS",
+        "candidate accidentally selects",
+        "unexpectedly calls an ambient runtime",
+        "arpa/inet.h",
+        "sys/socket.h",
+    ):
+        require(
+            required in runner,
+            f"network byte-order runner omits {required}",
+        )
+
+    dispatch_source = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "libc-network-byte-order)" in dispatch_source,
+        "libc-network-byte-order is absent from the native dispatcher",
+    )
+
+
 def require_socket_messages_artifact(family: Mapping[str, Any]) -> None:
     """Keep the padded socket-message/options archive block private and exact."""
     artifacts = require_verified_artifacts(
@@ -23539,6 +23837,7 @@ def validate_ledger(
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
+    require_network_byte_order_artifact(by_id["libc.posix-runtime"])
     require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_posix_semaphore_artifact(by_id["libc.posix-runtime"])

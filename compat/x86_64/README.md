@@ -434,6 +434,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-system-observation
 ./scripts/dev-x86_64.sh libc-system-information
 ./scripts/dev-x86_64.sh libc-uts-identity
+./scripts/dev-x86_64.sh libc-network-byte-order
 ./scripts/dev-x86_64.sh libc-socket-transport
 ./scripts/dev-x86_64.sh libc-socket-messages
 ./scripts/dev-x86_64.sh libc-byte-strings
@@ -3245,6 +3246,19 @@ copy/forced-NUL rule, the complete-fitting NUL-terminated domain-name copy,
 and direct setter `EFAULT`/`EINVAL` results. It excludes namespace management,
 gethostid/sethostid, system-file parsing, sysconf, process identity, general
 runtime, and public x86 support.
+
+`libc-network-byte-order` is a separately recorded private
+`static-c-network-byte-order` `verified_artifact` inside still-planned
+`libc.posix-runtime`, not resolver or Ethernet work. Its project-header C body
+first runs through pinned musl 1.2.6 and then through a
+`-nostdlib -static` candidate, selecting exactly `htonl`, `htons`, `ntohl`,
+and `ntohs`. On little-endian x86 it proves the 32-bit `01 02 03 04` and
+16-bit `01 02` wire-byte results, inverse round trips, and zero/all-one fixed
+points while rejecting TLS, errno, allocation, syscall, and ambient runtime
+paths. It does not select `inet_*` address conversion or scratch storage,
+resolver configuration, DNS, netdb/database, Ethernet/interface behavior,
+socket transport, general networking, family promotion, or public x86
+support.
 
 `libc-socket-transport` is a separately recorded
 `static-c-socket-transport` `verified_artifact` gate over that archive, not a

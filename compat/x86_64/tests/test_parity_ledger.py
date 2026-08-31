@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 36)
-        self.assertEqual(report["verified_artifact_count"], 132)
+        self.assertEqual(report["verified_artifact_count"], 133)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -12767,6 +12767,129 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "exact static pathname runtime regression"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_network_byte_order_artifact_stays_outside_resolver_and_ethernet(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        self.assertIn(
+            "libc/src/c_abi/x86_64/network_byte_order.rs",
+            family["source_owners"],
+        )
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-network-byte-order"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/network_byte_order.rs",
+            "include/arpa/inet.h",
+            "compat/x86_64/libc_network_byte_order_probe.c",
+            "compat/x86_64/libc_network_byte_order_start.S",
+            "compat/x86_64/run_libc_network_byte_order.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-network-byte-order"},
+        )
+        for phrase in (
+            "still-planned `libc.posix-runtime`",
+            "`htonl`",
+            "`htons`",
+            "`ntohl`",
+            "`ntohs`",
+            "little-endian scalar 32-bit and 16-bit byte reversals",
+            "`01 02 03 04` and `01 02` network-byte results",
+            "inverse round trips",
+            "zero/all-one fixed points",
+            "resolver configuration",
+            "DNS",
+            "netdb",
+            "database",
+            "Ethernet",
+            "interface",
+            "address-codec",
+            "socket-transport",
+            "errno",
+            "TLS",
+            "syscall",
+            "allocation",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        exports = set(
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertTrue({"htonl", "htons", "ntohl", "ntohs"} <= exports)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        scalar_abi = next(item for item in prerequisites if "System V AMD64 LP64" in item)
+        assert isinstance(scalar_abi, str)
+        for phrase in (
+            "`uint32_t`",
+            "`uint16_t`",
+            "little-endian",
+            "0x01020304",
+            "01 02 03 04",
+            "0x0102",
+            "01 02",
+        ):
+            self.assertIn(phrase, scalar_abi)
+        source_mapping = next(
+            item for item in prerequisites if "src/network/htonl.c" in item
+        )
+        assert isinstance(source_mapping, str)
+        for phrase in (
+            "htons.c",
+            "ntohl.c",
+            "ntohs.c",
+            "runtime endian-union",
+            "bswap_32",
+            "bswap_16",
+            "`swap_bytes`",
+        ):
+            self.assertIn(phrase, source_mapping)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-network-byte-order"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "Ethernet", "link-layer"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "omits Ethernet"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-network-byte-order"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = "scalar byte-order fixture"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "isolated runtime regression"
         ):
             ledger.validate_ledger(data)
 

@@ -6,6 +6,16 @@ runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
 with explicit target-specific foundations and native evidence. Public support
 remains Linux/AArch64 little-endian until every x86 promotion gate passes.
 
+`./scripts/dev-x86_64.sh libc-network-byte-order` is a private
+`static-c-network-byte-order` artifact inside planned `libc.posix-runtime`.
+Its pinned-musl and true-static candidate fixture selects only `htonl`,
+`htons`, `ntohl`, and `ntohs`: fixed-width little-endian 32-bit/16-bit byte
+reversal, network-byte output, inverse round trips, and zero/all-one values.
+It has no errno, TLS, syscall, allocation, resolver configuration, DNS,
+netdb/database, Ethernet/interface, address-codec, or socket-transport path;
+it is not resolver/network completion, family promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-login-name` is a private
 `static-c-login-name` artifact inside planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes compose the selected bounded
