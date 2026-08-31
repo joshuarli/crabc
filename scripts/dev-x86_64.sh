@@ -156,6 +156,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   readlinkat-header-abi  verify selected x86 POSIX readlinkat C/C++ declarations
   linkat-header-abi  verify selected x86 POSIX linkat C/C++ declarations
   lchown-header-abi  verify selected x86 POSIX lchown C/C++ declarations
+  hasmntopt-header-abi  verify selected x86 mntent hasmntopt C/C++ declarations
   mktemp-header-abi  compile the staged x86 C/C++ mktemp declaration
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   memory-sync-header-abi  verify selected x86 msync C/C++ declarations
@@ -327,6 +328,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-readlinkat  run the static x86 crabc-libc readlinkat leaf
   libc-linkat  run the static x86 crabc-libc linkat leaf
   libc-lchown  run the static x86 crabc-libc lchown leaf
+  libc-hasmntopt  run the static x86 crabc-libc hasmntopt leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
   libc-process-context  run the static x86 crabc-libc selected process-context slice
   libc-environment  run the static x86 crabc-libc bounded environment slice
@@ -2858,6 +2860,9 @@ run_linkat_header_abi() {
 run_lchown_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_lchown_header_abi.sh
 }
+run_hasmntopt_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_hasmntopt_header_abi.sh
+}
 run_mman_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_mman_header_abi.sh
 }
@@ -3783,6 +3788,10 @@ run_libc_lchown_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_lchown.sh
 }
 
+run_libc_hasmntopt_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_hasmntopt.sh
+}
+
 run_libc_process_context_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_process_context.sh
 }
@@ -4089,7 +4098,7 @@ case "$command" in
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield) ;;
     sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi) ;;
     ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown) ;;
+    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4766,6 +4775,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "lchown-header-abi takes no arguments"
         ensure_image
         run_lchown_header_abi
+        ;;
+    hasmntopt-header-abi)
+        [ "$#" -eq 0 ] || fail "hasmntopt-header-abi takes no arguments"
+        ensure_image
+        run_hasmntopt_header_abi
         ;;
     mktemp-header-abi)
         [ "$#" -eq 0 ] || fail "mktemp-header-abi takes no arguments"
@@ -5555,6 +5569,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-lchown takes no arguments"
         ensure_image
         run_libc_lchown_probe
+        ;;
+    libc-hasmntopt)
+        [ "$#" -eq 0 ] || fail "libc-hasmntopt takes no arguments"
+        ensure_image
+        run_libc_hasmntopt_probe
         ;;
     libc-mktemp)
         [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"

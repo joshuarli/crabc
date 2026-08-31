@@ -16593,6 +16593,301 @@ def require_lchown_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in runner, f"lchown runner omits {snippet}")
 
 
+def require_hasmntopt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's caller-owned mntent option scan self-contained."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-hasmntopt"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-hasmntopt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-hasmntopt must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-hasmntopt must remain a private artifact rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "selected-static-archive `hasmntopt`",
+        "still-planned `libc.posix-runtime`",
+        "pinned musl 1.2.6",
+        "`-nostdlib -static`",
+        "src/misc/mntent.c::hasmntopt",
+        "NUL, comma, or equals",
+        "caller-owned `mnt_opts`",
+        "exact returned pointers",
+        "no byte mutation",
+        "no syscall, errno, TLS",
+        "`setmntent`",
+        "`endmntent`",
+        "`getmntent`",
+        "`getmntent_r`",
+        "`addmntent`",
+        "mount database",
+        "/etc/mtab",
+        "FILE/stdio",
+        "locale objects",
+        "environment lookup",
+        "catalogs",
+        "general locale support",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-hasmntopt description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-hasmntopt.source_owners")
+    )
+    for owner in (
+        "COMPATIBILITY-PROFILE.md",
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/hasmntopt.rs",
+        "include/mntent.h",
+        "include/stdio.h",
+        "include/stddef.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/hasmntopt_header_abi_probe.c",
+        "compat/x86_64/hasmntopt_header_abi_probe.cpp",
+        "compat/x86_64/run_hasmntopt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_hasmntopt_probe.c",
+        "compat/x86_64/libc_hasmntopt_start.S",
+        "compat/x86_64/run_libc_hasmntopt.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-hasmntopt source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-hasmntopt.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "rdi" in item
+            and "rsi" in item
+            and "rax" in item
+            and "size 40" in item
+            and "0/8/16/24/32/36" in item
+            and "no syscall, errno, TLS" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must record its pointer and struct ABI",
+    )
+    require(
+        any(
+            "src/misc/mntent.c::hasmntopt" in item
+            and "l = strlen(opt)" in item
+            and "!strncmp(p, opt, l)" in item
+            and "p[l]=='='" in item
+            and "strchr(p, ',')" in item
+            and "volatile byte loops" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its exact pinned-musl scan mapping",
+    )
+    require(
+        any(
+            "rw,relatime,noexec=1,nodev" in item
+            and "exact returned pointers" in item
+            and "prefix and absent" in item
+            and "empty first-element" in item
+            and "no setmntent/endmntent/getmntent/getmntent_r/addmntent" in item
+            and "locale object" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its caller-owned bounded fixture",
+    )
+    require(
+        any(
+            "only the archive member" in item
+            and "no PT_TLS" in item
+            and "syscall, call instruction" in item
+            and "helper-string export" in item
+            for item in prerequisites
+        ),
+        "static-c-hasmntopt must retain its one-object no-runtime closure",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-hasmntopt.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "eight-profile" in item
+            and "mntent.h" in item
+            and "hasmntopt(const struct mntent *, const char *)" in item
+            and "40-byte/8-byte-aligned" in item
+            and "0/8/16/24/32/36" in item
+            and "All eight" in item
+            and "none hides it" in item
+            and "unmangled C++" in item
+            for item in headers
+        ),
+        "static-c-hasmntopt must retain its unconditional mntent header ABI boundary",
+    )
+
+    static_exports = set(
+        static_c_abi_export_names(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+    )
+    require("hasmntopt" in static_exports, "static-c-hasmntopt must export hasmntopt")
+    for forbidden in ("setmntent", "endmntent", "getmntent", "getmntent_r", "addmntent"):
+        require(
+            forbidden not in static_exports,
+            f"static-c-hasmntopt must not add {forbidden}",
+        )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "hasmntopt.rs"]\nmod hasmntopt;' in static_root,
+        "x86 static C ABI must compose the hasmntopt leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hasmntopt.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/misc/mntent.c::hasmntopt",
+        "l = strlen(opt)",
+        "!strncmp(p, opt, l)",
+        "strchr(p, ',')",
+        "struct MntEnt",
+        "fn hasmntopt",
+        "read_unaligned",
+        "read_volatile",
+        "boundary == 0 || boundary == b',' || boundary == b'='",
+        "ptr::null_mut",
+        "wrapping_add",
+    ):
+        require(snippet in implementation, f"hasmntopt leaf omits {snippet}")
+    for forbidden in (
+        "fn setmntent(",
+        "fn endmntent(",
+        "fn getmntent(",
+        "fn getmntent_r(",
+        "fn addmntent(",
+        "raw_syscall::",
+        "c_status(",
+        "static mut",
+        "alloc::",
+        "Vec<",
+        "__tls_get_addr",
+    ):
+        require(
+            forbidden not in implementation,
+            f"hasmntopt leaf unexpectedly contains {forbidden}",
+        )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "include/mntent.h" in entry["role"]
+            and "src/misc/mntent.c::hasmntopt" in entry["role"]
+            and "strlen" in entry["role"]
+            and "NUL/comma/equals" in entry["role"]
+            and "strchr(p, ',')" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-hasmntopt must retain its pinned-musl declaration and source mapping",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "rdi/rsi" in entry["role"]
+            and "rax" in entry["role"]
+            and "no-TLS" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-hasmntopt must retain its x86 static ABI oracle",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence} == {"./scripts/dev-x86_64.sh libc-hasmntopt"},
+        "static-c-hasmntopt must use the dedicated native command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "one-object",
+                "`-nostdlib -static`",
+                "all eight visible and none hidden",
+                "PT_TLS/dynamic TLS",
+                "no syscall or call",
+                "comma and equals boundaries",
+                "empty-first-element",
+                "no mutation",
+                "setmntent/endmntent/getmntent/getmntent_r/addmntent",
+                "locale objects",
+                "public x86 support",
+            )
+        ),
+        "static-c-hasmntopt evidence must retain its exact one-object regression",
+    )
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_hasmntopt_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "MUSL_ROOT=/opt/musl-1.2.6",
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+        "mntent.h",
+        "stdio.h",
+        "__NEED_FILE",
+        "unmangled",
+    ):
+        require(snippet in header_runner, f"hasmntopt header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_hasmntopt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_hasmntopt_header_abi.sh",
+        "-nostdlib -static",
+        "--no-undefined",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "hasmntopt must have exactly one selected archive member",
+        "candidate unexpectedly selects TLS",
+        "hasmntopt implementation calls an unselected runtime boundary",
+        "setmntent endmntent getmntent getmntent_r addmntent",
+        "strlen strncmp strchr",
+    ):
+        require(snippet in runner, f"hasmntopt runner omits {snippet}")
+
+
 def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
     """Keep musl's status-returning POSIX scheduler-yield closure bounded."""
 
@@ -48983,6 +49278,7 @@ def validate_ledger(
     require_readlinkat_artifact(by_id["libc.posix-runtime"])
     require_linkat_artifact(by_id["libc.posix-runtime"])
     require_lchown_artifact(by_id["libc.posix-runtime"])
+    require_hasmntopt_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])

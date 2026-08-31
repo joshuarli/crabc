@@ -3837,6 +3837,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "inet_ntoa.rs"]',
         '#[path = "inet_classful.rs"]',
         '#[path = "hstrerror.rs"]',
+        '#[path = "hasmntopt.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
         '#[path = "byte_strings.rs"]',
@@ -10482,6 +10483,160 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "message evidence must not force-link the whole archive"
         )
 
+    hasmntopt_probe_source = ROOT / "compat" / "x86_64" / "libc_hasmntopt_probe.c"
+    hasmntopt_start_source = ROOT / "compat" / "x86_64" / "libc_hasmntopt_start.S"
+    hasmntopt_runner_source = ROOT / "compat" / "x86_64" / "run_libc_hasmntopt.sh"
+    hasmntopt_header_c_source = (
+        ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.c"
+    )
+    hasmntopt_header_cpp_source = (
+        ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.cpp"
+    )
+    hasmntopt_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_hasmntopt_header_abi.sh"
+    )
+    for path in (
+        hasmntopt_probe_source,
+        hasmntopt_start_source,
+        hasmntopt_runner_source,
+        hasmntopt_header_c_source,
+        hasmntopt_header_cpp_source,
+        hasmntopt_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static hasmntopt artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    hasmntopt_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hasmntopt.rs"
+    hasmntopt_text = hasmntopt_source.read_text(errors="replace")
+    hasmntopt_probe = hasmntopt_probe_source.read_text(errors="replace")
+    hasmntopt_start = hasmntopt_start_source.read_text(errors="replace")
+    hasmntopt_runner = hasmntopt_runner_source.read_text(errors="replace")
+    hasmntopt_header_c = hasmntopt_header_c_source.read_text(errors="replace")
+    hasmntopt_header_cpp = hasmntopt_header_cpp_source.read_text(errors="replace")
+    hasmntopt_header_runner = hasmntopt_header_runner_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "Selected static Linux/x86-64 `hasmntopt` C ABI leaf",
+        "src/misc/mntent.c::hasmntopt",
+        "l = strlen(opt)",
+        "!strncmp(p, opt, l)",
+        "strchr(p, ',')",
+        "struct MntEnt",
+        "read_unaligned",
+        "read_volatile",
+        "boundary == 0 || boundary == b',' || boundary == b'='",
+        'pub unsafe extern "C" fn hasmntopt',
+    ):
+        if required not in hasmntopt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/hasmntopt.rs: selected static caller-owned "
+                f"mntent lookup boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "fn setmntent(",
+        "fn endmntent(",
+        "fn getmntent(",
+        "fn getmntent_r(",
+        "fn addmntent(",
+        "raw_syscall::",
+        "c_status(",
+        "static mut",
+        "alloc::",
+        "Vec<",
+        "__tls_get_addr",
+    ):
+        if forbidden in hasmntopt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/hasmntopt.rs: selected static caller-owned "
+                f"mntent lookup must not select {forbidden!r}"
+            )
+    hasmntopt_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            hasmntopt_text,
+        )
+    )
+    if hasmntopt_exports != {"hasmntopt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/hasmntopt.rs: selected static artifact "
+            "must export only hasmntopt"
+        )
+    for header_probe in (hasmntopt_header_c, hasmntopt_header_cpp):
+        for required in (
+            "mntent.h",
+            "hasmntopt",
+            "sizeof(struct mntent) == 40",
+            "mnt_opts) == 24",
+            "mnt_passno) == 36",
+        ):
+            if required not in header_probe:
+                errors.append(
+                    "compat/x86_64 hasmntopt header probe is missing "
+                    f"{required!r}"
+                )
+    for required in (
+        "EXPECTED_PROFILE_COUNT=8",
+        "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+        "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+        "mntent.h",
+        "__NEED_FILE",
+        "unmangled",
+    ):
+        if required not in hasmntopt_header_runner:
+            errors.append(
+                "compat/x86_64/run_hasmntopt_header_abi.sh: selected declaration "
+                f"evidence is missing {required!r}"
+            )
+    for required in (
+        "hasmntopt_signature",
+        "rw,relatime,noexec=1,nodev",
+        "leading_empty_option_bytes",
+        "same_bytes",
+        "CRABC_HASMNTOPT_FREESTANDING",
+    ):
+        if required not in hasmntopt_probe:
+            errors.append(
+                "compat/x86_64/libc_hasmntopt_probe.c: static caller-owned "
+                f"mntent lookup regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_hasmntopt_probe", "mov $60, %eax"):
+        if required not in hasmntopt_start:
+            errors.append(
+                "compat/x86_64/libc_hasmntopt_start.S: static caller-owned "
+                f"mntent lookup entry is missing {required!r}"
+            )
+    if "static_tls" in hasmntopt_start:
+        errors.append(
+            "compat/x86_64/libc_hasmntopt_start.S: caller-owned mntent lookup "
+            "entry must not bootstrap TLS"
+        )
+    for required in (
+        "run_hasmntopt_header_abi.sh",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "hasmntopt must have exactly one selected archive member",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "hasmntopt implementation calls an unselected runtime boundary",
+        "setmntent endmntent getmntent getmntent_r addmntent",
+        "strlen strncmp strchr",
+    ):
+        if required not in hasmntopt_runner:
+            errors.append(
+                "compat/x86_64/run_libc_hasmntopt.sh: archive-free static caller-owned "
+                f"mntent lookup evidence is missing {required!r}"
+            )
+    if '"$archive" -o "$candidate"' in hasmntopt_runner or "--whole-archive" in hasmntopt_runner:
+        errors.append(
+            "compat/x86_64/run_libc_hasmntopt.sh: final caller-owned mntent lookup "
+            "candidate must link only its selected member"
+        )
+
     dn_skipname_probe_source = (
         ROOT / "compat" / "x86_64" / "libc_dn_skipname_probe.c"
     )
@@ -12098,6 +12253,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         inet_ntoa_text,
         inet_classful_text,
         hstrerror_text,
+        hasmntopt_text,
         dn_skipname_text,
         dn_expand_text,
         ns_flagdata_text,
@@ -12508,6 +12664,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "inet_ntoa",
         "inet_lnaof",
         "inet_makeaddr",
+        "hasmntopt",
         "hstrerror",
         "dn_skipname",
         "__dn_expand",
@@ -12661,7 +12818,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "paired read-only scheduler-priority bounds leaf, "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
-            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, immutable nameserver flag-accessor data, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
+            "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, immutable nameserver flag-accessor data, and legacy classful IPv4 arithmetic, one caller-owned mntent option lookup, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "one direct legacy wide-substring alias, fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, paired intrusive-queue links, callback-tree/hash-table search, and the "
@@ -12761,6 +12918,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("inet_ntoa.rs", inet_ntoa_text),
         ("inet_classful.rs", inet_classful_text),
         ("hstrerror.rs", hstrerror_text),
+        ("hasmntopt.rs", hasmntopt_text),
         ("dn_skipname.rs", dn_skipname_text),
         ("dn_expand.rs", dn_expand_text),
         ("ns_flagdata.rs", ns_flagdata_text),

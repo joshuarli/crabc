@@ -5345,6 +5345,54 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-hasmntopt"
+description = "Private native x86 selected-static-archive `hasmntopt` leaf within still-planned `libc.posix-runtime`. One project-header C body runs first through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate linked only from the one selected crabc-libc archive member. It resolves only `hasmntopt(const struct mntent *, const char *)`: musl's `src/misc/mntent.c::hasmntopt` scans caller-owned `mnt_opts` bytes and returns the matching list-element pointer only when the requested option is followed by NUL, comma, or equals. The fixture proves comma elements, an equals-valued option, prefix negatives, the source-faithful empty-first-element behavior, exact returned pointers, and no byte mutation. The candidate has no syscall, errno, TLS, helper-string export, FILE/stdio, allocation, or mount-table state. It does not select `setmntent`, `endmntent`, `getmntent`, `getmntent_r`, `addmntent`, a mount database or `/etc/mtab` lookup, general string APIs, pathname/CWD/namespace policy, locale objects, environment lookup, catalogs, general locale support, a Rust facade, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support."
+source_owners = [
+  "COMPATIBILITY-PROFILE.md",
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/hasmntopt.rs",
+  "include/mntent.h",
+  "include/stdio.h",
+  "include/stddef.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/abi/musl-1.2.6/aarch64/headers.tsv",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/hasmntopt_header_abi_probe.c",
+  "compat/x86_64/hasmntopt_header_abi_probe.cpp",
+  "compat/x86_64/run_hasmntopt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_hasmntopt_probe.c",
+  "compat/x86_64/libc_hasmntopt_start.S",
+  "compat/x86_64/run_libc_hasmntopt.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI passes `const struct mntent *` in rdi and `const char *` in rsi, returning the borrowed `char *` in rax. Linux/x86-64 LP64 fixes `struct mntent` at size 40, alignment 8, and mnt_fsname/mnt_dir/mnt_type/mnt_opts/mnt_freq/mnt_passno offsets 0/8/16/24/32/36. The selected leaf has no syscall, errno, TLS, FILE, or global state.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps include/mntent.h plus src/misc/mntent.c::hasmntopt exactly: `l = strlen(opt)`, `!strncmp(p, opt, l) && (!p[l] || p[l]==',' || p[l]=='=')`, then `p = strchr(p, ',')`. The selected Rust object deliberately retains that scan with local volatile byte loops so it does not select strlen, strncmp, strchr, a general string runtime, parser, mount database, or state.",
+  "The native fixture uses caller-owned mutable option bytes `rw,relatime,noexec=1,nodev`; it proves exact returned pointers for comma and equals boundaries, rejects prefix and absent names, pins musl's empty first-element behavior, and compares the original bytes after every lookup. It invokes no setmntent/endmntent/getmntent/getmntent_r/addmntent, FILE/stdio, /etc/mtab, allocation, locale object, environment, catalog, pathname, or policy operation.",
+  "The final candidate links only the archive member that defines hasmntopt and has no PT_TLS segment, interpreter, DT_NEEDED, unresolved symbol, dynamic TLS form, errno/h_errno reference, syscall, call instruction, helper-string export, or unowned runtime dependency. Its test-only entry shim is not CRT, stdio, mount parsing, or process-startup support.",
+]
+x86_header_prerequisites = ["The eight-profile C11/C++17 project-first/pinned-musl mntent.h matrix proves unconditional `hasmntopt(const struct mntent *, const char *)`, the x86 LP64 40-byte/8-byte-aligned `struct mntent` with 0/8/16/24/32/36 field offsets, and unmangled C++ linkage. All eight default/GNU/strict/POSIX/X/Open/BSD C/C++ profiles expose it; none hides it. The existing project header reaches stdio.h for FILE while pinned musl mntent.h uses __NEED_FILE directly; this gate constrains the selected declaration and record ABI only, not mntent stream API completion, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-hasmntopt", scope = "Pinned-musl project-header C reference plus a true one-object x86 `-nostdlib -static` crabc-libc candidate. The gate runs the eight-profile hasmntopt C/C++ header matrix with all eight visible and none hidden; ratchets the exact crate-owned archive export; rejects interpreter/DT_NEEDED, unresolved symbols, PT_TLS/dynamic TLS, errno/h_errno, helper-string, and unowned runtime dependencies; and disassembles the selected member for no syscall or call. Its caller-owned fixture checks comma and equals boundaries, exact returned pointers, prefix/absent negatives, empty-first-element behavior, and no mutation. It does not select setmntent/endmntent/getmntent/getmntent_r/addmntent, FILE/stdio, mount parsing or /etc/mtab lookup, allocation, errno/TLS, general string APIs, locale objects, environment, catalogs, general locale, pathname policy, libc.so, CRT, loader, sysroot, filesystem capability completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration and source oracle for include/mntent.h and src/misc/mntent.c::hasmntopt: it returns a caller-owned option-list pointer only after the `strlen`/`strncmp` and NUL/comma/equals boundary test, then advances with `strchr(p, ',')`." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 struct mntent layout, rdi/rsi pointer arguments, rax pointer return, unmangled C++ linkage, and true static no-TLS candidate contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-sched-yield"
 description = "Private native x86 selected-static-archive POSIX `sched_yield` leaf. One dependency-free `crabc-libc` archive resolves exactly `sched_yield(void)` into a freestanding C fixture after an equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional no-argument signed-int declaration and unmangled C++ linkage. The static fixture proves a normal successful yield preserves stale errno, then uses fixture-local classic BPF only to force the raw Linux `-EPERM` result and prove musl's status bridge returns `-1` with `errno=EPERM`. It is distinct from the separate C11 `thrd_yield` artifact, whose void source intentionally discards that same raw result. This artifact establishes no scheduler handoff, fairness, peer-progress, scheduler policy/parameter API, affinity, C11 or pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

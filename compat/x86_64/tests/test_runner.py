@@ -1384,7 +1384,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield",
             "sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi",
             "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown",
+            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -1563,6 +1563,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-linkat", source)
         self.assertIn("lchown-header-abi", source)
         self.assertIn("libc-lchown", source)
+        self.assertIn("hasmntopt-header-abi", source)
+        self.assertIn("libc-hasmntopt", source)
         self.assertIn("libc-readiness-waits", source)
         self.assertIn("libc-socket-transport", source)
         self.assertIn("libc-system-observation", source)
@@ -23183,6 +23185,163 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-lchown)\n        [ "$#" -eq 0 ] || fail "libc-lchown takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_hasmntopt_artifact_stays_bounded(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "hasmntopt.rs"
+        ).read_text(encoding="utf-8")
+        header_c_probe = (
+            ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx_probe = (
+            ROOT / "compat" / "x86_64" / "hasmntopt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_hasmntopt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_hasmntopt_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_hasmntopt_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_hasmntopt.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "hasmntopt.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `hasmntopt` C ABI leaf",
+            "musl 1.2.6",
+            "src/misc/mntent.c::hasmntopt",
+            "l = strlen(opt)",
+            "!strncmp(p, opt, l)",
+            "strchr(p, ',')",
+            "struct MntEnt",
+            "read_unaligned",
+            "read_volatile",
+            "boundary == 0 || boundary == b',' || boundary == b'='",
+            "ptr::null_mut",
+            "wrapping_add",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "fn setmntent(",
+            "fn endmntent(",
+            "fn getmntent(",
+            "fn getmntent_r(",
+            "fn addmntent(",
+            "raw_syscall::",
+            "c_status(",
+            "static mut",
+            "alloc::",
+            "Vec<",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, implementation)
+
+        for header_probe in (header_c_probe, header_cxx_probe):
+            for required in (
+                "mntent.h",
+                "hasmntopt",
+                "sizeof(struct mntent) == 40",
+                "mnt_opts) == 24",
+                "mnt_passno) == 36",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("__builtin_types_compatible_p", header_c_probe)
+        self.assertIn("__is_same", header_cxx_probe)
+        for required in (
+            "EXPECTED_PROFILE_COUNT=8",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=8",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=0",
+            "c-default c11-gnu cxx17-gnu",
+            "-nostdinc",
+            "-nostdinc++",
+            "run_musl_oracle.sh",
+            "__NEED_FILE",
+            "compile-only",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <mntent.h>",
+            "hasmntopt_signature",
+            "rw,relatime,noexec=1,nodev",
+            "noexec=1",
+            "leading_empty_option_bytes",
+            "same_bytes",
+            "CRABC_HASMNTOPT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_hasmntopt_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("static_tls", start)
+
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_hasmntopt_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "hasmntopt must have exactly one selected archive member",
+            "candidate unexpectedly selects TLS",
+            "hasmntopt implementation calls an unselected runtime boundary",
+            "setmntent endmntent getmntent getmntent_r addmntent",
+            "strlen strncmp strchr",
+            "unowned runtime dependency",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
+        self.assertIn("hasmntopt", static_export_names)
+        self.assertFalse(
+            static_export_names
+            & {"setmntent", "endmntent", "getmntent", "getmntent_r", "addmntent"}
+        )
+        self.assertIn('id = "static-c-hasmntopt"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-hasmntopt"',
+            parity_ledger,
+        )
+        self.assertIn("run_hasmntopt_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_hasmntopt_header_abi.sh",
+            runner,
+        )
+        self.assertIn("run_libc_hasmntopt_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_hasmntopt.sh",
+            runner,
+        )
+        self.assertIn(
+            '    hasmntopt-header-abi)\n        [ "$#" -eq 0 ] || fail "hasmntopt-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-hasmntopt)\n        [ "$#" -eq 0 ] || fail "libc-hasmntopt takes no arguments"',
             runner,
         )
 
