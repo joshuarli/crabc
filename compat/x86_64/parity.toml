@@ -8390,6 +8390,55 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Sun/FreeBSD and musl MIT source, exact raw-classification/quadrant/reduction/kernel/NaN/dual-output-store/IEEE payload-exception-directed-rounding behavior, and GNU C ABI oracle for exactly src/math/sincos.c and src/math/sincosf.c plus their private sin/cos/reduction/floor/scalbn closure." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0 binary32/binary64 value argument plus rdi/rsi output-pointer and void-return ABI, and caller-visible MXCSR directed-SSE arithmetic boundary for the selected static GNU C entries." }]
 
 [[family.verified_artifact]]
+id = "static-c-math-pow"
+description = "Private native x86 selected-static binary32/binary64 scalar power artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `pow` and `powf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `pow.c`/`powf.c` plus their direct source closure retains binary64/binary32 raw classification, signed-integral-exponent rules, signed-zero parity, zero/pole and infinity/NaN behavior, fixed logarithm/exponential table paths, and typed overflow/underflow helpers. Matching private exp/pow/exp2f/powf table data, invalid/overflow/underflow/xflow helpers, and `fabs.c` provider are renamed and local, so public exp/log/exp2/fabs siblings and ambient libm cannot enter the candidate. The record stream covers signed zero and integral/exact/nonintegral exponent parity, domain/pole inputs, finite logarithm/exponential paths, raw subnormal/normal boundaries, overflow/underflow, finite extrema, infinities, quiet/signaling NaNs, result payloads, exception flags, and all four MXCSR rounding modes. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes `powl`, public exp/log/exp2/fabs functions, fma, fmod/remainder/modf, fenv API/policy, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "docker/Dockerfile.x86_64",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/fenv.rs",
+  "libc/src/c_abi/x86_64/math_pow.rs",
+  "libc/src/c_abi/x86_64/math_pow_musl_x86_64.S",
+  "include/fenv.h",
+  "include/float.h",
+  "include/math.h",
+  "compat/x86_64/generate_libc_math_pow.py",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/math_pow_header_abi_probe.cpp",
+  "compat/x86_64/run_math_pow_header_abi.sh",
+  "compat/x86_64/libc_math_pow_probe.c",
+  "compat/x86_64/libc_math_pow_start.S",
+  "compat/x86_64/run_libc_math_pow.sh",
+  "compat/x86_64/run_libc_text_math_locale_stdio_composition.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "SCOPE.md",
+  "COMPATIBILITY-PROFILE.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/check_structure.py",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "Pinned musl 1.2.6 src/math/pow.c and powf.c plus the complete private closure src/math/{exp_data,pow_data,exp2f_data,powf_data,__math_invalid,__math_invalidf,__math_oflow,__math_oflowf,__math_uflow,__math_uflowf,__math_xflow,__math_xflowf,fabs}.c are fixed by the normalized 1.2.6 source-tree digest and GCC 15.2.0 input. The checked `-frounding-math` and `-ffp-contract=off` assembly translation retains source classification, signed-exponent, table, and typed exceptional-result behavior rather than calling a public exp/log/exp2/fabs entry or ambient libm.",
+  "System V AMD64 passes binary64/binary32 base and exponent in xmm0/xmm1 and returns the corresponding result in xmm0. Fixed scalar SSE arithmetic preserves MXCSR-directed results and flags; powf's source-local double_t intermediates do not promote the public binary32 ABI. Binary80 `powl` is representation- and ABI-distinct and remains excluded.",
+  "The fixture composes only existing selected static fegetenv/fesetenv/fesetround/fegetround/feclearexcept/fetestexcept entries to reset and observe MXCSR. That harness dependency proves caller-visible environment behavior without selecting fenv API or rounding policy as part of this artifact.",
+]
+x86_header_prerequisites = [
+  "The focused C fixture preprocesses project fenv.h, float.h, math.h, stdint.h, features.h, and bits/alltypes.h under _GNU_SOURCE, then calls parenthesized pow/powf function pointers so compiler builtins cannot substitute for the named C ABI.",
+  "Dedicated C++17 objects compiled with default SSE and -mfpmath=387 pin exact binary64/binary32 binary function-pointer signatures and unmangled C references from the project header against pinned musl.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-math-pow", scope = "Pinned-musl/project-header C and C++ ABI execution plus one dependency-free `-nostdlib -static --no-undefined --gc-sections` candidate. The C fixture compares 256 exact 40-byte records across all four rounding directions: binary32/binary64 signed-zero parity, signed integral and nonintegral exponents, zero/pole/domain inputs, finite logarithm/exponential paths, raw subnormal and normal bounds, overflow/underflow, finite extrema, infinities, quiet/signaling NaNs, raw result bits, requested/observed MXCSR direction, and exception flags. ELF proof requires strong global target-owned pow/powf definitions, exact archive surface, local exp/pow/exp2f/powf data plus typed helper/fabs providers, and addsd/addss/subsd/subss/mulsd/mulss/divsd/divss/cvtsd2ss/cvtss2sd source arithmetic; it rejects weak compiler-builtins fallback, powl, public exp/log/exp2/fabs, fma/fmod/remainder/modf, fenv API/policy, special/complex, unresolved symbols, dynamic linkage, TLS, ambient libm, and unowned runtime dependencies. It excludes category/family completion, promotion, full x86-64 parity, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Arm and musl MIT source, exact raw-classification/signed-integer-exponent/zero-pole/table/NaN/IEEE payload-exception-directed-rounding behavior, and public C ABI oracle for exactly src/math/pow.c and src/math/powf.c plus their private table, typed-helper, and fabs closure." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "xmm0/xmm1 binary32/binary64 base/exponent argument and xmm0 return ABI, and caller-visible MXCSR directed-SSE arithmetic boundary for the selected static C entries." }]
+
+[[family.verified_artifact]]
 id = "static-c-math-ceil"
 description = "Private native x86 selected-static binary32/binary64 fixed-direction ceiling artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly `ceil` and `ceilf` into a freestanding project-header C fixture after equivalent pinned-musl execution. A checked GCC 15.2.0 assembly translation of musl's `ceil.c`/`ceilf.c` retains binary64's raw IEEE exponent classification and `toint` add/subtract operation order, plus binary32's raw fraction-mask transformation and volatile `FORCE_EVAL` addition, rather than a target-intrinsic rewrite. The record stream covers signed zero, finite normal/subnormal boundaries, neighbors around integral values, large finite values, infinities, quiet/signaling NaNs, all four requested/observed rounding directions, and exception flags; fractional finite values preserve musl's `FE_INEXACT` behavior. Strong target-owned definitions reject a weak compiler-builtins fallback. This artifact excludes binary80 `ceill`, floor and all other fixed-direction rounding, fma, fmod, cbrt, fenv API/policy, bit-sign/minmax/fdim, special and complex functions, binary80/x87 math, errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot, `math.elementary` family completion, promotion, full x86-64 parity, and public x86 support."
 source_owners = [

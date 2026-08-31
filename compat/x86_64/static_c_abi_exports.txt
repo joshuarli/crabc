@@ -610,6 +610,8 @@ posix_fadvise
 posix_fallocate
 posix_getdents
 posix_madvise
+pow
+powf
 powl
 ppoll
 pread

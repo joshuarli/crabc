@@ -1290,6 +1290,25 @@ definitions and final ELF checks reject weak compiler-builtins fallback,
 API/policy, special/complex/binary80 math, family completion, promotion, and
 public x86 support.
 
+The separate private `static-c-math-pow` artifact records only binary64 `pow`
+and binary32 `powf`: `./scripts/dev-x86_64.sh libc-math-pow` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `pow.c`/`powf.c` plus private local
+exp/pow/exp2f/powf table data, typed exceptional-result helpers, and a local
+fabs provider is the complete direct source closure: it retains raw
+classification, signed-integral-exponent rules, signed-zero parity, zero/pole,
+infinity/NaN, and source table behavior without a public exp/log/exp2/fabs
+sibling or ambient libm. The 256-record differential preserves raw result
+bits, flags, and all four requested-and-observed MXCSR directions over
+signed-zero exponent parity; signed integral and nonintegral exponents;
+domain/pole inputs; finite logarithm/exponential paths; raw subnormal/normal
+bounds; overflow/underflow; finite extrema; infinities; quiet-NaN; and
+signaling-NaN inputs. Strong target-owned definitions and final ELF checks
+reject weak compiler-builtins fallback, `powl`, public exp/log/exp2/fabs,
+fma/fmod/remainder/modf, fenv API/policy, special/complex/binary80 math,
+family completion, promotion, and public x86 support.
+
 The separate private `static-c-math-sincos` artifact records only GNU binary64
 `sincos` and binary32 `sincosf`: `./scripts/dev-x86_64.sh libc-math-sincos`
 runs project-header C and default-SSE/`-mfpmath=387` C++ function-pointer

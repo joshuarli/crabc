@@ -24145,6 +24145,122 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_pow_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_pow.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_pow_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_pow_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_math_pow_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_pow.rs").read_text(
+            encoding="utf-8"
+        )
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_pow_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_pow.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "math-pow-header-abi)",
+            "run_math_pow_header_abi()",
+            "libc-math-pow)",
+            "run_libc_math_pow_probe()",
+            "/workspace/compat/x86_64/run_libc_math_pow.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "run_math_pow_header_abi.sh",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate does not retain local",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "crabc_x86_math_pow_provider_xflowf",
+            "crabc_x86_math_pow_provider_fabs",
+            "addsd addss subsd subss mulsd mulss divsd divss cvtsd2ss cvtss2sd",
+            "powl exp expf expl exp2",
+            "math_special",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_pow",
+            "direct_powf",
+            "POW_RECORD_WORDS 5",
+            "binary64_cases",
+            "binary32_cases",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0xc090cc0000000000",
+            "0xc3160000",
+            "0x7ff0000000000042",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in ("double_binary", "float_binary", "direct_pow", "direct_powf"):
+            self.assertIn(required, header)
+        for required in (
+            "math_pow_header_abi_probe.cpp",
+            "-mfpmath=387",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/pow.c",
+            "src/math/powf.c",
+            "src/math/exp_data.c",
+            "base and exponent in `xmm0`",
+            "`xmm1`, then returns",
+            "-ffp-contract=off",
+            'include_str!("math_pow_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/pow.c"',
+            '"src/math/powf.c"',
+            '"src/math/exp_data.c"',
+            '"src/math/powf_data.c"',
+            '"src/math/__math_xflowf.c"',
+            '"src/math/fabs.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            '"-ffp-contract=off"',
+            '"-mfpmath=sse"',
+            "PRIVATE_RENAMES",
+            "retained_notices",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "musl's MIT license",
+            "\t.globl\tpow\n",
+            "\t.globl\tpowf\n",
+            "\t.local crabc_x86_math_pow_provider_exp_data",
+            "\t.local crabc_x86_math_pow_provider_xflowf",
+            "\t.local crabc_x86_math_pow_provider_fabs",
+            "cvtsd2ss",
+            "cvtss2sd",
+        ):
+            self.assertIn(required, assembly)
+
     def test_math_ceil_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
         runner = (ROOT / "compat" / "x86_64" / "run_libc_math_ceil.sh").read_text(

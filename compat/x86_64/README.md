@@ -543,6 +543,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-atanh
 ./scripts/dev-x86_64.sh libc-math-acosh
 ./scripts/dev-x86_64.sh libc-math-sincos
+./scripts/dev-x86_64.sh libc-math-pow
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4843,6 +4844,27 @@ crabc-owned definitions, local closure providers/data/helpers, and scalar
 API/policy, special/complex/binary80 math, dynamic linkage, TLS, and ambient
 libm. Family completion, promotion, full x86-64 parity, and public x86 support
 remain unselected.
+`libc-math-pow` is the separate non-promoting `static-c-math-pow` artifact for
+binary64/binary32 `pow`/`powf`. Its project-header C fixture and default-SSE/
+`-mfpmath=387` C++ signature probes run first through pinned musl and then
+through one garbage-collected `-nostdlib -static` candidate. The checked GCC
+15.2.0 translation of musl 1.2.6 `pow.c`/`powf.c` plus renamed local
+exp/pow/exp2f/powf table data, typed exceptional-result helpers, and a fabs
+provider is the complete direct source closure: it retains raw classification,
+signed-integral-exponent rules, signed-zero parity, zero/pole,
+infinity/NaN, and source table behavior without calling public exp/log/exp2/
+fabs siblings or ambient libm. The 256-record raw differential covers signed
+zero and integral/exact/nonintegral exponents, domain/poles, finite
+logarithm/exponential paths, raw subnormal/normal boundaries,
+overflow/underflow, finite extrema, infinities, quiet/signaling NaNs, result
+payloads, flags, and requested versus observed MXCSR direction in all four
+modes. Final-link proof requires strong crabc-owned definitions, local table/
+helper/fabs providers, and scalar `addsd`/`addss`/`subsd`/`subss`/`mulsd`/
+`mulss`/`divsd`/`divss`/`cvtsd2ss`/`cvtss2sd`, while rejecting weak
+compiler-builtins fallback, `powl`, public exp/log/exp2/fabs,
+fma/fmod/remainder/modf, fenv API/policy, special/complex/binary80 math,
+dynamic linkage, TLS, and ambient libm. Family completion, promotion, full
+x86-64 parity, and public x86 support remain unselected.
 `libc-math-sincos` is the separate non-promoting `static-c-math-sincos` GNU
 artifact for binary64/binary32 `sincos`/`sincosf`. Its project-header C fixture
 and default-SSE/`-mfpmath=387` C++ signature probes run first through pinned
