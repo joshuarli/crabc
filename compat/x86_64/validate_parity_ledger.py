@@ -7027,6 +7027,12 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "caller’s `Dl_info` untouched",
         "leaves `dlerror` clear",
         "The bridge admits only that null-address no-image observation",
+        "`dlopen(NULL, RTLD_NOLOAD)` returns the same permanent main handle",
+        "`if (!file) return head`",
+        "before inspecting `mode`",
+        "only that exact flags value into its existing local main-token open",
+        "`crabc_bounded_runtime_dlopen`",
+        "bare-null `RTLD_NOLOAD` rejection",
         "`RTLD_NEXT`",
         "`RTLD_GLOBAL`",
         "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -7051,6 +7057,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "compat/x86_64/ldso_public_dlfcn_probe.c",
         "compat/x86_64/ldso_public_dlfcn_header_probe.cpp",
         "compat/x86_64/run_ldso_public_dlfcn.sh",
+        "compat/x86_64/ldso_bounded_dlopen_probe.c",
+        "compat/x86_64/run_ldso_bounded_dlopen.sh",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -7078,7 +7086,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "32 fixed diagnostic slots",
         "tgkill=234",
         "RTLD_DEFAULT",
-        "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, and dlsym exports",
+        "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
         "src/ldso/dlinfo.c:dlinfo",
         "Unsupported request %d",
         "does not consume that pending state",
@@ -7096,6 +7104,15 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "dladdr(NULL)",
         "Dl_info",
         "non-null failure and unavailable-record paths retain their existing fail-closed handling",
+        "ldso/dynlink.c:dlopen",
+        "if (!file) return head",
+        "before inspecting `mode`",
+        "dlopen(NULL, RTLD_NOLOAD=4)",
+        "same permanent main token",
+        "existing `RTLD_NOW` main route",
+        "run_ldso_bounded_dlopen.sh",
+        "crabc_bounded_runtime_dlopen",
+        "bare `NULL RTLD_NOLOAD` retains the runtime sibling's initial-object rejection",
         "never searched, mapped, finalized, or unmapped",
     ):
         require(
@@ -7136,6 +7153,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "dladdr(NULL)",
         "preserve it",
         "leave `dlerror` clear",
+        "`dlopen(NULL, RTLD_NOLOAD)`",
+        "both executions return the same main handle",
         "loader.dlfcn-basic",
         "public x86 support",
     ):
@@ -7189,6 +7208,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "ldso/dynlink.c:dladdr",
         "if (!p) return 0",
         "information.is_null() || address.is_null()",
+        "ldso/dynlink.c:dlopen",
+        "if (!file) return head",
+        "filename.is_null() && flags == RTLD_NOLOAD",
+        "crabc_bounded_runtime_dlopen",
     ):
         require(
             snippet in bridge,
@@ -7210,6 +7233,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "Dl_info null_address",
         "typed_dladdr(NULL, &null_address)",
         "null_address.dli_fname !=",
+        "void *main_noload = typed_dlopen(NULL, RTLD_NOLOAD)",
+        "main_noload != main_handle",
     ):
         require(
             snippet in probe,
@@ -7221,7 +7246,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
     aarch64_dynamic = (
         ROOT / "compat" / "abi" / "musl-1.2.6" / "aarch64" / "libc.so.dynamic.tsv"
     ).read_text(encoding="utf-8")
-    for symbol in ("dladdr", "dlclose", "dlerror", "dlinfo", "dlsym"):
+    for symbol in ("dladdr", "dlclose", "dlerror", "dlinfo", "dlsym", "dlopen"):
         require(
             f"\n{symbol}\t" in aarch64_static,
             f"pinned AArch64 musl static manifest omits {symbol}",
@@ -7245,6 +7270,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "exact null-dlclose return/diagnostic" in entry["role"]
             and "exact live-handle empty-dlsym diagnostic" in entry["role"]
             and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
+            and "exact null-RTLD_NOLOAD main-handle/no-error behavior" in entry["role"]
             for entry in oracle
         ),
         "ldso-public-fixed-graph-dlfcn must retain its pinned musl dlinfo/dlclose/dlsym/dladdr oracle",
@@ -7257,6 +7283,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "aarch64/libc.so.dynamic.tsv" in entry["source"]
             and "libc.a.static.tsv" in entry["source"]
             and isinstance(entry.get("role"), str)
+            and "dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
             and "not a behavioral fallback" in entry["role"]
             for entry in oracle
         ),
@@ -7470,6 +7497,7 @@ def require_ldso_bounded_runtime_dlopen_artifact(family: Mapping[str, Any]) -> N
         "RTLD_LOCAL",
         "RTLD_NOLOAD=4",
         "without a path lookup",
+        "bare `dlopen(NULL, RTLD_NOLOAD)`",
         "named initial main/mid/leaf identities fail closed",
         "RTLD_NODELETE=4096",
         "lifecycle-neutral flag",
@@ -7538,6 +7566,9 @@ def require_ldso_bounded_runtime_dlopen_artifact(family: Mapping[str, Any]) -> N
         "RTLD_NOLOAD=4",
         "without opening a path",
         "before the mapper",
+        "private `crabc_bounded_runtime_dlopen`",
+        "bare `dlopen(NULL, RTLD_NOLOAD)`",
+        "NULL initial-object rejection",
         "RTLD_NODELETE=4096",
         "RTLD_NOLOAD reference",
         "close still makes an explicit token stale",
@@ -7572,6 +7603,7 @@ def require_ldso_bounded_runtime_dlopen_artifact(family: Mapping[str, Any]) -> N
         "out-of-load pair fails before publication",
         "before-publication RTLD_NOLOAD",
         "NULL RTLD_NOLOAD",
+        "bare `dlopen(NULL, RTLD_NOLOAD)`",
         "named-initial-object RTLD_NOLOAD",
         "same-token explicit reference",
         "both RTLD_NOW and RTLD_LAZY",
@@ -7620,6 +7652,17 @@ def require_ldso_bounded_runtime_dlopen_artifact(family: Mapping[str, Any]) -> N
             phrase in runner,
             f"ldso-bounded-runtime-dlopen runner omits {phrase}",
         )
+    require(
+        runner.count("--cfg crabc_bounded_runtime_dlopen") >= 2,
+        "ldso-bounded-runtime-dlopen must compile both loader and shared bridge with its private cfg",
+    )
+    bounded_probe = (
+        ROOT / "compat" / "x86_64" / "ldso_bounded_dlopen_probe.c"
+    ).read_text(encoding="utf-8")
+    require(
+        "dlopen(NULL, RTLD_NOLOAD | RTLD_LOCAL)" in bounded_probe,
+        "ldso-bounded-runtime-dlopen must retain its bare-null RTLD_NOLOAD rejection regression",
+    )
     require(
         "run_ldso_bounded_dlopen.sh" in (ROOT / "scripts" / "dev-x86_64.sh").read_text(),
         "ldso-bounded-dlopen dispatcher binding is missing",

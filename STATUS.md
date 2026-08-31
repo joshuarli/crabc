@@ -291,7 +291,10 @@ and invalid handles retain their existing loader paths. For a writable `Dl_info`
 musl's `dladdr(NULL)` returns zero before modifying it or publishing `dlerror`;
 the fixed bridge preserves that no-image observation only for the null-address
 branch. Non-null failure and unavailable-record paths retain their existing
-fail-closed handling. Search/mapping, graph mutation, `RTLD_NEXT`,
+fail-closed handling. Only in this non-runtime public bridge,
+`dlopen(NULL, RTLD_NOLOAD)` returns musl's permanent main handle and leaves
+`dlerror` clear before mode processing; its bounded runtime-mapping sibling
+continues to reject that bare NULL/NOLOAD initial-object request. Search/mapping, graph mutation, `RTLD_NEXT`,
 global promotion, finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 

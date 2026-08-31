@@ -102,7 +102,7 @@ rustc --edition=2021 --crate-type staticlib --cfg crabc_fixed_graph_dlfcn \
 cc -nostdlib -shared -Wl,-e,_start -Wl,-Bsymbolic -Wl,-z,now -Wl,--no-undefined \
     -Wl,--whole-archive "$work_dir/libbounded-dlopen-ldso.a" -Wl,--no-whole-archive \
     -o "$interpreter"
-rustc --edition=2021 --crate-type staticlib -C relocation-model=pic \
+rustc --edition=2021 --crate-type staticlib --cfg crabc_bounded_runtime_dlopen -C relocation-model=pic \
     -C code-model=small -C panic=abort "$BRIDGE_SOURCE" -o "$archive"
 
 cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now -Wl,-z,pack-relative-relocs \

@@ -121,6 +121,9 @@ int main(void) {
         || after_noload.nonzero_additions) return 48;
     if (dlopen(NULL, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
         || dlerror() == NULL || dlerror() != NULL) return 49;
+    /* The static bridge's bare NULL/NOLOAD observation stays disabled here. */
+    if (dlopen(NULL, RTLD_NOLOAD | RTLD_LOCAL) != NULL
+        || dlerror() == NULL || dlerror() != NULL) return 82;
     if (dlopen("libmid-bounded-dlopen.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
         || dlerror() == NULL || dlerror() != NULL) return 49;
     if (dlopen("libleaf-bounded-dlopen.so", RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != NULL
