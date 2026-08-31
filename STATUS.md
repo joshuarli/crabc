@@ -793,8 +793,22 @@ synchronization, cancellation, CRT, loader, sysroot, family completion,
 promotion, or public x86 support.
 
 The separate
-`./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query` artifact is a
+`./scripts/dev-x86_64.sh libc-pthread-mutexattr-type-query` artifact is a
 twenty-ninth private static artifact in that same still-planned family. It
+selects only `pthread_mutexattr_gettype` over the public four-byte attribute
+word: musl reads raw bits 0 and 1 as `0` through `3` without modifying caller
+storage. The installed `PTHREAD_MUTEX_NORMAL`/`PTHREAD_MUTEX_DEFAULT`/
+`PTHREAD_MUTEX_RECURSIVE`/`PTHREAD_MUTEX_ERRORCHECK` vocabulary covers
+`0`/`0`/`1`/`2`; raw `3` remains an exact getter result, not a constructed
+mutex type. The fixture uses raw caller-owned words and makes no
+`pthread_mutexattr_settype`, lifecycle, or mutex call. It therefore does not
+select recursive/error-checking mutex operation, mutex initialization/locking/
+destruction, threads, TLS, synchronization, cancellation, CRT, loader,
+sysroot, family completion, promotion, or public x86 support.
+
+The separate
+`./scripts/dev-x86_64.sh libc-pthread-mutex-prioceiling-query` artifact is a
+thirtieth private static artifact in that same still-planned family. It
 selects only musl's unavailable `pthread_mutex_getprioceiling` direct status:
 every null or opaque mutex/ceiling pointer combination returns `EINVAL`, and a
 provided ceiling slot stays unchanged because musl reads neither pointer. The

@@ -324,6 +324,8 @@ mod pthread_mutexattr_protocol_query;
 mod pthread_mutexattr_pshared_query;
 #[path = "pthread_mutexattr_robust_query.rs"]
 mod pthread_mutexattr_robust_query;
+#[path = "pthread_mutexattr_type_query.rs"]
+mod pthread_mutexattr_type_query;
 #[path = "pthread_mutex_prioceiling_query.rs"]
 mod pthread_mutex_prioceiling_query;
 #[path = "pthread_cond.rs"]
