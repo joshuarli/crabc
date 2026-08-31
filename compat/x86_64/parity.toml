@@ -7646,6 +7646,49 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c: do_getc/do_putc permanent aliases, standard-stream shortcuts, and one non-EOF ungetc unsigned-byte/EOF-clearing transition." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "read=0 and write=1 permanent-stream data paths plus pipe/dup/dup2/close descriptor transport used only to observe the fixed standard descriptors." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/int calling ABI, exact C/C++ declaration linkage, and Variant-II initial-exec errno TLS contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-stdio-permanent-status"
+description = "Private native x86 permanent-standard-stream status artifact inside still-planned `libc.text-math-locale-stdio`. It adds no C export or capability: existing strong `feof`, `ferror`, and `clearerr` calls observe only the process-lifetime `stdin` object. The pinned-musl project-header differential redirects stdin to an empty pipe, then uses existing `fgetc(stdin)` solely as marker setup: EOF makes feof nonzero while ferror is zero; clearerr restores both predicates to zero; closing stdin after that reset makes ferror nonzero while feof is zero; and clearerr restores both predicates to zero again. This is the C/POSIX zero-versus-nonzero predicate contract, not a claim about musl's internal numeric `1` normalization or FLOCK/FUNLOCK behavior. The dedicated C11/C++17 header gate proves exact unconditional FILE-pointer signatures, clearerr's void return, and unmangled C++ spellings. The shared implementation also has independently selected pathname-stream state, but this fixture never creates or invokes a pathname `FILE *` and makes no claim about it. This is one externally serialized, allocation-free permanent-status leaf only: it does not select `stdio.stream-io`, FILE/path streams, descriptor adoption/reopen, `tmpfile`, LP64/LFS aliases, byte/block I/O beyond existing fgetc marker setup, `fread`/`fwrite`, output, general buffering or buffer configuration, locks or unlocked entries, multiple live streams, allocation/registry, positions, line/formatted/wide I/O, memory/cookie/`fopencookie`/`popen` streams, ordinary-exit flushing, general stdio, libc.so, CRT lifecycle, loader, sysroot, capability or family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/stdio_standard.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/bits/alltypes.h",
+  "include/errno.h",
+  "include/features.h",
+  "include/stdio.h",
+  "include/unistd.h",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/stdio_permanent_status_header_abi_probe.c",
+  "compat/x86_64/stdio_permanent_status_header_abi_probe.cpp",
+  "compat/x86_64/run_stdio_permanent_status_header_abi.sh",
+  "compat/x86_64/libc_stdio_permanent_status_probe.c",
+  "compat/x86_64/libc_stdio_permanent_status_start.S",
+  "compat/x86_64/run_libc_stdio_permanent_status.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes each selected opaque `FILE *` in a general-purpose pointer register, returns feof/ferror's int result in eax, and accepts clearerr's void result. The public FILE remains opaque; the process-lifetime stdin record is target-private and not caller-constructible layout.",
+  "Pinned musl 1.2.6 src/stdio/feof.c and ferror.c return `!!(flags & F_EOF/F_ERR)`, while clearerr.c clears exactly `F_EOF|F_ERR`; its FLOCK/FUNLOCK and weak unlocked/_IO aliases remain unselected. This lock-free sibling retains the externally observable C zero/nonzero predicates and reset transition only under external serialization, without claiming musl's numeric normalization or lock behavior.",
+  "Linux 5.10 x86-64 raw read=0 remains inside the shared permanent state owner. The fixture uses only pipe/dup/dup2/close descriptor transport to induce stdin EOF and EBADF marker setup, delegates its untouched entry stack to the existing Variant-II initial-exec errno TLS bootstrap, and does not allocate or open a stream.",
+]
+x86_header_prerequisites = [
+  "The dedicated project-first/pinned-musl strict C11/C++17 matrix checks only unconditional feof/ferror int(FILE *) and clearerr void(FILE *) declarations. C++ used references retain unmangled C spellings; this compile-only gate selects no archive linkage or runtime behavior.",
+  "The runtime fixture preprocesses only project errno.h, stdio.h, unistd.h, features.h, and bits/alltypes.h before both the pinned-musl reference and the static candidate. Its fgetc declaration is marker setup only and does not make pathname, LFS, unlocked, byte/block, buffer-configuration, or general stream APIs linkable evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-stdio-permanent-status", scope = "Pinned-musl project-header C reference plus one dependency-free x86 crabc-libc archive and a true `-nostdlib -static` candidate. The gate first requires the strict C11/C++17 permanent-stream-status declaration/linkage proof, ratchets the complete selected static C export contract, requires strong feof/ferror/clearerr in pinned musl and candidate archives, rejects unresolved symbols/interpreter/DT_NEEDED/dynamic TLS/allocator or ambient runtime, and verifies direct initial-exec errno TLS plus the existing Static Initial TLS v1 bootstrap. Function-pointer calls on permanent stdin use fgetc solely to induce an empty-pipe EOF then a closed-descriptor EBADF marker: they prove feof/ferror zero-versus-nonzero state, each clearerr reset, and no numeric musl-normalization or lock claim. It rejects unlocked aliases, pathname, descriptor-reopen, tmpfile, LFS, byte/block behavior beyond marker setup, output/buffering/position/lock, multiple-stream, line/formatted/wide, memory/cookie/popen, ordinary-exit, general stdio, capability or family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for src/stdio/{feof,ferror,clearerr}.c: zero/nonzero F_EOF/F_ERR predicates, exact F_EOF|F_ERR reset, internal numeric normalization, and unselected FLOCK/FUNLOCK/unlocked aliases." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "read=0 and pipe/dup/dup2/close descriptor transport used only to establish permanent stdin EOF and EBADF status markers." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "LP64 FILE-pointer/int/void calling ABI, exact C/C++ declaration linkage, and Variant-II initial-exec errno TLS contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-stdio-path-stream"
 description = "Private native x86 fixed pathname-stream and logical-position artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free static `crabc-libc` archive owns exactly one externally serialized active path `FILE` slot: `fopen` accepts only regular-file `\"r\"` and `\"w+\"` modes, then selected `fread`/`fwrite`/`fgetc`/`fputc`/`fflush`/`fileno` plus `fclose`, pre-I/O caller-buffered `_IOFBF` `setvbuf`, `fseek`/`fseeko`, `ftell`/`ftello`, `rewind`, and opaque 16-byte `fgetpos`/`fsetpos` preserve its bounded state. The slot has one static `BUFSIZ=1024` backing object with musl-shaped eight-byte pushback headroom; caller-buffered mode owns no pushback route. The project-header fixture first runs through pinned musl then a real `-nostdlib -static` candidate, proving write buffering and logical output position, all-owned-output `fflush(NULL)`, failed positioning preserves the I/O-error indicator, read-ahead-adjusted `SEEK_CUR`, fpos save/restore with opaque tail bytes preserved, EOF/rewind, close, and one-slot reuse; candidate-only checks ratchet the one-slot, mode, and buffer-reconfiguration limits. It excludes `fdopen`, `freopen`, append/exclusive/close-on-exec/general mode parsing, more than one active path stream, stream allocation or a general registry, input `fflush`, `_IONBF`/`_IOLBF`/post-I/O buffer reconfiguration, line/formatted/wide/cookie/memory/popen streams, general stdio, libc.so, CRT lifecycle, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [

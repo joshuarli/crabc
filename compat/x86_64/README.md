@@ -729,6 +729,23 @@ pushback capacity, multiple streams, line/formatted/wide/memory/cookie/popen
 I/O, ordinary-exit flushing, general stdio, parity, promotion, and public x86
 support.
 
+The separate `stdio-permanent-status-header-abi` and
+`libc-stdio-permanent-status` gates record a private
+`static-c-stdio-permanent-status` artifact without an export or capability.
+Its pinned-musl/static differential calls `feof`, `ferror`, and `clearerr`
+only on permanent `stdin`: an empty pipe produces the EOF marker, `clearerr`
+resets both predicates, and a subsequently closed descriptor produces the
+error marker before a second reset. Existing `fgetc(stdin)` calls only induce
+those observable markers; they do not add byte-I/O evidence. The C/POSIX
+contract is zero versus nonzero, so this leaf does not claim musl's internal
+numeric `1` normalization or lock behavior. The strict C11/C++17 proof
+ratchets the two `int (FILE *)` predicates, `void clearerr(FILE *)`, and
+unmangled C++ spellings. It never creates a pathname `FILE *` and excludes
+`stdio.stream-io`, path/descriptor-reopen/tmpfile or LP64/LFS behavior,
+byte/block/output/buffering/position/lock/unlocked APIs, multiple streams,
+line/formatted/wide/memory/cookie/popen I/O, ordinary-exit flushing, general
+stdio, parity, promotion, and public x86 support.
+
 The separate `libc-stdio-format-scan` gate
 (`./scripts/dev-x86_64.sh libc-stdio-format-scan`) records one private
 `static-c-stdio-format-scan` artifact in the still-planned
