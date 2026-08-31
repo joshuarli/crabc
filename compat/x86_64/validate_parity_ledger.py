@@ -8357,8 +8357,8 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-rwlock artifact",
     )
     require(
-        len(artifacts) == 18,
-        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
+        len(artifacts) == 19,
+        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -8368,7 +8368,7 @@ def require_static_pthread_rwlock_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Eighteen separately verified static artifacts",
+        "Nineteen separately verified static artifacts",
         "complete private rwlock/rwlockattr block with private and process-shared futex waits",
         "not pthread/TLS parity",
     ):
@@ -9101,8 +9101,8 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-once artifact",
     )
     require(
-        len(artifacts) == 18,
-        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
+        len(artifacts) == 19,
+        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9112,7 +9112,7 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Eighteen separately verified static artifacts",
+        "Nineteen separately verified static artifacts",
         "private normal-return pthread/C11 once state machine",
         "not pthread/TLS parity",
     ):
@@ -9428,8 +9428,8 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-c11-tsd artifact",
     )
     require(
-        len(artifacts) == 18,
-        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
+        len(artifacts) == 19,
+        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9439,7 +9439,7 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Eighteen separately verified static artifacts",
+        "Nineteen separately verified static artifacts",
         "bounded private pthread-key/C11-TSS lifecycle table",
         "not pthread/TLS parity",
     ):
@@ -9799,8 +9799,8 @@ def require_static_pthread_cancel_deferred_artifact(
         "libc.pthread-tls must contain exactly one static-c-pthread-cancel-deferred artifact",
     )
     require(
-        len(artifacts) == 18,
-        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
+        len(artifacts) == 19,
+        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -9810,7 +9810,7 @@ def require_static_pthread_cancel_deferred_artifact(
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Eighteen separately verified static artifacts",
+        "Nineteen separately verified static artifacts",
         "selected-worker deferred-cancellation route",
         "sole delivery point is explicit `pthread_testcancel`",
         "not pthread/TLS parity",
@@ -20187,8 +20187,8 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "libc.pthread-tls must contain exactly one static-c-pthread-atfork-fork artifact",
     )
     require(
-        len(artifacts) == 18,
-        "libc.pthread-tls must retain exactly eighteen private verified artifacts",
+        len(artifacts) == 19,
+        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
     )
     require(
         family.get("status") == "planned",
@@ -20198,7 +20198,7 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     family_description = family["description"]
     assert isinstance(family_description, str)
     for phrase in (
-        "Eighteen separately verified static artifacts",
+        "Nineteen separately verified static artifacts",
         "single-threaded fixed-capacity pthread_atfork/fork route",
         "child-only bounded ordinary-exit callback dispatch",
         "not pthread/TLS parity",
@@ -20414,6 +20414,198 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_pthread_atfork.sh" in dispatcher_source,
         "static-c-pthread-atfork-fork dispatcher binding is missing",
     )
+
+
+def require_static_pthread_affinity_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Ratchet the bounded GNU pthread-affinity handle leaf without promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-pthread-affinity"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one bounded pthread-affinity artifact",
+    )
+    require(
+        len(artifacts) == 19,
+        "libc.pthread-tls must retain exactly nineteen private verified artifacts",
+    )
+    require(
+        family.get("status") == "planned",
+        "pthread affinity must not promote libc.pthread-tls",
+    )
+
+    family_description = family["description"]
+    assert isinstance(family_description, str)
+    for phrase in (
+        "Nineteen separately verified static artifacts",
+        "bounded direct GNU pthread-affinity route",
+        "bootstrapped-main self handles",
+        "executing selected-worker handles",
+        "not pthread/TLS parity",
+    ):
+        require(
+            phrase in family_description,
+            f"libc.pthread-tls description omits {phrase} after pthread affinity",
+        )
+
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.pthread-tls`",
+        "Two dependency-free GNU entries",
+        "128-byte, 1024-bit `cpu_set_t`",
+        "bootstrapped process-main task",
+        "CLONE_PARENT_SETTID",
+        "sched_getaffinity=204",
+        "sched_setaffinity=203",
+        "positive pthread errors",
+        "target completion",
+        "concurrent `pthread_join`, `pthread_detach`, and selected reaping",
+        "Affinity attributes",
+        "CPU_*` mask helpers",
+        "foreign/general thread handles",
+        "general pthread/TLS or x86-64 parity",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"pthread affinity description omits {phrase}")
+
+    expected_sources = {
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/pthread_affinity.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
+        "libc/src/c_abi/x86_64/pthread_identity.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/bits/alltypes.h",
+        "include/errno.h",
+        "include/features.h",
+        "include/pthread.h",
+        "include/sched.h",
+        "include/stdint.h",
+        "compat/x86_64/pthread_c11_header_abi_probe.c",
+        "compat/x86_64/pthread_c11_header_abi_probe.cpp",
+        "compat/x86_64/run_pthread_c11_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_pthread_affinity_probe.c",
+        "compat/x86_64/libc_pthread_affinity_start.S",
+        "compat/x86_64/run_libc_pthread_affinity.sh",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+    }
+    require(
+        set(string_list(
+            artifact["source_owners"], "pthread-affinity source owners"
+        ))
+        == expected_sources,
+        "pthread-affinity source owners drifted",
+    )
+
+    prerequisite_text = " ".join(artifact["x86_abi_prerequisites"])
+    for phrase in (
+        "src/sched/affinity.c",
+        "pthread_getaffinity_np",
+        "pthread_setaffinity_np",
+        "do_getaffinity",
+        "128-byte",
+        "sched_getaffinity=204",
+        "sched_setaffinity=203",
+        "gettid=186",
+        "CLONE_PARENT_SETTID",
+        "CLONE_CHILD_CLEARTID",
+        "ESRCH",
+        "completion, join, detach, or later reaping",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"pthread-affinity ABI prerequisites omit {phrase}",
+        )
+    header_text = " ".join(artifact["x86_header_prerequisites"])
+    for phrase in (
+        "_GNU_SOURCE",
+        "128-byte align-8 cpu_set_t",
+        "both exact const-correct pthread-affinity function-pointer declarations",
+        "28-context C/C++ pthread/C11 include-order/profile matrix",
+        "unmangled C-linkage references",
+        "feature hiding",
+        "CPU_* mask helper macro family remains unselected",
+    ):
+        require(
+            phrase in header_text,
+            f"pthread-affinity header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-affinity"},
+        "pthread affinity must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header C reference",
+        "`-nostdlib -static` candidate",
+        "bootstrapped-main self get/set",
+        "raw Linux prefix comparison",
+        "undersized get EINVAL",
+        "empty-mask set EINVAL",
+        "executing selected worker",
+        "post-join input remains unchanged",
+        "ESRCH",
+        "sched_getaffinity=204",
+        "sched_setaffinity=203",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "CPU_* mask helpers",
+        "target completion",
+        "concurrent join/detach/reaping handle ownership",
+        "family completion, promotion, and public x86 support",
+    ):
+        require(phrase in scope, f"pthread-affinity evidence scope omits {phrase}")
+
+    static_exports = set(static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    ))
+    require(
+        {"pthread_getaffinity_np", "pthread_setaffinity_np"} <= static_exports,
+        "pthread-affinity static export contract is incomplete",
+    )
+    for unselected in (
+        "pthread_attr_getaffinity_np",
+        "pthread_attr_setaffinity_np",
+        "sched_getaffinity",
+        "sched_setaffinity",
+    ):
+        require(
+            unselected not in static_exports,
+            f"pthread-affinity must not expose unselected {unselected}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text()
+    for snippet in (
+        "run_libc_pthread_affinity_probe()",
+        "run_libc_pthread_affinity.sh",
+        "libc-pthread-affinity)",
+    ):
+        require(snippet in dispatcher, f"pthread-affinity dispatcher omits {snippet}")
 
 
 def validate_ledger(
@@ -20634,6 +20826,7 @@ def validate_ledger(
     require_static_pthread_cancel_deferred_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_tls_aggregate_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_atfork_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_affinity_artifact(by_id["libc.pthread-tls"])
     require_byte_string_artifact(by_id["libc.posix-runtime"])
     require_random_entropy_artifact(by_id["libc.posix-runtime"])
     require_memory_search_artifact(by_id["libc.posix-runtime"])

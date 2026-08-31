@@ -381,6 +381,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-pthread-c11-tsd
 ./scripts/dev-x86_64.sh libc-pthread-tls-aggregate
 ./scripts/dev-x86_64.sh libc-pthread-atfork
+./scripts/dev-x86_64.sh libc-pthread-affinity
 ./scripts/dev-x86_64.sh termios-header-abi
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh libc-process-context
@@ -2594,6 +2595,24 @@ registration/fork callers, and selected-worker lifecycle callers; signal masks/s
 allocator, TSD, cancellation, synchronization, or loader reset; dynamic TLS;
 CRT/sysroot integration; general fork, atfork, process-exit, or pthread
 behavior; full pthread/TLS or x86-64 parity; promotion; and public x86 support.
+
+`libc-pthread-affinity` is a nineteenth private static `verified_artifact`
+under that same still-planned family. Its project-header C fixture first runs
+against pinned musl, then against the dependency-free `-nostdlib -static`
+candidate. It selects only GNU `pthread_getaffinity_np` and
+`pthread_setaffinity_np` over musl's tagged 128-byte, 1024-bit `cpu_set_t`.
+The bootstrapped process-main task is admitted only through its own
+`pthread_self()` handle, and one executing selected worker only through its
+opaque-TP registry mapping while its parent-written `CLONE_PARENT_SETTID` word
+is positive. The direct get route retains the initialized Linux
+`sched_getaffinity=204` prefix and clears the caller tail exactly as musl does;
+the set route uses `sched_setaffinity=203`. The fixture proves main/worker get
+and set, tail clearing, undersized/empty `EINVAL`, preserved `errno`, and
+post-join `ESRCH`. It excludes affinity attributes, `sched_*` C APIs, `CPU_*`
+helpers, `pthread_getattr_np`, non-self-main and foreign/general handles,
+target completion or concurrent join/detach/reaping, scheduler policy,
+dynamic/loader TLS, full pthread/TLS or x86-64 parity, promotion, and public
+x86 support.
 
 
 `libc-termios-control` is a separately recorded static

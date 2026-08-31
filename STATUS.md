@@ -330,6 +330,22 @@ masks/safety; allocator, TSD, cancellation, synchronization, or loader reset;
 dynamic TLS; CRT/sysroot integration; general fork/atfork/process-exit/pthread
 behavior; family completion; promotion; and public x86 support remain excluded.
 
+`./scripts/dev-x86_64.sh libc-pthread-affinity` is a nineteenth private static
+artifact in that same still-planned family. It selects only GNU
+`pthread_getaffinity_np`/`pthread_setaffinity_np` over the musl-shaped
+128-byte, 1024-bit `cpu_set_t`: the bootstrapped process-main task through its
+own `pthread_self()` handle and one executing selected worker through its
+opaque-TP registry mapping while its parent-written `CLONE_PARENT_SETTID` word
+is positive. Direct Linux `sched_getaffinity=204` preserves the initialized
+kernel prefix and clears the caller-owned tail exactly as musl does;
+`sched_setaffinity=203` changes the admitted task mask. The fixture proves
+main/worker get and set, tail clearing, undersized/empty `EINVAL`, preserved
+`errno`, and post-join `ESRCH`. Affinity attributes, `sched_*` C APIs, `CPU_*`
+helpers, `pthread_getattr_np`, non-self-main and foreign/general handles,
+target completion or concurrent join/detach/reaping, scheduler policy, dynamic
+or loader TLS, family completion, promotion, and public x86 support remain
+excluded.
+
 The CRT-composition artifact,
 `./scripts/dev-x86_64.sh libc-crt-static-tls`, composes
 the real `rcrt1.o`/`crti.o`/`crtn.o` with that hidden libc owner: after checked

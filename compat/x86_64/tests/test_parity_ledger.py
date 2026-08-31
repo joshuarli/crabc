@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 32)
-        self.assertEqual(report["verified_artifact_count"], 121)
+        self.assertEqual(report["verified_artifact_count"], 122)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -7573,7 +7573,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/pthread_atfork.rs", pthread_tls["source_owners"]
         )
         self.assertIn(
-            "Eighteen separately verified static artifacts", pthread_tls["description"]
+            "Nineteen separately verified static artifacts", pthread_tls["description"]
         )
         self.assertIn(
             "sole delivery point is explicit `pthread_testcancel`",
@@ -7596,7 +7596,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         artifacts = pthread_tls["verified_artifact"]
-        self.assertEqual(len(artifacts), 18)
+        self.assertEqual(len(artifacts), 19)
         by_id = {artifact["id"]: artifact for artifact in artifacts}
         self.assertEqual(
             set(by_id),
@@ -7619,6 +7619,7 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "static-c-pthread-cancel-deferred",
                 "static-c-pthread-tls-aggregate",
                 "static-c-pthread-atfork-fork",
+                "static-c-pthread-affinity",
             },
         )
         static_tls = by_id["static-c-initial-tls-v1"]
@@ -7639,6 +7640,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         cancellation = by_id["static-c-pthread-cancel-deferred"]
         aggregate = by_id["static-c-pthread-tls-aggregate"]
         atfork = by_id["static-c-pthread-atfork-fork"]
+        affinity = by_id["static-c-pthread-affinity"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
         self.assertEqual(
@@ -7680,6 +7682,25 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, atfork_scope)
+        self.assertEqual(
+            affinity["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-pthread-affinity",
+        )
+        for phrase in (
+            "still-planned `libc.pthread-tls`",
+            "Two dependency-free GNU entries",
+            "128-byte, 1024-bit `cpu_set_t`",
+            "CLONE_PARENT_SETTID",
+            "sched_getaffinity=204",
+            "sched_setaffinity=203",
+            "Affinity attributes",
+            "CPU_*` mask helpers",
+            "target completion",
+            "concurrent `pthread_join`, `pthread_detach`, and selected reaping",
+            "general pthread/TLS or x86-64 parity",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, affinity["description"])
         self.assertEqual(
             crt1_handoff["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-crt1-static-tls",

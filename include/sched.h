@@ -35,6 +35,15 @@ struct sched_param {
 #define SCHED_RESET_ON_FORK 0x40000000
 
 #ifdef _GNU_SOURCE
+/* Linux's GNU pthread-affinity entries exchange this fixed 1024-bit mask.
+ * Keep musl 1.2.6's tagged type, capacity, and unsigned-long storage so the
+ * pointer declarations in pthread.h are constructible by C and C++ callers
+ * without inventing a separate x86-only public representation. The CPU_*
+ * construction/allocation helper macro family remains unselected. */
+typedef struct cpu_set_t {
+    unsigned long __bits[128 / sizeof(long)];
+} cpu_set_t;
+
 #define CSIGNAL             0x000000ff
 #define CLONE_NEWTIME       0x00000080
 #define CLONE_VM            0x00000100

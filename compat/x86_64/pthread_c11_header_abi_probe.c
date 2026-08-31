@@ -337,6 +337,8 @@ static void crabc_cleanup_macro_shape(void)
 }
 
 #if defined(CRABC_EXPECT_GNU_PTHREAD_EXTENSIONS)
+_Static_assert(sizeof(cpu_set_t) == 128 && _Alignof(cpu_set_t) == 8,
+	"musl x86-64 cpu_set_t ABI used by pthread affinity calls");
 typedef int (*crabc_pthread_timedjoin_signature)(
 	pthread_t, void **, const struct timespec *);
 typedef int (*crabc_pthread_getaffinity_np_signature)(

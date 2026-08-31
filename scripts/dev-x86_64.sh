@@ -232,6 +232,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-c11-tsd  run the static x86 crabc-libc pthread-key/C11 TSS lifecycle slice
   libc-pthread-cancel-deferred  run the static x86 crabc-libc deferred pthread-cancellation slice
   libc-pthread-atfork  run the static x86 crabc-libc bounded pthread_atfork/fork/exit-hook slice
+  libc-pthread-affinity  run the static x86 crabc-libc bounded pthread-affinity slice
   libc-pthread-detach  run the static x86 crabc-libc bounded pthread/C11 detach slice
   libc-thrd-sleep  run the static x86 crabc-libc bounded C11 thrd_sleep slice
   libc-pthread-mutex-normal  run the static x86 crabc-libc normal pthread-mutex slice
@@ -2735,6 +2736,10 @@ run_libc_pthread_atfork_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_atfork.sh
 }
 
+run_libc_pthread_affinity_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_pthread_affinity.sh
+}
+
 run_libc_pthread_detach_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_pthread_detach.sh
 }
@@ -3041,6 +3046,7 @@ case "$command" in
     libc-lchmod-unsupported) ;;
     libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
+    libc-pthread-affinity) ;;
     libc-pthread-detach) ;;
     libc-memory-sync) ;;
     libc-memory-locking) ;;
@@ -3962,6 +3968,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-pthread-atfork takes no arguments"
         ensure_image
         run_libc_pthread_atfork_probe
+        ;;
+    libc-pthread-affinity)
+        [ "$#" -eq 0 ] || fail "libc-pthread-affinity takes no arguments"
+        ensure_image
+        run_libc_pthread_affinity_probe
         ;;
     libc-pthread-detach)
         [ "$#" -eq 0 ] || fail "libc-pthread-detach takes no arguments"

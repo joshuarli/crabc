@@ -466,6 +466,7 @@ pthread_create
 pthread_detach
 pthread_equal
 pthread_exit
+pthread_getaffinity_np
 pthread_getspecific
 pthread_join
 pthread_key_create
@@ -490,6 +491,7 @@ pthread_rwlockattr_getpshared
 pthread_rwlockattr_init
 pthread_rwlockattr_setpshared
 pthread_self
+pthread_setaffinity_np
 pthread_setcancelstate
 pthread_setcanceltype
 pthread_setspecific

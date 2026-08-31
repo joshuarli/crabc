@@ -81,7 +81,11 @@
 //! general stdio. The pthread artifacts are
 //! intentionally bounded to null-attribute workers that return normally or
 //! use their selected explicit-exit path, plus prompt detach with later
-//! clear-child-tid reaping and opaque current/equality identity. The mutex
+//! clear-child-tid reaping and opaque current/equality identity. GNU affinity
+//! selects only bootstrapped-main self handles and executing selected-worker
+//! handles through direct Linux syscalls; target completion, affinity
+//! attributes, `CPU_*` helper macros, and general thread handles remain
+//! unselected. The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
@@ -202,6 +206,8 @@ mod signal_altstack;
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]
 mod pthread_create_join;
+#[path = "pthread_affinity.rs"]
+mod pthread_affinity;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]

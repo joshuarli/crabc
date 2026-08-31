@@ -1124,6 +1124,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-lchmod-unsupported",
             "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
+            "libc-pthread-affinity",
             "libc-pthread-detach",
             "libc-memory-sync",
             "libc-memory-locking",
@@ -4610,6 +4611,97 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-pthread-atfork)\n        [ "$#" -eq 0 ] || fail "libc-pthread-atfork takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_affinity_stays_bounded(self) -> None:
+        affinity = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "pthread_affinity.rs"
+        ).read_text(encoding="utf-8")
+        pthread_create_join = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "pthread_create_join.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        sched_header = (ROOT / "include" / "sched.h").read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_affinity_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_pthread_affinity_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_affinity.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "src/sched/affinity.c",
+            "pthread_getaffinity_np",
+            "pthread_setaffinity_np",
+            "SYS_SCHED_SETAFFINITY",
+            "SYS_SCHED_GETAFFINITY",
+            "is_initial_thread_pointer",
+            "CPU_*` mask helper",
+        ):
+            self.assertIn(required, affinity)
+        self.assertIn("selected_worker_linux_thread_id", pthread_create_join)
+        self.assertIn("SYS_SCHED_SETAFFINITY: i64 = 203", syscall)
+        for required in (
+            "typedef struct cpu_set_t",
+            "unsigned long __bits[128 / sizeof(long)]",
+            "CPU_*\n * construction/allocation helper macro family remains unselected",
+        ):
+            self.assertIn(required, sched_header)
+        for required in (
+            "sizeof(cpu_set_t) == 128",
+            "pthread_getaffinity_np declaration",
+            "pthread_setaffinity_np declaration",
+            "check_getaffinity",
+            "holding_worker",
+            "pthread_setaffinity_np(worker_thread",
+            "CRABC_PTHREAD_AFFINITY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_affinity_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_pthread_c11_header_abi.sh",
+            "-pthread",
+            "-nostdlib -static",
+            "-DCRABC_PTHREAD_AFFINITY_FREESTANDING",
+            "pthread_getaffinity_np",
+            "pthread_setaffinity_np",
+            "selected static C ABI export surface drifted",
+            "candidate selected a dynamic runtime",
+            "candidate retains an unresolved symbol",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {"pthread_getaffinity_np", "pthread_setaffinity_np"}
+            <= static_exports
+        )
+        self.assertIn("run_libc_pthread_affinity_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_affinity.sh", runner
+        )
+        self.assertIn(
+            '    libc-pthread-affinity)\n        [ "$#" -eq 0 ] || fail "libc-pthread-affinity takes no arguments"',
             runner,
         )
 

@@ -422,6 +422,8 @@ static crabc_pthread_sigmask_signature const crabc_force_pthread_sigmask
 #endif
 
 #if defined(CRABC_EXPECT_GNU_PTHREAD_EXTENSIONS)
+static_assert(sizeof(cpu_set_t) == 128 && alignof(cpu_set_t) == 8,
+	"musl x86-64 cpu_set_t ABI used by pthread affinity calls");
 using crabc_pthread_timedjoin_signature = int (*)(
 	pthread_t, void **, const timespec *);
 using crabc_pthread_getaffinity_np_signature = int (*)(

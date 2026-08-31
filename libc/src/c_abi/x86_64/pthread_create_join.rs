@@ -602,6 +602,47 @@ pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool
     requested
 }
 
+/// Resolve one live selected-worker handle to Linux's parent-written TID.
+///
+/// This is deliberately a scalar handoff for the pthread-affinity sibling,
+/// not a public TCB accessor or a general thread-list query. The registry lock
+/// proves that the opaque TP maps to a live private control record while this
+/// helper copies `child_tid`; it never dereferences the caller's handle. A
+/// caller must use the returned ID immediately, keep the target executing,
+/// and must not race its completion, join, detach, or later reaping boundary,
+/// which can clear this word, withdraw the mapping, and permit Linux TID reuse
+/// after the lock is released.
+pub(super) fn selected_worker_linux_thread_id(thread: *mut c_void) -> Option<c_int> {
+    if thread.is_null() {
+        return None;
+    }
+
+    let thread_pointer = thread as usize;
+    lock_selected_worker_registry();
+    let mut thread_id = None;
+    for slot in &SELECTED_WORKER_REGISTRY {
+        if slot.thread_pointer.load(Ordering::Acquire) != thread_pointer {
+            continue;
+        }
+        let control = slot.control.load(Ordering::Acquire);
+        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
+            break;
+        }
+        let control = control as *mut ThreadControl;
+        // SAFETY: the registry lock prevents withdrawal and reclamation of
+        // this matched private control record while its child-TID word is
+        // copied. CLONE_PARENT_SETTID has written a positive TID before a
+        // successful create returns; CLONE_CHILD_CLEARTID later clears it.
+        let child_tid = unsafe { (*control).child_tid.load(Ordering::Acquire) };
+        if child_tid > 0 {
+            thread_id = Some(child_tid);
+        }
+        break;
+    }
+    unlock_selected_worker_registry();
+    thread_id
+}
+
 /// Withdraw a selected-worker registry entry without touching its mapping.
 fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) -> bool {
     lock_selected_worker_registry();
