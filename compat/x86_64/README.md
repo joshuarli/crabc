@@ -244,6 +244,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
 ./scripts/dev-x86_64.sh iconv-header-abi
 ./scripts/dev-x86_64.sh wide-character-header-abi
+./scripts/dev-x86_64.sh wcswcs-header-abi
 ./scripts/dev-x86_64.sh locale-object-wide-header-abi
 ./scripts/dev-x86_64.sh locale-narrow-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
@@ -551,6 +552,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
+./scripts/dev-x86_64.sh libc-wcswcs
 ./scripts/dev-x86_64.sh libc-locale-object-wide
 ./scripts/dev-x86_64.sh libc-locale-narrow
 ./scripts/dev-x86_64.sh libc-locale-error-strings
@@ -5048,6 +5050,18 @@ and public x86 support remain outside this core artifact. Wide numeric parsing
 belongs to the separately selected numeric-parse slice and is not exercised by
 this artifact. The built-in locale-object/localized-wide artifact below is
 independently judged.
+
+`wcswcs-header-abi` and `libc-wcswcs` record the distinct private
+`static-c-wcswcs` alias leaf. The strict/POSIX/X/Open/GNU/BSD C11/C++17
+matrix proves the unconditional exact `wchar_t *wcswcs(const wchar_t *, const
+wchar_t *)` declaration and unmangled C linkage. Its same project-header
+fixture first executes with pinned musl and then through a true
+`-nostdlib -static` candidate, proving empty-needle identity, first-suffix
+selection, null misses, signed full-width units, and no input mutation. The
+one-export scalar closure follows musl's `wcswcs.c -> wcsstr.c` alias without
+extracting `wcsstr`, the broad wide-character object, locale/Unicode policy,
+multibyte conversion, or a general wide text/search surface. It remains
+selected-private and does not promote the family or public x86 support.
 
 `locale-object-wide-header-abi` and `libc-locale-object-wide` record the
 separate private `static-c-locale-object-localized-wide` artifact. The

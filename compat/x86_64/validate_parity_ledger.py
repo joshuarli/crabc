@@ -1687,6 +1687,7 @@ WIDE_CHARACTER_SYMBOLS = (
     "iswupper", "iswxdigit", "iswctype", "wctype", "towlower",
     "towupper", "towctrans", "wctrans",
 )
+WCSWCS_SYMBOLS = ("wcswcs",)
 LOCALE_OBJECT_WIDE_SYMBOLS = (
     "newlocale", "freelocale", "uselocale", "duplocale", "nl_langinfo",
     "nl_langinfo_l", "iswalnum_l", "iswalpha_l", "iswblank_l",
@@ -29845,8 +29846,8 @@ def require_getsubopt_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-getsubopt"
@@ -31302,8 +31303,8 @@ def require_stdio_integer_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-integer-scan"
@@ -31585,8 +31586,8 @@ def require_stdio_octal_hex_scan_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -32111,8 +32112,8 @@ def require_stdio_errno_output_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-stdio-errno-output"
@@ -32632,8 +32633,8 @@ def require_stdio_permanent_byte_io_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -32959,8 +32960,8 @@ def require_stdio_permanent_status_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -33287,8 +33288,8 @@ def require_stdio_permanent_feof_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -33655,8 +33656,8 @@ def require_stdio_permanent_fileno_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -33960,8 +33961,8 @@ def require_stdio_permanent_fileno_unlocked_artifact(
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry
@@ -37497,8 +37498,8 @@ def require_math_ceil_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-ceil"]
     require(
@@ -37722,8 +37723,8 @@ def require_math_floor_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-floor"]
     require(
@@ -37948,8 +37949,8 @@ def require_math_round_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [entry for entry in artifacts if entry.get("id") == "static-c-math-round"]
     require(
@@ -38901,8 +38902,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -39297,6 +39298,240 @@ def require_wide_character_artifact(family: Mapping[str, Any]) -> None:
         "wide-character-header-abi)",
         "libc-wide-character)",
         "run_wide_character_header_abi()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_wcswcs_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the legacy wide-substring alias local, closed, and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-wcswcs"]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-wcswcs artifact",
+    )
+    artifact = matching[0]
+    require("capabilities" not in artifact, "static-c-wcswcs must not promote capabilities")
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "`wcswcs`",
+        "`wcsstr`",
+        "scalar suffix comparison",
+        "INT32_MIN/U+10FFFF/U+10437",
+        "no input mutation",
+        "general wide text/search",
+        "locale or Unicode policy",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-wcswcs description omits {phrase}")
+
+    owners = nonempty_strings(artifact["source_owners"], "static-c-wcswcs.source_owners")
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/wcswcs.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stdint.h",
+        "include/wchar.h",
+        "compat/x86_64/wcswcs_header_abi_probe.c",
+        "compat/x86_64/wcswcs_header_abi_probe.cpp",
+        "compat/x86_64/run_wcswcs_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_wcswcs_probe.c",
+        "compat/x86_64/libc_wcswcs_start.S",
+        "compat/x86_64/run_libc_wcswcs.sh",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-wcswcs source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-wcswcs.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "rdi/rsi" in item and "rax" in item and "signed four-byte align-4" in item
+            and "no restrict" in item
+            for item in prerequisites
+        ),
+        "static-c-wcswcs must retain its LP64 wide pointer ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/string/wcswcs.c::wcswcs" in item
+            and "src/string/wcsstr.c" in item
+            and "scalar suffix comparison" in item
+            for item in prerequisites
+        ),
+        "static-c-wcswcs must retain its bounded musl source closure",
+    )
+    require(
+        any(
+            "no interpreter" in item and "PT_TLS" in item and "rejecting wcsstr" in item
+            and "one exit syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-wcswcs must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"], "static-c-wcswcs.x86_header_prerequisites"
+    )
+    require(
+        any(
+            "C11/C++17" in item and "wchar_t *wcswcs(const wchar_t *, const wchar_t *)" in item
+            and "strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-wcswcs must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-wcswcs"},
+        "static-c-wcswcs must use the closed libc-wcswcs command",
+    )
+    scope = evidence[0].get("scope") if evidence and isinstance(evidence[0], Mapping) else None
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C11/C++ header",
+                "`-nostdlib -static` candidate",
+                "empty-needle original-pointer behavior",
+                "first repeated suffix selection",
+                "signed `INT32_MIN`/U+10FFFF/U+10437",
+                "no input mutation",
+                "wcsstr, broad wide-string, locale, and conversion extraction",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-wcswcs evidence must retain its standalone static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(set(WCSWCS_SYMBOLS) <= exports, "static-c-wcswcs must retain its selected export")
+    require(
+        {symbol for symbol in exports if symbol in WCSWCS_SYMBOLS}
+        == set(WCSWCS_SYMBOLS),
+        "static-c-wcswcs must retain its exact export set",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "wcswcs.rs"]\nmod wcswcs;' in static_root,
+        "x86 static C ABI must compose the standalone wcswcs leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wcswcs.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 C `wcswcs` ABI boundary",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/wcswcs.c",
+        "src/string/wcsstr.c",
+        "scalar suffix comparison",
+        "unsafe fn musl_wcsstr",
+        'pub unsafe extern "C" fn wcswcs',
+    ):
+        require(snippet in source, f"wcswcs implementation omits {snippet}")
+    exports_in_source = set(
+        re.findall(r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', source)
+    )
+    require(
+        exports_in_source == set(WCSWCS_SYMBOLS),
+        "wcswcs implementation must expose wcswcs only",
+    )
+    for forbidden in (
+        "super::wide_character",
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+        'extern "C" fn wcsstr',
+    ):
+        require(forbidden not in source, f"wcswcs leaf widens into {forbidden}")
+
+    fixture = (ROOT / "compat" / "x86_64" / "libc_wcswcs_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "wcswcs_signature",
+        "check_empty_and_first_suffix",
+        "check_first_match_and_miss",
+        "check_empty_haystack_and_no_mutation",
+        "check_full_wchar_domain_units",
+        "INT32_MIN",
+        "0x10ffff",
+        "0x00010437",
+        "CRABC_WCSWCS_FREESTANDING",
+    ):
+        require(snippet in fixture, f"wcswcs fixture omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_wcswcs_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "wcswcs_header_abi_probe.c",
+        "wcswcs_header_abi_probe.cpp",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "nm --undefined-only",
+        "retained a mangled wcswcs reference",
+    ):
+        require(snippet in header_runner, f"wcswcs header runner omits {snippet}")
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_wcswcs.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_wcswcs_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "-Wl,-e,_start",
+        "-Wl,--no-undefined",
+        "--disassemble=wcswcs",
+        "wcswcs candidate unexpectedly retains TLS",
+        "wcswcs unexpectedly performs a syscall",
+        "wcsstr wcslen wcsnlen",
+        "candidate accidentally selects ${symbol}",
+        "timeout",
+    ):
+        require(snippet in runner, f"wcswcs runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "wcswcs-header-abi)",
+        "libc-wcswcs)",
+        "run_wcswcs_header_abi()",
+        "run_libc_wcswcs()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -39727,8 +39962,8 @@ def require_locale_error_strings_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 38,
-        "libc.text-math-locale-stdio must retain exactly thirty-eight private verified artifacts",
+        len(artifacts) == 39,
+        "libc.text-math-locale-stdio must retain exactly thirty-nine private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-error-strings"
@@ -41666,6 +41901,7 @@ def validate_ledger(
     require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_wide_iconv_artifact(by_id["libc.text-math-locale-stdio"])
     require_wide_character_artifact(by_id["libc.text-math-locale-stdio"])
+    require_wcswcs_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_object_wide_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_narrow_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_ctype_locator_artifact(by_id["libc.text-math-locale-stdio"])

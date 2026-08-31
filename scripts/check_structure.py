@@ -210,6 +210,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/memccpy.rs"),
     Path("libc/src/c_abi/x86_64/mempcpy.rs"),
     Path("libc/src/c_abi/x86_64/strsep.rs"),
+    Path("libc/src/c_abi/x86_64/wcswcs.rs"),
     Path("libc/src/c_abi/x86_64/legacy_memory.rs"),
     Path("libc/src/c_abi/x86_64/process_context.rs"),
     Path("libc/src/c_abi/x86_64/environment.rs"),
@@ -3741,6 +3742,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "memccpy.rs"]',
         '#[path = "mempcpy.rs"]',
         '#[path = "strsep.rs"]',
+        '#[path = "wcswcs.rs"]',
         '#[path = "legacy_memory.rs"]',
         '#[path = "fenv.rs"]',
         '#[path = "setjmp.rs"]',
@@ -4652,6 +4654,75 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if "--whole-archive" in strsep_runner_text:
         errors.append(
             "compat/x86_64/run_libc_strsep.sh: selected static strsep "
+            "evidence must not force-link the archive"
+        )
+
+    wcswcs_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "wcswcs.rs"
+    wcswcs_text = wcswcs_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/string/wcswcs.c",
+        "src/string/wcsstr.c",
+        "scalar suffix comparison",
+        "broad wide-character object",
+        "unsafe fn musl_wcsstr",
+        "pub unsafe extern \"C\" fn wcswcs",
+        "general wide text/search",
+        "public x86 support",
+    ):
+        if required not in wcswcs_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/wcswcs.rs: selected static wcswcs "
+                f"boundary is missing {required!r}"
+            )
+    wcswcs_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            wcswcs_text,
+        )
+    )
+    if wcswcs_exports != {"wcswcs"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/wcswcs.rs: selected static wcswcs "
+            "artifact must export only wcswcs"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "malloc",
+        "use super::wide_character",
+        "wide_character::",
+        "global_asm",
+    ):
+        if forbidden in wcswcs_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/wcswcs.rs: selected static wcswcs "
+                f"leaf must not select {forbidden!r}"
+            )
+    wcswcs_runner = ROOT / "compat" / "x86_64" / "run_libc_wcswcs.sh"
+    wcswcs_runner_text = wcswcs_runner.read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_wcswcs_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "--disassemble=wcswcs",
+        "candidate unexpectedly retains TLS",
+        "wcsstr wcslen wcsnlen",
+        "timeout",
+    ):
+        if required not in wcswcs_runner_text:
+            errors.append(
+                "compat/x86_64/run_libc_wcswcs.sh: selected static wcswcs "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in wcswcs_runner_text:
+        errors.append(
+            "compat/x86_64/run_libc_wcswcs.sh: selected static wcswcs "
             "evidence must not force-link the archive"
         )
 
@@ -10620,6 +10691,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         byte_strings_text,
         memccpy_text,
         strsep_text,
+        wcswcs_text,
         random_entropy_text,
         memory_search_text,
         string_copy_text,
@@ -11016,6 +11088,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "strrchr",
         "strspn",
         "strstr",
+        "wcswcs",
         "getrandom",
         "getentropy",
         "memchr",
@@ -11138,7 +11211,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
-            "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
+            "one direct legacy wide-substring alias, fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
             "getopt state and aliases, standalone linear search, paired intrusive-queue links, callback-tree/hash-table search, and the "
             "bounded no-catalog gettext/message-catalog ABI, "
@@ -11162,6 +11235,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("memccpy.rs", memccpy_text),
         ("mempcpy.rs", mempcpy_text),
         ("strsep.rs", strsep_text),
+        ("wcswcs.rs", wcswcs_text),
         ("fenv.rs", fenv_text),
         ("setjmp.rs", setjmp_text),
         ("signal_foundation.rs", signal_foundation_text),
