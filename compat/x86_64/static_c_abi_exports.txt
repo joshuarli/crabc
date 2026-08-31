@@ -704,6 +704,7 @@ scalblnl
 scalbn
 scalbnf
 scalbnl
+sched_getscheduler
 sched_yield
 secure_getenv
 seekdir

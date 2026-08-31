@@ -1369,8 +1369,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
-            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
+            "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
+            "sched-getscheduler-header-abi",
             "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
@@ -5529,6 +5530,143 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("run_libc_sigrtmin_probe()", dispatcher)
         self.assertIn("libc-sigrtmin)", dispatcher)
+
+    def test_libc_static_c_abi_sched_getscheduler_artifact_stays_musl_enosys(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sched_getscheduler.rs"
+        )
+        c_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getscheduler_header_abi_probe.c"
+        )
+        cxx_header_path = (
+            ROOT / "compat" / "x86_64" / "sched_getscheduler_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_sched_getscheduler_header_abi.sh"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_sched_getscheduler_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_sched_getscheduler_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_sched_getscheduler.sh"
+        )
+        process_resources_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_process_resources.sh"
+        )
+        for path in (
+            source_path,
+            c_header_path,
+            cxx_header_path,
+            header_runner_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing sched_getscheduler input: {path}")
+        self.assertTrue(header_runner_path.stat().st_mode & 0o111)
+        self.assertTrue(artifact_runner_path.stat().st_mode & 0o111)
+
+        source = source_path.read_text(encoding="utf-8")
+        c_header = c_header_path.read_text(encoding="utf-8")
+        cxx_header = cxx_header_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        process_resources_runner = process_resources_runner_path.read_text(
+            encoding="utf-8"
+        )
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sched_getscheduler.rs"]', static_root)
+        for required in (
+            "Bounded Linux/x86-64 static POSIX scheduler-policy observation boundary",
+            "src/sched/sched_getscheduler.c::sched_getscheduler",
+            "__syscall_ret(-ENOSYS)",
+            "raw syscall `sched_getscheduler=145`",
+            "c_status(-ENOSYS)",
+            'pub extern "C" fn sched_getscheduler(_pid: c_int) -> c_int',
+        ):
+            self.assertIn(required, source)
+        for forbidden in ("raw_syscall::", "SYS_SCHED_GETSCHEDULER"):
+            self.assertNotIn(forbidden, source)
+
+        for required in (
+            "__typeof__(&sched_getscheduler)",
+            "sched_getscheduler_signature)(pid_t)",
+            "sizeof(pid_t) == 4",
+        ):
+            self.assertIn(required, c_header)
+        for required in (
+            "decltype(&sched_getscheduler)",
+            "sched_getscheduler_signature",
+            "extern \"C\" void crabc_sched_getscheduler_linkage_witness",
+        ):
+            self.assertIn(required, cxx_header)
+        for required in (
+            "strict posix xopen gnu",
+            "sched_getscheduler_header_abi_probe.c",
+            "sched_getscheduler_header_abi_probe.cpp",
+            "unmangled sched_getscheduler",
+            "project trace omitted",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "SYS_sched_getscheduler == 145",
+            "raw_sched_getscheduler",
+            "raw_sched_getscheduler((pid_t)-1) != -EINVAL",
+            "check_musl_process_api",
+            "errno != ENOSYS",
+            "CRABC_SCHED_GETSCHEDULER_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "call __crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sched_getscheduler_probe",
+            "exit_group",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("arch_prctl", start)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "run_sched_getscheduler_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "R_X86_64_TPOFF",
+            "assert_musl_enosys_boundary",
+            "sched_getscheduler forwarded raw Linux syscall 145",
+            "candidate unexpectedly pulls",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sched_getscheduler", static_exports)
+        self.assertNotIn("times sched_getscheduler", process_resources_runner)
+        self.assertIn("sched_setscheduler", process_resources_runner)
+        self.assertIn('id = "static-c-sched-getscheduler"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sched-getscheduler"',
+            parity_ledger,
+        )
+        self.assertIn("run_sched_getscheduler_header_abi()", dispatcher)
+        self.assertIn("run_libc_sched_getscheduler_probe()", dispatcher)
+        self.assertIn("sched-getscheduler-header-abi)", dispatcher)
+        self.assertIn("libc-sched-getscheduler)", dispatcher)
 
     def test_libc_static_c_abi_sigpending_artifact_stays_bounded(self) -> None:
         static_root = (

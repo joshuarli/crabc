@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 197)
+        self.assertEqual(report["verified_artifact_count"], 198)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6729,7 +6729,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 83
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 84
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts
@@ -15421,6 +15421,106 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sigrtmin command"):
+            ledger.validate_ledger(data)
+
+    def test_sched_getscheduler_artifact_keeps_its_musl_enosys_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-getscheduler"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/sched_getscheduler.rs",
+            "include/sched.h",
+            "compat/x86_64/sched_getscheduler_header_abi_probe.c",
+            "compat/x86_64/sched_getscheduler_header_abi_probe.cpp",
+            "compat/x86_64/run_sched_getscheduler_header_abi.sh",
+            "compat/x86_64/libc_sched_getscheduler_probe.c",
+            "compat/x86_64/libc_sched_getscheduler_start.S",
+            "compat/x86_64/run_libc_sched_getscheduler.sh",
+            "compat/x86_64/run_libc_process_resources.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sched-getscheduler"},
+        )
+        for phrase in (
+            "one-symbol POSIX scheduler-policy observation compatibility artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `sched_getscheduler`",
+            "`src/sched/sched_getscheduler.c`",
+            "`__syscall_ret(-ENOSYS)`",
+            "`-1` and writes `ENOSYS=38`",
+            "thread-scoped raw x86 syscall 145",
+            "strict/POSIX/X/Open/GNU C and C++17 feature matrix",
+            "makes no raw syscall",
+            "separate C11 `thrd_yield` route and priority-bounds reference",
+            "scheduler-family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "pid_t" in prerequisite
+                and "edi" in prerequisite
+                and "eax" in prerequisite
+                and "syscall 145" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/sched/sched_getscheduler.c" in prerequisite
+                and "__syscall_ret(-ENOSYS)" in prerequisite
+                and "thread-scoped" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "raw 145 current-task success" in prerequisite
+                and "raw -1 as -EINVAL" in prerequisite
+                and "-1/ENOSYS" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-getscheduler"
+        )
+        artifact["description"] = "private scheduler helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sched-getscheduler description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sched-getscheduler"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh scheduler-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-sched-getscheduler command"
+        ):
             ledger.validate_ledger(data)
 
     def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:

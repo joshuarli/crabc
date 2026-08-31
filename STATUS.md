@@ -1749,6 +1749,19 @@ process signaling, waits, queues, descriptors, timers, pthread policy,
 libc.so, CRT, loader, sysroot, family/platform parity, promotion, or public
 x86 support.
 
+`./scripts/dev-x86_64.sh libc-sched-getscheduler` is a separate private
+`static-c-sched-getscheduler` artifact inside planned `libc.posix-runtime`.
+Pinned musl 1.2.6's `src/sched/sched_getscheduler.c` intentionally turns the
+POSIX process-facing `sched_getscheduler(pid_t)` spelling into `-1`/`ENOSYS`
+for every input rather than forwarding Linux x86 raw syscall 145, whose target
+is a thread. Its true-static C body first proves raw current-task success and
+raw invalid `-EINVAL`, then proves the musl C ABI result for 0, -1, and
+INT_MAX. The strict/POSIX/X/Open/GNU C/C++ header matrix retains the exact
+unmangled declaration. This is not scheduler support: mutation, parameters,
+priority bounds, `sched_yield`, affinity, pthread scheduling attributes,
+lifecycle, family/platform parity, promotion, and public x86 support remain
+outside the artifact.
+
 `./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
 private `static-c-sigset-mutation` artifact inside planned
 `libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof
