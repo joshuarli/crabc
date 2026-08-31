@@ -5084,6 +5084,53 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and GNU/BSD declaration oracle: src/legacy/getloadavg.c::getloadavg supplies the count branch, one sysinfo call, three-entry clamp, and SI_LOAD_SHIFT fixed-point output. Its failed uninitialized-record read is explicitly not an output oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sysinfo=99 rdi public-record input, SI_LOAD_SHIFT=16 load-word representation, raw errno result, and live snapshot observation contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/int/binary64 calling convention, GNU/BSD C++ C linkage, static initial-exec TLS, and Variant-II fixture thread-pointer contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-sync"
+description = "Private native x86 selected-static-archive `sync` compatibility artifact inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `void sync(void)` into a freestanding C fixture after an equivalent pinned musl 1.2.6 execution. Pinned musl's complete leaf issues one zero-argument Linux `sync=162` request and deliberately discards its raw result, so this C ABI has no status or errno/TLS publication path. The adjacent pinned-musl/raw reference dirties only a disposable regular file before observing musl's normal void return and raw zero result; it establishes a system-wide kernel/filesystem writeback completion request only, not writeback timing, per-file completion, storage-cache or power-loss durability. This artifact does not select `syncfs`, `sync_file_range`, `fsync`, `fdatasync`, pathname or descriptor APIs, filesystem policy, libc.so, CRT, loader, sysroot, allocation, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/sync.rs",
+  "include/unistd.h",
+  "include/features.h",
+  "compat/x86_64/sync_header_abi_probe.c",
+  "compat/x86_64/sync_header_abi_probe.cpp",
+  "compat/x86_64/run_sync_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sync_probe.c",
+  "compat/x86_64/libc_sync_start.S",
+  "compat/x86_64/run_libc_sync.sh",
+  "compat/x86_64/x86_sync_reference_probe.c",
+  "compat/x86_64/run_x86_sync_reference.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `void sync(void)` ABI consumes no C argument registers and returns no C status. Linux 5.10 x86-64 sync=162 likewise consumes no kernel argument, with its raw signed result in rax deliberately ignored by the selected void wrapper.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/unistd/sync.c::sync` exactly to `__syscall(SYS_sync)`. The source has no output, errno, TLS, allocation, descriptor, pathname, or state branch; it intentionally discards the raw Linux result rather than translating it through C errno.",
+  "The separate pinned-musl/raw reference dirties only a disposable regular file, observes musl's normal void return and raw sync=162 zero result, and records neither writeback timing nor per-file, storage-cache, or power-loss durability. That reference remains distinct from the selected static C ABI candidate.",
+  "The final `-nostdlib -static` candidate has no PT_TLS, errno path, dynamic relocation/resolver, external call, interpreter, DT_NEEDED, unresolved symbol, allocator, descriptor, pathname, or syncfs/sync_file_range/fsync/fdatasync dependency. Its selected sync function emits one direct `sync=162` syscall instruction without a CRT or TLS-lifecycle claim.",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-first C11/C++17 `<unistd.h>` gate proves the exact `void sync(void)` declaration under X/Open, GNU, and BSD selection, strict/POSIX hiding, and unmangled C++ linkage. It selects no general unistd header, archive linkage, filesystem behavior, family completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sync", scope = "Pinned-musl/project X/Open/GNU/BSD C/C++ header compilation plus the adjacent pinned-musl/raw disposable-dirty-file sync=162 reference, an equivalent pinned-musl C run, and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The C fixture proves the zero-argument void direct/function-pointer boundary returns normally; archive/final ELF checks ratchet exactly `sync`, reject PT_TLS/errno, interpreter/DT_NEEDED/unresolved symbols, dynamic resolver, external calls, unowned runtime dependencies, descriptor/pathname APIs, syncfs/sync_file_range/fsync/fdatasync, and emitted code other than direct sync=162. It establishes only a system-wide kernel/filesystem writeback completion request, not timing, per-file effects, or storage-cache/power-loss durability. It does not select filesystem policy, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and X/Open/GNU/BSD declaration oracle for src/unistd/sync.c::sync: one void __syscall(SYS_sync) wrapper that intentionally discards the raw result and has no errno/TLS, descriptor, pathname, or state behavior." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sync=162 no-argument raw syscall and system-wide writeback-completion request boundary; it supplies no timing, per-file, storage-cache, or power-loss durability guarantee." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument void C ABI, unmangled C++ linkage, and true-static ET_EXEC closure contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-uts-identity"
 description = "Private native x86 selected-static-archive UTS-namespace identity block. One dependency-free crabc-libc archive resolves only gethostname, sethostname, getdomainname, and setdomainname through the separately selected private uname record seam into a freestanding C fixture after an equivalent pinned-musl execution. Each reference and candidate arm starts under unshare --uts --fork in a fresh fixture-local UTS namespace; the canonical launcher supplies the one container-local CAP_SYS_ADMIN prerequisite, and all hostname/domain mutations are confined to that namespace rather than the container or host identity. It proves musl's bounded forced-NUL hostname copy, full-fit-only domain copy, direct setter errno results, and identity stability after rejected setters. This is capability-free evidence, not a UTS namespace-management capability: it does not select UTS namespace creation, entry, or control, gethostid/sethostid, system-file parsing, sysconf, process identity, a system-information framework, libc.so, CRT, dynamic TLS, pthread/TLS lifecycle, loader, sysroot, allocator, or public x86 support."
 source_owners = [

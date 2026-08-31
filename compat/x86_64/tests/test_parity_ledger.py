@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 195)
+        self.assertEqual(report["verified_artifact_count"], 196)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -19541,6 +19541,56 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-getloadavg evidence must retain its standalone static closure",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_sync_artifact_stays_a_private_void_writeback_leaf(self) -> None:
+        """`sync` must not turn a direct request into filesystem support."""
+
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sync"},
+        )
+        for phrase in (
+            "selected-static-archive `sync` compatibility artifact",
+            "no status or errno/TLS publication path",
+            "system-wide kernel/filesystem writeback completion request",
+            "storage-cache or power-loss durability",
+            "`syncfs`, `sync_file_range`, `fsync`, `fdatasync`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "sync=162 reference", "sync request"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-sync evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
 

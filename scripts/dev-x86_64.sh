@@ -130,6 +130,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
+  sync-header-abi  compile the staged x86 C/C++ X/Open/GNU/BSD sync declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
   tcgetpgrp-header-abi  compile the staged x86 C/C++ tcgetpgrp declaration
   tcsetpgrp-header-abi  compile the staged x86 C/C++ tcsetpgrp declaration
@@ -288,6 +289,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-ctermid  run the static x86 crabc-libc ctermid spelling slice
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
+  libc-sync  run the static x86 crabc-libc global sync compatibility slice
   libc-isatty  run the static x86 crabc-libc descriptor-observation slice
   libc-tcgetpgrp  run the static x86 crabc-libc foreground-group observation slice
   libc-tcsetpgrp  run the static x86 crabc-libc foreground-group assignment slice
@@ -735,6 +737,14 @@ run. It selects only historical `getloadavg`: count <= 0/no-output/stale-errno,
 the three-entry clamp, and caller output from an adjacent raw `sysinfo` snapshot.
 It does not select public sysinfo/uname, `/proc`, processor or topology policy,
 general `sysconf`, dynamic libc, or application startup.
+`libc-sync` exercises a separate X/Open/GNU/BSD project-header C/C++ declaration
+gate and freestanding project-header C fixture after the existing pinned-musl/
+raw `sync=162` reference. It selects only musl's void zero-argument direct
+syscall spelling, including no errno/TLS result path. The reference dirties only
+a disposable regular file and establishes no timing, per-file, storage-cache,
+or power-loss durability property. It does not select `syncfs`,
+`sync_file_range`, `fsync`, `fdatasync`, pathname/descriptor APIs, filesystem
+policy, dynamic libc, or application startup.
 `libc-fcntl-record-locks` exercises a separate freestanding project-header C
 fixture after its equivalent pinned-musl run. It selects only pointer-bearing
 nonblocking `fcntl(F_GETLK)`/`fcntl(F_SETLK)` record locks: an unlocked query,
@@ -1605,6 +1615,15 @@ equivalent pinned-musl run. It selects only historical `getloadavg`: count <=
 output from an adjacent raw `sysinfo` snapshot. It does not provide public
 sysinfo/uname, `/proc`, processor or topology policy, general `sysconf`,
 dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86 support.
+`libc-sync` links that archive into a separate X/Open/GNU/BSD project-header
+C/C++ declaration gate and freestanding fixture after the existing pinned-musl/
+raw `sync=162` reference. It selects only `void sync(void)`: one direct
+zero-argument syscall whose raw result remains outside the C errno/TLS
+boundary. A disposable dirty regular file supplies the reference precondition;
+it proves no timing, per-file, storage-cache, or power-loss durability property.
+It does not provide `syncfs`, `sync_file_range`, `fsync`, `fdatasync`,
+descriptor/pathname APIs, filesystem policy, dynamic libc, CRT/TLS lifecycle,
+loader, sysroot, or public x86 support.
 `libc-fcntl-record-locks` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 pointer-bearing nonblocking `F_GETLK`/`F_SETLK` record locks: the public
@@ -2589,6 +2608,10 @@ run_gethostid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_gethostid_header_abi.sh
 }
 
+run_sync_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sync_header_abi.sh
+}
+
 run_isatty_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_isatty_header_abi.sh
 }
@@ -3482,6 +3505,10 @@ run_libc_gethostid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_gethostid.sh
 }
 
+run_libc_sync_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sync.sh
+}
+
 run_libc_isatty_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_isatty.sh
 }
@@ -3781,7 +3808,7 @@ case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-yield) ;;
-    ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|sync-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-sync|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4323,6 +4350,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"
         ensure_image
         run_gethostid_header_abi
+        ;;
+    sync-header-abi)
+        [ "$#" -eq 0 ] || fail "sync-header-abi takes no arguments"
+        ensure_image
+        run_sync_header_abi
         ;;
     isatty-header-abi)
         [ "$#" -eq 0 ] || fail "isatty-header-abi takes no arguments"
@@ -5067,6 +5099,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"
         ensure_image
         run_libc_gethostid_probe
+        ;;
+    libc-sync)
+        [ "$#" -eq 0 ] || fail "libc-sync takes no arguments"
+        ensure_image
+        run_libc_sync_probe
         ;;
     libc-isatty)
         [ "$#" -eq 0 ] || fail "libc-isatty takes no arguments"

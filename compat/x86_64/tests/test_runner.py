@@ -1373,7 +1373,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
-            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|sync-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-sync|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -20756,6 +20756,125 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-gethostid)\n        [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_sync_artifact_stays_void_and_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync.rs"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_sync_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_sync_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sync.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sync_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "sync_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "sync_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sync.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 `sync` C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/unistd/sync.c::sync",
+            "Linux 5.10 x86-64 `sync=162`",
+            "void sync(void)",
+            "without touching errno or TLS",
+            'pub extern "C" fn sync()',
+            "raw_syscall::syscall0(raw_syscall::SYS_SYNC)",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "errno::",
+            "descriptor_io::",
+            "system_information::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("sync", static_exports)
+
+        for required in (
+            "#include <unistd.h>",
+            "void (*)(void)",
+            "const sync_signature function = sync",
+            "sync();",
+            "function == sync",
+            "CRABC_SYNC_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_sync_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "sync declaration",
+                "sync_must_be_hidden",
+                "CRABC_REQUIRE_SYNC_HIDDEN",
+            ):
+                self.assertIn(required, header)
+        for required in (
+            "sync_header_abi_probe.c",
+            "sync_header_abi_probe.cpp",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "-D_POSIX_C_SOURCE=200809L",
+            "nm --undefined-only",
+            "retained a mangled sync reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_x86_sync_reference.sh",
+            "run_sync_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=sync",
+            "sync candidate unexpectedly retains TLS",
+            "sync candidate unexpectedly selects",
+            "sync lacks fixed Linux sync syscall 162",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-sync"', parity_ledger)
+        self.assertIn('command = "./scripts/dev-x86_64.sh libc-sync"', parity_ledger)
+        self.assertIn("run_sync_header_abi()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_sync_header_abi.sh", runner)
+        self.assertIn("run_libc_sync_probe()", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_sync.sh", runner)
+        self.assertIn(
+            '    sync-header-abi)\n        [ "$#" -eq 0 ] || fail "sync-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-sync)\n        [ "$#" -eq 0 ] || fail "libc-sync takes no arguments"',
             runner,
         )
 

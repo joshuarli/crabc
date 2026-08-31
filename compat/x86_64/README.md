@@ -495,6 +495,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-system-information
 ./scripts/dev-x86_64.sh getloadavg-header-abi
 ./scripts/dev-x86_64.sh libc-getloadavg
+./scripts/dev-x86_64.sh sync-header-abi
+./scripts/dev-x86_64.sh libc-sync
 ./scripts/dev-x86_64.sh libc-uts-identity
 ./scripts/dev-x86_64.sh libc-network-byte-order
 ./scripts/dev-x86_64.sh libc-in6addr-any
@@ -4096,6 +4098,20 @@ output. It excludes public `sysinfo`/`uname`, processor/page helpers, `/proc`,
 topology or scheduler policy, general `sysconf`, dynamic runtime, and public
 x86 support.
 
+`libc-sync` is the fixture for a separate private `static-c-sync`
+`verified_artifact` over that archive, not a filesystem capability. Its
+X/Open/GNU/BSD `<unistd.h>` C/C++ declaration matrix and one project-header C
+body first execute through pinned musl and then through a `-nostdlib -static`
+candidate. It maps only musl 1.2.6 `src/unistd/sync.c::sync`: a zero-argument
+`void sync(void)` direct `sync=162` syscall that intentionally discards its raw
+result without errno or TLS. The adjacent raw/musl reference dirties a
+disposable regular file before the normal void return and raw-zero observation;
+it proves only the system-wide kernel/filesystem writeback completion request,
+not timing, per-file completion, storage-cache, or power-loss durability. It
+excludes `syncfs`, `sync_file_range`, `fsync`, `fdatasync`, descriptor/pathname
+APIs, filesystem policy, dynamic runtime, family completion, promotion, and
+public x86 support.
+
 `libc-uts-identity` is a separately recorded
 `static-c-uts-identity` `verified_artifact` gate over that archive, not a
 namespace or system-information capability. Its project-header C body first
@@ -5136,6 +5152,10 @@ its direct range effects; it does not broaden the public x86 support boundary.
 global-sync regression proves only the unit-returning system-wide `sync(2)`
 request after dirtying a disposable regular file; it deliberately makes no
 timing, per-file, crash, or storage-media durability assertion. The
+separate `libc-sync` static C ABI fixture adds only musl's feature-selected
+`void sync(void)` spelling to that existing raw/pinned-musl boundary. It is not
+`syncfs`, `sync_file_range`, `fsync`, `fdatasync`, descriptor/pathname support,
+or a filesystem capability. The
 syncfs regression proves regular-file and pipefs acceptance through a live
 borrowed descriptor, regular-file position stability, and raw-core `EBADF`
 after closure without manufacturing an invalid safe descriptor borrow. It is

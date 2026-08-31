@@ -1431,6 +1431,18 @@ no output oracle; the safe candidate instead publishes that errno and returns
 processor or topology policy, general `sysconf`, a general system-information
 capability, C-runtime/family parity, AArch64 parity, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-sync` is a separate private `static-c-sync`
+artifact inside that still-planned `libc.posix-runtime` family. Its
+X/Open/GNU/BSD `<unistd.h>` C/C++ declaration matrix and a true
+`-nostdlib -static` candidate map exactly to musl 1.2.6
+`src/unistd/sync.c`: one void, zero-argument `sync=162` request which discards
+the raw result without errno or TLS. The adjacent pinned-musl/raw reference
+uses only a disposable dirty regular file and establishes a system-wide kernel
+writeback completion request, not timing, per-file completion, storage-cache,
+or power-loss durability. It does not select `syncfs`, `sync_file_range`,
+`fsync`, `fdatasync`, pathname or descriptor APIs, filesystem policy,
+family/platform parity, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

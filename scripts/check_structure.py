@@ -259,6 +259,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
     Path("libc/src/c_abi/x86_64/getloadavg.rs"),
+    Path("libc/src/c_abi/x86_64/sync.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the
@@ -3825,6 +3826,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "ffs.rs"]',
         '#[path = "system_observation.rs"]',
         '#[path = "getloadavg.rs"]',
+        '#[path = "sync.rs"]',
         '#[path = "uts_identity.rs"]',
         "fn c_status",
         "fn c_pointer_status",
@@ -10285,6 +10287,46 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"getloadavg boundary must not select {forbidden!r}"
             )
 
+    sync_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync.rs"
+    sync_text = sync_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 `sync` C ABI boundary",
+        "musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/sync.c::sync",
+        "Linux 5.10 x86-64 `sync=162`",
+        "without touching errno or TLS",
+        'pub extern "C" fn sync()',
+        "raw_syscall::syscall0(raw_syscall::SYS_SYNC)",
+    ):
+        if required not in sync_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync.rs: selected static global-sync "
+                f"boundary is missing {required!r}"
+            )
+    sync_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', sync_text
+        )
+    )
+    if sync_exports != {"sync"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sync.rs: selected static global-sync "
+            "artifact must export only sync"
+        )
+    for forbidden in (
+        "errno::",
+        "descriptor_io::",
+        "system_information::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in sync_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync.rs: selected static global-sync "
+                f"boundary must not select {forbidden!r}"
+            )
+
     uts_identity_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "uts_identity.rs"
     uts_identity_text = uts_identity_source.read_text(errors="replace")
     for required in (
@@ -10416,6 +10458,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ffs_text,
         system_observation_text,
         getloadavg_text,
+        sync_text,
         uts_identity_text,
         timestamp_text,
     )
@@ -10780,6 +10823,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "uname",
         "sysinfo",
         "getloadavg",
+        "sync",
         "gethostname",
         "sethostname",
         "getdomainname",
@@ -10916,7 +10960,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
             "signal-control, separate realtime-minimum/realtime-maximum bridges, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, binary64 difftime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, a status-returning POSIX scheduler-yield leaf, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
-            "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, selected UTS-identity, "
+            "selected socket transport and selected socket-message/options, selected system-observation, historical load snapshot, direct global-sync void boundary, selected UTS-identity, "
             "selected numeric-address codecs, immutable IPv6 unspecified/loopback address data objects, and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy/mempcpy, caller-buffer strsep, random-entropy, memory-search, C-string-copy, immutable error-string, "
             "fixed-C-locale ctype, integer-arithmetic, integer-parsing, intmax-arithmetic, credential-observation, and "
             "raw auxiliary-vector observation, startup-derived secure-environment, and environment-backed login-name observation, find-first-set, startup-published program names, short/GNU-long "
@@ -11018,6 +11062,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ffs.rs", ffs_text),
         ("system_observation.rs", system_observation_text),
         ("getloadavg.rs", getloadavg_text),
+        ("sync.rs", sync_text),
         ("uts_identity.rs", uts_identity_text),
     ):
         if re.search(
