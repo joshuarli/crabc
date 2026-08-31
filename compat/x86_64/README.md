@@ -261,6 +261,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh byte-strings-header-abi
 ./scripts/dev-x86_64.sh memory-search-header-abi
 ./scripts/dev-x86_64.sh memccpy-header-abi
+./scripts/dev-x86_64.sh mempcpy-header-abi
 ./scripts/dev-x86_64.sh string-copy-header-abi
 ./scripts/dev-x86_64.sh error-strings-header-abi
 ./scripts/dev-x86_64.sh string-duplication-header-abi
@@ -488,6 +489,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-byte-strings
 ./scripts/dev-x86_64.sh libc-legacy-memory
 ./scripts/dev-x86_64.sh libc-memccpy
+./scripts/dev-x86_64.sh libc-mempcpy
 ./scripts/dev-x86_64.sh libc-process-globals-getopt
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
@@ -1271,6 +1273,12 @@ declarations for `void *memccpy(void *restrict, const void *restrict, int,
 size_t)`. It verifies XOPEN/GNU/BSD visibility, strict/POSIX C hiding, exact
 signature, and unmangled C++ linkage. This is compile-only header evidence; it
 does not select C memory behavior or `crabc-libc`.
+
+`mempcpy-header-abi` compiles project-first and pinned-musl C/C++ `<string.h>`
+declarations for `void *mempcpy(void *restrict, const void *, size_t)`. It
+verifies GNU-only visibility, default/strict/POSIX/XOPEN/BSD C hiding, exact signature,
+and unmangled C++ linkage. This is compile-only header evidence; it does not
+select C memory behavior or `crabc-libc`.
 
 `string-copy-header-abi` compiles project-first and pinned-musl C/C++
 `<string.h>` declarations for the closed C-string-copy set: unconditional
@@ -4119,6 +4127,20 @@ CRT, loader, or sysroot path; it does not select general bulk memory,
 `memory.bytes-basic`, `mempcpy`, `explicit_bzero`, allocator
 lifecycle/interposition, family completion, promotion, or public x86 support.
 
+`libc-mempcpy` is a separately recorded `static-c-mempcpy`
+`verified_artifact`, not a `memory.bytes-basic` or allocator claim. Its
+dedicated C/C++ header gate checks GNU-only visibility, default/strict/POSIX/XOPEN/BSD
+C hiding, and C linkage against pinned musl. Its project-header C fixture first
+executes through pinned musl and then through a true `-nostdlib -static`
+candidate made from exactly one adapter object exporting only `mempcpy` and the
+already selected bulk-memory object. It proves the direct `memcpy` relocation,
+destination-plus-length returns, and exact copied/untouched bytes over
+source/destination residues 0..7 and length boundaries through 64 including
+zero. It has no allocator, errno/TLS, locale, syscall, dynamic-runtime, CRT,
+loader, or sysroot path; it does not select general bulk memory,
+`memory.bytes-basic`, `memccpy`, `explicit_bzero`, allocator
+lifecycle/interposition, family completion, promotion, or public x86 support.
+
 `libc-random-entropy` is a separately recorded
 `static-c-random-entropy` `verified_artifact` gate over that archive, not a
 promotion of the Rust random-source or random-state capabilities. Its
@@ -5302,7 +5324,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-process-resources`, `libc-readiness-waits`, and
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
-`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-random-entropy`, `libc-memory-search`,
+`libc-byte-strings`, `libc-legacy-memory`, `libc-memccpy`, `libc-mempcpy`, `libc-random-entropy`, `libc-memory-search`,
 `libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
 `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-getsubopt`, `libc-intmax-arithmetic`, `libc-credential-observation`,

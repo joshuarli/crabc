@@ -524,6 +524,7 @@ memcpy
 memfd_create
 memmem
 memmove
+mempcpy
 memrchr
 memset
 mincore

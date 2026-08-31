@@ -173,6 +173,20 @@ It excludes terminal discovery, termios mutation/control, PTY/session policy,
 `tcgetpgrp`, `tcgetsid`, `ttyname`, `getpass`, generic ioctl, family
 completion, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh libc-mempcpy` is a separate private
+`static-c-mempcpy` adapter inside still-planned `libc.posix-runtime`. Its
+dedicated project-header/pinned-musl C/C++ gate proves GNU-only visibility,
+default/strict/POSIX/XOPEN/BSD C hiding, the exact unmangled `mempcpy` signature, and
+header provenance. Its pinned-musl and true `-nostdlib -static` routes extract
+exactly one `mempcpy` adapter together with the established `memcpy` owner,
+ratchet that one direct relocation, and prove returned destination-plus-length
+pointers and exact copied/untouched bytes across source/destination residues
+and length boundaries including zero. It has no errno/TLS, allocator, locale,
+syscall, dynamic-runtime, CRT, loader, or sysroot path beyond that preselected
+bulk-memory owner. It does not promote Rust-subsumed `memory.bytes-basic`,
+general bulk-memory behavior, `memccpy`/`explicit_bzero`, allocator
+lifecycle/interposition, family completion, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

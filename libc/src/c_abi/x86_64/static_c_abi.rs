@@ -179,6 +179,8 @@ mod credential_observation;
 mod memory;
 #[path = "memccpy.rs"]
 mod memccpy;
+#[path = "mempcpy.rs"]
+mod mempcpy;
 #[path = "legacy_memory.rs"]
 mod legacy_memory;
 #[path = "memory_search.rs"]
