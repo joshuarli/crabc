@@ -582,6 +582,7 @@ ngettext
 nice
 nl_langinfo
 nl_langinfo_l
+ns_get16
 ntohl
 ntohs
 open

@@ -58,8 +58,10 @@
 //! descriptor creation, system-observation,
 //! processor/page-count system-information, UTS-namespace identity, basic socket-transport,
 //! scalar network byte-order conversion, immutable IPv6 unspecified-address
-//! and loopback-address data objects, one isolated shared static IPv4
-//! presentation buffer with no resolver state, padded socket messages/options,
+//! and loopback-address data objects, one caller-owned nameserver 16-bit
+//! wire-read codec, one caller-owned DNS wire-name span codec, one isolated
+//! shared static IPv4 presentation buffer with no resolver state, padded
+//! socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
 //! Linux interface name/index and address snapshots with private output
@@ -482,6 +484,8 @@ mod in6addr_any;
 mod in6addr_loopback;
 #[path = "dn_skipname.rs"]
 mod dn_skipname;
+#[path = "ns_get16.rs"]
+mod ns_get16;
 #[path = "inet_address.rs"]
 mod inet_address;
 #[path = "inet_ntoa.rs"]

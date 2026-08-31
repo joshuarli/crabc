@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 <resolv.h> dn_skipname declaration ABI proof.
+# Native Linux/x86-64 <resolv.h> selected nameserver declaration ABI proof.
 #
 # Pinned musl 1.2.6 is the declaration and C-linkage oracle. This header-only
-# gate proves one caller-owned DNS wire-name span function through C and C++.
-# It selects no resolver state, `/etc/resolv.conf`, DNS packet I/O, socket,
-# netdb, or general nameserver API behavior.
+# gate proves one caller-owned DNS wire-name span function and one caller-owned
+# 16-bit wire-read function through C and C++. It selects no resolver state,
+# `/etc/resolv.conf`, DNS packet I/O, socket, netdb, or general nameserver API
+# behavior.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,14 +27,18 @@ require_native_linux_x86_64() {
 check_cxx_c_linkage() {
     local tree="$1"
     local object="$2"
-    local undefined
+    local symbol mangled undefined
 
     undefined="$(nm --undefined-only "$object")"
-    printf '%s\n' "$undefined" | grep -Eq '[[:space:]]dn_skipname$' ||
-        fail "$tree C++ probe does not retain C linkage for dn_skipname"
-    if printf '%s\n' "$undefined" | grep -Eq '_Z.*dn_skipname'; then
-        fail "$tree C++ probe retained a mangled dn_skipname reference"
-    fi
+    for symbol in dn_skipname ns_get16; do
+        printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
+            fail "$tree C++ probe does not retain C linkage for ${symbol}"
+    done
+    for mangled in '_Z.*dn_skipname' '_Z.*ns_get16'; do
+        if printf '%s\n' "$undefined" | grep -Eq "$mangled"; then
+            fail "$tree C++ probe retained a mangled selected-nameserver reference"
+        fi
+    done
 }
 
 require_native_linux_x86_64
@@ -46,8 +51,8 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 c_probe="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.c"
 cxx_probe="$ROOT_DIR/compat/x86_64/nameser_header_abi_probe.cpp"
-[ -f "$c_probe" ] || fail "missing C resolv header ABI probe"
-[ -f "$cxx_probe" ] || fail "missing C++ resolv header ABI probe"
+[ -f "$c_probe" ] || fail "missing C selected-nameserver header ABI probe"
+[ -f "$cxx_probe" ] || fail "missing C++ selected-nameserver header ABI probe"
 
 work_dir="$(mktemp -d /tmp/crabc-x86-64-nameser-header.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
@@ -73,4 +78,4 @@ done
     -o "$project_cxx_object"
 check_cxx_c_linkage project "$project_cxx_object"
 
-printf 'x86 pinned-musl/project C/C++ <resolv.h> dn_skipname ABI: PASS\n'
+printf 'x86 pinned-musl/project C/C++ <resolv.h> selected nameserver ABI: PASS\n'

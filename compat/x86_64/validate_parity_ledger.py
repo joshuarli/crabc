@@ -1429,6 +1429,8 @@ HSTRERROR_SYMBOLS = ("hstrerror",)
 
 DN_SKIPNAME_SYMBOLS = ("dn_skipname",)
 
+NS_GET16_SYMBOLS = ("ns_get16",)
+
 INET_NTOA_SYMBOLS = ("inet_ntoa",)
 
 GETHOSTID_SYMBOLS = ("gethostid",)
@@ -5477,7 +5479,7 @@ def require_inet_address_header_evidence(family: Mapping[str, Any]) -> None:
 
 
 def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
-    """Keep the one wire-span declaration gate below resolver promotion."""
+    """Keep the selected nameserver declaration gate below resolver promotion."""
     evidence = family.get("native_evidence")
     require(
         isinstance(evidence, list),
@@ -5504,8 +5506,10 @@ def require_nameser_header_evidence(family: Mapping[str, Any]) -> None:
                 "project-first/pinned-musl C/C++",
                 "<resolv.h>",
                 "`dn_skipname(const unsigned char *, const unsigned char *)`",
+                "`ns_get16(const unsigned char *)`",
                 "NS_CMPRSFLGS/NS_MAXLABEL/NS_MAXCDNAME/NS_MAXDNAME",
                 "caller-owned DNS wire-name span",
+                "caller-owned 16-bit wire-read",
                 "resolver state",
                 "/etc/resolv.conf",
                 "DNS packet I/O",
@@ -28214,6 +28218,364 @@ def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_ns_get16_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the dependency-free nameserver wire read out of resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.resolver].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-ns-get16"]
+    require(
+        len(matching) == 1,
+        "libc.resolver must contain exactly one static-c-ns-get16 artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-ns-get16 must not promote libc.resolver",
+    )
+    artifact = matching[0]
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-ns-get16 needs a description")
+    for phrase in (
+        "Private native x86 static `ns_get16` caller-owned 16-bit nameserver wire-read C ABI artifact",
+        "still-planned `libc.resolver`",
+        "archive-free true `-nostdlib -static` candidate",
+        "exactly one extracted crabc object",
+        "never `libc.a`",
+        "exactly `ns_get16`",
+        "unaligned network-order 16-bit value",
+        "NS_GET16",
+        "`h_errno`",
+        "`errno`",
+        "TLS",
+        "`/etc/hosts`",
+        "`/etc/resolv.conf`",
+        "DNS packet I/O",
+        "netdb/database",
+        "byte-order helper",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-ns-get16 description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-ns-get16.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/ns_get16.rs",
+        "include/resolv.h",
+        "include/arpa/nameser.h",
+        "include/netinet/in.h",
+        "include/stddef.h",
+        "include/stdint.h",
+        "include/sys/socket.h",
+        "include/sys/types.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/nameser_header_abi_probe.c",
+        "compat/x86_64/nameser_header_abi_probe.cpp",
+        "compat/x86_64/run_nameser_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_ns_get16_probe.c",
+        "compat/x86_64/libc_ns_get16_start.S",
+        "compat/x86_64/run_libc_ns_get16.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-ns-get16 source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-ns-get16.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 LP64" in item
+            and "ns_get16(const unsigned char *)" in item
+            and "rdi" in item
+            and "eax" in item
+            and "at least two readable bytes in one allocation" in item
+            and "no alignment" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-get16 must retain its caller-owned pointer/unsigned ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/ns_parse.c" in item
+            and "11-byte `.text.ns_get16` section" in item
+            and "no relocation, call, or syscall" in item
+            and "ns_get32/ns_put16/ns_put32/parser" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-get16 must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "exactly one extracted `ns_get16` object" in item
+            and "never `libc.a`" in item
+            and "TLS/errno/h_errno" in item
+            and "DNS packet I/O" in item
+            and "byte-order helper" in item
+            and "Ethernet" in item
+            for item in prerequisites
+        ),
+        "static-c-ns-get16 must retain its archive-free non-resolver boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-ns-get16.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "<resolv.h>" in item
+            and "ns_get16(const unsigned char *)" in item
+            and "NS_CMPRSFLGS=0xc0" in item
+            and "NS_MAXDNAME=1025" in item
+            and "unmangled C++ C linkage" in item
+            for item in headers
+        ),
+        "static-c-ns-get16 must retain its C/C++ resolv.h declaration boundary",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(NS_GET16_SYMBOLS) <= exports,
+        "static-c-ns-get16 must retain its selected export",
+    )
+    require(
+        not (
+            exports
+            & {
+                "dn_expand",
+                "ns_get32",
+                "ns_put16",
+                "ns_put32",
+                "ns_skiprr",
+                "ns_name_uncompress",
+                "res_init",
+            }
+        ),
+        "static-c-ns-get16 must not add broader nameserver exports",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "ns_get16.rs"]\nmod ns_get16;' in static_root,
+        "x86 static C ABI must compose the ns_get16 leaf",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_get16.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ns_parse.c",
+        "core::ptr::read",
+        "bytes.add(1)",
+        'pub unsafe extern "C" fn ns_get16',
+        "at least two readable bytes",
+    ):
+        require(snippet in implementation, f"ns_get16 leaf omits {snippet}")
+    exported_functions = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            implementation,
+        )
+    )
+    require(
+        exported_functions == set(NS_GET16_SYMBOLS),
+        "ns_get16 leaf must export only ns_get16",
+    )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn ns_get32",
+        "fn ns_put16",
+        "fn ns_put32",
+    ):
+        require(
+            forbidden not in implementation,
+            f"ns_get16 leaf widens into {forbidden}",
+        )
+
+    oracle = artifact.get("oracle")
+    require(isinstance(oracle, list), "static-c-ns-get16 needs oracle evidence")
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/network/ns_parse.c" in entry["role"]
+            and "(cp[0] << 8) | cp[1]" in entry["role"]
+            and "unaligned caller-owned input" in entry["role"]
+            and "Resolver state/files" in entry["role"]
+            and "Ethernet" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ns-get16 must retain its pinned-musl codec oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "elf-abi"
+            and isinstance(entry.get("role"), str)
+            and "rdi" in entry["role"]
+            and "eax" in entry["role"]
+            and "11-byte ns_get16 section" in entry["role"]
+            and "archive-free static final-ELF boundary" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-ns-get16 must retain its static ELF ABI oracle",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-ns-get16 needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-ns-get16"},
+        "static-c-ns-get16 must use the closed libc-ns-get16 command",
+    )
+    scope = evidence[0].get("scope")
+    require(isinstance(scope, str), "static-c-ns-get16 evidence needs a scope")
+    for phrase in (
+        "Pinned-musl project-header C execution",
+        "archive-free x86 `-nostdlib -static` candidate",
+        "`ns_get16`",
+        "`ns_parse.lo` 11-byte `.text.ns_get16` source mapping",
+        "exactly one extracted object",
+        "never `libc.a`",
+        "unaligned network-order pairs",
+        "NS_GET16's two-byte cursor advancement",
+        "no interpreter/DT_NEEDED/unresolved symbol",
+        "TLS/errno/h_errno/dynamic TLS",
+        "calls, syscalls",
+        "resolver configuration",
+        "hosts/resolv.conf",
+        "DNS packet I/O",
+        "netdb/database",
+        "separate byte-order helpers",
+        "Ethernet",
+        "public x86 support",
+    ):
+        require(phrase in scope, f"static-c-ns-get16 evidence omits {phrase}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cpp = (
+        ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "ns_get16_signature",
+        "NS_CMPRSFLGS == 0xc0",
+        "NS_MAXLABEL == 63",
+        "NS_MAXCDNAME == 255",
+        "NS_MAXDNAME == 1025",
+    ):
+        require(snippet in header_c, f"nameser C header probe omits {snippet}")
+        require(snippet in header_cpp, f"nameser C++ header probe omits {snippet}")
+    for snippet in (
+        "check_cxx_c_linkage",
+        "nm --undefined-only",
+        "_Z.*ns_get16",
+        "resolv.h arpa/nameser.h netinet/in.h",
+        "DNS packet I/O",
+        "netdb",
+    ):
+        require(snippet in header_runner, f"nameser header runner omits {snippet}")
+
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_ns_get16_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "#include <resolv.h>",
+        "ns_get16_signature",
+        "NS_INT16SZ == 2",
+        "static const unsigned char octets",
+        "NS_GET16(value, cursor)",
+        "CRABC_NS_GET16_FREESTANDING",
+    ):
+        require(snippet in fixture, f"ns_get16 fixture omits {snippet}")
+    start = (
+        ROOT / "compat" / "x86_64" / "libc_ns_get16_start.S"
+    ).read_text(encoding="utf-8")
+    for snippet in ("crabc_x86_64_ns_get16_probe", "mov $60, %eax"):
+        require(snippet in start, f"ns_get16 static entry omits {snippet}")
+    require("ARCH_SET_FS" not in start, "ns_get16 static entry must not bootstrap TLS")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_ns_get16.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "ns_parse.lo",
+        "ns_parse.c",
+        "11",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "ns_get16 archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "dn_expand dn_skipname ns_get32 ns_put16 ns_put32",
+        "res_query res_querydomain res_search",
+        "htonl htons ntohl ntohs",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+        "call|syscall",
+    ):
+        require(snippet in runner, f"ns_get16 runner omits {snippet}")
+    require(
+        '"$archive" -o "$candidate"' not in runner,
+        "ns_get16 final candidate must not link libc.a",
+    )
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "nameser-header-abi)" in dispatch
+        and "run_nameser_header_abi.sh" in dispatch
+        and "libc-ns-get16)" in dispatch
+        and "run_libc_ns_get16.sh" in dispatch,
+        "ns_get16 dispatcher bindings are missing",
+    )
+
+
 def require_auxv_observation_artifact(family: Mapping[str, Any]) -> None:
     """Keep direct initial-vector lookup bounded, static, and private."""
     artifacts = require_verified_artifacts(
@@ -42126,6 +42488,7 @@ def validate_ledger(
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])
     require_dn_skipname_artifact(by_id["libc.resolver"])
+    require_ns_get16_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
