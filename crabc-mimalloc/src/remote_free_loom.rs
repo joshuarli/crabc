@@ -1853,12 +1853,11 @@ fn loom_live_remote_publication_and_owner_exit_keep_the_pagemap_valid_until_one_
                 // atomic publication can be collected by its owner.
                 producer_model.finish_one_client_free();
                 producer_model.finish_publication();
+                publication_done_send
+                    .send(())
+                    .expect("the failed owner-exit admission retains the producer receiver");
             }
             producer_publication.store(published, Ordering::Release);
-            // If owner exit won before this thread acquired its lease, the
-            // owner has no reason to wait and may already have dropped the
-            // receiver. That is the valid rejected-live-publication branch.
-            let _ = publication_done_send.send(());
         });
 
         owner.join().expect("owner exit admission completes");
@@ -1891,6 +1890,17 @@ fn loom_live_remote_publication_and_owner_exit_keep_the_pagemap_valid_until_one_
             );
             assert_eq!(blocks.collect_once(&head), 1);
             blocks.assert_collected(0);
+            let mut no_hook: Option<fn()> = None;
+            assert_eq!(
+                try_unown_abandoned_head_with(&*head, &mut no_hook),
+                AbandonedOwnerHeadTransition::Released,
+                "the post-exit collector transfers its empty source head before final release"
+            );
+            assert_eq!(
+                head.load(Ordering::Acquire),
+                0,
+                "final release follows the post-exit collector's low-bit transfer"
+            );
             model.finish_one_client_free();
             model.finish_publication();
         }
@@ -2174,13 +2184,12 @@ fn loom_lifetime_word_retirement_racing_final_producer_admits_or_rejects_once() 
                         .recv()
                         .expect("an in-flight producer makes the owner retry");
                     finish_live_remote_page_publication_with(&*producer_lifetime, generation);
-                    let _ = producer_done_send.send(true);
+                    producer_done_send
+                        .send(())
+                        .expect("the owner waits only for an admitted producer");
                     true
                 }
-                Err(LiveRemoteFreePagePublicationError::Retired) => {
-                    let _ = producer_done_send.send(false);
-                    false
-                }
+                Err(LiveRemoteFreePagePublicationError::Retired) => false,
                 Err(error) => panic!("initial generation has no other producer outcome: {error:?}"),
             }
         });
@@ -2193,12 +2202,9 @@ fn loom_lifetime_word_retirement_racing_final_producer_admits_or_rejects_once() 
                     finish_send
                         .send(())
                         .expect("the admitted producer retains its finish receiver");
-                    assert!(
-                        producer_done_receive
-                            .recv()
-                            .expect("the admitted producer completes its publication"),
-                        "the owner only waits after observing an admitted producer"
-                    );
+                    producer_done_receive
+                        .recv()
+                        .expect("the admitted producer completes its publication");
                     assert_eq!(
                         begin_live_remote_page_retirement_with(&*owner_lifetime, generation),
                         Ok(()),
