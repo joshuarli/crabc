@@ -1554,6 +1554,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
+        self.assertIn("grantpt-header-abi", source)
+        self.assertIn("libc-grantpt", source)
         self.assertIn("tcsetpgrp-header-abi", source)
         self.assertIn("libc-tcsetpgrp", source)
         self.assertIn("getpass-header-abi", source)
@@ -2974,6 +2976,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-ctermid)\n        [ "$#" -eq 0 ] || fail "libc-ctermid takes no arguments"',
+            source,
+        )
+        self.assertIn('run_grantpt_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_grantpt_header_abi.sh', source
+        )
+        self.assertIn('run_libc_grantpt_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_grantpt.sh', source
+        )
+        self.assertIn(
+            '    libc-grantpt)\n        [ "$#" -eq 0 ] || fail "libc-grantpt takes no arguments"',
             source,
         )
         self.assertIn('run_isatty_header_abi()', source)
@@ -10674,6 +10688,223 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("#define L_ctermid 20\n\n/* File access */", stdio_header)
         self.assertIn("ctermid-header-abi", runner)
         self.assertIn("libc-ctermid", runner)
+
+    def test_libc_static_c_abi_grantpt_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "grantpt.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_grantpt_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_grantpt_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_grantpt.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_grantpt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        stdlib_header = (ROOT / "include" / "stdlib.h").read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "grantpt.rs"]', static_root)
+        self.assertIn("grantpt", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"grantpt"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/grantpt.c::grantpt",
+            "returns zero without",
+            "does not dereference or retain",
+            "# Safety",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "termios_control::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "global_asm!",
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "grantpt_signature",
+            "grantpt(-1)",
+            "invoke(INT32_MIN)",
+            "grantpt(0)",
+            "invoke(INT32_MAX)",
+            "errno = 313",
+            "CRABC_GRANTPT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_grantpt_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_grantpt_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "archive does not define grantpt",
+            "--disassemble=grantpt",
+            "grantpt candidate unexpectedly retains TLS",
+            "no-call no-syscall wrapper",
+            "zero-return instruction",
+            "assert_candidate_excludes_pty_policy",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "grantpt_header_abi_probe.c",
+            "grantpt_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "outside X/Open/GNU/BSD",
+            "retained a mangled grantpt reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("grantpt declaration", "grantpt_function", "grantpt_must_be_hidden"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("int grantpt(int);", stdlib_header)
+        self.assertIn("grantpt-header-abi", runner)
+        self.assertIn("libc-grantpt", runner)
+
+    def test_libc_static_c_abi_unlockpt_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlockpt.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_unlockpt_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_unlockpt_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_unlockpt.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_unlockpt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        stdlib_header = (ROOT / "include" / "stdlib.h").read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "unlockpt.rs"]', static_root)
+        self.assertIn("unlockpt", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"unlockpt"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/unlockpt.c::unlockpt",
+            "TIOCSPTLCK",
+            "private zero-valued",
+            "raw ioctl/status boundary",
+            "# Safety",
+            "raw_syscall::SYS_IOCTL",
+            "c_status(result)",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "termios_control::",
+            "getpass::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "global_asm!",
+            'pub unsafe extern "C" fn ioctl',
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "unlockpt_signature",
+            "invoke(-1)",
+            "unlockpt(null_fd)",
+            "invoke(master)",
+            "FIXTURE_TIOCGPTPEER",
+            "errno = 313",
+            "CRABC_UNLOCKPT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_unlockpt_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_unlockpt_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "archive does not define unlockpt",
+            "--disassemble=unlockpt",
+            "candidate retains a dynamic TLS model",
+            "fixed TIOCSPTLCK request",
+            "private zero lock value",
+            "assert_candidate_excludes_pty_policy",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "unlockpt_header_abi_probe.c",
+            "unlockpt_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "outside X/Open/GNU/BSD",
+            "retained a mangled unlockpt reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("unlockpt declaration", "unlockpt_function", "unlockpt_must_be_hidden"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("int unlockpt(int);", stdlib_header)
+        self.assertIn("unlockpt-header-abi", runner)
+        self.assertIn("libc-unlockpt", runner)
 
     def test_libc_static_c_abi_isatty_artifact_stays_narrow(self) -> None:
         static_root = (
@@ -24600,6 +24831,529 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-sendfile)\n        [ "$#" -eq 0 ] || fail "libc-sendfile takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_tee_artifact_stays_narrow(self) -> None:
+        """GNU tee remains one direct static pipe-buffer duplication leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        tee = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tee.rs").read_text(
+            encoding="utf-8"
+        )
+        header_c = (
+            ROOT / "compat" / "x86_64" / "tee_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "tee_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_tee_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (ROOT / "compat" / "x86_64" / "libc_tee_probe.c").read_text(
+            encoding="utf-8"
+        )
+        start = (ROOT / "compat" / "x86_64" / "libc_tee_start.S").read_text(
+            encoding="utf-8"
+        )
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_tee.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "tee.rs"]', static_root)
+        self.assertIn("SYS_TEE: i64 = 276", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/tee.c",
+            "#[no_mangle]",
+            'extern "C" fn tee',
+            "raw_syscall::SYS_TEE",
+            "raw_syscall::syscall4(",
+            "c_ssize_status(result)",
+            "length: usize",
+            "flags: u32",
+            "rdi/rsi/rdx/r10",
+            "cancellation-point machinery",
+        ):
+            self.assertIn(required, tee)
+        for forbidden in ("fn splice(", "fn vmsplice(", "crabc_core", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, tee)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <fcntl.h>",
+            "tee_signature",
+            "CRABC_EXPECT_TEE",
+            "CRABC_REQUIRE_TEE_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <fcntl.h>",
+            'extern "C" ssize_t tee',
+            "tee_signature",
+            "decltype(&tee)",
+        ):
+            self.assertIn(required, header_cpp)
+        for required in (
+            "tee_header_abi_probe.c",
+            "tee_header_abi_probe.cpp",
+            "GNU <fcntl.h> tee ABI",
+            "pinned musl exposes tee outside the GNU selector",
+            "project fcntl.h exposes tee outside the GNU selector",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_tee == 276",
+            "SYS_pipe2 == 293",
+            "raw_pipe2",
+            "source_bytes",
+            "destination_bytes",
+            "errno = ERANGE",
+            "FIXTURE_EBADF",
+            "CRABC_TEE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_tee_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_tee_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_tee_syscall_path",
+            "tee lacks Linux syscall 276",
+            "assert_candidate_excludes_descriptor_policy",
+            "source bytes remain readable",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("tee", static_export_names)
+        self.assertIn('id = "static-c-tee"', parity_ledger)
+        self.assertIn('command = "./scripts/dev-x86_64.sh libc-tee"', parity_ledger)
+        self.assertIn("run_tee_header_abi()", runner)
+        self.assertIn("run_libc_tee_probe()", runner)
+        self.assertIn("    tee-header-abi|splice-header-abi) ;;", runner)
+        self.assertIn("    libc-tee|libc-splice) ;;", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_tee.sh", runner)
+        self.assertIn(
+            '    libc-tee)\n        [ "$#" -eq 0 ] || fail "libc-tee takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_copy_file_range_artifact_stays_narrow(self) -> None:
+        """GNU copy_file_range remains one six-word static copy leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "copy_file_range.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "copy_file_range_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "copy_file_range_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_copy_file_range_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_copy_file_range_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_copy_file_range_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_copy_file_range.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "copy_file_range.rs"]', static_root)
+        self.assertIn("SYS_COPY_FILE_RANGE: i64 = 326", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/copy_file_range.c",
+            "#[no_mangle]",
+            'extern "C" fn copy_file_range',
+            "raw_syscall::SYS_COPY_FILE_RANGE",
+            "raw_syscall::syscall6(",
+            "c_ssize_status(result)",
+            "input_offset: *mut c_long",
+            "output_offset: *mut c_long",
+            "length: usize",
+            "flags: u32",
+            "rdi/rsi/rdx/r10/r8/r9",
+            "cancellation-point",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("fn sendfile(", "fn splice(", "crabc_core", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <unistd.h>",
+            "copy_file_range_signature",
+            "CRABC_EXPECT_COPY_FILE_RANGE",
+            "CRABC_REQUIRE_COPY_FILE_RANGE_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <unistd.h>",
+            'extern "C" ssize_t copy_file_range',
+            "copy_file_range_signature",
+            "decltype(&copy_file_range)",
+        ):
+            self.assertIn(required, header_cpp)
+        for required in (
+            "copy_file_range_header_abi_probe.c",
+            "copy_file_range_header_abi_probe.cpp",
+            "C++ driver follows musl's extension-visible mode",
+            "copy_file_range is visible under ${label} C",
+            "compile_cxx_extension_profile strict",
+            "C++ ${label} probe does not retain C linkage",
+            "copy_file_range reference (${variant})",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_copy_file_range == 326",
+            "raw_syscall6",
+            "TRANSFER_INPUT_OFFSET",
+            "TRANSFER_OUTPUT_OFFSET",
+            "raw_copy_file_range",
+            "raw_result != -EINVAL",
+            "raw_result != -EBADF",
+            "CRABC_COPY_FILE_RANGE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_copy_file_range_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_copy_file_range_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_copy_file_range_syscall_path",
+            "copy_file_range lacks Linux syscall 326",
+            "assert_candidate_excludes_descriptor_policy",
+            "stable shared positions",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("copy_file_range", static_export_names)
+        self.assertIn('id = "static-c-copy-file-range"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-copy-file-range"',
+            parity_ledger,
+        )
+        self.assertIn("run_copy_file_range_header_abi()", runner)
+        self.assertIn("run_libc_copy_file_range_probe()", runner)
+        self.assertIn(
+            "    sync-file-range-header-abi|copy-file-range-header-abi) ;;", runner
+        )
+        self.assertIn("    libc-sync-file-range|libc-copy-file-range) ;;", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_copy_file_range.sh", runner
+        )
+        self.assertIn(
+            "    libc-copy-file-range)\n"
+            "        [ \"$#\" -eq 0 ] || fail \"libc-copy-file-range takes no arguments\"",
+            runner,
+        )
+
+    def test_libc_static_c_abi_splice_artifact_stays_narrow(self) -> None:
+        """GNU splice remains one six-word static file-to-pipe leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "splice.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "splice_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "splice_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_splice_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_splice_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_splice_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_splice.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "splice.rs"]', static_root)
+        self.assertIn("SYS_SPLICE: i64 = 275", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/splice.c",
+            "#[no_mangle]",
+            'extern "C" fn splice',
+            "raw_syscall::SYS_SPLICE",
+            "raw_syscall::syscall6(",
+            "c_ssize_status(result)",
+            "input_offset: *mut c_long",
+            "output_offset: *mut c_long",
+            "length: usize",
+            "flags: u32",
+            "rdi/rsi/rdx/r10/r8/r9",
+            "cancellation-point",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("fn tee(", "fn vmsplice(", "crabc_core", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <fcntl.h>",
+            "splice_signature",
+            "CRABC_EXPECT_SPLICE",
+            "CRABC_REQUIRE_SPLICE_HIDDEN",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <fcntl.h>",
+            'extern "C" ssize_t splice',
+            "splice_signature",
+            "decltype(&splice)",
+        ):
+            self.assertIn(required, header_cpp)
+        for required in (
+            "splice_header_abi_probe.c",
+            "splice_header_abi_probe.cpp",
+            "C++ driver follows musl's extension-visible mode",
+            "splice is visible under ${label} C",
+            "compile_cxx_extension_profile strict",
+            "C++ ${label} probe does not retain C linkage",
+            "splice reference (${variant})",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_splice == 275",
+            "raw_syscall6",
+            "TRANSFER_INPUT_OFFSET",
+            "INVALID_SPLICE_FLAGS",
+            "raw_splice",
+            "raw_result != -EINVAL",
+            "raw_result != -EBADF",
+            "CRABC_SPLICE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_splice_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_splice_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_splice_syscall_path",
+            "splice lacks Linux syscall 275",
+            "assert_candidate_excludes_descriptor_policy",
+            "stable file positions",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("splice", static_export_names)
+        self.assertIn('id = "static-c-splice"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-splice"',
+            parity_ledger,
+        )
+        self.assertIn("run_splice_header_abi()", runner)
+        self.assertIn("run_libc_splice_probe()", runner)
+        self.assertIn("    tee-header-abi|splice-header-abi) ;;", runner)
+        self.assertIn("    libc-tee|libc-splice) ;;", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_splice.sh", runner)
+        self.assertIn(
+            "    libc-splice)\n"
+            "        [ \"$#\" -eq 0 ] || fail \"libc-splice takes no arguments\"",
+            runner,
+        )
+
+    def test_libc_static_c_abi_sync_file_range_artifact_stays_narrow(self) -> None:
+        """GNU sync_file_range remains one direct static range-request leaf."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        syscall = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "syscall.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "sync_file_range_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "sync_file_range_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_sync_file_range_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_sync_file_range_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_sync_file_range_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_sync_file_range.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "sync_file_range.rs"]', static_root)
+        self.assertIn("SYS_SYNC_FILE_RANGE: i64 = 277", syscall)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/sync_file_range.c",
+            "#[no_mangle]",
+            'extern "C" fn sync_file_range',
+            "raw_syscall::SYS_SYNC_FILE_RANGE",
+            "raw_syscall::syscall4(",
+            "c_status(result)",
+            "offset: i64",
+            "nbytes: i64",
+            "flags: c_uint",
+            "rdi/rsi/rdx/r10",
+            "select cancellation",
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in ("fn syncfs(", "fn fallocate(", "crabc_core", "crabc_mimalloc"):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <fcntl.h>",
+            "sync_file_range_signature",
+            "CRABC_EXPECT_SYNC_FILE_RANGE",
+        ):
+            self.assertIn(required, header_c)
+        for required in (
+            "#include <sys/types.h>",
+            "#include <fcntl.h>",
+            "using sync_file_range_signature",
+            "sync_file_range_signature",
+            "decltype(&sync_file_range)",
+        ):
+            self.assertIn(required, header_cpp)
+        for required in (
+            "sync_file_range_header_abi_probe.c",
+            "sync_file_range_header_abi_probe.cpp",
+            "GNU C/C++ <fcntl.h> sync_file_range ABI",
+            "EXPECTED_VISIBLE_PROFILE_COUNT=1",
+            "EXPECTED_HIDDEN_PROFILE_COUNT=4",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "SYS_sync_file_range == 277",
+            "raw_syscall4",
+            "FIXTURE_SEEK_CUR",
+            "0x08U",
+            "EBADF",
+            "CRABC_SYNC_FILE_RANGE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_sync_file_range_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_sync_file_range_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "candidate errno does not use direct fs initial TLS",
+            "assert_static_closure",
+            "sync_file_range lacks Linux x86-64 sync_file_range=277",
+            "sync_file_range delegates to an unselected runtime boundary",
+            "selected sync_file_range member",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("sync_file_range", static_export_names)
+        self.assertIn('id = "static-c-sync-file-range"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-sync-file-range"',
+            parity_ledger,
+        )
+        self.assertIn("run_sync_file_range_header_abi()", runner)
+        self.assertIn("run_libc_sync_file_range_probe()", runner)
+        self.assertIn(
+            "    sync-file-range-header-abi|copy-file-range-header-abi) ;;", runner
+        )
+        self.assertIn("    libc-sync-file-range|libc-copy-file-range) ;;", runner)
+        self.assertIn("/workspace/compat/x86_64/run_libc_sync_file_range.sh", runner)
+        self.assertIn(
+            "    libc-sync-file-range)\n"
+            "        [ \"$#\" -eq 0 ] || fail \"libc-sync-file-range takes no arguments\"",
             runner,
         )
 

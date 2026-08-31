@@ -258,6 +258,34 @@ select terminal policy, PTY/session/termios/tty discovery, getpass, generic
 filesystem behavior, temporary-file families, filesystem handles, family
 completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-grantpt` is a separate private
+`static-c-grantpt` artifact inside still-planned `libc.posix-runtime`. Its
+pinned-musl/project-header C/C++ gate proves the exact X/Open/GNU/BSD
+`int grantpt(int)` declaration, strict/POSIX hiding, and unmangled C++
+linkage. Its pinned-musl and freestanding-static routes then prove only musl's
+legacy zero-return compatibility wrapper for `-1`, `INT32_MIN`, `0`, and
+`INT32_MAX`, with stale errno unchanged in the musl route. The candidate does
+not inspect the descriptor, access errno/TLS, allocate, call helpers, or issue
+a syscall. It does not select PTY allocation/grant/unlock/naming, descriptor
+authority, terminal discovery or session policy, `posix_openpt`, `unlockpt`,
+`ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, generic ioctl,
+family completion, promotion, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-unlockpt` is a separate private
+`static-c-unlockpt` artifact inside still-planned `libc.posix-runtime`. Its
+pinned-musl/project-header C/C++ gate proves the exact X/Open/GNU/BSD
+`int unlockpt(int)` declaration, strict/POSIX hiding, and unmangled C++
+linkage. Its pinned-musl and freestanding-static routes then prove only musl's
+fixed `TIOCSPTLCK=0x40045431` bridge: `EBADF` and non-PTY `ENOTTY` become `-1`
+with errno, while a call on one fresh raw-opened devpts master succeeds with
+stale errno preserved and permits fixture-only peer observation. The wrapper
+owns one private zero `int`, the fixed ioctl request, and existing errno
+translation; it adds no generic ioctl API, PTY opening/grant/naming, descriptor
+ownership, terminal discovery, termios state, or terminal/session/process
+policy. `posix_openpt`, `grantpt`, `ptsname`/`ptsname_r`,
+openpty/forkpty/login_tty/vhangup, family completion, promotion, and public x86
+support remain excluded.
+
 `./scripts/dev-x86_64.sh libc-gethostid` is a private `static-c-gethostid`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 X/Open C/C++ header gate proves `long gethostid(void)` visibility only under
@@ -2091,6 +2119,47 @@ position through short-transfer and EOF-zero cases, and stale `errno`,
 `EINVAL`, and `EBADF` are translated directly. It does not select pathname,
 socket/pipe, splice, copy-file-range, vector-I/O, durability, cancellation,
 family/platform parity, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-tee` is a separate private `static-c-tee`
+artifact inside planned `libc.posix-runtime`. Its GNU-only project-header C/C++
+gate and pinned-musl/freestanding-static fixture prove only direct pipe-buffer
+`tee`: source bytes remain readable after an equal destination-pipe copy,
+zero-length success leaves stale `errno`, and a bad source descriptor maps to
+`EBADF`. It does not select pipe creation or ownership, generic descriptor
+policy, `splice`/`vmsplice` transfer, cancellation, family/platform parity, or
+public x86 support.
+
+`./scripts/dev-x86_64.sh libc-splice` is a separate private `static-c-splice`
+artifact inside planned `libc.posix-runtime`. Its GNU-only project-header C/C++
+gate and pinned-musl/freestanding-static fixture prove only one regular-file-to-
+pipe explicit-input-offset `splice=275` request: wrapper/raw result and
+pointed-offset agreement, copied pipe bytes, retained file position, stale
+`errno` on success, plus direct invalid-flags `EINVAL` and bad-input `EBADF`.
+It does not select pathname opening, descriptor or pipe ownership, blocking,
+fallback, general pipe/filesystem transfer policy,
+`tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability, cancellation,
+family/platform parity, or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-sync-file-range` is a separate private
+`static-c-sync-file-range` artifact inside planned `libc.posix-runtime`. Its
+GNU-only project-header C/C++ gate and pinned-musl/freestanding-static fixture
+prove only one direct regular-file `sync_file_range=277` request: exact raw
+result/`errno` agreement, retained shared descriptor position, stale `errno` on
+success, plus direct invalid-flags `EINVAL` and bad-descriptor `EBADF`. It does
+not select pathname opening or descriptor ownership, cache/writeback policy or
+durability, `sync`/`syncfs`, `fallocate`, cancellation, family/platform parity,
+or public x86 support.
+
+`./scripts/dev-x86_64.sh libc-copy-file-range` is a separate private
+`static-c-copy-file-range` artifact inside planned `libc.posix-runtime`. Its
+GNU-only project-header C/C++ gate and pinned-musl/freestanding-static fixture
+prove only one same-filesystem regular-file explicit-offset
+`copy_file_range=326` request: wrapper/raw result and pointed-offset agreement,
+copied bytes, retained shared descriptor positions, stale `errno` on success,
+plus direct invalid-flags `EINVAL` and bad-input `EBADF`. It does not select
+pathname opening or descriptor ownership, copy fallback or cross-filesystem
+policy, `sendfile`/`splice`, durability, cancellation, family/platform parity,
+or public x86 support.
 
 `./scripts/dev-x86_64.sh libc-posix-fallocate` is a separate private
 `static-c-posix-fallocate` artifact inside planned `libc.posix-runtime`. Its

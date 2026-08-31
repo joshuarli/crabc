@@ -16333,6 +16333,121 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_static_grantpt_artifact_keeps_its_noop_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-grantpt must not promote"
+        ):
+            ledger.require_grantpt_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-grantpt"
+        )
+        artifact["capabilities"] = ["terminal.session-control"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-grantpt"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "returns zero for every signed int descriptor", "generic compatibility"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits returns zero for every signed int descriptor"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-grantpt"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-ctermid"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-grantpt command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_unlockpt_artifact_keeps_its_fixed_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-unlockpt must not promote"
+        ):
+            ledger.require_unlockpt_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-unlockpt"
+        )
+        artifact["capabilities"] = ["terminal.pty-basic"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-unlockpt"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "fixed-PTY-lock-release boundary", "generic compatibility"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "description omits fixed-PTY-lock-release boundary",
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-unlockpt"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-grantpt"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-unlockpt command"
+        ):
+            ledger.validate_ledger(data)
+
     def test_static_secure_environment_artifact_keeps_its_private_boundary(
         self,
     ) -> None:
@@ -20719,6 +20834,129 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh sendfile-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sendfile command"):
             ledger.validate_ledger(data)
+
+    def test_copy_file_range_artifact_keeps_direct_six_word_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-copy-file-range"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/copy_file_range.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/unistd.h",
+            "compat/x86_64/copy_file_range_header_abi_probe.c",
+            "compat/x86_64/copy_file_range_header_abi_probe.cpp",
+            "compat/x86_64/run_copy_file_range_header_abi.sh",
+            "compat/x86_64/libc_copy_file_range_probe.c",
+            "compat/x86_64/libc_copy_file_range_start.S",
+            "compat/x86_64/run_libc_copy_file_range.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        description = artifact["description"]
+        assert isinstance(description, str)
+        for phrase in (
+            "GNU descriptor-range copy block",
+            "copy_file_range=326",
+            "rdi/rsi/rdx/r10/r8/r9",
+            "pointed offset updates",
+            "retained shared descriptor positions",
+            "stale `errno`",
+            "EINVAL",
+            "EBADF",
+            "cross-filesystem policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, description)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-copy-file-range"},
+        )
+        self.assertIn("src/linux/copy_file_range.c", artifact["oracle"][0]["role"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-copy-file-range"
+        )
+        changed_artifact["description"] = "private descriptor copy"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-copy-file-range description omits"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_splice_artifact_keeps_direct_file_to_pipe_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-splice"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/splice.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/fcntl.h",
+            "compat/x86_64/splice_header_abi_probe.c",
+            "compat/x86_64/splice_header_abi_probe.cpp",
+            "compat/x86_64/run_splice_header_abi.sh",
+            "compat/x86_64/libc_splice_probe.c",
+            "compat/x86_64/libc_splice_start.S",
+            "compat/x86_64/run_libc_splice.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        description = artifact["description"]
+        assert isinstance(description, str)
+        for phrase in (
+            "GNU file-to-pipe transfer block",
+            "splice=275",
+            "rdi/rsi/rdx/r10/r8/r9",
+            "pointed input-offset update",
+            "retained file descriptor position",
+            "stale `errno`",
+            "EINVAL",
+            "EBADF",
+            "general pipe/filesystem transfer policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, description)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-splice"},
+        )
+        self.assertIn("src/linux/splice.c", artifact["oracle"][0]["role"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-splice"
+        )
+        changed_artifact["description"] = "private descriptor splice"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-splice description omits"
+        ):
+            ledger.validate_ledger(changed)
 
     def test_posix_fallocate_artifact_keeps_direct_error_boundary(self) -> None:
         data = self.data()

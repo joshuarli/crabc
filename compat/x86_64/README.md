@@ -299,6 +299,10 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh fcntl-header-abi
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
+./scripts/dev-x86_64.sh tee-header-abi
+./scripts/dev-x86_64.sh splice-header-abi
+./scripts/dev-x86_64.sh sync-file-range-header-abi
+./scripts/dev-x86_64.sh copy-file-range-header-abi
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
@@ -456,6 +460,10 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-termios-control
 ./scripts/dev-x86_64.sh ctermid-header-abi
 ./scripts/dev-x86_64.sh libc-ctermid
+./scripts/dev-x86_64.sh grantpt-header-abi
+./scripts/dev-x86_64.sh libc-grantpt
+./scripts/dev-x86_64.sh unlockpt-header-abi
+./scripts/dev-x86_64.sh libc-unlockpt
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
 ./scripts/dev-x86_64.sh endhostent-header-abi
@@ -526,6 +534,10 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fcntl-record-locks
 ./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sendfile
+./scripts/dev-x86_64.sh libc-tee
+./scripts/dev-x86_64.sh libc-splice
+./scripts/dev-x86_64.sh libc-sync-file-range
+./scripts/dev-x86_64.sh libc-copy-file-range
 ./scripts/dev-x86_64.sh libc-posix-fallocate
 ./scripts/dev-x86_64.sh libc-filesystem-capacity
 ./scripts/dev-x86_64.sh libc-vector-io
@@ -1937,6 +1949,34 @@ evidence; it does not select locking behavior or `crabc-libc`.
 `SYS_sendfile=40`, the direct signature, large-file alias spelling, and
 unmangled C++ linkage. It is source-only header evidence; it does not select
 descriptor transfer behavior or `crabc-libc`.
+
+`tee-header-abi` compiles project and pinned-musl C/C++ GNU `<fcntl.h>`
+declarations for `ssize_t tee(int, int, size_t, unsigned)`, with C++ linkage.
+It also proves default, strict, POSIX, XOPEN, and BSD C selector profiles hide
+that GNU-only spelling. It is source-only declaration evidence; it does not
+select pipe-buffer transfer behavior or `crabc-libc`.
+
+`splice-header-abi` compiles project and pinned-musl C/C++ GNU `<fcntl.h>`
+declarations for `ssize_t splice(int, off_t *, int, off_t *, size_t,
+unsigned)`, signed x86 `off_t`, and unmangled C++ linkage. Strict, POSIX,
+XOPEN, and BSD C selector profiles hide that GNU-only spelling; the C++ driver
+follows musl's extension-visible mode. It is source-only declaration evidence;
+it does not select descriptor, pipe, or transfer behavior or `crabc-libc`.
+
+`sync-file-range-header-abi` compiles project and pinned-musl C/C++ GNU
+`<fcntl.h>` declarations for `int sync_file_range(int, off_t, off_t,
+unsigned)`, with signed x86 `off_t` and C++ linkage. It also proves default,
+strict, POSIX, XOPEN, and BSD C selector profiles hide that GNU-only spelling.
+It is source-only declaration evidence; it does not select cache/writeback or
+durability policy, descriptor ownership, `sync`/`syncfs`, or `crabc-libc`.
+
+`copy-file-range-header-abi` compiles project and pinned-musl C/C++ GNU
+`<unistd.h>` declarations for `ssize_t copy_file_range(int, off_t *, int,
+off_t *, size_t, unsigned)`, signed x86 `off_t`, and unmangled C++ linkage.
+Strict, POSIX, XOPEN, and BSD C selector profiles hide that GNU-only spelling;
+the C++ driver follows musl's extension-visible mode. It is source-only
+declaration evidence; it does not select descriptor-copy behavior, fallback,
+or `crabc-libc`.
 
 `unistd-header-abi` compiles project and pinned-musl C/C++ `<unistd.h>`
 declarations, including the staged x86 LP64 POSIX/GNU selectors, process and
@@ -4112,6 +4152,35 @@ PTY/session/termios/tty discovery, getpass, generic filesystem behavior,
 temporary-file families, filesystem handles, dynamic runtime, family
 completion, promotion, and public x86 support.
 
+`libc-grantpt` is a separately recorded static `static-c-grantpt`
+`verified_artifact` gate over that archive, not a PTY or terminal capability.
+Its X/Open/GNU/BSD C/C++ `<stdlib.h>` declaration gate proves exact
+`int grantpt(int)` linkage and strict/POSIX hiding before one project-header C
+body executes through pinned musl and a `-nostdlib -static` candidate. It
+selects only musl's historical zero-return compatibility wrapper: direct and
+function-pointer calls with `-1`, `INT32_MIN`, `0`, and `INT32_MAX` succeed;
+the pinned-musl route preserves stale errno. The candidate does not inspect the
+descriptor or use TLS/errno, allocation, helper calls, or a syscall. It
+excludes PTY allocation/grant/unlock/naming, descriptor authority, terminal
+discovery or session policy, `posix_openpt`, `unlockpt`, `ptsname`/`ptsname_r`,
+openpty/forkpty/login_tty/vhangup, generic ioctl, dynamic runtime, family
+completion, promotion, and public x86 support.
+
+`libc-unlockpt` is a separately recorded static `static-c-unlockpt`
+`verified_artifact` gate over that archive, not a PTY or terminal capability.
+Its X/Open/GNU/BSD C/C++ `<stdlib.h>` declaration gate proves exact
+`int unlockpt(int)` linkage and strict/POSIX hiding before one project-header C
+body executes through pinned musl and a `-nostdlib -static` candidate. It
+selects only musl's fixed private-zero `TIOCSPTLCK=0x40045431` bridge: `-1`
+reports `EBADF`, a raw-opened non-PTY reports `ENOTTY`, and one fresh raw-opened
+devpts master succeeds with stale errno preserved before fixture-only peer
+observation. The candidate includes only the existing errno translation and
+fixed request; it rejects generic ioctl and all unselected terminal/PTY
+helpers. It excludes PTY allocation/grant/naming, descriptor ownership,
+terminal discovery or session/process policy, `posix_openpt`, `grantpt`,
+`ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, dynamic runtime,
+family completion, promotion, and public x86 support.
+
 `libc-gethostid` is a separate static `verified_artifact` inside
 still-planned `libc.c-abi-compat`, not a `system.kernel-admin` capability. Its
 focused X/Open/GNU/BSD `<unistd.h>` C/C++ gate proves `long gethostid(void)`,
@@ -4866,6 +4935,51 @@ offset advance without input-position mutation, null-offset short transfer and
 EOF zero, stale errno on success, and `EINVAL`/`EBADF` errors. It does not
 select pathname, socket/pipe, splice, copy-file-range, vector-I/O, durability,
 cancellation, general runtime, or public x86 support.
+
+`libc-tee` is a separately recorded `static-c-tee` `verified_artifact` gate
+over the same archive, not a general pipe or descriptor capability. Its
+project-header C/C++ GNU `<fcntl.h>` gate runs before a pinned-musl and
+`-nostdlib -static` candidate fixture for direct pipe-buffer duplication. It
+proves `tee=276` x86 ABI forwarding, source bytes remain readable after an
+equal destination-pipe copy, zero-length stale errno on success, and direct
+`EBADF`. It does not select pipe creation/ownership, generic descriptor
+policy, `splice`/`vmsplice`, cancellation, general runtime, or public x86
+support.
+
+`libc-splice` is a separately recorded `static-c-splice` `verified_artifact`
+gate over the same archive, not a descriptor, pipe, or transfer capability.
+Its project-header C/C++ GNU `<fcntl.h>` gate runs before a pinned-musl and
+`-nostdlib -static` candidate fixture for one regular-file-to-pipe
+explicit-input-offset request. It proves `splice=275` x86 ABI forwarding,
+raw/wrapper result and pointed-offset agreement, copied pipe bytes, retained
+file position, stale `errno` on success, and direct invalid-flags `EINVAL` plus
+bad-input `EBADF`. It does not select pathname or descriptor/pipe ownership,
+blocking, fallback, general pipe/filesystem transfer policy,
+`tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability, cancellation,
+general runtime, or public x86 support.
+
+`libc-sync-file-range` is a separately recorded
+`static-c-sync-file-range` `verified_artifact` gate over the same archive, not
+a descriptor/filesystem capability. Its project-header C/C++ GNU `<fcntl.h>`
+gate runs before a pinned-musl and `-nostdlib -static` candidate fixture for
+one direct regular-file range request. It proves `sync_file_range=277` x86 ABI
+forwarding, exact raw result/`errno` agreement, retained shared descriptor
+position, stale `errno` on success, and direct invalid-flags `EINVAL` and
+bad-descriptor `EBADF`. It does not select pathname or descriptor ownership,
+cache/writeback policy or durability, `sync`/`syncfs`, `fallocate`,
+cancellation, general runtime, or public x86 support.
+
+`libc-copy-file-range` is a separately recorded
+`static-c-copy-file-range` `verified_artifact` gate over the same archive, not
+a descriptor/filesystem capability. Its project-header C/C++ GNU `<unistd.h>`
+gate runs before a pinned-musl and `-nostdlib -static` candidate fixture for
+one same-filesystem regular-file explicit-offset request. It proves
+`copy_file_range=326` x86 ABI forwarding, raw/wrapper result and pointed-offset
+agreement, copied bytes, retained shared descriptor positions, stale `errno`
+on success, and direct invalid-flags `EINVAL` plus bad-input `EBADF`. It does
+not select pathname or descriptor ownership, copy fallback or cross-filesystem
+policy, `sendfile`/`splice`, durability, cancellation, general runtime, or
+public x86 support.
 
 `libc-posix-fallocate` is a separately recorded
 `static-c-posix-fallocate` `verified_artifact` gate over the same archive, not
@@ -6686,6 +6800,8 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,
 `libc-ctermid`,
+`libc-grantpt`,
+`libc-unlockpt`,
 `libc-gethostid`,
 `libc-endhostent`,
 `libc-gettid`,
@@ -6726,6 +6842,10 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-fcntl-record-locks`,
 `libc-flock`,
 `libc-sendfile`,
+`libc-tee`,
+`libc-splice`,
+`libc-sync-file-range`,
+`libc-copy-file-range`,
 `libc-posix-fallocate`,
 `libc-filesystem-capacity`,
 `libc-vector-io`,

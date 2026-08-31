@@ -16284,6 +16284,515 @@ def require_ctermid_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_grantpt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's legacy PTY-grant compatibility no-op below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-grantpt"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-grantpt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-grantpt must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-grantpt must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "legacy `grantpt` compatibility no-op",
+        "still-planned `libc.posix-runtime`",
+        "exactly `int grantpt(int)`",
+        "src/unistd/grantpt.c::grantpt",
+        "returns zero for every signed int descriptor",
+        "without inspecting it, changing errno, or issuing a syscall",
+        "selected-private leaf",
+        "PTY allocation",
+        "lock/unlock operation",
+        "slave-name lookup",
+        "descriptor authority",
+        "terminal discovery",
+        "terminal/session policy",
+        "generic ioctl",
+        "errno/TLS",
+        "`posix_openpt`, `unlockpt`, `ptsname`/`ptsname_r`",
+        "openpty/forkpty/login_tty/vhangup",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-grantpt description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-grantpt.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/grantpt.rs",
+        "include/stdlib.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/grantpt_header_abi_probe.c",
+        "compat/x86_64/grantpt_header_abi_probe.cpp",
+        "compat/x86_64/run_grantpt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_grantpt_probe.c",
+        "compat/x86_64/libc_grantpt_start.S",
+        "compat/x86_64/run_libc_grantpt.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-grantpt source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-grantpt.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi" in item
+            and "eax" in item
+            and "every int bit pattern" in item
+            and "returns zero" in item
+            for item in prerequisites
+        ),
+        "static-c-grantpt must retain its signed-int no-inspection ABI",
+    )
+    require(
+        any(
+            "src/unistd/grantpt.c::grantpt" in item
+            and "literal `return 0`" in item
+            and "xor %eax,%eax; ret" in item
+            for item in prerequisites
+        ),
+        "static-c-grantpt must retain its exact pinned-musl no-op mapping",
+    )
+    require(
+        any(
+            "no PT_TLS" in item
+            and "call/jump/syscall" in item
+            and "only syscall belongs to the test entry shim" in item
+            for item in prerequisites
+        ),
+        "static-c-grantpt must retain its stateless static closure",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-grantpt.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "`int grantpt(int)`" in item
+            and "unmangled C++ reference" in item
+            and "X/Open, GNU, and BSD" in item
+            and "Strict and POSIX profiles hide" in item
+            for item in header_prerequisites
+        ),
+        "static-c-grantpt must retain its XSI C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-grantpt"},
+        "static-c-grantpt must use the closed libc-grantpt command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "-1, INT32_MIN, 0, and INT32_MAX",
+                "stale errno preserved",
+                "-nostdlib -static",
+                "PT_TLS/TLS/errno",
+                "calls, jumps, and any syscall in grantpt",
+                "posix_openpt/unlockpt/ptsname/ptsname_r",
+                "openpty/forkpty/login_tty/vhangup",
+                "terminal discovery or session policy",
+                "public x86 support",
+            )
+        ),
+        "static-c-grantpt evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("grantpt" in exports, "static C ABI export contract omits grantpt")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "grantpt.rs"]\nmod grantpt;' in static_root,
+        "x86 static C ABI must compose the grantpt leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "grantpt.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/grantpt.c::grantpt",
+        "returns zero without",
+        "does not dereference or retain",
+        "# Safety",
+        'pub unsafe extern "C" fn grantpt',
+    ):
+        require(snippet in source, f"grantpt implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(exported == {"grantpt"}, "grantpt implementation must export only grantpt")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "termios_control::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+    ):
+        require(forbidden not in source, f"grantpt implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_grantpt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_grantpt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define grantpt",
+        "--disassemble=grantpt",
+        "grantpt candidate unexpectedly retains TLS",
+        "no-call no-syscall wrapper",
+        "zero-return instruction",
+        "assert_candidate_excludes_pty_policy",
+        'timeout "$EXECUTION_TIMEOUT"',
+    ):
+        require(snippet in runner, f"grantpt runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_grantpt_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "grantpt_signature",
+        "grantpt(-1)",
+        "invoke(INT32_MIN)",
+        "grantpt(0)",
+        "invoke(INT32_MAX)",
+        "errno = 313",
+        "CRABC_GRANTPT_FREESTANDING",
+    ):
+        require(snippet in probe, f"grantpt probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("grantpt declaration", "grantpt_function", "grantpt_must_be_hidden"):
+        require(snippet in header_c, f"grantpt C header probe omits {snippet}")
+        require(snippet in header_cxx, f"grantpt C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "grantpt-header-abi)",
+        "libc-grantpt)",
+        "run_grantpt_header_abi()",
+        "run_libc_grantpt_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_unlockpt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's fixed PTY lock-release bridge below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-unlockpt"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-unlockpt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-unlockpt must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-unlockpt must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "fixed-PTY-lock-release boundary",
+        "still-planned `libc.posix-runtime`",
+        "exactly `int unlockpt(int)`",
+        "src/unistd/unlockpt.c::unlockpt",
+        "private zero-valued four-byte int",
+        "`TIOCSPTLCK=0x40045431`",
+        "raw `EBADF`/`ENOTTY` failures return `-1` and publish errno",
+        "Fixture-local raw syscalls create, observe, and close one fresh devpts master only",
+        "selected-private leaf",
+        "PTY allocation/grant/naming",
+        "terminal/session/process policy",
+        "generic ioctl",
+        "`posix_openpt`, `grantpt`, `ptsname`/`ptsname_r`",
+        "openpty/forkpty/login_tty/vhangup",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-unlockpt description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-unlockpt.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/unlockpt.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/stdlib.h",
+        "include/sys/syscall.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/unlockpt_header_abi_probe.c",
+        "compat/x86_64/unlockpt_header_abi_probe.cpp",
+        "compat/x86_64/run_unlockpt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_unlockpt_probe.c",
+        "compat/x86_64/libc_unlockpt_start.S",
+        "compat/x86_64/run_libc_unlockpt.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-unlockpt source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-unlockpt.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi/rdx" in item
+            and "eax" in item
+            and "TIOCSPTLCK=0x40045431" in item
+            and "four-byte zero int" in item
+            for item in prerequisites
+        ),
+        "static-c-unlockpt must retain its fixed ioctl ABI",
+    )
+    require(
+        any(
+            "src/unistd/unlockpt.c::unlockpt" in item
+            and "int unlock = 0" in item
+            and "return ioctl(fd, TIOCSPTLCK, &unlock)" in item
+            for item in prerequisites
+        ),
+        "static-c-unlockpt must retain its exact pinned-musl mapping",
+    )
+    require(
+        any(
+            "-nostdlib -static" in item
+            and "no dynamic TLS relocation/resolver" in item
+            and "fixture-local raw `/dev/ptmx`/TIOCGPTPEER observation" in item
+            for item in prerequisites
+        ),
+        "static-c-unlockpt must retain its bounded static closure",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-unlockpt.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "`int unlockpt(int)`" in item
+            and "unmangled C++ reference" in item
+            and "X/Open, GNU, and BSD" in item
+            and "Strict and POSIX profiles hide" in item
+            for item in header_prerequisites
+        ),
+        "static-c-unlockpt must retain its XSI C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-unlockpt"},
+        "static-c-unlockpt must use the closed libc-unlockpt command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "EBADF and non-PTY ENOTTY errno translation",
+                "fresh raw-opened devpts master",
+                "stale errno preserved",
+                "fixture-only TIOCGPTPEER observation",
+                "-nostdlib -static",
+                "dynamic TLS resolver",
+                "TIOCSPTLCK=0x40045431",
+                "posix_openpt/grantpt/ptsname/ptsname_r",
+                "openpty/forkpty/login_tty/vhangup",
+                "terminal discovery or session/process policy",
+                "public x86 support",
+            )
+        ),
+        "static-c-unlockpt evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("unlockpt" in exports, "static C ABI export contract omits unlockpt")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "unlockpt.rs"]\nmod unlockpt;' in static_root,
+        "x86 static C ABI must compose the unlockpt leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlockpt.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/unlockpt.c::unlockpt",
+        "TIOCSPTLCK",
+        "private zero-valued",
+        "raw ioctl/status boundary",
+        "# Safety",
+        'pub unsafe extern "C" fn unlockpt',
+        "raw_syscall::SYS_IOCTL",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+    ):
+        require(snippet in source, f"unlockpt implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(exported == {"unlockpt"}, "unlockpt implementation must export only unlockpt")
+    for forbidden in (
+        "termios_control::",
+        "getpass::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+        'pub unsafe extern "C" fn ioctl',
+    ):
+        require(forbidden not in source, f"unlockpt implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_unlockpt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_unlockpt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define unlockpt",
+        "--disassemble=unlockpt",
+        "candidate retains a dynamic TLS model",
+        "fixed TIOCSPTLCK request",
+        "private zero lock value",
+        "assert_candidate_excludes_pty_policy",
+        'timeout "$EXECUTION_TIMEOUT"',
+    ):
+        require(snippet in runner, f"unlockpt runner omits {snippet}")
+    probe = (ROOT / "compat" / "x86_64" / "libc_unlockpt_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "unlockpt_signature",
+        "invoke(-1)",
+        "unlockpt(null_fd)",
+        "invoke(master)",
+        "FIXTURE_TIOCGPTPEER",
+        "errno = 313",
+        "CRABC_UNLOCKPT_FREESTANDING",
+    ):
+        require(snippet in probe, f"unlockpt probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_unlockpt_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_unlockpt_probe", "mov $60, %eax"):
+        require(snippet in start, f"unlockpt static entry shim omits {snippet}")
+    header_c = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("unlockpt declaration", "unlockpt_function", "unlockpt_must_be_hidden"):
+        require(snippet in header_c, f"unlockpt C header probe omits {snippet}")
+        require(snippet in header_cxx, f"unlockpt C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_unlockpt_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "unlockpt_header_abi_probe.c",
+        "unlockpt_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside X/Open/GNU/BSD",
+        "retained a mangled unlockpt reference",
+    ):
+        require(snippet in header_runner, f"unlockpt header runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "unlockpt-header-abi)",
+        "libc-unlockpt)",
+        "run_unlockpt_header_abi()",
+        "run_libc_unlockpt_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_getpass_artifact(family: Mapping[str, Any]) -> None:
     """Keep historical terminal password input below family promotion."""
     artifacts = require_verified_artifacts(
@@ -27011,6 +27520,469 @@ def require_sendfile_artifact(family: Mapping[str, Any]) -> None:
         require(
             phrase in scope,
             f"static-c-sendfile evidence scope omits {phrase}",
+        )
+
+
+def require_tee_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C tee on its direct pipe-buffer duplication boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-tee"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-tee artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU pipe-buffer duplication block",
+        "tee=276",
+        "rdi/rsi/rdx/r10",
+        "retaining source-pipe bytes",
+        "destination pipe",
+        "zero-length stale errno",
+        "splice",
+        "vmsplice",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-tee description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/tee.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "compat/x86_64/tee_header_abi_probe.c",
+        "compat/x86_64/tee_header_abi_probe.cpp",
+        "compat/x86_64/run_tee_header_abi.sh",
+        "compat/x86_64/libc_tee_probe.c",
+        "compat/x86_64/libc_tee_start.S",
+        "compat/x86_64/run_libc_tee.sh",
+    ):
+        require(owner in owners, f"static-c-tee must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "tee=276" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            for item in prerequisites
+        ),
+        "static-c-tee must record its four-word syscall ABI",
+    )
+    require(
+        any(
+            "source pipe" in item
+            and "remain readable" in item
+            and "destination-pipe copy" in item
+            and "zero length" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-tee must record its narrow pipe-buffer behavior",
+    )
+    require(
+        any("src/linux/tee.c" in item and "cancellation" in item for item in prerequisites),
+        "static-c-tee must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU fcntl.h" in item
+            and "Default, strict, POSIX, XOPEN, and BSD" in item
+            and "hidden" in item
+            for item in header
+        ),
+        "static-c-tee must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-tee"},
+        "static-c-tee must use the closed libc-tee command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "tee=276",
+        "rdi/rsi/rdx/r10",
+        "source remains readable",
+        "destination copy",
+        "zero-length stale errno",
+        "EBADF",
+        "splice",
+        "vmsplice",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-tee evidence scope omits {phrase}",
+        )
+
+
+def require_copy_file_range_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C copy_file_range on one direct descriptor-copy boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-copy-file-range"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-copy-file-range artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-copy-file-range must remain selected-private rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU descriptor-range copy block",
+        "copy_file_range=326",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "pointed offset updates",
+        "retained shared descriptor positions",
+        "stale `errno`",
+        "EINVAL",
+        "EBADF",
+        "cross-filesystem policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-copy-file-range description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/copy_file_range.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/unistd.h",
+        "compat/x86_64/copy_file_range_header_abi_probe.c",
+        "compat/x86_64/copy_file_range_header_abi_probe.cpp",
+        "compat/x86_64/run_copy_file_range_header_abi.sh",
+        "compat/x86_64/libc_copy_file_range_probe.c",
+        "compat/x86_64/libc_copy_file_range_start.S",
+        "compat/x86_64/run_libc_copy_file_range.sh",
+    ):
+        require(owner in owners, f"static-c-copy-file-range must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "copy_file_range=326" in item
+            and "rdi/rsi/rdx/r10/r8/r9" in item
+            and "syscall6" in item
+            for item in prerequisites
+        ),
+        "static-c-copy-file-range must record its six-word syscall ABI",
+    )
+    require(
+        any(
+            "same-filesystem" in item
+            and "explicit-offset" in item
+            and "pointed input/output offset updates" in item
+            and "retained current descriptor position" in item
+            and "stale errno" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-copy-file-range must record its narrow explicit-offset behavior",
+    )
+    require(
+        any(
+            "src/linux/copy_file_range.c" in item and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-copy-file-range must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU unistd.h" in item
+            and "Strict, POSIX, XOPEN, and BSD C" in item
+            and "hidden" in item
+            and "C++ follows musl's extension-visible mode" in item
+            for item in header
+        ),
+        "static-c-copy-file-range must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-copy-file-range"},
+        "static-c-copy-file-range must use the closed libc-copy-file-range command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "copy_file_range=326",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "pointed-offset agreement",
+        "stable shared positions",
+        "stale errno on success",
+        "EINVAL",
+        "EBADF",
+        "cross-filesystem policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-copy-file-range evidence scope omits {phrase}",
+        )
+
+
+def require_splice_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C splice on one direct file-to-pipe transfer boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-splice"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-splice artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-splice must remain selected-private rather than a capability",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU file-to-pipe transfer block",
+        "splice=275",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "pointed input-offset update",
+        "retained file descriptor position",
+        "stale `errno`",
+        "EINVAL",
+        "EBADF",
+        "general pipe/filesystem transfer policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-splice description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/splice.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "compat/x86_64/splice_header_abi_probe.c",
+        "compat/x86_64/splice_header_abi_probe.cpp",
+        "compat/x86_64/run_splice_header_abi.sh",
+        "compat/x86_64/libc_splice_probe.c",
+        "compat/x86_64/libc_splice_start.S",
+        "compat/x86_64/run_libc_splice.sh",
+    ):
+        require(owner in owners, f"static-c-splice must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "splice=275" in item
+            and "rdi/rsi/rdx/r10/r8/r9" in item
+            and "syscall6" in item
+            for item in prerequisites
+        ),
+        "static-c-splice must record its six-word syscall ABI",
+    )
+    require(
+        any(
+            "file-to-pipe" in item
+            and "explicit-input-offset" in item
+            and "pointed input-offset update" in item
+            and "retained current file position" in item
+            and "stale errno" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-splice must record its narrow explicit-input-offset behavior",
+    )
+    require(
+        any(
+            "src/linux/splice.c" in item and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-splice must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU fcntl.h" in item
+            and "Strict, POSIX, XOPEN, and BSD C" in item
+            and "hidden" in item
+            and "C++ follows musl's extension-visible mode" in item
+            for item in header
+        ),
+        "static-c-splice must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-splice"},
+        "static-c-splice must use the closed libc-splice command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "splice=275",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "pointed-offset agreement",
+        "stable file position",
+        "stale errno on success",
+        "EINVAL",
+        "EBADF",
+        "general pipe/filesystem transfer policy",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-splice evidence scope omits {phrase}",
+        )
+
+
+def require_sync_file_range_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C sync_file_range on one direct descriptor-range boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sync-file-range"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sync-file-range artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU descriptor-range writeback block",
+        "sync_file_range=277",
+        "rdi/rsi/rdx/r10",
+        "wrapper result and errno exactly",
+        "shared descriptor position",
+        "stale errno on raw success",
+        "EINVAL",
+        "EBADF",
+        "syncfs",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sync-file-range description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sync_file_range.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "compat/x86_64/sync_file_range_header_abi_probe.c",
+        "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+        "compat/x86_64/run_sync_file_range_header_abi.sh",
+        "compat/x86_64/libc_sync_file_range_probe.c",
+        "compat/x86_64/libc_sync_file_range_start.S",
+        "compat/x86_64/run_libc_sync_file_range.sh",
+    ):
+        require(owner in owners, f"static-c-sync-file-range must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "sync_file_range=277" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record its four-word syscall ABI",
+    )
+    require(
+        any(
+            "regular file" in item
+            and "sibling raw request" in item
+            and "current position" in item
+            and "stale errno" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record its narrow regular-file behavior",
+    )
+    require(
+        any(
+            "src/linux/sync_file_range.c" in item and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU fcntl.h" in item
+            and "Default, strict, POSIX, XOPEN, and BSD" in item
+            and "hidden" in item
+            for item in header
+        ),
+        "static-c-sync-file-range must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sync-file-range"},
+        "static-c-sync-file-range must use the closed libc-sync-file-range command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "sync_file_range=277",
+        "rdi/rsi/rdx/r10",
+        "raw result/errno agreement",
+        "shared position",
+        "stale errno on raw success",
+        "EINVAL",
+        "EBADF",
+        "syncfs",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-sync-file-range evidence scope omits {phrase}",
         )
 
 
@@ -60922,6 +61894,8 @@ def validate_ledger(
     require_static_secure_environment_artifact(by_id["libc.posix-runtime"])
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_ctermid_artifact(by_id["libc.posix-runtime"])
+    require_grantpt_artifact(by_id["libc.posix-runtime"])
+    require_unlockpt_artifact(by_id["libc.posix-runtime"])
     require_isatty_artifact(by_id["libc.posix-runtime"])
     require_ttyname_r_artifact(by_id["libc.posix-runtime"])
     require_tcgetpgrp_artifact(by_id["libc.posix-runtime"])
@@ -60982,6 +61956,9 @@ def validate_ledger(
     require_fcntl_record_locks_artifact(by_id["libc.posix-runtime"])
     require_flock_artifact(by_id["libc.posix-runtime"])
     require_sendfile_artifact(by_id["libc.posix-runtime"])
+    require_tee_artifact(by_id["libc.posix-runtime"])
+    require_copy_file_range_artifact(by_id["libc.posix-runtime"])
+    require_splice_artifact(by_id["libc.posix-runtime"])
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])

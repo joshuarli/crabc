@@ -198,6 +198,7 @@ conj
 conjf
 conjl
 connect
+copy_file_range
 copysign
 copysignf
 copysignl
@@ -427,6 +428,7 @@ gettimeofday
 getuid
 getxattr
 gmtime_r
+grantpt
 hasmntopt
 hcreate
 hcreate_r
@@ -904,6 +906,7 @@ snprintf
 sockatmark
 socket
 socketpair
+splice
 sprintf
 sqrt
 sqrtf
@@ -984,6 +987,7 @@ tcsetpgrp
 tcsetwinsize
 tdelete
 tdestroy
+tee
 telldir
 textdomain
 tfind
@@ -1033,6 +1037,7 @@ uname
 ungetc
 unlink
 unlinkat
+unlockpt
 unsetenv
 uselocale
 usleep

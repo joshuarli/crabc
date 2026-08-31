@@ -11,7 +11,9 @@
 # nanosleep, and clock_nanosleep,
 # selected descriptor entry, selected filesystem access, selected fcntl status control,
 # nonblocking record locks, advisory flock, bounded regular-file sendfile,
-# mode-zero POSIX range allocation, and descriptor advice,
+# direct GNU descriptor-to-pipe splice transfer and pipe-buffer tee duplication,
+# mode-zero POSIX range allocation,
+# and descriptor advice,
 # selected descriptor I/O, selected process resources, and selected readiness
 # and signal waits, system observation, UTS identity, base socket transport,
 # padded socket messages/options,
@@ -146,6 +148,10 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-uio-cxx-linkage  link a freestanding C++ sys/uio consumer to static x86 crabc-libc
   flock-header-abi compile the staged x86 C/C++ sys/file.h header layouts
   sendfile-header-abi compile the staged x86 C/C++ sys/sendfile.h header layouts
+  tee-header-abi      compile the staged x86 C/C++ GNU fcntl.h tee declaration
+  splice-header-abi   compile the staged x86 C/C++ GNU fcntl.h splice declaration
+  sync-file-range-header-abi compile the staged x86 C/C++ GNU fcntl.h sync_file_range declaration
+  copy-file-range-header-abi compile the staged x86 C/C++ GNU unistd.h copy_file_range declaration
   unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
   getpagesize-header-abi  compile the staged x86 C/C++ GNU/BSD getpagesize declaration
   system-header-abi  compile the staged x86 C/C++ system header layouts
@@ -154,6 +160,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   sched-getscheduler-header-abi  compile x86 sched_getscheduler C/C++ declarations
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
+  grantpt-header-abi  compile the staged x86 C/C++ XSI grantpt declaration
+  unlockpt-header-abi  compile the staged x86 C/C++ XSI unlockpt declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
   endhostent-header-abi  compile the staged x86 C/C++ legacy netdb terminator declarations
   gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
@@ -345,6 +353,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-pthread-tls-aggregate  run the static x86 crabc-libc pthread/TLS composition slice
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-ctermid  run the static x86 crabc-libc ctermid spelling slice
+  libc-grantpt  run the static x86 crabc-libc grantpt compatibility slice
+  libc-unlockpt  run the static x86 crabc-libc PTY lock-release slice
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
   libc-endhostent  run the static x86 crabc-libc legacy netdb terminator slice
   libc-gettid  run the static x86 crabc-libc gettid compatibility slice
@@ -411,6 +421,10 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-fcntl-record-locks  run the static x86 crabc-libc fcntl record-lock slice
   libc-flock  run the static x86 crabc-libc advisory flock slice
   libc-sendfile  run the static x86 crabc-libc regular-file sendfile slice
+  libc-tee       run the static x86 crabc-libc GNU pipe-buffer tee slice
+  libc-splice    run the static x86 crabc-libc GNU file-to-pipe splice slice
+  libc-sync-file-range  run the static x86 crabc-libc GNU descriptor-range writeback slice
+  libc-copy-file-range  run the static x86 crabc-libc GNU descriptor-range copy slice
   libc-posix-fallocate  run the static x86 crabc-libc mode-zero POSIX range-allocation slice
   libc-descriptor-advice  run the static x86 crabc-libc descriptor-advice slice
   libc-filesystem-capacity  run the static x86 crabc-libc filesystem-capacity slice
@@ -909,6 +923,36 @@ null-offset short-transfer and EOF-zero behavior, stale `errno`, and direct
 kernel errors. It does not select pathname, socket/pipe, splice,
 copy-file-range, vector-I/O, durability, cancellation, dynamic libc, or
 application startup.
+`libc-copy-file-range` exercises a separate freestanding project-header C
+fixture after its equivalent pinned-musl run. It selects only one direct GNU
+same-filesystem regular-file explicit-offset request: wrapper/raw result and
+pointed-offset agreement, copied bytes, retained shared descriptor positions,
+stale `errno` on success, and direct invalid-flags `EINVAL` plus bad-input
+`EBADF`. It does not select pathname or descriptor ownership, copy fallback or
+cross-filesystem policy, `sendfile`/`splice`, durability, cancellation,
+dynamic libc, or application startup.
+`libc-splice` exercises a separate freestanding project-header C fixture after
+its equivalent pinned-musl run. It selects only one direct GNU regular-file-to-
+pipe explicit-input-offset request: wrapper/raw result and pointed-offset
+agreement, copied pipe bytes, stable file position, stale `errno` on success,
+and direct invalid-flags `EINVAL` plus bad-input `EBADF`. It does not select
+pathname or descriptor/pipe ownership, blocking, fallback, general
+pipe/filesystem transfer policy, `tee`/`vmsplice`/`sendfile`/`copy_file_range`,
+durability, cancellation, dynamic libc, or application startup.
+`libc-tee` exercises a separate freestanding project-header C fixture after
+its equivalent pinned-musl run. It selects only direct GNU pipe-buffer
+duplication: source bytes remain readable after an equal destination copy,
+zero-length success retains stale `errno`, and a bad source descriptor maps to
+`EBADF`. Fixture-local raw pipe setup is evidence plumbing, not selected pipe
+creation, ownership, descriptor policy, `splice`/`vmsplice` transfer,
+cancellation, dynamic libc, or application startup.
+`libc-sync-file-range` exercises a separate freestanding project-header C
+fixture after its equivalent pinned-musl run. It selects only one direct GNU
+regular-file range request: raw result/`errno` agreement, stable shared
+descriptor position, stale `errno` on success, and direct invalid-flags
+`EINVAL` plus bad-descriptor `EBADF`. It does not select pathname or descriptor
+ownership, cache/writeback policy or durability, `sync`/`syncfs`, `fallocate`,
+cancellation, dynamic libc, or application startup.
 `libc-posix-fallocate` exercises a separate freestanding project-header C
 fixture after its equivalent pinned-musl run. It selects only mode-zero
 `posix_fallocate`: regular-file extension with preserved file position, a
@@ -1090,7 +1134,7 @@ musl. It rejects AArch64 HWCAP/register leaks and does not select runtime,
 archive linkage, header-family completion, or public x86 support.
 `types-header-abi` compiles only staged C/C++ type declarations and opaque
 pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
-`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
+`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `tee-header-abi`, `splice-header-abi`, `sync-file-range-header-abi`, `copy-file-range-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
 `system-header-abi` compile only their named C/C++ layout/declaration slices.
 `syscall-header-abi` compares only staged syscall number macros.
 `signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
@@ -1790,6 +1834,40 @@ mutation, null-offset short transfer and EOF zero, stale `errno`, and direct
 kernel errors. It does not provide pathname, socket/pipe, splice,
 copy-file-range, vector-I/O, durability, cancellation, dynamic libc, CRT/TLS
 lifecycle, loader, sysroot, or public x86 support.
+`libc-copy-file-range` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+one direct GNU same-filesystem regular-file explicit-offset request:
+wrapper/raw result and pointed-offset agreement, copied bytes, retained shared
+descriptor positions, stale `errno` on success, and direct invalid-flags
+`EINVAL` plus bad-input `EBADF`. It does not provide pathname or descriptor
+ownership, copy fallback or cross-filesystem policy, `sendfile`/`splice`,
+durability, cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot,
+or public x86 support.
+`libc-splice` links that archive into a separate freestanding project-header C
+fixture after an equivalent pinned-musl run. It selects only one direct GNU
+regular-file-to-pipe explicit-input-offset request: wrapper/raw result and
+pointed-offset agreement, copied pipe bytes, stable file position, stale
+`errno` on success, and direct invalid-flags `EINVAL` plus bad-input `EBADF`.
+It does not provide pathname or descriptor/pipe ownership, blocking, fallback,
+general pipe/filesystem transfer policy, `tee`/`vmsplice`/`sendfile`/
+`copy_file_range`, durability, cancellation, dynamic libc, CRT/TLS lifecycle,
+loader, sysroot, or public x86 support.
+`libc-tee` links that archive into a separate freestanding project-header C
+fixture after an equivalent pinned-musl run. It selects only direct GNU
+pipe-buffer `tee`: source bytes remain readable after an equal destination
+copy, zero-length success retains stale `errno`, and a bad source descriptor
+maps to `EBADF`. Raw fixture pipe setup does not provide pipe creation or
+ownership, generic descriptor policy, `splice`/`vmsplice` transfer,
+cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
+support.
+`libc-sync-file-range` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+one direct GNU regular-file range request: raw result/`errno` agreement,
+stable shared descriptor position, stale `errno` on success, and direct
+invalid-flags `EINVAL` plus bad-descriptor `EBADF`. It does not provide pathname
+or descriptor ownership, cache/writeback policy or durability, `sync`/`syncfs`,
+`fallocate`, cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot,
+or public x86 support.
 `libc-posix-fallocate` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 mode-zero `posix_fallocate`: an unlinked regular-file extension with retained
@@ -2997,6 +3075,22 @@ run_sendfile_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sendfile_header_abi.sh
 }
 
+run_tee_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_tee_header_abi.sh
+}
+
+run_splice_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_splice_header_abi.sh
+}
+
+run_sync_file_range_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sync_file_range_header_abi.sh
+}
+
+run_copy_file_range_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_copy_file_range_header_abi.sh
+}
+
 run_unistd_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_unistd_header_abi.sh
 }
@@ -3055,6 +3149,14 @@ run_termios_header_abi() {
 
 run_ctermid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_ctermid_header_abi.sh
+}
+
+run_grantpt_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_grantpt_header_abi.sh
+}
+
+run_unlockpt_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_unlockpt_header_abi.sh
 }
 
 run_gethostid_header_abi() {
@@ -4051,6 +4153,14 @@ run_libc_ctermid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_ctermid.sh
 }
 
+run_libc_grantpt_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_grantpt.sh
+}
+
+run_libc_unlockpt_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_unlockpt.sh
+}
+
 run_libc_gethostid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_gethostid.sh
 }
@@ -4200,6 +4310,22 @@ run_libc_flock_probe() {
 
 run_libc_sendfile_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_sendfile.sh
+}
+
+run_libc_tee_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_tee.sh
+}
+
+run_libc_splice_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_splice.sh
+}
+
+run_libc_sync_file_range_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sync_file_range.sh
+}
+
+run_libc_copy_file_range_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_copy_file_range.sh
 }
 
 run_libc_posix_fallocate_probe() {
@@ -4425,8 +4551,10 @@ case "$command" in
     usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-getaffinity|libc-setfsuid|libc-setfsgid|libc-personality) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-getscheduler-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-getaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync|sync-file-range-header-abi|libc-sync-file-range) ;;
+    ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|endhostent-header-abi|ether-line-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-endhostent|libc-ether-line|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
+    tee-header-abi|splice-header-abi) ;;
+    sync-file-range-header-abi|copy-file-range-header-abi) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
@@ -4535,6 +4663,8 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-getschedpolicy) ;;
+    libc-tee|libc-splice) ;;
+    libc-sync-file-range|libc-copy-file-range) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-l64a|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
@@ -5145,6 +5275,26 @@ case "$command" in
         ensure_image
         run_sendfile_header_abi
         ;;
+    tee-header-abi)
+        [ "$#" -eq 0 ] || fail "tee-header-abi takes no arguments"
+        ensure_image
+        run_tee_header_abi
+        ;;
+    splice-header-abi)
+        [ "$#" -eq 0 ] || fail "splice-header-abi takes no arguments"
+        ensure_image
+        run_splice_header_abi
+        ;;
+    sync-file-range-header-abi)
+        [ "$#" -eq 0 ] || fail "sync-file-range-header-abi takes no arguments"
+        ensure_image
+        run_sync_file_range_header_abi
+        ;;
+    copy-file-range-header-abi)
+        [ "$#" -eq 0 ] || fail "copy-file-range-header-abi takes no arguments"
+        ensure_image
+        run_copy_file_range_header_abi
+        ;;
     unistd-header-abi)
         [ "$#" -eq 0 ] || fail "unistd-header-abi takes no arguments"
         ensure_image
@@ -5184,6 +5334,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "ctermid-header-abi takes no arguments"
         ensure_image
         run_ctermid_header_abi
+        ;;
+    grantpt-header-abi)
+        [ "$#" -eq 0 ] || fail "grantpt-header-abi takes no arguments"
+        ensure_image
+        run_grantpt_header_abi
+        ;;
+    unlockpt-header-abi)
+        [ "$#" -eq 0 ] || fail "unlockpt-header-abi takes no arguments"
+        ensure_image
+        run_unlockpt_header_abi
         ;;
     gethostid-header-abi)
         [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"
@@ -6054,6 +6214,16 @@ case "$command" in
         ensure_image
         run_libc_ctermid_probe
         ;;
+    libc-grantpt)
+        [ "$#" -eq 0 ] || fail "libc-grantpt takes no arguments"
+        ensure_image
+        run_libc_grantpt_probe
+        ;;
+    libc-unlockpt)
+        [ "$#" -eq 0 ] || fail "libc-unlockpt takes no arguments"
+        ensure_image
+        run_libc_unlockpt_probe
+        ;;
     libc-gethostid)
         [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"
         ensure_image
@@ -6263,6 +6433,26 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-sendfile takes no arguments"
         ensure_image
         run_libc_sendfile_probe
+        ;;
+    libc-tee)
+        [ "$#" -eq 0 ] || fail "libc-tee takes no arguments"
+        ensure_image
+        run_libc_tee_probe
+        ;;
+    libc-splice)
+        [ "$#" -eq 0 ] || fail "libc-splice takes no arguments"
+        ensure_image
+        run_libc_splice_probe
+        ;;
+    libc-sync-file-range)
+        [ "$#" -eq 0 ] || fail "libc-sync-file-range takes no arguments"
+        ensure_image
+        run_libc_sync_file_range_probe
+        ;;
+    libc-copy-file-range)
+        [ "$#" -eq 0 ] || fail "libc-copy-file-range takes no arguments"
+        ensure_image
+        run_libc_copy_file_range_probe
         ;;
     libc-posix-fallocate)
         [ "$#" -eq 0 ] || fail "libc-posix-fallocate takes no arguments"

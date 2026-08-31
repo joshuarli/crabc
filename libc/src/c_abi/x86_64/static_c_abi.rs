@@ -394,6 +394,10 @@ mod pthread_once;
 mod termios_control;
 #[path = "ctermid.rs"]
 mod ctermid;
+#[path = "grantpt.rs"]
+mod grantpt;
+#[path = "unlockpt.rs"]
+mod unlockpt;
 #[path = "gethostid.rs"]
 mod gethostid;
 #[path = "gettid.rs"]
@@ -506,6 +510,12 @@ mod record_locks;
 mod flock;
 #[path = "sendfile.rs"]
 mod sendfile;
+#[path = "copy_file_range.rs"]
+mod copy_file_range;
+#[path = "splice.rs"]
+mod splice;
+#[path = "tee.rs"]
+mod tee;
 #[path = "posix_fallocate.rs"]
 mod posix_fallocate;
 #[path = "descriptor_advice.rs"]

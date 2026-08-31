@@ -280,6 +280,12 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/error_strings.rs"),
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
+    Path("libc/src/c_abi/x86_64/tee.rs"),
+    Path("libc/src/c_abi/x86_64/copy_file_range.rs"),
+    Path("libc/src/c_abi/x86_64/splice.rs"),
+    Path("libc/src/c_abi/x86_64/sync_file_range.rs"),
+    Path("libc/src/c_abi/x86_64/grantpt.rs"),
+    Path("libc/src/c_abi/x86_64/unlockpt.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
     Path("libc/src/c_abi/x86_64/ttyname_r.rs"),
     Path("libc/src/c_abi/x86_64/tcgetpgrp.rs"),
@@ -3920,6 +3926,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "c11_sync.rs"]',
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
+        '#[path = "tee.rs"]',
+        '#[path = "copy_file_range.rs"]',
+        '#[path = "splice.rs"]',
+        '#[path = "sync_file_range.rs"]',
+        '#[path = "grantpt.rs"]',
+        '#[path = "unlockpt.rs"]',
         '#[path = "isatty.rs"]',
         '#[path = "ttyname_r.rs"]',
         '#[path = "tcgetpgrp.rs"]',
@@ -6591,6 +6603,239 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"ctermid boundary must not select {forbidden!r}"
             )
 
+    grantpt_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "grantpt.rs"
+    grantpt_text = grantpt_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/grantpt.c::grantpt",
+        "returns zero without",
+        "does not dereference or retain",
+        "# Safety",
+        'pub unsafe extern "C" fn grantpt',
+    ):
+        if required not in grantpt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/grantpt.rs: selected static legacy "
+                f"grantpt boundary is missing {required!r}"
+            )
+    grantpt_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            grantpt_text,
+        )
+    )
+    if grantpt_exports != {"grantpt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/grantpt.rs: selected static legacy grantpt "
+            "artifact must export only grantpt"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "termios_control::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+    ):
+        if forbidden in grantpt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/grantpt.rs: selected static legacy grantpt "
+                f"boundary must not select {forbidden!r}"
+            )
+
+    unlockpt_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlockpt.rs"
+    unlockpt_text = unlockpt_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/unlockpt.c::unlockpt",
+        "TIOCSPTLCK",
+        "private zero-valued",
+        "raw ioctl/status boundary",
+        "# Safety",
+        'pub unsafe extern "C" fn unlockpt',
+        "raw_syscall::SYS_IOCTL",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+    ):
+        if required not in unlockpt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
+                f"lock-release boundary is missing {required!r}"
+            )
+    unlockpt_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            unlockpt_text,
+        )
+    )
+    if unlockpt_exports != {"unlockpt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
+            "lock-release artifact must export only unlockpt"
+        )
+    for forbidden in (
+        "termios_control::",
+        "getpass::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+        'pub unsafe extern "C" fn ioctl',
+    ):
+        if forbidden in unlockpt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
+                f"lock-release boundary must not select {forbidden!r}"
+            )
+
+    tee_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tee.rs"
+    tee_text = tee_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/tee.c",
+        "tee=276",
+        "rdi/rsi/rdx/r10",
+        "raw_syscall::SYS_TEE",
+        "raw_syscall::syscall4(",
+        "c_ssize_status(result)",
+        'pub unsafe extern "C" fn tee',
+        "cancellation-point machinery",
+    ):
+        if required not in tee_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
+                f"boundary is missing {required!r}"
+            )
+    tee_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', tee_text
+        )
+    )
+    if tee_exports != {"tee"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
+            "artifact must export only tee"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn splice(", "fn vmsplice("):
+        if forbidden in tee_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
+                f"boundary must not select {forbidden!r}"
+            )
+
+    copy_file_range_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "copy_file_range.rs"
+    )
+    copy_file_range_text = copy_file_range_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/copy_file_range.c",
+        "copy_file_range=326",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "raw_syscall::SYS_COPY_FILE_RANGE",
+        "raw_syscall::syscall6(",
+        "c_ssize_status(result)",
+        'pub unsafe extern "C" fn copy_file_range',
+        "cancellation-point",
+    ):
+        if required not in copy_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
+                f"descriptor-copy boundary is missing {required!r}"
+            )
+    copy_file_range_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            copy_file_range_text,
+        )
+    )
+    if copy_file_range_exports != {"copy_file_range"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
+            "descriptor-copy artifact must export only copy_file_range"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn sendfile(", "fn splice("):
+        if forbidden in copy_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/copy_file_range.rs: selected static GNU "
+                f"descriptor-copy boundary must not select {forbidden!r}"
+            )
+
+    splice_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "splice.rs"
+    splice_text = splice_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/splice.c",
+        "splice=275",
+        "rdi/rsi/rdx/r10/r8/r9",
+        "raw_syscall::SYS_SPLICE",
+        "raw_syscall::syscall6(",
+        "c_ssize_status(result)",
+        'pub unsafe extern "C" fn splice',
+        "cancellation-point",
+    ):
+        if required not in splice_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/splice.rs: selected static GNU "
+                f"file-to-pipe boundary is missing {required!r}"
+            )
+    splice_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            splice_text,
+        )
+    )
+    if splice_exports != {"splice"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/splice.rs: selected static GNU "
+            "file-to-pipe artifact must export only splice"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn tee(", "fn vmsplice("):
+        if forbidden in splice_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/splice.rs: selected static GNU "
+                f"file-to-pipe boundary must not select {forbidden!r}"
+            )
+
+    sync_file_range_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+    )
+    sync_file_range_text = sync_file_range_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/sync_file_range.c",
+        "sync_file_range=277",
+        "rdi/rsi/rdx/r10",
+        "raw_syscall::SYS_SYNC_FILE_RANGE",
+        "raw_syscall::syscall4(",
+        "c_status(result)",
+        'pub unsafe extern "C" fn sync_file_range',
+        "cancellation-point",
+    ):
+        if required not in sync_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync_file_range.rs: selected static GNU "
+                f"descriptor-range boundary is missing {required!r}"
+            )
+    sync_file_range_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sync_file_range_text,
+        )
+    )
+    if sync_file_range_exports != {"sync_file_range"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sync_file_range.rs: selected static GNU "
+            "descriptor-range artifact must export only sync_file_range"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn syncfs(", "fn fallocate("):
+        if forbidden in sync_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync_file_range.rs: selected static GNU "
+                f"descriptor-range boundary must not select {forbidden!r}"
+            )
+
     gethostid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs"
     gethostid_text = gethostid_source.read_text(errors="replace")
     for required in (
@@ -7553,6 +7798,180 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 "scripts/dev-x86_64.sh: selected historical ctermid dispatcher is "
                 f"missing {required!r}"
             )
+
+    grantpt_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_grantpt.sh"
+    ).read_text(errors="replace")
+    grantpt_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_grantpt_header_abi.sh"
+    ).read_text(errors="replace")
+    grantpt_header_c = (
+        ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.c"
+    ).read_text(errors="replace")
+    grantpt_header_cxx = (
+        ROOT / "compat" / "x86_64" / "grantpt_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    grantpt_probe = (
+        ROOT / "compat" / "x86_64" / "libc_grantpt_probe.c"
+    ).read_text(errors="replace")
+    grantpt_start = (
+        ROOT / "compat" / "x86_64" / "libc_grantpt_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_grantpt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define grantpt",
+        "--disassemble=grantpt",
+        "grantpt candidate unexpectedly retains TLS",
+        "no-call no-syscall wrapper",
+        "zero-return instruction",
+        "assert_candidate_excludes_pty_policy",
+        'timeout "$EXECUTION_TIMEOUT"',
+    ):
+        if required not in grantpt_runner:
+            errors.append(
+                "compat/x86_64/run_libc_grantpt.sh: selected static legacy "
+                f"grantpt evidence is missing {required!r}"
+            )
+    for required in (
+        "grantpt_header_abi_probe.c",
+        "grantpt_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside X/Open/GNU/BSD",
+        "retained a mangled grantpt reference",
+    ):
+        if required not in grantpt_header_runner:
+            errors.append(
+                "compat/x86_64/run_grantpt_header_abi.sh: selected static legacy "
+                f"grantpt declaration evidence is missing {required!r}"
+            )
+    for required in ("grantpt declaration", "grantpt_function", "grantpt_must_be_hidden"):
+        if required not in grantpt_header_c or required not in grantpt_header_cxx:
+            errors.append(
+                "compat/x86_64/grantpt_header_abi_probe: selected static legacy "
+                f"grantpt declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "grantpt(-1)",
+        "invoke(INT32_MIN)",
+        "grantpt(0)",
+        "invoke(INT32_MAX)",
+        "errno = 313",
+        "CRABC_GRANTPT_FREESTANDING",
+    ):
+        if required not in grantpt_probe:
+            errors.append(
+                "compat/x86_64/libc_grantpt_probe.c: selected static legacy "
+                f"grantpt regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_grantpt_probe", "mov $60, %eax"):
+        if required not in grantpt_start:
+            errors.append(
+                "compat/x86_64/libc_grantpt_start.S: selected static legacy "
+                f"grantpt fixture is missing {required!r}"
+            )
+    for required in (
+        "grantpt-header-abi)",
+        "run_grantpt_header_abi",
+        "libc-grantpt)",
+        "run_libc_grantpt_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected legacy grantpt dispatcher is "
+                f"missing {required!r}"
+            )
+
+    unlockpt_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_unlockpt.sh"
+    ).read_text(errors="replace")
+    unlockpt_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_unlockpt_header_abi.sh"
+    ).read_text(errors="replace")
+    unlockpt_header_c = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.c"
+    ).read_text(errors="replace")
+    unlockpt_header_cxx = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    unlockpt_probe = (
+        ROOT / "compat" / "x86_64" / "libc_unlockpt_probe.c"
+    ).read_text(errors="replace")
+    unlockpt_start = (
+        ROOT / "compat" / "x86_64" / "libc_unlockpt_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_unlockpt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define unlockpt",
+        "--disassemble=unlockpt",
+        "candidate retains a dynamic TLS model",
+        "fixed TIOCSPTLCK request",
+        "private zero lock value",
+        "assert_candidate_excludes_pty_policy",
+        'timeout "$EXECUTION_TIMEOUT"',
+    ):
+        if required not in unlockpt_runner:
+            errors.append(
+                "compat/x86_64/run_libc_unlockpt.sh: selected static fixed PTY "
+                f"lock-release evidence is missing {required!r}"
+            )
+    for required in (
+        "unlockpt_header_abi_probe.c",
+        "unlockpt_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside X/Open/GNU/BSD",
+        "retained a mangled unlockpt reference",
+    ):
+        if required not in unlockpt_header_runner:
+            errors.append(
+                "compat/x86_64/run_unlockpt_header_abi.sh: selected static fixed "
+                f"PTY lock-release declaration evidence is missing {required!r}"
+            )
+    for required in ("unlockpt declaration", "unlockpt_function", "unlockpt_must_be_hidden"):
+        if required not in unlockpt_header_c or required not in unlockpt_header_cxx:
+            errors.append(
+                "compat/x86_64/unlockpt_header_abi_probe: selected static fixed "
+                f"PTY lock-release declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "unlockpt_signature",
+        "invoke(-1)",
+        "unlockpt(null_fd)",
+        "invoke(master)",
+        "FIXTURE_TIOCGPTPEER",
+        "errno = 313",
+        "CRABC_UNLOCKPT_FREESTANDING",
+    ):
+        if required not in unlockpt_probe:
+            errors.append(
+                "compat/x86_64/libc_unlockpt_probe.c: selected static fixed PTY "
+                f"lock-release regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_unlockpt_probe", "mov $60, %eax"):
+        if required not in unlockpt_start:
+            errors.append(
+                "compat/x86_64/libc_unlockpt_start.S: selected static fixed PTY "
+                f"lock-release fixture is missing {required!r}"
+            )
+    for required in (
+        "unlockpt-header-abi)",
+        "run_unlockpt_header_abi",
+        "libc-unlockpt)",
+        "run_libc_unlockpt_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected fixed PTY lock-release dispatcher is "
+                f"missing {required!r}"
+            )
+
     for required in (
         "run_musl_oracle.sh",
         "run_getpass_header_abi.sh",
@@ -13011,6 +13430,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         pthread_tsd_text,
         termios_control_text,
         ctermid_text,
+        grantpt_text,
+        unlockpt_text,
+        copy_file_range_text,
+        splice_text,
+        tee_text,
+        sync_file_range_text,
         gethostid_text,
         gettid_text,
         posix_close_text,
@@ -13366,6 +13791,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcgetwinsize",
         "tcsetwinsize",
         "ctermid",
+        "grantpt",
+        "unlockpt",
+        "copy_file_range",
+        "splice",
+        "tee",
+        "sync_file_range",
         "gethostid",
         "gettid",
         "posix_close",
@@ -13699,6 +14130,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("pthread_tsd.rs", pthread_tsd_text),
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
+        ("grantpt.rs", grantpt_text),
+        ("unlockpt.rs", unlockpt_text),
+        ("copy_file_range.rs", copy_file_range_text),
+        ("splice.rs", splice_text),
+        ("tee.rs", tee_text),
+        ("sync_file_range.rs", sync_file_range_text),
         ("gettid.rs", gettid_text),
         ("posix_close.rs", posix_close_text),
         ("endhostent.rs", endhostent_text),

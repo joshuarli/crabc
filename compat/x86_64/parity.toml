@@ -936,9 +936,9 @@ x86_abi_prerequisites = [
   "x86 Linux PTY allocation opens `/dev/ptmx` through openat=257 with O_RDWR=0x00000002, O_NOCTTY=0x00000100, and O_CLOEXEC=0x00080000. ioctl=16 receives its descriptor, request word, and argument pointer/word in rdi/rsi/rdx; TIOCGPTN=0x80045430 writes one stable four-byte int, TIOCSPTLCK=0x40045431 reads one stable four-byte zero int, and TIOCGPTPEER=0x5441 returns a newly owned slave descriptor with selected O_* flags encoded in the argument word",
   "PtyPair::open requires RDWR, validates and unlocks the devpts allocation, then makes an explicit O_NOCTTY request on the peer open. Any controlling-terminal or session transition stays outside this safe pair boundary; borrowed master/slave access and consuming into_parts retain ordinary descriptor ownership",
   "ptsname_into derives ASCII `/dev/pts/<number>` plus a trailing NUL from TIOCGPTN into caller-owned MaybeUninit storage; short caller storage reports RANGE without partial-name success, while alloc-enabled ptsname owns the same bytes without a C static buffer",
-  "The paired raw/pinned-musl fixture statically pins x86 LP64 int/long/size_t widths, openat=257, ioctl=16, the selected O_* and TIOC* words, then proves master/slave allocation, byte transfer, direct PTY-number/name agreement, short-name storage failure, raw ioctl/unlockpt/ptsname_r ENOTTY for a non-PTY descriptor, and the forced O_NOCTTY peer-open request. Musl's C grantpt is a no-op success there because devpts grants on allocation; the private Rust grantpt deliberately validates TIOCGPTN and returns NOTTY. It treats posix_openpt/grantpt/unlockpt/ptsname_r as behavior/oracle evidence only, not a selected C API",
+  "The paired raw/pinned-musl fixture statically pins x86 LP64 int/long/size_t widths, openat=257, ioctl=16, the selected O_* and TIOC* words, then proves master/slave allocation, byte transfer, direct PTY-number/name agreement, short-name storage failure, raw ioctl/unlockpt/ptsname_r ENOTTY for a non-PTY descriptor, and the forced O_NOCTTY peer-open request. Musl's C grantpt is a no-op success there because devpts grants on allocation; the private Rust grantpt deliberately validates TIOCGPTN and returns NOTTY. This Rust vertical treats posix_openpt/grantpt/unlockpt/ptsname_r as behavior/oracle evidence only; separate static-c-unlockpt records one closed C unlockpt artifact without promoting this capability",
 ]
-x86_header_prerequisites = ["pty::{openpt, grantpt, unlockpt, PtyPair, OpenptFlags, ptsname_into}, and alloc-enabled ptsname are private Rust-owned descriptor and caller-buffer boundaries. Pinned-musl PTY wrappers and ioctl values are oracle evidence only; this selects no x86 C openpty/forkpty/login_tty/posix_openpt/grantpt/unlockpt/ptsname API/header/ABI or errno TLS, no generic ioctl or public ioctl_tiocgptpeer surface, no TIOCSCTTY/setsid/process-session or controlling-terminal transition, no termios/tty API or record ABI, and no public x86 support."]
+x86_header_prerequisites = ["pty::{openpt, grantpt, unlockpt, PtyPair, OpenptFlags, ptsname_into}, and alloc-enabled ptsname are private Rust-owned descriptor and caller-buffer boundaries. Pinned-musl PTY wrappers and ioctl values are oracle evidence only for this Rust vertical; separate static-c-unlockpt records one closed C ABI leaf. This capability still selects no x86 C openpty/forkpty/login_tty/posix_openpt/grantpt/ptsname API/header/ABI, no generic ioctl or public ioctl_tiocgptpeer surface, no TIOCSCTTY/setsid/process-session or controlling-terminal transition, no termios/tty API or record ABI, and no public x86 support."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh pty-basic-reference", scope = "Focused no-default-feature Rust regression and no-std pty_basic_direct_probe cover safe openpt/grantpt/unlockpt and PtyPair allocation/ownership, RDWR validation, forced O_NOCTTY peer opening, master/slave byte transfer, caller-buffered and alloc-owned devpts names, short-buffer RANGE, and private Rust grantpt's non-PTY NOTTY validation. Paired raw/pinned-musl C evidence pins x86 openat=257/ioctl=16 plus the selected O_* and TIOC* values, compares the allocated PTY number/name lifecycle and byte transfer, records raw ioctl/unlockpt/ptsname_r ENOTTY, and records musl grantpt's no-op success because devpts grants on allocation; it does not assert session state. It excludes C PTY APIs/errno TLS, generic ioctl/direct TIOCGPTPEER exposure, TIOCSCTTY/setsid/session handoff, all termios/TTY controls, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "posix_openpt/grantpt/unlockpt/ptsname_r wrapper and selected PTY behavior oracle only; no C API is selected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Direct openat/ioctl, devpts allocation, descriptor ownership, flag, and caller-buffered PTY-name contract." }]
 capabilities = ["terminal.pty-basic"]
@@ -2464,6 +2464,87 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The focused pinned-musl/project-header-first C11/C++17 gate proves `char *ctermid(char *)`, `L_ctermid == 20`, POSIX/POSIX.1-2008/XOPEN/GNU/BSD visibility, unmangled C++ linkage, and strict C/C++ hiding of both the declaration and macro through stdio.h/features.h/bits/alltypes.h. This header-only check selects no stdio stream, terminal behavior, archive linkage, installed-header completion, or public x86 support."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-ctermid", scope = "Pinned-musl/project POSIX C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with one `-nostdlib -static` candidate. The fixture proves the exact ctermid declaration and L_ctermid=20 visibility boundary, unmangled C++ reference, non-null `/dev/tty` spelling, null borrowed spelling, caller-buffer result-pointer identity, terminating NUL, and untouched caller tail. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol, no TLS/errno path, no syscall instruction, and no terminal, filesystem, or string-helper linkage. It excludes terminal policy, PTY/session/termios/tty discovery, getpass, generic filesystem behavior, mktemp/tempnam/tmpnam/mkstemp/mkdtemp/tmpfile temporary-file families, authority-bearing filesystem handles, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/ctermid.c supplies the declaration visibility, fixed literal, caller-buffer copy, and null-result behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C char-pointer argument/result and true-static closure contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-grantpt"
+description = "Private native x86 selected-static-archive legacy `grantpt` compatibility no-op inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `int grantpt(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/grantpt.c::grantpt` returns zero for every signed int descriptor without inspecting it, changing errno, or issuing a syscall; Linux devpts allocation has already performed the kernel PTY grant before this historical compatibility spelling. This selected-private leaf selects no PTY allocation, lock/unlock operation, slave-name lookup, descriptor authority, terminal discovery, terminal/session policy, generic ioctl, errno/TLS, allocation, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support. It explicitly excludes `posix_openpt`, `unlockpt`, `ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, and any general terminal or PTY capability claim."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/grantpt.rs",
+  "include/stdlib.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/grantpt_header_abi_probe.c",
+  "compat/x86_64/grantpt_header_abi_probe.cpp",
+  "compat/x86_64/run_grantpt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_grantpt_probe.c",
+  "compat/x86_64/libc_grantpt_start.S",
+  "compat/x86_64/run_libc_grantpt.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the signed four-byte `int grantpt(int)` descriptor in rdi and returns its signed four-byte result in eax. The selected wrapper accepts every int bit pattern, does not dereference or inspect rdi, and returns zero",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/unistd/grantpt.c::grantpt` to a literal `return 0`; the pinned x86 pty object disassembles to `xor %eax,%eax; ret`, with no descriptor, PTY, or kernel operation",
+  "The linked `-nostdlib -static` candidate has no PT_TLS/TLS relocation, errno accessor, dynamic resolver, or call/jump/syscall instruction in grantpt. The only syscall belongs to the test entry shim, so this leaf has no kernel, descriptor-authority, or terminal-state ABI boundary",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-header-first C11/C++17 gate proves the exact `int grantpt(int)` stdlib.h declaration and unmangled C++ reference under X/Open, GNU, and BSD profiles. Strict and POSIX profiles hide the extension. This header-only boundary selects no PTY allocation/grant/unlock/naming, archive linkage, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-grantpt", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with one `-nostdlib -static` candidate. The fixture calls direct and function-pointer `grantpt` with -1, INT32_MIN, 0, and INT32_MAX and proves zero success with stale errno preserved in the musl route. It ratchets exact crate-owned exports and rejects an interpreter, DT_NEEDED, unresolved symbols, PT_TLS/TLS/errno, allocation, runtime dependencies, calls, jumps, and any syscall in grantpt. It excludes posix_openpt/unlockpt/ptsname/ptsname_r, openpty/forkpty/login_tty/vhangup, descriptor I/O, terminal discovery or session policy, generic ioctl, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/grantpt.c::grantpt supplies the X/Open/GNU/BSD declaration visibility and literal zero-return compatibility behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C signed-int argument/result and true-static closure contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-unlockpt"
+description = "Private native x86 selected-static-archive `unlockpt` fixed-PTY-lock-release boundary inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `int unlockpt(int)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/unlockpt.c::unlockpt` creates one private zero-valued four-byte int and issues fixed Linux `ioctl=16`/`TIOCSPTLCK=0x40045431`; success returns zero without changing stale errno, while raw `EBADF`/`ENOTTY` failures return `-1` and publish errno. Fixture-local raw syscalls create, observe, and close one fresh devpts master only. This selected-private leaf selects no PTY allocation/grant/naming, slave-path lookup, descriptor ownership/transfer, terminal discovery, terminal/session/process policy, termios state, generic ioctl, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support. It explicitly excludes `posix_openpt`, `grantpt`, `ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, and any general terminal or PTY capability claim."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/unlockpt.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/stdlib.h",
+  "include/sys/syscall.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/unlockpt_header_abi_probe.c",
+  "compat/x86_64/unlockpt_header_abi_probe.cpp",
+  "compat/x86_64/run_unlockpt_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_unlockpt_probe.c",
+  "compat/x86_64/libc_unlockpt_start.S",
+  "compat/x86_64/run_libc_unlockpt.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes the signed four-byte `int unlockpt(int)` descriptor in rdi and returns the signed four-byte status in eax. Linux x86-64 `ioctl=16` receives the descriptor, fixed request, and pointer in rdi/rsi/rdx; the sole `TIOCSPTLCK=0x40045431` request reads one aligned private four-byte zero int",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/unistd/unlockpt.c::unlockpt` to `int unlock = 0; return ioctl(fd, TIOCSPTLCK, &unlock);`; the pinned x86 pty object retains the same fixed request, local zero word, and ioctl call",
+  "The linked `-nostdlib -static` candidate has one selected initial-TLS errno datum but no dynamic TLS relocation/resolver, interpreter, DT_NEEDED, unresolved symbol, generic ioctl export, or terminal/PTY helper. Its unlockpt disassembly pins syscall 16, TIOCSPTLCK, and the private zero word; fixture-local raw `/dev/ptmx`/TIOCGPTPEER observation is not an archive PTY API",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-header-first C11/C++17 gate proves exact `int unlockpt(int)` stdlib.h declaration and unmangled C++ reference under X/Open, GNU, and BSD profiles. Strict and POSIX profiles hide the extension. This header-only boundary selects no PTY opening/grant/naming, archive linkage, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-unlockpt", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true `-nostdlib -static` x86 crabc-libc candidate. The fixture checks direct and function-pointer EBADF and non-PTY ENOTTY errno translation, then unlocks one fresh raw-opened devpts master with stale errno preserved and uses fixture-only TIOCGPTPEER observation before closing both descriptors. It ratchets exact crate-owned exports and rejects an interpreter, DT_NEEDED, unresolved symbols, dynamic TLS resolver, runtime dependencies, generic ioctl, and unselected terminal/PTY helpers while pinning syscall 16, TIOCSPTLCK=0x40045431, and the local zero lock word in unlockpt. It excludes posix_openpt/grantpt/ptsname/ptsname_r, openpty/forkpty/login_tty/vhangup, PTY allocation/naming/ownership, terminal discovery or session/process policy, generic ioctl, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/unlockpt.c::unlockpt supplies X/Open/GNU/BSD declaration visibility, private zero lock value, fixed ioctl request, and errno-status behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "ioctl=16, TIOCSPTLCK=0x40045431, devpts lock-release pointer shape, and EBADF/ENOTTY behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "C signed-int argument/result and true-static errno/TLS closure contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-isatty"
@@ -5248,6 +5329,157 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, C sendfile declaration, direct syscall forwarding, and errno behavior oracle for src/linux/sendfile.c." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sendfile=40 rdi/rsi/rdx/r10 register order, signed off_t-pointer update, descriptor-position, regular-file transfer, and raw errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "C pointer/int/size_t register convention and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-tee"
+description = "Private native x86 selected-static-archive GNU pipe-buffer duplication block. One dependency-free `crabc-libc` archive resolves only `tee(int, int, size_t, unsigned)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `tee=276` through rdi/rsi/rdx/r10, retaining source-pipe bytes while placing an equal copy in the destination pipe. The fixture also proves zero-length stale errno on success and a bad source descriptor's EBADF result. This does not select pipe creation or ownership, generic descriptor policy, splice, vmsplice, sendfile, copy_file_range, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/tee.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/tee_header_abi_probe.c",
+  "compat/x86_64/tee_header_abi_probe.cpp",
+  "compat/x86_64/run_tee_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_tee_probe.c",
+  "compat/x86_64/libc_tee_start.S",
+  "compat/x86_64/run_libc_tee.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 tee=276 receives signed int source/destination descriptors, LP64 size_t length, and unsigned flags in rdi/rsi/rdx/r10 through syscall4. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
+  "The focused fixture writes a fixed payload into one raw-created source pipe, observes its bytes remain readable after tee, and observes an equal destination-pipe copy. It separately fixes zero length as successful with stale errno and a bad source descriptor as EBADF; pipe creation, ownership, blocking, and transfer policy stay fixture-local or unselected",
+  "Pinned musl 1.2.6 src/linux/tee.c directly invokes syscall(SYS_tee, src, dest, len, flags) without a cancellation-point wrapper or fallback. This selected x86 leaf preserves that direct path; splice, vmsplice, general descriptor behavior, and cancellation remain outside the artifact",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C/C++ GNU fcntl.h gate proves `ssize_t tee(int, int, size_t, unsigned)` and the header's unmangled C++ declaration. Default, strict, POSIX, XOPEN, and BSD C selector profiles keep tee hidden in both header trees. The candidate fixture additionally preprocesses project errno.h, fcntl.h, features.h, sys/types.h, sys/syscall.h, bits/fcntl.h, and bits/syscall.h. This is a bounded GNU tee header facet, not closed fcntl/header completion or a general C ABI."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-tee", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding candidate. The gate proves project-header C/C++ GNU fcntl.h provenance; exact crate-owned C object-member export closure separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; a tee=276 wrapper with rdi/rsi/rdx/r10 forwarding; source remains readable after an equal destination copy, zero-length stale errno on success, and EBADF for a bad source descriptor. It does not select pipe creation or ownership, generic descriptor policy, splice, vmsplice, sendfile, copy_file_range, cancellation, libc.so, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU C tee declaration, direct syscall forwarding, and errno behavior oracle for src/linux/tee.c." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "tee=276 rdi/rsi/rdx/r10 register order, pipe-buffer duplication without source consumption, flags, and raw errno contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Two-int/size_t/unsigned C register convention and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-copy-file-range"
+description = "Private native x86 selected-static-archive GNU descriptor-range copy block. One dependency-free `crabc-libc` archive resolves only `copy_file_range(int, off_t *, int, off_t *, size_t, unsigned)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `copy_file_range=326` through rdi/rsi/rdx/r10/r8/r9 with caller-owned signed LP64 `off_t` pointers, size_t length, and unsigned flags, mapping raw byte counts or Linux's raw -4095..=-1 range to C `ssize_t` or `-1` plus initial-TLS `errno`. The fixture compares one same-filesystem regular-file explicit-offset wrapper request with a sibling raw request: result, pointed offset updates, copied bytes, and retained shared descriptor positions agree, while a successful wrapper retains stale `errno`; invalid flags report `EINVAL` and a bad input descriptor reports `EBADF`. This does not select pathname opening, descriptor ownership, copy fallback or cross-filesystem policy, `sendfile`/`splice`, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/copy_file_range.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "include/sys/syscall.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/copy_file_range_header_abi_probe.c",
+  "compat/x86_64/copy_file_range_header_abi_probe.cpp",
+  "compat/x86_64/run_copy_file_range_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_copy_file_range_probe.c",
+  "compat/x86_64/libc_copy_file_range_start.S",
+  "compat/x86_64/run_libc_copy_file_range.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 copy_file_range=326 receives signed int input/output descriptors, optional caller-owned signed LP64 off_t pointers, a size_t length, and unsigned flags in rdi/rsi/rdx/r10/r8/r9 through syscall6. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
+  "The focused fixture uses same-filesystem raw-created, immediately unlinked regular-file pairs. One explicit-offset request makes wrapper and sibling raw result, pointed input/output offset updates, copied bytes, and each retained current descriptor position agree; wrapper success leaves stale errno unchanged, invalid flags produce EINVAL, and a bad input descriptor produces EBADF. It does not establish pathname behavior, short/EOF policy, fallback, cross-filesystem policy, or durability",
+  "Pinned musl 1.2.6 src/linux/copy_file_range.c directly invokes syscall(SYS_copy_file_range, fd_in, off_in, fd_out, off_out, len, flags) on x86-64 without a cancellation-point wrapper or fallback. This selected x86 leaf preserves that direct path; descriptor-copy policy and cancellation remain outside the artifact",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C/C++ GNU unistd.h gate proves `ssize_t copy_file_range(int, off_t *, int, off_t *, size_t, unsigned)`, signed 64-bit x86 off_t, and unmangled C++ linkage. Strict, POSIX, XOPEN, and BSD C selector profiles keep that GNU-only spelling hidden in both header trees, while C++ follows musl's extension-visible mode. The candidate fixture additionally preprocesses project errno.h, fcntl.h, features.h, sys/types.h, stddef.h, stdint.h, unistd.h, sys/syscall.h, bits/fcntl.h, and bits/syscall.h. This is a bounded GNU copy_file_range header facet, not closed unistd/header completion or a general C ABI."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-copy-file-range", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding candidate. The gate proves project-header C/C++ GNU unistd.h provenance; exact crate-owned C object-member export closure separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; a copy_file_range=326 wrapper with rdi/rsi/rdx/r10/r8/r9 forwarding; one same-filesystem regular-file explicit-offset wrapper/raw result and pointed-offset agreement, copied bytes, stable shared positions, stale errno on success, EINVAL, and EBADF. It does not select pathname opening, descriptor ownership, copy fallback or cross-filesystem policy, sendfile/splice, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU C declaration, direct syscall forwarding, and errno behavior oracle for src/linux/copy_file_range.c." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "copy_file_range=326 rdi/rsi/rdx/r10/r8/r9 register order, signed off_t-pointer updates, descriptor-position behavior, flags, and raw errno contract; a direct request does not establish copy fallback or filesystem policy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Int/LP64 off_t-pointer/size_t/unsigned C register convention and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-splice"
+description = "Private native x86 selected-static-archive GNU file-to-pipe transfer block. One dependency-free `crabc-libc` archive resolves only `splice(int, off_t *, int, off_t *, size_t, unsigned)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `splice=275` through rdi/rsi/rdx/r10/r8/r9 with caller-owned signed LP64 input/output `off_t` pointers, size_t length, and unsigned flags, mapping raw byte counts or Linux's raw -4095..=-1 range to C `ssize_t` or `-1` plus initial-TLS `errno`. The fixture compares one regular-file-to-pipe explicit-input-offset wrapper request with a sibling raw request: result, pointed input-offset update, copied pipe bytes, and retained file descriptor position agree, while a successful wrapper retains stale `errno`; invalid flags report `EINVAL` and a bad input descriptor reports `EBADF`. This does not select pathname opening, descriptor or pipe ownership, blocking, fallback, general pipe/filesystem transfer policy, `tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/splice.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/splice_header_abi_probe.c",
+  "compat/x86_64/splice_header_abi_probe.cpp",
+  "compat/x86_64/run_splice_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_splice_probe.c",
+  "compat/x86_64/libc_splice_start.S",
+  "compat/x86_64/run_libc_splice.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 splice=275 receives signed int input/output descriptors, optional caller-owned signed LP64 off_t pointers, a size_t length, and unsigned flags in rdi/rsi/rdx/r10/r8/r9 through syscall6. The selected C wrapper returns the signed byte count or maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
+  "The focused fixture uses raw-created, immediately unlinked regular-file inputs and raw-created pipes. One file-to-pipe explicit-input-offset request makes wrapper and sibling raw result, pointed input-offset update, pipe bytes, and retained current file position agree; wrapper success leaves stale errno unchanged, invalid flags produce EINVAL, and a bad input descriptor produces EBADF. It does not establish output-offset, pipe blocking, short/EOF, fallback, or filesystem-transfer policy",
+  "Pinned musl 1.2.6 src/linux/splice.c directly invokes syscall(SYS_splice, fd_in, off_in, fd_out, off_out, len, flags) on x86-64 without a cancellation-point wrapper or fallback. This selected x86 leaf preserves that direct path; pipe/descriptor-transfer policy and cancellation remain outside the artifact",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C/C++ GNU fcntl.h gate proves `ssize_t splice(int, off_t *, int, off_t *, size_t, unsigned)`, signed 64-bit x86 off_t, and unmangled C++ linkage. Strict, POSIX, XOPEN, and BSD C selector profiles keep that GNU-only spelling hidden in both header trees, while C++ follows musl's extension-visible mode. The candidate fixture additionally preprocesses project errno.h, fcntl.h, features.h, sys/types.h, stddef.h, stdint.h, sys/syscall.h, bits/fcntl.h, and bits/syscall.h. This is a bounded GNU splice header facet, not closed fcntl/header completion or a general C ABI."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-splice", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding candidate. The gate proves project-header C/C++ GNU fcntl.h provenance; exact crate-owned C object-member export closure separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; a splice=275 wrapper with rdi/rsi/rdx/r10/r8/r9 forwarding; one regular-file-to-pipe explicit-input-offset wrapper/raw result and pointed-offset agreement, copied pipe bytes, stable file position, stale errno on success, EINVAL, and EBADF. It does not select pathname opening, descriptor or pipe ownership, blocking, fallback, general pipe/filesystem transfer policy, tee/vmsplice/sendfile/copy_file_range, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU C declaration, direct syscall forwarding, and errno behavior oracle for src/linux/splice.c." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "splice=275 rdi/rsi/rdx/r10/r8/r9 register order, signed off_t-pointer update, regular-file-to-pipe transfer, flags, and raw errno contract; a direct request does not establish pipe or filesystem-transfer policy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Int/LP64 off_t-pointer/size_t/unsigned C register convention and static initial-exec TLS fixture contract." },
 ]
 
 [[family.verified_artifact]]
