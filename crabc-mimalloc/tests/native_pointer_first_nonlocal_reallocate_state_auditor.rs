@@ -164,10 +164,10 @@ struct ReplacementObservation {
 /// Pinned `src/alloc.c:379-451` allocates a replacement through the current
 /// owner, copies the old usable prefix, then sends the old pointer through the
 /// general pointer-first free path. A's owner has already exited here, so B
-/// can never reuse A's page in place. The current head intentionally returns
-/// `Unavailable` at that PageMap-derived nonlocal branch; this assertion is a
-/// red-before-core regression for the W01 connector rather than a claim that
-/// the current refusal is a successful replacement.
+/// can never reuse A's page in place. With W01 integrated, that PageMap-derived
+/// nonlocal branch allocates B's distinct replacement, copies the bounded old
+/// usable prefix, and consumes exactly one A client through pointer-first free
+/// dispatch.
 #[test]
 fn native_pointer_first_nonlocal_reallocate_audits_failure_and_one_old_consumption() {
     assert!(
