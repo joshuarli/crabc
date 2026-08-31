@@ -29,6 +29,11 @@
 //! owner exit first collects, publishes the abandoned identity, and unowns;
 //! a final release first unregisters the page and then either releases once
 //! or retains one terminal owner after the injected failure.
+//! A separate two-producer witness composes those transitions with a terminal
+//! consumer low-bit claim. Its deliberately fixed terminal shape has no
+//! client-count ledger or owner registry: the two address-free source blocks,
+//! one page-local publication word, and the source head are sufficient to
+//! establish the owner-exit and terminal-claim ordering.
 //!
 //! These are intentionally page-geometry-free models. They neither select a
 //! bin nor an arena/OS route, and they do not pretend that `PageMap`'s plain
@@ -553,6 +558,232 @@ impl PageMapLifetimeModel {
         assert_eq!(self.terminal_state.load(Ordering::Acquire), MODEL_TERMINAL_RETAINED);
         assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 0);
         assert_eq!(self.retained_owner_count.load(Ordering::Acquire), 1);
+    }
+}
+
+/// Outcome of a terminal consumer racing to claim one already-unowned,
+/// source-empty abandoned page.
+///
+/// The claim is the pinned `mi_page_claim_ownership` low-bit transition, not
+/// an entry in an owner table. Only its winner may perform the terminal
+/// PageMap/metadata release below.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalConsumerClaimOutcome {
+    Released,
+    AlreadyClaimed,
+}
+
+/// Finite composed lifetime witness for two final live remote publications,
+/// owner exit, and a competing terminal consumer claim.
+///
+/// This intentionally has no live-client count and no owner registry. The
+/// test fixes the two modeled source blocks as the page's final clients; the
+/// `phase_and_publishers` word is only the page-local lookup-to-publication
+/// exclusion required before owner exit. Once the owner has collected those
+/// exact blocks and unowned the source head, `claim_abandoned_owner_with`
+/// alone chooses the sole terminal consumer. Page geometry and the production
+/// `used` count remain outside this address-free Loom proof.
+struct MultiProducerOwnerExitTerminalModel {
+    phase_and_publishers: AtomicUsize,
+    page_map_root: AtomicUsize,
+    page_map_entry: AtomicUsize,
+    metadata: AtomicUsize,
+    owner_identity: AtomicUsize,
+    terminal_release_count: AtomicUsize,
+}
+
+impl MultiProducerOwnerExitTerminalModel {
+    fn new() -> Self {
+        Self {
+            phase_and_publishers: AtomicUsize::new(LIFETIME_LIVE),
+            page_map_root: AtomicUsize::new(MODEL_ROOT_PUBLISHED),
+            page_map_entry: AtomicUsize::new(MODEL_ENTRY_PUBLISHED),
+            metadata: AtomicUsize::new(MODEL_METADATA_LIVE),
+            owner_identity: AtomicUsize::new(MODEL_OWNER_LIVE),
+            terminal_release_count: AtomicUsize::new(0),
+        }
+    }
+
+    /// Acquires the one page-local lifetime pin required between a successful
+    /// PageMap lookup and the source `mi_free_block_mt` publication.
+    fn begin_live_remote_publication(&self) -> bool {
+        let mut observed = self.phase_and_publishers.load(Ordering::Acquire);
+        loop {
+            if observed & LIFETIME_PHASE_MASK != LIFETIME_LIVE {
+                return false;
+            }
+            match self.phase_and_publishers.compare_exchange_weak(
+                observed,
+                observed + LIFETIME_PUBLISHER,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    assert_eq!(
+                        self.page_map_root.load(Ordering::Acquire),
+                        MODEL_ROOT_PUBLISHED,
+                        "a live producer observes the published PageMap root"
+                    );
+                    assert_eq!(
+                        self.page_map_entry.load(Ordering::Acquire),
+                        MODEL_ENTRY_PUBLISHED,
+                        "a live producer observes its registered page"
+                    );
+                    assert_eq!(
+                        self.metadata.load(Ordering::Acquire),
+                        MODEL_METADATA_LIVE,
+                        "a live producer observes live page metadata"
+                    );
+                    return true;
+                }
+                Err(actual) => observed = actual,
+            }
+        }
+    }
+
+    fn finish_live_remote_publication(&self) {
+        let previous = self
+            .phase_and_publishers
+            .fetch_sub(LIFETIME_PUBLISHER, Ordering::Release);
+        assert_eq!(
+            previous & LIFETIME_PHASE_MASK,
+            LIFETIME_LIVE,
+            "the owner cannot begin exit while a source publisher is still pinned"
+        );
+        assert!(
+            previous & !LIFETIME_PHASE_MASK >= LIFETIME_PUBLISHER,
+            "only an admitted source producer releases one page-local pin"
+        );
+    }
+
+    /// The source owner can leave only after every page-local publisher has
+    /// completed. A failed first attempt is the important composed race: it
+    /// proves no registry lookup or client-ledger scan is necessary to find
+    /// the two in-flight producers.
+    fn begin_owner_exit(&self) -> bool {
+        self.phase_and_publishers
+            .compare_exchange(
+                LIFETIME_LIVE,
+                LIFETIME_ABANDONED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Publishes the abandoned identity only after the real source head has
+    /// detached every final remote block, then runs the exact source unown
+    /// transition to transfer the low-bit claim to a future consumer.
+    fn abandon_after_remote_collection(&self, head: &AtomicUsize) {
+        assert_eq!(
+            self.phase_and_publishers.load(Ordering::Acquire),
+            LIFETIME_ABANDONED,
+            "only the exclusive owner-exit phase may abandon this page"
+        );
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            OWNER_EMPTY_HEAD,
+            "owner exit unowns only after its source collection emptied the head"
+        );
+        assert_eq!(
+            self.owner_identity.compare_exchange(
+                MODEL_OWNER_LIVE,
+                MODEL_OWNER_ABANDONED,
+                Ordering::Release,
+                Ordering::Acquire,
+            ),
+            Ok(MODEL_OWNER_LIVE),
+            "owner exit publishes the abandoned identity exactly once"
+        );
+
+        let mut no_hook: Option<fn()> = None;
+        assert_eq!(
+            try_unown_abandoned_head_with(head, &mut no_hook),
+            AbandonedOwnerHeadTransition::Released,
+            "the empty source head transfers its low owner bit to a consumer"
+        );
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            0,
+            "owner exit leaves one unowned empty page for the terminal claim"
+        );
+    }
+
+    /// Claims and releases the selected terminal-empty page.
+    ///
+    /// A losing consumer sees the source low bit already set and never reads
+    /// PageMap or metadata state. The winner alone converts the abandoned
+    /// page-local phase into the irreversible terminal release.
+    fn terminal_consumer_claim_and_release(
+        &self,
+        head: &AtomicUsize,
+    ) -> TerminalConsumerClaimOutcome {
+        if claim_abandoned_owner_with(head) == AbandonedOwnerClaim::AlreadyOwned {
+            return TerminalConsumerClaimOutcome::AlreadyClaimed;
+        }
+
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            OWNER_EMPTY_HEAD,
+            "the winning consumer retains the source low-bit claim through release"
+        );
+        assert_eq!(
+            self.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_ABANDONED,
+            "the terminal consumer follows owner-exit's abandoned identity"
+        );
+        assert_eq!(
+            self.phase_and_publishers.compare_exchange(
+                LIFETIME_ABANDONED,
+                LIFETIME_RELEASING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ),
+            Ok(LIFETIME_ABANDONED),
+            "the unique low-bit claimant owns the only terminal release transition"
+        );
+        assert_eq!(
+            self.page_map_entry.swap(MODEL_ENTRY_UNREGISTERED, Ordering::AcqRel),
+            MODEL_ENTRY_PUBLISHED,
+            "terminal release unregisters the page before metadata retirement"
+        );
+        assert_eq!(
+            self.page_map_root.swap(0, Ordering::AcqRel),
+            MODEL_ROOT_PUBLISHED,
+            "the sole page entry lets terminal release clear the PageMap root"
+        );
+        assert_eq!(
+            self.metadata
+                .swap(MODEL_METADATA_RELEASED, Ordering::AcqRel),
+            MODEL_METADATA_LIVE,
+            "terminal release retires metadata after PageMap removal"
+        );
+        assert_eq!(
+            self.terminal_release_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "exactly one terminal consumer reaches physical release"
+        );
+        TerminalConsumerClaimOutcome::Released
+    }
+
+    fn assert_terminal_release_once(&self, head: &AtomicUsize) {
+        assert_eq!(
+            self.phase_and_publishers.load(Ordering::Acquire),
+            LIFETIME_RELEASING
+        );
+        assert_eq!(
+            self.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_ABANDONED
+        );
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            OWNER_EMPTY_HEAD,
+            "the terminal owner still holds the sole source low-bit claim"
+        );
+        assert_eq!(self.page_map_entry.load(Ordering::Acquire), MODEL_ENTRY_UNREGISTERED);
+        assert_eq!(self.page_map_root.load(Ordering::Acquire), 0);
+        assert_eq!(self.metadata.load(Ordering::Acquire), MODEL_METADATA_RELEASED);
+        assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 1);
     }
 }
 
@@ -1670,6 +1901,154 @@ fn loom_live_remote_publication_and_owner_exit_keep_the_pagemap_valid_until_one_
             "the source order releases only after every client and publisher is gone"
         );
         model.assert_released_once();
+    });
+}
+
+#[test]
+fn loom_two_remote_publishers_owner_exit_and_terminal_consumer_claim_need_no_ledger_or_registry() {
+    loom::model(|| {
+        // The test fixes two exact final source blocks. Each producer obtains
+        // only the page-local lookup-to-publication pin; there is no client
+        // record to scan and no global owner identity to resolve. Holding both
+        // pins before the owner attempts exit forces the relevant source
+        // interleaving: exit must wait for the raw remote-head publications,
+        // then the next phase is chosen solely by the page-local words.
+        let model = Arc::new(MultiProducerOwnerExitTerminalModel::new());
+        let head = Arc::new(AtomicUsize::new(OWNER_EMPTY_HEAD));
+        let blocks = Arc::new(ModelBlocks::new());
+
+        let (first_ready_send, first_ready_receive) = mpsc::channel();
+        let (second_ready_send, second_ready_receive) = mpsc::channel();
+        let (first_publish_send, first_publish_receive) = mpsc::channel();
+        let (second_publish_send, second_publish_receive) = mpsc::channel();
+        let (first_done_send, first_done_receive) = mpsc::channel();
+        let (second_done_send, second_done_receive) = mpsc::channel();
+        let (first_terminal_claim_send, first_terminal_claim_receive) = mpsc::channel();
+        let (second_terminal_claim_send, second_terminal_claim_receive) = mpsc::channel();
+        let (first_terminal_outcome_send, first_terminal_outcome_receive) = mpsc::channel();
+        let (second_terminal_outcome_send, second_terminal_outcome_receive) = mpsc::channel();
+
+        let first_model = Arc::clone(&model);
+        let first_head = Arc::clone(&head);
+        let first_blocks = Arc::clone(&blocks);
+        let first = thread::spawn(move || {
+            assert!(
+                first_model.begin_live_remote_publication(),
+                "the first producer pins the still-live page"
+            );
+            first_ready_send
+                .send(())
+                .expect("the owner retains the first producer's readiness receiver");
+            first_publish_receive
+                .recv()
+                .expect("the owner lets the first producer enter the source head");
+            first_blocks.publish(&first_head, 0);
+            first_model.finish_live_remote_publication();
+            first_done_send
+                .send(())
+                .expect("the owner retains the first producer's completion receiver");
+            first_terminal_claim_receive
+                .recv()
+                .expect("the owner releases the first terminal-consumer gate");
+            first_terminal_outcome_send
+                .send(first_model.terminal_consumer_claim_and_release(&first_head))
+                .expect("the owner retains the first terminal outcome receiver");
+        });
+
+        let second_model = Arc::clone(&model);
+        let second_head = Arc::clone(&head);
+        let second_blocks = Arc::clone(&blocks);
+        let second = thread::spawn(move || {
+            assert!(
+                second_model.begin_live_remote_publication(),
+                "the second producer pins the still-live page"
+            );
+            second_ready_send
+                .send(())
+                .expect("the owner retains the second producer's readiness receiver");
+            second_publish_receive
+                .recv()
+                .expect("the owner lets the second producer enter the source head");
+            second_blocks.publish(&second_head, 1);
+            second_model.finish_live_remote_publication();
+            second_done_send
+                .send(())
+                .expect("the owner retains the second producer's completion receiver");
+            second_terminal_claim_receive
+                .recv()
+                .expect("the owner releases the second terminal-consumer gate");
+            second_terminal_outcome_send
+                .send(second_model.terminal_consumer_claim_and_release(&second_head))
+                .expect("the owner retains the second terminal outcome receiver");
+        });
+
+        // The model thread is the source owner. Keeping it here avoids an
+        // artificial fifth worker while Loom still schedules both producers'
+        // source atomic publications around the owner-exit admission.
+        first_ready_receive
+            .recv()
+            .expect("the first producer retains its readiness sender");
+        second_ready_receive
+            .recv()
+            .expect("the second producer retains its readiness sender");
+        assert!(
+            !model.begin_owner_exit(),
+            "two page-local publication pins reject owner exit without an owner registry"
+        );
+
+        first_publish_send
+            .send(())
+            .expect("the first producer retains its source-publication receiver");
+        second_publish_send
+            .send(())
+            .expect("the second producer retains its source-publication receiver");
+        first_done_receive
+            .recv()
+            .expect("the first producer completes its source publication");
+        second_done_receive
+            .recv()
+            .expect("the second producer completes its source publication");
+
+        assert!(
+            model.begin_owner_exit(),
+            "the owner exits once both page-local publications have left"
+        );
+        assert_eq!(blocks.collect_once(&head), PRODUCER_COUNT);
+        blocks.assert_all_collected();
+        model.abandon_after_remote_collection(&head);
+
+        // The completed producers no longer hold PageMap pins, so they may
+        // now act as two independent terminal consumers. Reusing those
+        // actors keeps the model finite while Loom still schedules their
+        // competing source low-bit claims.
+        first_terminal_claim_send
+            .send(())
+            .expect("the first producer retains its terminal-consumer receiver");
+        second_terminal_claim_send
+            .send(())
+            .expect("the second producer retains its terminal-consumer receiver");
+        let first_outcome = first_terminal_outcome_receive
+            .recv()
+            .expect("the first terminal consumer completes");
+        let second_outcome = second_terminal_outcome_receive
+            .recv()
+            .expect("the second terminal consumer completes");
+        first.join().expect("first producer completes its terminal claim");
+        second.join().expect("second producer completes its terminal claim");
+        assert!(
+            matches!(
+                (first_outcome, second_outcome),
+                (
+                    TerminalConsumerClaimOutcome::Released,
+                    TerminalConsumerClaimOutcome::AlreadyClaimed
+                ) | (
+                    TerminalConsumerClaimOutcome::AlreadyClaimed,
+                    TerminalConsumerClaimOutcome::Released
+                )
+            ),
+            "the source low bit leaves exactly one terminal claimant without a client ledger or owner registry"
+        );
+        model.assert_terminal_release_once(&head);
     });
 }
 
