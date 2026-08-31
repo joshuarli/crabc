@@ -354,6 +354,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
   libc-math-minmax  run the static x86 fmax/fmin minmax slice
   libc-math-bit-sign  run the static x86 fabs/copysign bit-sign slice
+  libc-math-trunc  run the static x86 trunc/truncf scalar slice
   libc-math-elementary-long-double  run the complete static x86 math.elementary-long-double capability
   libc-math-x87-extended  run the static x86 x87 long-double math/remainder block
   libc-math-special  run the complete static x86 math.special capability
@@ -1544,6 +1545,16 @@ four MXCSR modes, and preservation of preexisting `FE_DIVBYZERO` in one
 freestanding static candidate. It excludes `fabsl`/`copysignl`, `fdim*`,
 fmax/fmin, fenv-rounding, binary80/x87, special and complex math, family
 completion, promotion, and public x86 support.
+`libc-math-trunc` is the separate selected binary32/binary64 toward-zero
+truncation slice for `trunc` and `truncf`. It compares parenthesized C calls
+and default-SSE/`-mfpmath=387` C++ declarations with pinned musl, then proves
+ordinary/integral values, signed zero, infinities, raw quiet/signaling-NaN
+payloads, ordinary/raw-subnormal fractional inputs, the required
+`FE_INEXACT`/no-`FE_INVALID` path, all four MXCSR modes, and preservation of
+preexisting `FE_DIVBYZERO` in one freestanding static candidate. It excludes
+`truncl`, `round*`, `rint*`/`nearbyint*`, bit-sign, `fdim*`, fmax/fmin,
+special and complex math, binary80/x87, family completion, promotion, and
+public x86 support.
 `libc-math-elementary-long-double` proves the exact 35-symbol
 `math.elementary-long-double` capability through project headers, a closed
 static archive, and 2,764 exact pinned-musl binary80/fenv records across all
@@ -3205,6 +3216,10 @@ run_libc_math_bit_sign_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_bit_sign.sh
 }
 
+run_libc_math_trunc_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_math_trunc.sh
+}
+
 run_libc_math_elementary_long_double_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_math_elementary_long_double.sh
 }
@@ -3319,6 +3334,7 @@ case "$command" in
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
     libc-math-bit-sign) ;;
+    libc-math-trunc) ;;
     libc-fdim) ;;
     machine-context-header-abi) ;;
     memory-sync-header-abi) ;;
@@ -4984,6 +5000,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-math-bit-sign takes no arguments"
         ensure_image
         run_libc_math_bit_sign_probe
+        ;;
+    libc-math-trunc)
+        [ "$#" -eq 0 ] || fail "libc-math-trunc takes no arguments"
+        ensure_image
+        run_libc_math_trunc_probe
         ;;
     libc-math-elementary-long-double)
         [ "$#" -eq 0 ] || fail "libc-math-elementary-long-double takes no arguments"

@@ -774,6 +774,18 @@ strong crabc-owned definitions and rejects weak compiler-builtins fallback,
 binary80 siblings, fdim, fmax/fmin, rounding, special math, family completion,
 promotion, and public x86 support.
 
+The separate private `static-c-math-trunc` artifact records only binary64/
+binary32 `trunc`/`truncf`: `./scripts/dev-x86_64.sh libc-math-trunc` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. It proves ordinary
+and integral values, signed zero, infinity, raw quiet/signaling-NaN payloads,
+ordinary and raw-subnormal fractional values, musl's required `FE_INEXACT`
+without `FE_INVALID`, all four MXCSR modes, and preexisting-`FE_DIVBYZERO`
+preservation. The target leaf retains only musl's raw exponent/fraction masks
+and volatile force-evaluation addition; it does not select `truncl`, fenv
+rounding, special/complex/binary80 math, family completion, promotion, or
+public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding

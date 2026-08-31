@@ -1342,6 +1342,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-fenv-rounding) ;;", source)
         self.assertIn("    libc-math-minmax) ;;", source)
         self.assertIn("    libc-math-bit-sign) ;;", source)
+        self.assertIn("    libc-math-trunc) ;;", source)
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
         self.assertIn("    libc-fdim) ;;", source)
@@ -1370,6 +1371,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-fenv-rounding",
             "libc-math-minmax",
             "libc-math-bit-sign",
+            "libc-math-trunc",
             "libc-fdim",
             "machine-context-header-abi",
             "memory-sync-header-abi",
@@ -18855,6 +18857,67 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "andps xmm0",
             "orpd xmm0, xmm1",
             "orps xmm0, xmm1",
+        ):
+            self.assertIn(required, leaf)
+
+    def test_math_trunc_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_trunc.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (ROOT / "compat" / "x86_64" / "libc_math_trunc_probe.c").read_text(
+            encoding="utf-8"
+        )
+        header = (
+            ROOT / "compat" / "x86_64" / "math_trunc_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        leaf = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_trunc.rs").read_text(
+            encoding="utf-8"
+        )
+
+        for required in (
+            "libc-math-trunc)",
+            "run_libc_math_trunc_probe()",
+            "/workspace/compat/x86_64/run_libc_math_trunc.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "math_trunc_header_abi_probe.cpp",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate retains TLS",
+            "addsd addss",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_trunc",
+            "direct_truncf",
+            "signaling_nan",
+            "FE_INVALID",
+            "FE_INEXACT",
+            "check_fenv_boundary",
+            "FE_DIVBYZERO",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "double_unary_signature",
+            "float_unary_signature",
+            "direct_trunc",
+            "direct_truncf",
+        ):
+            self.assertIn(required, header)
+        for required in (
+            "src/math/trunc.c",
+            "src/math/truncf.c",
+            'pub extern "C" fn trunc',
+            'pub extern "C" fn truncf',
+            "FORCE_EVAL",
+            "write_volatile",
+            "u64::MAX",
+            "u32::MAX",
         ):
             self.assertIn(required, leaf)
 

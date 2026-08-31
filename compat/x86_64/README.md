@@ -482,6 +482,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-fenv-rounding
 ./scripts/dev-x86_64.sh libc-math-minmax
 ./scripts/dev-x86_64.sh libc-math-bit-sign
+./scripts/dev-x86_64.sh libc-math-trunc
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -3958,6 +3959,19 @@ signed zero, raw quiet/signaling-NaN payload/sign preservation without
 final-link proof requires strong crabc-owned definitions rather than
 compiler-builtins weak fallbacks. `fabsl`/`copysignl`, `fdim*`, fmax/fmin,
 fenv rounding, special/complex and binary80/x87 math, family completion,
+promotion, full x86-64 parity, and public x86 support remain unselected.
+`libc-math-trunc` is the separate non-promoting `static-c-math-trunc`
+artifact for binary64/binary32 `trunc`/`truncf`. Its project-header C fixture
+and default-SSE/`-mfpmath=387` C++ signature probes run first through pinned
+musl and then through one garbage-collected `-nostdlib -static` candidate.
+They prove ordinary/integral values, signed zero, infinity, raw
+quiet/signaling-NaN payloads, ordinary and raw-subnormal fractional values,
+the musl `FE_INEXACT`/no-`FE_INVALID` path, all four MXCSR modes, and
+preservation of preexisting `FE_DIVBYZERO`. The target leaf uses raw
+exponent/fraction masks plus volatile SSE force evaluation; final-link proof
+requires strong crabc-owned definitions rather than compiler-builtins weak
+fallbacks. `truncl`, `round*`, `rint*`/`nearbyint*`, bit-sign, `fdim*`,
+fmax/fmin, special/complex and binary80/x87 math, family completion,
 promotion, full x86-64 parity, and public x86 support remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and

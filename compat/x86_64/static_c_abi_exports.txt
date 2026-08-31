@@ -789,7 +789,9 @@ towlower
 towlower_l
 towupper
 towupper_l
+trunc
 truncate
+truncf
 truncl
 tsearch
 tss_create
