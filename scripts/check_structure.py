@@ -161,6 +161,12 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/setfsuid.rs"),
     Path("libc/src/c_abi/x86_64/child_reaping.rs"),
     Path("libc/src/c_abi/x86_64/clock_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/clock_adjtime.rs"),
+    Path("libc/src/c_abi/x86_64/clock_settime.rs"),
+    Path("libc/src/c_abi/x86_64/timer_getoverrun.rs"),
+    Path("libc/src/c_abi/x86_64/timer_delete.rs"),
+    Path("libc/src/c_abi/x86_64/timer_gettime.rs"),
+    Path("libc/src/c_abi/x86_64/timer_settime.rs"),
     Path("libc/src/c_abi/x86_64/difftime.rs"),
     Path("libc/src/c_abi/x86_64/gmtime_r.rs"),
     Path("libc/src/c_abi/x86_64/timegm.rs"),
@@ -3953,6 +3959,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "search_hash_table.rs"]',
         '#[path = "gettext_catalog.rs"]',
         '#[path = "clock_gettime.rs"]',
+        '#[path = "clock_adjtime.rs"]',
+        '#[path = "clock_settime.rs"]',
+        '#[path = "timer_getoverrun.rs"]',
+        '#[path = "timer_delete.rs"]',
+        '#[path = "timer_gettime.rs"]',
+        '#[path = "timer_settime.rs"]',
         '#[path = "difftime.rs"]',
         '#[path = "gmtime_r.rs"]',
         '#[path = "timegm.rs"]',
@@ -9110,6 +9122,321 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "must export only clock_gettime"
         )
 
+    clock_adjtime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_adjtime.rs"
+    clock_adjtime_text = clock_adjtime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/clock_adjtime.c::clock_adjtime",
+        "SYS_CLOCK_ADJTIME",
+        "raw_syscall::syscall2",
+        "c_status(result)",
+        "rejected-ID C error",
+        "valid caller",
+        "successful discipline/state semantics",
+        "public x86 support",
+    ):
+        if required not in clock_adjtime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_adjtime.rs: selected static "
+                f"clock_adjtime error ABI is missing {required!r}"
+            )
+    clock_adjtime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            clock_adjtime_text,
+        )
+    )
+    if clock_adjtime_exports != {"clock_adjtime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/clock_adjtime.rs: selected static artifact "
+            "must export only clock_adjtime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "clock_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "adjtimex(",
+        "timer_create(",
+        "timer_delete(",
+        "nanosleep(",
+        "__tls_get_addr",
+    ):
+        if forbidden in clock_adjtime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_adjtime.rs: selected static "
+                f"clock_adjtime error ABI must not select {forbidden!r}"
+            )
+
+    clock_settime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_settime.rs"
+    clock_settime_text = clock_settime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/clock_settime.c::clock_settime",
+        "raw_syscall::SYS_CLOCK_SETTIME",
+        "raw_syscall::syscall2(",
+        "c_status(result)",
+        "rejected-request C error",
+        "valid caller",
+        "successful mutation/state semantics",
+        "public x86 support",
+    ):
+        if required not in clock_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_settime.rs: selected static "
+                f"clock_settime error ABI is missing {required!r}"
+            )
+    clock_settime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            clock_settime_text,
+        )
+    )
+    if clock_settime_exports != {"clock_settime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/clock_settime.rs: selected static artifact "
+            "must export only clock_settime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "clock_gettime(",
+        "clock_getres(",
+        "timer_create(",
+        "timer_delete(",
+        "nanosleep(",
+        "__tls_get_addr",
+    ):
+        if forbidden in clock_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/clock_settime.rs: selected static "
+                f"clock_settime error ABI must not select {forbidden!r}"
+            )
+
+    timer_getoverrun_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_getoverrun.rs"
+    )
+    timer_getoverrun_text = timer_getoverrun_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_getoverrun.c::timer_getoverrun",
+        "SYS_TIMER_GETOVERRUN",
+        "raw_syscall::syscall1",
+        "c_status(result)",
+        "nonnegative opaque",
+        "pthread_impl",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_getoverrun_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_getoverrun.rs: selected static "
+                f"timer_getoverrun error ABI is missing {required!r}"
+            )
+    timer_getoverrun_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_getoverrun_text,
+        )
+    )
+    if timer_getoverrun_exports != {"timer_getoverrun"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_getoverrun.rs: selected static artifact "
+            "must export only timer_getoverrun"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_delete(",
+        "timer_gettime(",
+        "timer_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_getoverrun_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_getoverrun.rs: selected static "
+                f"timer_getoverrun error ABI must not select {forbidden!r}"
+            )
+
+    timer_delete_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_delete.rs"
+    )
+    timer_delete_text = timer_delete_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_delete.c::timer_delete",
+        "SYS_TIMER_DELETE",
+        "raw_syscall::syscall1",
+        "raw -errno",
+        "does not touch errno",
+        "nonnegative opaque",
+        "pthread_impl",
+        "SIGTIMER",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_delete_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_delete.rs: selected static "
+                f"timer_delete raw-error ABI is missing {required!r}"
+            )
+    timer_delete_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_delete_text,
+        )
+    )
+    if timer_delete_exports != {"timer_delete"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_delete.rs: selected static artifact "
+            "must export only timer_delete"
+        )
+    if "c_status(" in timer_delete_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_delete.rs: selected static raw-error "
+            "ABI must not normalize its result"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_getoverrun(",
+        "timer_gettime(",
+        "timer_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_delete_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_delete.rs: selected static "
+                f"timer_delete raw-error ABI must not select {forbidden!r}"
+            )
+
+    timer_gettime_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_gettime.rs"
+    )
+    timer_gettime_text = timer_gettime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_gettime.c::timer_gettime",
+        "SYS_TIMER_GETTIME",
+        "raw_syscall::syscall2",
+        "c_status(result)",
+        "nonnegative opaque",
+        "pthread_impl",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_gettime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_gettime.rs: selected static "
+                f"timer_gettime error ABI is missing {required!r}"
+            )
+    timer_gettime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_gettime_text,
+        )
+    )
+    if timer_gettime_exports != {"timer_gettime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_gettime.rs: selected static artifact "
+            "must export only timer_gettime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_delete(",
+        "timer_getoverrun(",
+        "timer_settime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_gettime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_gettime.rs: selected static "
+                f"timer_gettime error ABI must not select {forbidden!r}"
+            )
+
+    timer_settime_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_settime.rs"
+    )
+    timer_settime_text = timer_settime_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/time/timer_settime.c::timer_settime",
+        "SYS_TIMER_SETTIME",
+        "raw_syscall::syscall4",
+        "c_status(result)",
+        "nonnegative opaque",
+        "pthread_impl",
+        "does not decode or dereference",
+        "valid POSIX timer",
+        "public x86 support",
+    ):
+        if required not in timer_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_settime.rs: selected static "
+                f"timer_settime error ABI is missing {required!r}"
+            )
+    timer_settime_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            timer_settime_text,
+        )
+    )
+    if timer_settime_exports != {"timer_settime"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/timer_settime.rs: selected static artifact "
+            "must export only timer_settime"
+        )
+    for forbidden in (
+        "crabc_core",
+        "crabc_mimalloc",
+        "timer_create(",
+        "timer_delete(",
+        "timer_getoverrun(",
+        "timer_gettime(",
+        "clock_gettime(",
+        "clock_getres(",
+        "clock_settime(",
+        "clock_adjtime(",
+        "adjtimex(",
+        "getenv(",
+        "tzset(",
+        "__tls_get_addr",
+    ):
+        if forbidden in timer_settime_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/timer_settime.rs: selected static "
+                f"timer_settime error ABI must not select {forbidden!r}"
+            )
+
     difftime_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "difftime.rs"
     difftime_text = difftime_source.read_text(errors="replace")
     for required in (
@@ -9431,6 +9758,36 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64/syscall.rs: selected static clock_gettime "
             "boundary requires SYS_CLOCK_GETTIME=228"
+        )
+    if "pub(crate) const SYS_CLOCK_SETTIME: i64 = 227;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static clock_settime "
+            "error ABI requires SYS_CLOCK_SETTIME=227"
+        )
+    if "pub(crate) const SYS_CLOCK_ADJTIME: i64 = 305;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static clock_adjtime "
+            "error ABI requires SYS_CLOCK_ADJTIME=305"
+        )
+    if "pub(crate) const SYS_TIMER_GETOVERRUN: i64 = 225;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_getoverrun "
+            "error ABI requires SYS_TIMER_GETOVERRUN=225"
+        )
+    if "pub(crate) const SYS_TIMER_DELETE: i64 = 226;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_delete "
+            "raw-error ABI requires SYS_TIMER_DELETE=226"
+        )
+    if "pub(crate) const SYS_TIMER_GETTIME: i64 = 224;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_gettime "
+            "error ABI requires SYS_TIMER_GETTIME=224"
+        )
+    if "pub(crate) const SYS_TIMER_SETTIME: i64 = 223;" not in raw_syscall_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/syscall.rs: selected static timer_settime "
+            "error ABI requires SYS_TIMER_SETTIME=223"
         )
 
     memory_mapping_source = (
@@ -13461,6 +13818,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         search_hash_table_text,
         gettext_catalog_text,
         clock_gettime_text,
+        clock_adjtime_text,
+        clock_settime_text,
+        timer_getoverrun_text,
+        timer_delete_text,
+        timer_gettime_text,
+        timer_settime_text,
         difftime_text,
         gmtime_r_text,
         timegm_text,
@@ -13824,6 +14187,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "waitpid",
         "waitid",
         "clock_gettime",
+        "clock_adjtime",
+        "clock_settime",
+        "timer_getoverrun",
+        "timer_delete",
+        "timer_gettime",
+        "timer_settime",
         "difftime",
         "gmtime_r",
         "timegm",

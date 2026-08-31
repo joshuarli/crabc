@@ -468,6 +468,18 @@ mod gettext_catalog;
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]
 mod clock_gettime;
+#[path = "clock_settime.rs"]
+mod clock_settime;
+#[path = "clock_adjtime.rs"]
+mod clock_adjtime;
+#[path = "timer_getoverrun.rs"]
+mod timer_getoverrun;
+#[path = "timer_delete.rs"]
+mod timer_delete;
+#[path = "timer_gettime.rs"]
+mod timer_gettime;
+#[path = "timer_settime.rs"]
+mod timer_settime;
 #[path = "clock_getcpuclockid.rs"]
 mod clock_getcpuclockid;
 #[path = "difftime.rs"]

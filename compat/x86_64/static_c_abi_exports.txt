@@ -179,10 +179,12 @@ cimagl
 clearenv
 clearerr
 clock
+clock_adjtime
 clock_getcpuclockid
 clock_getres
 clock_gettime
 clock_nanosleep
+clock_settime
 clog
 clogf
 clogl
@@ -1004,6 +1006,10 @@ thrd_sleep
 thrd_yield
 time
 timegm
+timer_delete
+timer_getoverrun
+timer_gettime
+timer_settime
 timerfd_create
 timerfd_gettime
 timerfd_settime

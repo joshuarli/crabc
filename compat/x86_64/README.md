@@ -505,6 +505,12 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-search-tree-intrusive
 ./scripts/dev-x86_64.sh libc-search-hash-table
 ./scripts/dev-x86_64.sh libc-clock-gettime
+./scripts/dev-x86_64.sh libc-clock-adjtime
+./scripts/dev-x86_64.sh libc-clock-settime
+./scripts/dev-x86_64.sh libc-timer-getoverrun
+./scripts/dev-x86_64.sh libc-timer-delete
+./scripts/dev-x86_64.sh libc-timer-gettime
+./scripts/dev-x86_64.sh libc-timer-settime
 ./scripts/dev-x86_64.sh libc-time-observation
 ./scripts/dev-x86_64.sh libc-difftime
 ./scripts/dev-x86_64.sh libc-timegm
@@ -4627,6 +4633,105 @@ this direct leaf intentionally owns no vDSO resolver or dynamic runtime state.
 It excludes `clock_getres`/`clock_settime`, `time`, calendar/timer state,
 pthread cancellation, dynamic runtime, and public x86 support.
 
+`libc-clock-adjtime` is a separately recorded
+`static-c-clock-adjtime-error-abi` `verified_artifact` gate over that archive,
+not clock-adjustment support. Its `<sys/timex.h>` C/C++ profiles prove the
+unconditional exact external-C declaration and x86 `struct timex` layout.
+The project-header C body first executes through pinned musl and then through
+a `-nostdlib -static` candidate, but only with rejected `clockid_t -1` and
+`CLOCK_MONOTONIC` requests. It proves the direct `clock_adjtime=305` rdi/rsi
+error convention, initial-TLS errno publication, and Linux's `EINVAL`,
+capability-first `EPERM`, or direct `EOPNOTSUPP` result without issuing a valid
+`CLOCK_REALTIME` adjustment. The wrapper deliberately installs no authority
+guard: a valid caller can reach Linux outside this evidence. It excludes
+successful clock authority/discipline/state semantics, valid-record behavior,
+clock observation, calendar/time-zone policy, POSIX timers, cancellation,
+dynamic runtime, family completion, promotion, and public x86 support.
+
+`libc-clock-settime` is a separately recorded
+`static-c-clock-settime-error-abi` `verified_artifact` gate over that archive,
+not clock-setting support. Its header gate proves that `<time.h>` hides the
+POSIX declaration under strict C11/C++17 and exposes the exact C and C++
+external-C signature under POSIX, X/Open, and GNU profiles. Its project-header
+C body first executes through pinned musl and then through a `-nostdlib -static`
+candidate, but only with rejected `clockid_t -1` and
+`CLOCK_MONOTONIC` requests. It therefore proves the direct `clock_settime=227`
+error convention, initial-TLS errno publication, and Linux's `EINVAL` or
+capability-first `EPERM` result without issuing a valid `CLOCK_REALTIME`
+update. The wrapper deliberately installs no authority guard: a valid caller
+can reach Linux outside this evidence. It excludes successful clock authority
+or state semantics, clock observation, calendar/time-zone policy, POSIX timers,
+cancellation, dynamic runtime, family completion, promotion, and public x86
+support.
+
+`libc-timer-getoverrun` is a separately recorded
+`static-c-timer-getoverrun-error-abi` `verified_artifact` gate over that
+archive, not POSIX-timer support. Its `<time.h>` header gate hides the POSIX
+declaration under strict C11/C++17 and proves the exact opaque external-C
+signature under POSIX, X/Open, and GNU profiles. The project-header C body
+first executes through pinned musl 1.2.6 and then through a `-nostdlib -static`
+candidate, but only with nonnegative opaque `timer_t` values `0` and `INT_MAX`.
+It therefore proves the direct `timer_getoverrun=225` rdi error convention and
+initial-TLS errno publication for Linux `EINVAL`, without creating, arming,
+querying, deleting, or observing a valid POSIX timer. Musl's negative tagged
+pthread-timer representation requires private `pthread_impl` state and is
+explicitly excluded; the leaf never decodes or dereferences a timer handle. It
+does not select timer ownership, overrun values, valid timer state, signal
+delivery, calendar/time-zone policy, cancellation, dynamic runtime, family
+completion, promotion, or public x86 support.
+
+`libc-timer-delete` is a separately recorded
+`static-c-timer-delete-raw-error-abi` `verified_artifact` gate over that
+archive, not POSIX-timer support. Its `<time.h>` header gate hides the POSIX
+declaration under strict C11/C++17 and proves the exact opaque external-C
+signature under POSIX, X/Open, and GNU profiles. In a fresh process that
+creates no POSIX timers, the project-header C body first executes through
+pinned musl 1.2.6 and then through a `-nostdlib -static` candidate, but only
+with nonnegative opaque `timer_t` values `0` and `INT_MAX`. It therefore proves
+the direct raw-result `timer_delete=226` rdi convention: Linux returns
+`-EINVAL` and the caller errno sentinel remains unchanged. Musl's negative
+tagged pthread-timer representation requires private `pthread_impl`, atomic
+timer-ID marking, and `SIGTIMER`; it is explicitly excluded and the leaf never
+decodes or dereferences a timer handle. It does not establish valid timer-deletion
+semantics, timer ownership/state, signal delivery, calendar/time-zone policy,
+cancellation, dynamic runtime, family completion, promotion, or public x86
+support.
+
+`libc-timer-gettime` is a separately recorded
+`static-c-timer-gettime-error-abi` `verified_artifact` gate over that archive,
+not POSIX-timer support. Its `<time.h>` header gate hides the POSIX declaration
+under strict C11/C++17 and proves the exact opaque external-C declaration,
+timespec/itimerspec layout, and unmangled C++ linkage under POSIX, X/Open, and
+GNU profiles. In a fresh process that creates no POSIX timers, the
+project-header C body first executes through pinned musl 1.2.6 and then through
+a `-nostdlib -static` candidate, but only with nonnegative opaque `timer_t`
+values `0` and `INT_MAX` and initialized writable output records. It proves
+only the direct `timer_gettime=224` rdi/rsi error convention: Linux returns
+`-1`/`EINVAL` and leaves each record unchanged. Musl's negative tagged
+pthread-timer representation requires private `pthread_impl` state and is
+explicitly excluded; the leaf never decodes or dereferences a timer handle. It
+does not establish valid timer query values, timer ownership/state, lifecycle,
+clock/calendar/time-zone policy, signal delivery, cancellation, dynamic runtime,
+family completion, promotion, or public x86 support.
+
+`libc-timer-settime` is a separately recorded
+`static-c-timer-settime-error-abi` `verified_artifact` gate over that archive,
+not POSIX-timer support. Its `<time.h>` header gate hides the POSIX declaration
+under strict C11/C++17 and proves the exact opaque external-C declaration,
+flags argument, timespec/itimerspec layout, and unmangled C++ linkage under
+POSIX, X/Open, and GNU profiles. In a fresh process that creates no POSIX
+timers, the project-header C body first executes through pinned musl 1.2.6 and
+then through a `-nostdlib -static` candidate, but only with nonnegative opaque
+`timer_t` values `0` and `INT_MAX`, flags zero, a valid nonzero request record,
+and initialized old-value storage. It proves only the direct
+`timer_settime=223` rdi/rsi/rdx/r10 error convention: Linux returns
+`-1`/`EINVAL` and leaves both records unchanged. Musl's negative tagged
+pthread-timer representation requires private `pthread_impl` state and is
+explicitly excluded; the leaf never decodes or dereferences a timer handle. It
+does not establish valid timer-control values, timer ownership/state/lifecycle,
+signal delivery, clock/calendar/time-zone policy, cancellation, dynamic runtime,
+family completion, promotion, or public x86 support.
+
 `libc-time-observation` is a separately recorded
 `static-c-time-observation` `verified_artifact` gate over that archive, not a
 C time-runtime capability. Its project-header C body first executes through
@@ -6821,6 +6926,12 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-search-hash-table`,
 `libc-gettext-catalog`,
 `libc-clock-gettime`,
+`libc-clock-adjtime`,
+`libc-clock-settime`,
+`libc-timer-getoverrun`,
+`libc-timer-delete`,
+`libc-timer-gettime`,
+`libc-timer-settime`,
 `libc-time-observation`,
 `libc-difftime`,
 `libc-timegm`,

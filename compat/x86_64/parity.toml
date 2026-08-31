@@ -2177,6 +2177,12 @@ source_owners = [
   "libc/src/c_abi/x86_64/posix_exit.rs",
   "libc/src/c_abi/x86_64/callback_algorithms.rs",
   "libc/src/c_abi/x86_64/clock_gettime.rs",
+  "libc/src/c_abi/x86_64/clock_adjtime.rs",
+  "libc/src/c_abi/x86_64/clock_settime.rs",
+  "libc/src/c_abi/x86_64/timer_getoverrun.rs",
+  "libc/src/c_abi/x86_64/timer_delete.rs",
+  "libc/src/c_abi/x86_64/timer_gettime.rs",
+  "libc/src/c_abi/x86_64/timer_settime.rs",
   "libc/src/c_abi/x86_64/nanosleep.rs",
   "libc/src/c_abi/x86_64/clock_nanosleep.rs",
   "libc/src/c_abi/x86_64/descriptor_entry.rs",
@@ -3361,6 +3367,335 @@ oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and behavior oracle for src/time/clock_gettime.c, including its public result/errno convention and possible internal vDSO route." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_gettime=228 rdi/rsi ABI, public timespec output, clock observations, and raw negative errno contract." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "C scalar/pointer calling convention and static initial-TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-clock-adjtime-error-abi"
+description = "Private native x86 static C `clock_adjtime` rejected-ID error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. On LP64 x86, pinned musl `src/linux/clock_adjtime.c` has no clock_adjtime64 conversion path and its non-`CLOCK_REALTIME` final branch is exactly `syscall(SYS_clock_adjtime, clock_id, utx)`; Linux syscall 305 receives the signed clock ID and writable `struct timex` pointer in rdi/rsi, then raw failure becomes C `-1` plus initial-TLS errno. The fixture calls only `clockid_t -1` and `CLOCK_MONOTONIC` with a zero 208-byte timex record, both rejected before any valid adjustment. It records Linux's `EINVAL`, capability-first `EPERM`, or direct `EOPNOTSUPP` result, never calls valid `CLOCK_REALTIME`, and proves the rejected record remains zero. Strict/POSIX/XOPEN/GNU C11/C++17 profiles prove the unconditional exact `int (*)(clockid_t, struct timex *)` declaration, x86 record layout, and unmangled C++ linkage. This exact wrapper does not install an authority guard, so a valid caller can still reach Linux and is outside selected evidence. The artifact establishes neither clock-adjustment authority nor successful discipline/state semantics, valid-record behavior, clock observation, calendar/timezone/environment, timers, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/clock_adjtime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/time.h",
+  "include/sys/timex.h",
+  "include/sys/time.h",
+  "include/sys/select.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/clock_adjtime_header_abi_probe.c",
+  "compat/x86_64/clock_adjtime_header_abi_probe.cpp",
+  "compat/x86_64/run_clock_adjtime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_clock_adjtime_probe.c",
+  "compat/x86_64/libc_clock_adjtime_start.S",
+  "compat/x86_64/run_libc_clock_adjtime.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int clock_adjtime(clockid_t, struct timex *)` with the signed four-byte clock ID in rdi and borrowed writable record pointer in rsi, returning the signed int result in eax. Linux/x86-64 syscall 305 is clock_adjtime and preserves the same two-word rdi/rsi input order.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/linux/clock_adjtime.c exactly on x86 LP64: no SYS_clock_adjtime64 conversion is selected because time_t is not wider than long, and a non-CLOCK_REALTIME ID reaches syscall(SYS_clock_adjtime, clock_id, utx) without local policy or state.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture passes only writable zero 208-byte align-8 timex storage to -1 and CLOCK_MONOTONIC IDs; each is rejected before a valid CLOCK_REALTIME adjustment, with EINVAL, capability-first EPERM, or direct EOPNOTSUPP accepted as the Linux error result and the record left zero. A valid adjustment, state change, and authority outcome have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, timer, or runtime state. It is a bounded rejected-ID ABI artifact, not clock adjustment support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict/POSIX/XOPEN/GNU C11/C++17 probes require the unconditional exact `int (*)(clockid_t, struct timex *)` declaration, 208-byte align-8 x86 timex layout, and unmangled C++ external-C reference; they select no valid clock-adjustment semantics.",
+  "The fixture preprocesses only project sys/timex.h, sys/time.h, sys/select.h, and bits/alltypes.h for this declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C time capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-clock-adjtime", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict/POSIX/XOPEN/GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. The shared fixture calls only writable zero timex values with rejected -1 and CLOCK_MONOTONIC IDs, accepting Linux EINVAL, capability-first EPERM, or direct EOPNOTSUPP while never issuing a valid CLOCK_REALTIME adjustment. Header/archive/final-ELF/source/disassembly checks require exactly clock_adjtime=305, direct rdi syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock query, calendar/timezone/environment, timer, or valid adjustment call. It excludes successful clock authority/discipline/state semantics, valid-record behavior, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/linux/clock_adjtime.c: the x86 LP64 non-CLOCK_REALTIME path returns syscall(SYS_clock_adjtime, clock_id, utx) without local policy or state." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_adjtime=305 rdi/rsi record-pointer ABI, raw negative errno convention, EINVAL/capability-first EPERM/EOPNOTSUPP rejected-ID possibilities, and no valid fixture adjustment." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "clockid_t/pointer C register ABI, external-C linkage, and true-static initial-TLS errno fixture boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-clock-settime-error-abi"
+description = "Private native x86 static C `clock_settime` rejected-request error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. Pinned musl `src/time/clock_settime.c` is exactly the direct `syscall(SYS_clock_settime, clk, ts)` wrapper; Linux x86-64 syscall 227 receives the signed clock ID and borrowed const timespec pointer in rdi/rsi, then raw failure becomes C `-1` plus initial-TLS errno. The fixture calls only `clockid_t -1` and `CLOCK_MONOTONIC` with a zero timespec, both rejected before a valid realtime update. It records Linux's capability-first ordering as either `EINVAL` or `EPERM`, never calls valid `CLOCK_REALTIME`, and proves no clock state change. The strict C11/C++17 profile hides this POSIX declaration; POSIX/XOPEN/GNU C11/C++17 profiles prove the exact `int (*)(clockid_t, const struct timespec *)` declaration and unmangled C++ linkage. This exact wrapper does not install an authority guard, so a valid caller can still reach Linux and is outside selected evidence. The artifact establishes neither clock-setting authority nor successful mutation/state semantics, valid-record behavior, clock observation, calendar/timezone/environment, timers, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/clock_settime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/time.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/clock_settime_header_abi_probe.c",
+  "compat/x86_64/clock_settime_header_abi_probe.cpp",
+  "compat/x86_64/run_clock_settime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_clock_settime_probe.c",
+  "compat/x86_64/libc_clock_settime_start.S",
+  "compat/x86_64/run_libc_clock_settime.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int clock_settime(clockid_t, const struct timespec *)` with the signed four-byte clock ID in rdi and borrowed const pointer in rsi, returning the signed int result in eax. Linux/x86-64 syscall 227 is clock_settime and preserves the same two-word rdi/rsi input order.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/clock_settime.c exactly: clock_settime(clk, ts) returns syscall(SYS_clock_settime, clk, ts). On LP64 x86 no clock_settime64 branch is selected, so the Rust leaf retains that one direct syscall closure with no vDSO, policy, or runtime state.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture passes only readable zero 16-byte align-8 timespec storage to -1 and CLOCK_MONOTONIC requests; each is rejected before a valid CLOCK_REALTIME update, with EINVAL or capability-first EPERM accepted as the Linux 5.10 error ordering. A valid clock-setting request, state change, and authority outcome have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, timer, or runtime state. It is a bounded rejected-request ABI artifact, not clock mutation support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict C11/C++17 probes require clock_settime to remain hidden. POSIX/XOPEN/GNU C11/C++17 probes require the exact `int (*)(clockid_t, const struct timespec *)` declaration and an unmangled C++ external-C reference; they select no valid clock mutation semantics.",
+  "The fixture preprocesses only project time.h, features.h, and bits/alltypes.h for this feature-profile declaration/linkage fact. This is a focused header ABI gate, not installed-header completion or C time capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-clock-settime", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict-hidden/POSIX-XOPEN-GNU-visible C/C++ declaration/linkage gate precede a true `-nostdlib -static` candidate. The shared fixture calls only readable zero timespec values with rejected -1 and CLOCK_MONOTONIC IDs, accepting Linux EINVAL or capability-first EPERM while never issuing a valid CLOCK_REALTIME update. Header/archive/final-ELF/source/disassembly checks require exactly clock_settime=227, direct rdi syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock query, calendar/timezone/environment, timer, or valid mutation call. It excludes successful clock authority/state semantics, valid-record behavior, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/clock_settime.c: clock_settime returns syscall(SYS_clock_settime, clk, ts) without local policy or state." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clock_settime=227 rdi/rsi record-pointer ABI, raw negative errno convention, capability-first EPERM possibility, and invalid/non-settable clock rejection before the fixture can mutate realtime." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "clockid_t/pointer C register ABI, external-C linkage, and true-static initial-TLS errno fixture boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-timer-getoverrun-error-abi"
+description = "Private native x86 static C `timer_getoverrun` rejected-handle error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. For a nonnegative opaque `timer_t` bit pattern, pinned musl `src/time/timer_getoverrun.c` reaches exactly `syscall(SYS_timer_getoverrun, t)`; Linux syscall 225 receives that pointer-sized word in rdi, then raw failure becomes C `-1` plus initial-TLS errno. The fixture calls only `timer_t 0` and `INT_MAX`, which are rejected nonnegative opaque handles, and records `EINVAL`; it never creates, arms, queries, deletes, or observes a valid POSIX timer. Musl's negative `timer_t` branch uses a tagged pthread timer representation through private `pthread_impl`; this artifact explicitly excludes it and does not decode or dereference any timer handle. Strict C11/C++17 hides the POSIX declaration, while POSIX/XOPEN/GNU C11/C++17 profiles prove the exact `int (*)(timer_t)` declaration, opaque 8-byte align-8 layout, and unmangled C++ linkage. The artifact establishes neither timer ownership nor overrun values, valid timer state, signal delivery, calendar/timezone/environment, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timer_getoverrun.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/timer_getoverrun_header_abi_probe.c",
+  "compat/x86_64/timer_getoverrun_header_abi_probe.cpp",
+  "compat/x86_64/run_timer_getoverrun_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timer_getoverrun_probe.c",
+  "compat/x86_64/libc_timer_getoverrun_start.S",
+  "compat/x86_64/run_libc_timer_getoverrun.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int timer_getoverrun(timer_t)` with the opaque 8-byte align-8 pointer-sized timer word in rdi and returns the signed int result in eax. Linux/x86-64 syscall 225 is timer_getoverrun and consumes that unchanged first syscall argument in rdi.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/timer_getoverrun.c exactly: a nonnegative opaque timer_t reaches syscall(SYS_timer_getoverrun, t). Its `(intptr_t)t < 0` branch reconstructs a tagged pthread timer through private pthread_impl and is deliberately not selected.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture passes only nonnegative opaque timer_t 0 and INT_MAX words, each rejected with EINVAL; it never creates, arms, queries, deletes, or observes a valid POSIX timer, so valid timer ownership and overrun values have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, signal, pthread timer representation, or timer runtime state. It is a bounded rejected-handle ABI artifact, not POSIX timer support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict C11/C++17 probes require timer_getoverrun to remain hidden. POSIX/XOPEN/GNU C11/C++17 probes require the exact `int (*)(timer_t)` declaration, opaque 8-byte align-8 timer_t layout, and unmangled C++ external-C reference; they select no valid POSIX timer semantics.",
+  "The fixture preprocesses only project time.h, features.h, bits/alltypes.h, errno.h, limits.h, stdint.h, and sys/syscall.h for this feature-profile declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C POSIX timer capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timer-getoverrun", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict-hidden/POSIX-XOPEN-GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. The shared fixture calls only nonnegative opaque timer_t 0 and INT_MAX values and requires EINVAL, never creating, arming, querying, deleting, or observing a valid POSIX timer. Header/archive/final-ELF/source/disassembly checks require exactly timer_getoverrun=225, direct rdi syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock/calendar/timezone, signal delivery, pthread tagged timer representation, or timer lifecycle call. It excludes negative tagged pthread timer behavior, valid POSIX timer state, timer ownership, overrun values, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/timer_getoverrun.c: nonnegative opaque t reaches syscall(SYS_timer_getoverrun, t), while negative tagged timer_t values require pthread_impl and are excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "timer_getoverrun=225 rdi opaque-word ABI, raw negative errno convention, and EINVAL for the selected invalid nonnegative fixture handles without valid POSIX timer state." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "timer_t pointer-sized external-C linkage and true-static initial-TLS errno fixture boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-timer-delete-raw-error-abi"
+description = "Private native x86 static C `timer_delete` raw-error ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. For a nonnegative opaque `timer_t` bit pattern, pinned musl `src/time/timer_delete.c` reaches exactly `return __syscall(SYS_timer_delete, t)`; Linux syscall 226 receives that pointer-sized word in rdi and preserves raw -errno without changing caller errno. In a fresh process that creates no POSIX timers, the fixture calls only `timer_t 0` and `INT_MAX`, requires raw `-EINVAL`, and requires its errno sentinel to remain unchanged; it never creates, arms, queries, observes, or deletes a valid POSIX timer. Musl's negative `timer_t` branch reconstructs a tagged pthread timer through private `pthread_impl`, atomically marks its timer ID, and sends `SIGTIMER`; this artifact explicitly excludes it and does not decode or dereference any timer handle. Strict C11/C++17 hides the POSIX declaration, while POSIX/XOPEN/GNU C11/C++17 profiles prove the exact `int (*)(timer_t)` declaration, opaque 8-byte align-8 layout, and unmangled C++ linkage. The artifact establishes neither timer ownership nor deletion semantics, valid timer state, signal delivery, calendar/timezone/environment, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timer_delete.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/timer_delete_header_abi_probe.c",
+  "compat/x86_64/timer_delete_header_abi_probe.cpp",
+  "compat/x86_64/run_timer_delete_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timer_delete_probe.c",
+  "compat/x86_64/libc_timer_delete_start.S",
+  "compat/x86_64/run_libc_timer_delete.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int timer_delete(timer_t)` with the opaque 8-byte align-8 pointer-sized timer word in rdi and returns the signed int raw result in eax. Linux/x86-64 syscall 226 is timer_delete and consumes that unchanged first syscall argument in rdi.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/timer_delete.c exactly: a nonnegative opaque timer_t reaches `return __syscall(SYS_timer_delete, t)`. Its `(intptr_t)t < 0` branch reconstructs a tagged pthread timer through private pthread_impl, uses a_store to mark its timer ID, and sends SIGTIMER through tkill; that branch is deliberately not selected.",
+  "Linux raw -4095 through -1 errors remain raw -errno: the selected direct branch does not call c_status or touch errno. The pinned-musl and true-static common fixture runs in a fresh process that creates no POSIX timers, passes only nonnegative opaque timer_t 0 and INT_MAX words, requires raw -EINVAL, and requires the caller errno sentinel to remain unchanged; it never creates, arms, queries, observes, or deletes a valid POSIX timer, so valid timer ownership and deletion semantics have no selected contract.",
+  "The final static candidate owns no leaf errno or TLS path; fixture-local Variant-II %fs:0 setup exists only to observe the unchanged errno sentinel. It has no dynamic TLS resolver, allocation, environment, calendar/timezone, signal, pthread timer representation, or timer runtime state. It is a bounded raw-error ABI artifact, not POSIX timer support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict C11/C++17 probes require timer_delete to remain hidden. POSIX/XOPEN/GNU C11/C++17 probes require the exact `int (*)(timer_t)` declaration, opaque 8-byte align-8 timer_t layout, and unmangled C++ external-C reference; they select no valid POSIX timer semantics.",
+  "The fixture preprocesses only project time.h, features.h, bits/alltypes.h, errno.h, limits.h, stdint.h, and sys/syscall.h for this feature-profile declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C POSIX timer capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timer-delete", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict-hidden/POSIX-XOPEN-GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. In a fresh process that creates no POSIX timers, the shared fixture calls only nonnegative opaque timer_t 0 and INT_MAX values, requires raw -EINVAL, and requires caller errno to remain unchanged, never creating, arming, querying, observing, or deleting a valid POSIX timer. Header/archive/final-ELF/source/disassembly checks require exactly timer_delete=226, direct rdi raw syscall input, no leaf errno conversion, fixture-only initial-TLS sentinel access, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock/calendar/timezone, signal delivery, pthread tagged timer representation, or timer lifecycle call. It excludes negative tagged pthread timer behavior, valid POSIX timer state, timer ownership, deletion semantics, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/timer_delete.c: nonnegative opaque t reaches return __syscall(SYS_timer_delete, t) with a raw result, while negative tagged timer_t values require pthread_impl, a_store, and SIGTIMER delivery and are excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "timer_delete=226 rdi opaque-word ABI, raw negative errno convention, and EINVAL for the selected fresh-process invalid nonnegative fixture handles without valid POSIX timer state." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "timer_t pointer-sized external-C linkage and true-static fixture-local initial-TLS errno-sentinel observation boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-timer-gettime-error-abi"
+description = "Private native x86 static C `timer_gettime` rejected-handle output-preservation error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. For a nonnegative opaque `timer_t` bit pattern, pinned musl `src/time/timer_gettime.c` reaches exactly `return syscall(SYS_timer_gettime, t, val)`; Linux syscall 224 receives that pointer-sized word in rdi and a writable 32-byte align-8 `struct itimerspec` record in rsi, then raw failure becomes C `-1` plus initial-TLS errno. In a fresh process that creates no POSIX timers, the fixture calls only `timer_t 0` and `INT_MAX` with initialized writable output records, requires `-1`/`EINVAL`, and requires each record to remain unchanged; it never creates, arms, queries, observes, or deletes a valid POSIX timer. Musl's negative `timer_t` branch reconstructs a tagged pthread timer through private `pthread_impl` and reads its timer ID; this artifact explicitly excludes it and does not decode or dereference any timer handle. Strict C11/C++17 hides the POSIX declaration, while POSIX/XOPEN/GNU C11/C++17 profiles prove the exact `int (*)(timer_t, struct itimerspec *)` declaration, opaque timer and timespec/itimerspec x86 layout, and unmangled C++ linkage. The artifact establishes neither timer ownership nor valid timer query values, timer state, signal delivery, calendar/timezone/environment, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timer_gettime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/timer_gettime_header_abi_probe.c",
+  "compat/x86_64/timer_gettime_header_abi_probe.cpp",
+  "compat/x86_64/run_timer_gettime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timer_gettime_probe.c",
+  "compat/x86_64/libc_timer_gettime_start.S",
+  "compat/x86_64/run_libc_timer_gettime.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int timer_gettime(timer_t, struct itimerspec *)` with the opaque 8-byte align-8 pointer-sized timer word in rdi and a writable 32-byte align-8 itimerspec pointer in rsi, returning the signed int result in eax. Linux/x86-64 syscall 224 is timer_gettime and preserves that two-word rdi/rsi input order.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/timer_gettime.c exactly: a nonnegative opaque timer_t reaches `return syscall(SYS_timer_gettime, t, val)`. Linux x86-64 has no selected SYS_timer_gettime64 conversion branch. Its `(intptr_t)t < 0` branch reconstructs a tagged pthread timer through private pthread_impl and reads td->timer_id; that branch is deliberately not selected.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture runs in a fresh process that creates no POSIX timers, passes only nonnegative opaque timer_t 0 and INT_MAX words with initialized writable itimerspec records, requires EINVAL, and requires each record to remain unchanged; it never creates, arms, queries, observes, or deletes a valid POSIX timer, so valid timer ownership, state, and query values have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, signal, pthread timer representation, or timer runtime state. It is a bounded rejected-handle output-preservation ABI artifact, not POSIX timer support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict C11/C++17 probes require timer_gettime to remain hidden. POSIX/XOPEN/GNU C11/C++17 probes require the exact `int (*)(timer_t, struct itimerspec *)` declaration, opaque 8-byte align-8 timer_t, 16-byte align-8 timespec, 32-byte align-8 itimerspec layout with interval/value offsets 0/16, and unmangled C++ external-C reference; they select no valid POSIX timer semantics.",
+  "The fixture preprocesses only project time.h, features.h, bits/alltypes.h, errno.h, limits.h, stdint.h, and sys/syscall.h for this feature-profile declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C POSIX timer capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timer-gettime", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict-hidden/POSIX-XOPEN-GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. In a fresh process that creates no POSIX timers, the shared fixture calls only nonnegative opaque timer_t 0 and INT_MAX values with initialized writable itimerspec records, requires C -1/EINVAL, and requires each record to remain unchanged, never creating, arming, querying, observing, or deleting a valid POSIX timer. Header/archive/final-ELF/source/disassembly checks require exactly timer_gettime=224, direct rdi/rsi syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock/calendar/timezone, signal delivery, pthread tagged timer representation, or timer lifecycle call. It excludes negative tagged pthread timer behavior, valid POSIX timer state, timer ownership, query values, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/timer_gettime.c: nonnegative opaque t reaches return syscall(SYS_timer_gettime, t, val), while negative tagged timer_t values require pthread_impl and td->timer_id and are excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "timer_gettime=224 rdi/rsi opaque-word/output-record ABI, raw negative errno convention, and EINVAL with unchanged output for the selected fresh-process invalid nonnegative fixture handles without valid POSIX timer state." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "timer_t/itimerspec external-C linkage, register layout, and true-static initial-TLS errno fixture boundary." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-timer-settime-error-abi"
+description = "Private native x86 static C `timer_settime` rejected-handle input/output-preservation error-ABI artifact inside still-planned `libc.posix-runtime`. One project-header C fixture first executes through pinned musl 1.2.6 and then through a true dependency-free `-nostdlib -static` candidate linked only with the selected `crabc-libc` archive. For a nonnegative opaque `timer_t` bit pattern, pinned musl `src/time/timer_settime.c` reaches exactly `return syscall(SYS_timer_settime, t, flags, val, old)`; Linux syscall 223 receives that pointer-sized word in rdi, a flags word in rsi, a readable 32-byte align-8 `struct itimerspec` request in rdx, and a writable 32-byte align-8 old-value record in r10, then raw failure becomes C `-1` plus initial-TLS errno. In a fresh process that creates no POSIX timers, the fixture calls only `timer_t 0` and `INT_MAX` with flags zero, one initialized valid nonzero request record, and initialized old-value records, requires `-1`/`EINVAL`, and requires both records to remain unchanged; it never creates, arms, queries, observes, or deletes a valid POSIX timer. Musl's negative `timer_t` branch reconstructs a tagged pthread timer through private `pthread_impl` and reads its timer ID; this artifact explicitly excludes it and does not decode or dereference any timer handle. Strict C11/C++17 hides the POSIX declaration, while POSIX/XOPEN/GNU C11/C++17 profiles prove the exact `int (*)(timer_t, int, const struct itimerspec *, struct itimerspec *)` declaration, opaque timer and timespec/itimerspec x86 layout, and unmangled C++ linkage. The artifact establishes neither timer ownership nor valid timer-control values, timer state or lifecycle, signal delivery, calendar/timezone/environment, cancellation, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/timer_settime.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/features.h",
+  "include/limits.h",
+  "include/stdint.h",
+  "include/time.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/timer_settime_header_abi_probe.c",
+  "compat/x86_64/timer_settime_header_abi_probe.cpp",
+  "compat/x86_64/run_timer_settime_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_timer_settime_probe.c",
+  "compat/x86_64/libc_timer_settime_start.S",
+  "compat/x86_64/run_libc_timer_settime.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 calls `int timer_settime(timer_t, int, const struct itimerspec *, struct itimerspec *)` with the opaque 8-byte align-8 pointer-sized timer word in rdi, the signed four-byte flags word in rsi, a readable 32-byte align-8 itimerspec pointer in rdx, and a writable 32-byte align-8 old-value pointer in rcx, returning the signed int result in eax. Linux/x86-64 syscall 223 is timer_settime and receives those four words in rdi/rsi/rdx/r10.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/time/timer_settime.c exactly: a nonnegative opaque timer_t reaches `return syscall(SYS_timer_settime, t, flags, val, old)`. Linux x86-64 has no selected SYS_timer_settime64 conversion branch. Its `(intptr_t)t < 0` branch reconstructs a tagged pthread timer through private pthread_impl and reads td->timer_id; that branch is deliberately not selected.",
+  "Linux raw -4095 through -1 errors become C -1 plus the selected initial-TLS errno through c_status. The pinned-musl and true-static common fixture runs in a fresh process that creates no POSIX timers, passes only nonnegative opaque timer_t 0 and INT_MAX words with flags zero, a valid nonzero request record, and an initialized old-value record, requires EINVAL, and requires both records to remain unchanged; it never creates, arms, queries, observes, or deletes a valid POSIX timer, so valid timer ownership, state, lifecycle, and control values have no selected contract.",
+  "The final static candidate owns only direct initial-TLS errno access after fixture-local Variant-II %fs:0 setup, with no dynamic TLS resolver, allocation, environment, calendar/timezone, signal, pthread timer representation, or timer runtime state. It is a bounded rejected-handle input/output-preservation ABI artifact, not POSIX timer support.",
+]
+x86_header_prerequisites = [
+  "Pinned-musl/project strict C11/C++17 probes require timer_settime to remain hidden. POSIX/XOPEN/GNU C11/C++17 probes require the exact `int (*)(timer_t, int, const struct itimerspec *, struct itimerspec *)` declaration, opaque 8-byte align-8 timer_t, 16-byte align-8 timespec, 32-byte align-8 itimerspec layout with interval/value offsets 0/16, and unmangled C++ external-C reference; they select no valid POSIX timer semantics.",
+  "The fixture preprocesses only project time.h, features.h, bits/alltypes.h, errno.h, limits.h, stdint.h, and sys/syscall.h for this feature-profile declaration/linkage/layout fact. This is a focused header ABI gate, not installed-header completion or C POSIX timer capability evidence.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-timer-settime", scope = "Pinned-musl 1.2.6 project-header normal C execution and the separate strict-hidden/POSIX-XOPEN-GNU-visible C/C++ declaration/linkage/layout gate precede a true `-nostdlib -static` candidate. In a fresh process that creates no POSIX timers, the shared fixture calls only nonnegative opaque timer_t 0 and INT_MAX values with flags zero, an initialized valid nonzero itimerspec request, and initialized old-value records, requires C -1/EINVAL, and requires both records to remain unchanged, never creating, arming, querying, observing, or deleting a valid POSIX timer. Header/archive/final-ELF/source/disassembly checks require exactly timer_settime=223, direct rdi/rsi/rdx/r10 syscall input, initial-TLS errno conversion, and an env -i closure with no interpreter/DT_NEEDED/unresolved symbol, dynamic TLS resolver, allocation, ambient runtime, clock/calendar/timezone, signal delivery, pthread tagged timer representation, or timer lifecycle call. It excludes negative tagged pthread timer behavior, valid POSIX timer state, timer ownership, control values, lifecycle, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C declaration and source oracle for src/time/timer_settime.c: nonnegative opaque t reaches return syscall(SYS_timer_settime, t, flags, val, old), while negative tagged timer_t values require pthread_impl and td->timer_id and are excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "timer_settime=223 rdi/rsi/rdx/r10 opaque-word/flags/request/old-value ABI, raw negative errno convention, and EINVAL with unchanged records for the selected fresh-process invalid nonnegative fixture handles without valid POSIX timer state." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "timer_t/itimerspec external-C linkage, four-word register layout including raw r10 placement, and true-static initial-TLS errno fixture boundary." },
 ]
 
 [[family.verified_artifact]]

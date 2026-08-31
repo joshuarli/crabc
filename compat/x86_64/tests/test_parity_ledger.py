@@ -10325,6 +10325,261 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/clock_gettime.rs",
             posix_runtime["source_owners"],
         )
+        clock_adjtime = artifacts_by_id["static-c-clock-adjtime-error-abi"]
+        assert isinstance(clock_adjtime, dict)
+        self.assertNotIn("capabilities", clock_adjtime)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/clock_adjtime.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/sys/timex.h",
+            "compat/x86_64/clock_adjtime_header_abi_probe.c",
+            "compat/x86_64/clock_adjtime_header_abi_probe.cpp",
+            "compat/x86_64/run_clock_adjtime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_clock_adjtime_probe.c",
+            "compat/x86_64/libc_clock_adjtime_start.S",
+            "compat/x86_64/run_libc_clock_adjtime.sh",
+        ):
+            self.assertIn(owner, clock_adjtime["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in clock_adjtime["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-clock-adjtime"},
+        )
+        for phrase in (
+            "rejected-ID error-ABI artifact",
+            "src/linux/clock_adjtime.c",
+            "CLOCK_MONOTONIC",
+            "never calls valid `CLOCK_REALTIME`",
+            "`EINVAL`, capability-first `EPERM`, or direct `EOPNOTSUPP`",
+            "does not install an authority guard",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, clock_adjtime["description"])
+        self.assertIn(
+            "src/linux/clock_adjtime.c", clock_adjtime["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/clock_adjtime.rs",
+            posix_runtime["source_owners"],
+        )
+        clock_settime = artifacts_by_id["static-c-clock-settime-error-abi"]
+        assert isinstance(clock_settime, dict)
+        self.assertNotIn("capabilities", clock_settime)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/clock_settime.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/clock_settime_header_abi_probe.c",
+            "compat/x86_64/clock_settime_header_abi_probe.cpp",
+            "compat/x86_64/run_clock_settime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_clock_settime_probe.c",
+            "compat/x86_64/libc_clock_settime_start.S",
+            "compat/x86_64/run_libc_clock_settime.sh",
+        ):
+            self.assertIn(owner, clock_settime["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in clock_settime["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-clock-settime"},
+        )
+        for phrase in (
+            "rejected-request error-ABI artifact",
+            "src/time/clock_settime.c",
+            "CLOCK_MONOTONIC",
+            "never calls valid `CLOCK_REALTIME`",
+            "`EINVAL` or `EPERM`",
+            "does not install an authority guard",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, clock_settime["description"])
+        self.assertIn(
+            "src/time/clock_settime.c", clock_settime["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/clock_settime.rs",
+            posix_runtime["source_owners"],
+        )
+        timer_getoverrun = artifacts_by_id["static-c-timer-getoverrun-error-abi"]
+        assert isinstance(timer_getoverrun, dict)
+        self.assertNotIn("capabilities", timer_getoverrun)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/timer_getoverrun.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/timer_getoverrun_header_abi_probe.c",
+            "compat/x86_64/timer_getoverrun_header_abi_probe.cpp",
+            "compat/x86_64/run_timer_getoverrun_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timer_getoverrun_probe.c",
+            "compat/x86_64/libc_timer_getoverrun_start.S",
+            "compat/x86_64/run_libc_timer_getoverrun.sh",
+        ):
+            self.assertIn(owner, timer_getoverrun["source_owners"])
+        self.assertEqual(
+            {
+                evidence["command"]
+                for evidence in timer_getoverrun["native_evidence"]
+            },
+            {"./scripts/dev-x86_64.sh libc-timer-getoverrun"},
+        )
+        for phrase in (
+            "rejected-handle error-ABI artifact",
+            "src/time/timer_getoverrun.c",
+            "timer_t 0",
+            "INT_MAX",
+            "negative `timer_t`",
+            "pthread_impl",
+            "does not decode or dereference",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, timer_getoverrun["description"])
+        self.assertIn(
+            "src/time/timer_getoverrun.c", timer_getoverrun["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/timer_getoverrun.rs",
+            posix_runtime["source_owners"],
+        )
+        timer_delete = artifacts_by_id["static-c-timer-delete-raw-error-abi"]
+        assert isinstance(timer_delete, dict)
+        self.assertNotIn("capabilities", timer_delete)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/timer_delete.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/timer_delete_header_abi_probe.c",
+            "compat/x86_64/timer_delete_header_abi_probe.cpp",
+            "compat/x86_64/run_timer_delete_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timer_delete_probe.c",
+            "compat/x86_64/libc_timer_delete_start.S",
+            "compat/x86_64/run_libc_timer_delete.sh",
+        ):
+            self.assertIn(owner, timer_delete["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in timer_delete["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timer-delete"},
+        )
+        for phrase in (
+            "raw-error ABI artifact",
+            "src/time/timer_delete.c",
+            "timer_t 0",
+            "INT_MAX",
+            "raw `-EINVAL`",
+            "errno sentinel to remain unchanged",
+            "negative `timer_t`",
+            "pthread_impl",
+            "SIGTIMER",
+            "does not decode or dereference",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, timer_delete["description"])
+        self.assertIn(
+            "src/time/timer_delete.c", timer_delete["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/timer_delete.rs",
+            posix_runtime["source_owners"],
+        )
+        timer_gettime = artifacts_by_id["static-c-timer-gettime-error-abi"]
+        assert isinstance(timer_gettime, dict)
+        self.assertNotIn("capabilities", timer_gettime)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/timer_gettime.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/timer_gettime_header_abi_probe.c",
+            "compat/x86_64/timer_gettime_header_abi_probe.cpp",
+            "compat/x86_64/run_timer_gettime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timer_gettime_probe.c",
+            "compat/x86_64/libc_timer_gettime_start.S",
+            "compat/x86_64/run_libc_timer_gettime.sh",
+        ):
+            self.assertIn(owner, timer_gettime["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in timer_gettime["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timer-gettime"},
+        )
+        for phrase in (
+            "rejected-handle output-preservation error-ABI artifact",
+            "src/time/timer_gettime.c",
+            "timer_t 0",
+            "INT_MAX",
+            "`-1`/`EINVAL`",
+            "record to remain unchanged",
+            "negative `timer_t`",
+            "pthread_impl",
+            "does not decode or dereference",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, timer_gettime["description"])
+        self.assertIn(
+            "src/time/timer_gettime.c", timer_gettime["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/timer_gettime.rs",
+            posix_runtime["source_owners"],
+        )
+        timer_settime = artifacts_by_id["static-c-timer-settime-error-abi"]
+        assert isinstance(timer_settime, dict)
+        self.assertNotIn("capabilities", timer_settime)
+        for owner in (
+            "compat/upstreams.toml",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/timer_settime.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/time.h",
+            "compat/x86_64/timer_settime_header_abi_probe.c",
+            "compat/x86_64/timer_settime_header_abi_probe.cpp",
+            "compat/x86_64/run_timer_settime_header_abi.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_timer_settime_probe.c",
+            "compat/x86_64/libc_timer_settime_start.S",
+            "compat/x86_64/run_libc_timer_settime.sh",
+        ):
+            self.assertIn(owner, timer_settime["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in timer_settime["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-timer-settime"},
+        )
+        for phrase in (
+            "rejected-handle input/output-preservation error-ABI artifact",
+            "src/time/timer_settime.c",
+            "timer_t 0",
+            "INT_MAX",
+            "flags zero",
+            "`-1`/`EINVAL`",
+            "both records to remain unchanged",
+            "negative `timer_t`",
+            "pthread_impl",
+            "does not decode or dereference",
+            "family completion, promotion, or public x86 support",
+        ):
+            self.assertIn(phrase, timer_settime["description"])
+        self.assertIn(
+            "src/time/timer_settime.c", timer_settime["oracle"][0]["role"]
+        )
+        self.assertIn(
+            "libc/src/c_abi/x86_64/timer_settime.rs",
+            posix_runtime["source_owners"],
+        )
         system_configuration = artifacts_by_id["static-c-system-configuration"]
         assert isinstance(system_configuration, dict)
         self.assertNotIn("capabilities", system_configuration)
@@ -17175,6 +17430,220 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh time-abi-reference"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-clock-gettime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_clock_adjtime_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-adjtime-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "CLOCK_MONOTONIC", "CLOCK_UNSELECTED"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "CLOCK_MONOTONIC"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-adjtime-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-clock-adjtime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_clock_settime_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-settime-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "CLOCK_MONOTONIC", "CLOCK_UNSELECTED"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "CLOCK_MONOTONIC"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-clock-settime-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-clock-settime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timer_getoverrun_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-getoverrun-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "INT_MAX", "UNSELECTED_MAX"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "INT_MAX"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-getoverrun-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timer-getoverrun command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timer_delete_raw_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-delete-raw-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "raw `-EINVAL`", "normalized EINVAL"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "raw `-EINVAL`"):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-delete-raw-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timer-delete command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timer_gettime_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-gettime-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "record to remain unchanged", "record may change"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "record to remain unchanged"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-gettime-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timer-gettime command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_timer_settime_error_abi_artifact_keeps_its_closed_mapping_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-settime-error-abi"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "both records to remain unchanged", "records may change"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "both records to remain unchanged"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-timer-settime-error-abi"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh advanced-time-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-timer-settime command"
         ):
             ledger.validate_ledger(data)
 

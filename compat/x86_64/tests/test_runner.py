@@ -22440,6 +22440,865 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_clock_adjtime_error_artifact_stays_non_adjusting(
+        self,
+    ) -> None:
+        """Rejected clock IDs are a private errno ABI, not adjustment support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        clock_adjtime = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_adjtime.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_clock_adjtime_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_clock_adjtime_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_clock_adjtime.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "clock_adjtime_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "clock_adjtime_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_clock_adjtime_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "clock_adjtime.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/linux/clock_adjtime.c::clock_adjtime",
+            "SYS_CLOCK_ADJTIME",
+            "raw_syscall::syscall2",
+            "c_status(result)",
+            "valid caller",
+            "successful discipline/state semantics",
+            "public x86 support",
+        ):
+            self.assertIn(required, clock_adjtime)
+        self.assertIn('pub unsafe extern "C" fn clock_adjtime(', clock_adjtime)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "clock_settime(",
+            "clock_gettime(",
+            "clock_getres(",
+            "adjtimex(",
+            "timer_create(",
+            "timer_delete(",
+            "nanosleep(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, clock_adjtime)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <sys/timex.h>",
+            "SYS_clock_adjtime == 305",
+            "check_rejected_clock",
+            "CLOCK_MONOTONIC",
+            "EOPNOTSUPP",
+            "CRABC_CLOCK_ADJTIME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("clock_adjtime_function(CLOCK_REALTIME", probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_clock_adjtime_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("clock_adjtime_signature", header_probe)
+            self.assertIn("clock_adjtime", header_probe)
+        for required in (
+            "strict",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_clock_adjtime_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_clock_adjtime_syscall",
+            "clock_adjtime lacks syscall 305",
+            "direct fs initial TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("clock_adjtime", static_export_names)
+        self.assertIn('id = "static-c-clock-adjtime-error-abi"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-clock-adjtime"',
+            parity_ledger,
+        )
+        self.assertIn("run_clock_adjtime_header_abi()", runner)
+        self.assertIn("run_libc_clock_adjtime()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_clock_adjtime.sh", runner
+        )
+        self.assertIn(
+            '    clock-adjtime-header-abi)\n        [ "$#" -eq 0 ] || fail "clock-adjtime-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-clock-adjtime)\n        [ "$#" -eq 0 ] || fail "libc-clock-adjtime takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_clock_settime_error_artifact_stays_non_mutating(
+        self,
+    ) -> None:
+        """Rejected clock IDs are a private errno ABI, not clock-set support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        clock_settime = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_settime.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_clock_settime_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_clock_settime_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_clock_settime.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "clock_settime_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "clock_settime_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_clock_settime_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "clock_settime.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/clock_settime.c::clock_settime",
+            "SYS_CLOCK_SETTIME",
+            "raw_syscall::syscall2",
+            "c_status(result)",
+            "valid caller",
+            "successful mutation/state semantics",
+            "public x86 support",
+        ):
+            self.assertIn(required, clock_settime)
+        self.assertIn('pub unsafe extern "C" fn clock_settime(', clock_settime)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "clock_gettime(",
+            "clock_getres(",
+            "timer_create(",
+            "timer_delete(",
+            "nanosleep(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, clock_settime)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <time.h>",
+            "SYS_clock_settime == 227",
+            "check_invalid_clock",
+            "check_monotonic_rejection",
+            "CLOCK_MONOTONIC",
+            "EINVAL && errno != EPERM",
+            "CRABC_CLOCK_SETTIME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("clock_settime_function(CLOCK_REALTIME", probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_clock_settime_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("CRABC_CLOCK_SETTIME_EXPECT_HIDDEN", header_probe)
+            self.assertIn("clock_settime_signature", header_probe)
+            self.assertIn("clock_settime", header_probe)
+        for required in (
+            "Strict C11/C++17",
+            "compile_hidden_profile",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_clock_settime_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_clock_settime_syscall",
+            "clock_settime lacks syscall 227",
+            "direct fs initial TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("clock_settime", static_export_names)
+        self.assertIn('id = "static-c-clock-settime-error-abi"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-clock-settime"',
+            parity_ledger,
+        )
+        self.assertIn("run_clock_settime_header_abi()", runner)
+        self.assertIn("run_libc_clock_settime()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_clock_settime.sh", runner
+        )
+        self.assertIn(
+            '    clock-settime-header-abi)\n        [ "$#" -eq 0 ] || fail "clock-settime-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-clock-settime)\n        [ "$#" -eq 0 ] || fail "libc-clock-settime takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_timer_getoverrun_error_artifact_stays_non_timer_support(
+        self,
+    ) -> None:
+        """Rejected opaque handles are a private errno ABI, not timer support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        timer_getoverrun = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "timer_getoverrun.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_timer_getoverrun_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_timer_getoverrun_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_timer_getoverrun.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" /
+            "timer_getoverrun_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" /
+            "timer_getoverrun_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_timer_getoverrun_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "timer_getoverrun.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/timer_getoverrun.c::timer_getoverrun",
+            "SYS_TIMER_GETOVERRUN",
+            "raw_syscall::syscall1",
+            "c_status(result)",
+            "nonnegative opaque",
+            "pthread_impl",
+            "does not decode or dereference",
+            "valid POSIX timer",
+            "public x86 support",
+        ):
+            self.assertIn(required, timer_getoverrun)
+        self.assertIn(
+            'pub unsafe extern "C" fn timer_getoverrun(', timer_getoverrun
+        )
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "timer_create(",
+            "timer_delete(",
+            "timer_gettime(",
+            "timer_settime(",
+            "clock_gettime(",
+            "clock_getres(",
+            "clock_settime(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, timer_getoverrun)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <stdint.h>",
+            "#include <time.h>",
+            "SYS_timer_getoverrun == 225",
+            "check_rejected_timer",
+            "(timer_t)(uintptr_t)INT_MAX",
+            "EINVAL",
+            "CRABC_TIMER_GETOVERRUN_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "timer_create(",
+            "timer_delete(",
+            "timer_gettime(",
+            "timer_settime(",
+        ):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_timer_getoverrun_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("CRABC_TIMER_GETOVERRUN_EXPECT_HIDDEN", header_probe)
+            self.assertIn("timer_getoverrun_signature", header_probe)
+            self.assertIn("timer_getoverrun", header_probe)
+        for required in (
+            "Strict C11/C++17",
+            "compile_hidden_profile",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_timer_getoverrun_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_timer_getoverrun_syscall",
+            "timer_getoverrun lacks syscall 225",
+            "direct fs initial TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("timer_getoverrun", static_export_names)
+        self.assertIn(
+            'id = "static-c-timer-getoverrun-error-abi"', parity_ledger
+        )
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-timer-getoverrun"',
+            parity_ledger,
+        )
+        self.assertIn("run_timer_getoverrun_header_abi()", runner)
+        self.assertIn("run_libc_timer_getoverrun()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_timer_getoverrun.sh", runner
+        )
+        self.assertIn(
+            '    timer-getoverrun-header-abi)\n        [ "$#" -eq 0 ] || fail "timer-getoverrun-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-timer-getoverrun)\n        [ "$#" -eq 0 ] || fail "libc-timer-getoverrun takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_timer_delete_raw_error_artifact_stays_non_timer_support(
+        self,
+    ) -> None:
+        """The selected direct raw branch is not a POSIX timer capability."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        timer_delete = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_delete.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_timer_delete_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_timer_delete_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_timer_delete.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "timer_delete_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "timer_delete_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_timer_delete_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "timer_delete.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/timer_delete.c::timer_delete",
+            "SYS_TIMER_DELETE",
+            "raw_syscall::syscall1",
+            "raw -errno",
+            "does not touch errno",
+            "nonnegative opaque",
+            "pthread_impl",
+            "SIGTIMER",
+            "does not decode or dereference",
+            "valid POSIX timer",
+            "public x86 support",
+        ):
+            self.assertIn(required, timer_delete)
+        self.assertIn('pub unsafe extern "C" fn timer_delete(', timer_delete)
+        self.assertNotIn("c_status(", timer_delete)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "timer_create(",
+            "timer_getoverrun(",
+            "timer_gettime(",
+            "timer_settime(",
+            "clock_gettime(",
+            "clock_getres(",
+            "clock_settime(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, timer_delete)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <stdint.h>",
+            "#include <time.h>",
+            "SYS_timer_delete == 226",
+            "check_raw_rejection",
+            "(timer_t)(uintptr_t)INT_MAX",
+            "-EINVAL",
+            "errno != sentinel",
+            "CRABC_TIMER_DELETE_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "timer_create(",
+            "timer_getoverrun(",
+            "timer_gettime(",
+            "timer_settime(",
+        ):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_timer_delete_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("CRABC_TIMER_DELETE_EXPECT_HIDDEN", header_probe)
+            self.assertIn("timer_delete_signature", header_probe)
+            self.assertIn("timer_delete", header_probe)
+        for required in (
+            "Strict C11/C++17",
+            "compile_hidden_profile",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_timer_delete_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_timer_delete_syscall",
+            "timer_delete lacks syscall 226",
+            "preserve the raw result without errno TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("timer_delete", static_export_names)
+        self.assertIn('id = "static-c-timer-delete-raw-error-abi"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-timer-delete"',
+            parity_ledger,
+        )
+        self.assertIn("run_timer_delete_header_abi()", runner)
+        self.assertIn("run_libc_timer_delete()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_timer_delete.sh", runner
+        )
+        self.assertIn(
+            '    timer-delete-header-abi)\n        [ "$#" -eq 0 ] || fail "timer-delete-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-timer-delete)\n        [ "$#" -eq 0 ] || fail "libc-timer-delete takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_timer_gettime_error_artifact_stays_non_timer_support(
+        self,
+    ) -> None:
+        """Rejected opaque handles preserve output; this is not timer support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        timer_gettime = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_gettime.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_timer_gettime_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_timer_gettime_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_timer_gettime.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" /
+            "timer_gettime_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" /
+            "timer_gettime_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_timer_gettime_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "timer_gettime.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/timer_gettime.c::timer_gettime",
+            "SYS_TIMER_GETTIME",
+            "raw_syscall::syscall2",
+            "c_status(result)",
+            "nonnegative opaque",
+            "pthread_impl",
+            "does not decode or dereference",
+            "valid POSIX timer",
+            "public x86 support",
+        ):
+            self.assertIn(required, timer_gettime)
+        self.assertIn('pub unsafe extern "C" fn timer_gettime(', timer_gettime)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "timer_create(",
+            "timer_delete(",
+            "timer_getoverrun(",
+            "timer_settime(",
+            "clock_gettime(",
+            "clock_getres(",
+            "clock_settime(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, timer_gettime)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <stdint.h>",
+            "#include <time.h>",
+            "SYS_timer_gettime == 224",
+            "check_rejected_timer",
+            "record_is_unchanged",
+            "(timer_t)(uintptr_t)INT_MAX",
+            "EINVAL",
+            "CRABC_TIMER_GETTIME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "timer_create(",
+            "timer_delete(",
+            "timer_getoverrun(",
+            "timer_settime(",
+        ):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_timer_gettime_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("CRABC_TIMER_GETTIME_EXPECT_HIDDEN", header_probe)
+            self.assertIn("timer_gettime_signature", header_probe)
+            self.assertIn("timer_gettime", header_probe)
+            self.assertIn("itimerspec", header_probe)
+        for required in (
+            "Strict C11/C++17",
+            "compile_hidden_profile",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_timer_gettime_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_timer_gettime_syscall",
+            "timer_gettime lacks syscall 224",
+            "direct fs initial TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("timer_gettime", static_export_names)
+        self.assertIn('id = "static-c-timer-gettime-error-abi"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-timer-gettime"',
+            parity_ledger,
+        )
+        self.assertIn("run_timer_gettime_header_abi()", runner)
+        self.assertIn("run_libc_timer_gettime()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_timer_gettime.sh", runner
+        )
+        self.assertIn(
+            '    timer-gettime-header-abi)\n        [ "$#" -eq 0 ] || fail "timer-gettime-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-timer-gettime)\n        [ "$#" -eq 0 ] || fail "libc-timer-gettime takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_timer_settime_error_artifact_stays_non_timer_support(
+        self,
+    ) -> None:
+        """Rejected opaque controls preserve records; this is not timer support."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        timer_settime = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "timer_settime.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_timer_settime_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_timer_settime_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_timer_settime.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" /
+            "timer_settime_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" /
+            "timer_settime_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_timer_settime_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "timer_settime.rs"]', static_root)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/time/timer_settime.c::timer_settime",
+            "SYS_TIMER_SETTIME",
+            "raw_syscall::syscall4",
+            "c_status(result)",
+            "nonnegative opaque",
+            "pthread_impl",
+            "does not decode or dereference",
+            "valid POSIX timer",
+            "public x86 support",
+        ):
+            self.assertIn(required, timer_settime)
+        self.assertIn('pub unsafe extern "C" fn timer_settime(', timer_settime)
+        for forbidden in (
+            "crabc_core",
+            "crabc_mimalloc",
+            "timer_create(",
+            "timer_delete(",
+            "timer_getoverrun(",
+            "timer_gettime(",
+            "clock_gettime(",
+            "clock_getres(",
+            "clock_settime(",
+            "__tls_get_addr",
+        ):
+            self.assertNotIn(forbidden, timer_settime)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <limits.h>",
+            "#include <stdint.h>",
+            "#include <time.h>",
+            "SYS_timer_settime == 223",
+            "check_rejected_timer",
+            "request_is_unchanged",
+            "record_is_unchanged",
+            "(timer_t)(uintptr_t)INT_MAX",
+            "EINVAL",
+            "CRABC_TIMER_SETTIME_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "timer_create(",
+            "timer_delete(",
+            "timer_getoverrun(",
+            "timer_gettime(",
+        ):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_timer_settime_probe",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cpp):
+            self.assertIn("CRABC_TIMER_SETTIME_EXPECT_HIDDEN", header_probe)
+            self.assertIn("timer_settime_signature", header_probe)
+            self.assertIn("timer_settime", header_probe)
+            self.assertIn("itimerspec", header_probe)
+        for required in (
+            "Strict C11/C++17",
+            "compile_hidden_profile",
+            "posix",
+            "xopen",
+            "gnu",
+            "-std=c++17",
+            "nm --undefined-only",
+            "mangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_timer_settime_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "assert_timer_settime_syscall",
+            "timer_settime lacks syscall 223",
+            "fourth-argument r10 placement",
+            "direct fs initial TLS",
+            "env -i",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("timer_settime", static_export_names)
+        self.assertIn('id = "static-c-timer-settime-error-abi"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-timer-settime"',
+            parity_ledger,
+        )
+        self.assertIn("run_timer_settime_header_abi()", runner)
+        self.assertIn("run_libc_timer_settime()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_timer_settime.sh", runner
+        )
+        self.assertIn(
+            '    timer-settime-header-abi)\n        [ "$#" -eq 0 ] || fail "timer-settime-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-timer-settime)\n        [ "$#" -eq 0 ] || fail "libc-timer-settime takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_time_observation_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
