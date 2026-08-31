@@ -58,13 +58,15 @@ The sealed driver passes `-mno-outline-atomics`, links `libc` before this
 archive, and audits resolved LLD inputs. Thus public libc math symbols remain
 owned by `libc`; the archive is selected only for compiler-generated helpers.
 
-## Private x86 static-PIE bundle helper
+## Private x86 static consumer helper
 
 `build_x86_64.py` is a deliberately narrower, native-evidence-only builder.
 It compiles the existing Rust helper source into a deterministic one-member
-`libcrabc-builtins.a`, audits its x86-64 ELF shape and helper closure, and is
-consumed only by `./crt/run-x86_64.sh static-pie-bundle`. The fixture selects
-`__udivti3` to prove the archive is really consumed alongside Rust
-`rcrt1.o`/`crti.o`/`crtn.o`; it rejects any ambient CRT or compiler-runtime
-input before linking. It neither reuses a prebuilt compiler runtime nor
-creates an installed x86 sysroot or complete x86 compiler-helper profile.
+`libcrabc-builtins.a` and audits its x86-64 ELF shape and helper closure. The
+private `./crt/run-x86_64.sh static-pie-bundle` fixture consumes it beside
+Rust `rcrt1.o`/`crti.o`/`crtn.o`; the separate private
+`./scripts/dev-x86_64.sh owned-static-sysroot` gate installs and consumes the
+same bounded archive beside `crt1.o` and the reconstructed static libc. Both
+force `__udivti3` and reject ambient CRT or compiler-runtime inputs. This
+builder never reuses a prebuilt compiler runtime and does not establish a
+complete x86 compiler-helper profile or public sysroot.

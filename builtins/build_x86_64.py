@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Build a bounded Rust-only x86-64 helper archive for CRT evidence.
+"""Build a bounded Rust-only x86-64 helper archive for static consumers.
 
 This is intentionally separate from ``build.py``'s complete installed
 Linux/AArch64 sysroot archive. It makes the existing audited Rust integer and
-complex helper object available only to the native x86 static-PIE bundle
-proof. It neither installs an x86 sysroot nor claims a complete x86 compiler
-runtime.
+complex helper object available to bounded native x86 static-PIE and installed
+static-consumer proofs. It is not a complete x86 compiler runtime.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -57,9 +57,31 @@ def run(command: list[str], *, cwd: Path = ROOT) -> str:
 
 def tool(name: str) -> str:
     value = shutil.which(name)
-    if value is None:
-        raise BuildError(f"required tool is unavailable: {name}")
-    return value
+    if value is not None:
+        return value
+    rustup = shutil.which("rustup")
+    if rustup is not None:
+        completed = subprocess.run(
+            [rustup, "run", TOOLCHAIN, "rustc", "--print", "sysroot"],
+            check=False,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if completed.returncode == 0:
+            sysroot = Path(completed.stdout.strip())
+            for candidate in (
+                sysroot / "lib" / "rustlib" / TARGET / "bin" / name,
+                sysroot / "lib" / "rustlib" / TARGET / "bin" / "gcc-ld" / name,
+            ):
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    return str(candidate)
+    if name == "llvm-readelf":
+        fallback = shutil.which("readelf")
+        if fallback is not None:
+            return fallback
+    raise BuildError(f"required tool is unavailable: {name}")
 
 
 def sha256(path: Path) -> str:
@@ -193,7 +215,7 @@ def main() -> int:
     provenance = {
         "schema": 1,
         "target": TARGET,
-        "scope": "private static-PIE helper bundle only; not an installed sysroot or complete x86 compiler runtime",
+        "scope": "bounded private x86 static consumers only; not a complete compiler runtime or public sysroot",
         "source": "builtins/src/lib.rs",
         "archive": archive,
         "reproducible": reproducible,

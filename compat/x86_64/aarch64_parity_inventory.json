@@ -1538,9 +1538,9 @@
         "sysroot"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "sysroot.static-tls",
-      "verified_artifact_count": 0,
+      "verified_artifact_count": 1,
       "verified_slice_count": 0
     },
     {
@@ -1550,9 +1550,9 @@
         "sysroot-smoke"
       ],
       "capability_count": 0,
-      "contract_state": "missing",
+      "contract_state": "selected-private",
       "id": "sysroot.owned-artifact",
-      "verified_artifact_count": 0,
+      "verified_artifact_count": 1,
       "verified_slice_count": 0
     },
     {
@@ -1652,8 +1652,8 @@
   ],
   "family_state_counts": {
     "implemented-foundation": 8,
-    "missing": 9,
-    "selected-private": 9
+    "missing": 7,
+    "selected-private": 11
   },
   "purpose": "Derived AArch64-to-x86 runtime contract inventory; evidence accounting only, never a promotion decision.",
   "schema": "crabc.x86_64-aarch64-parity-inventory/v1",
@@ -2057,13 +2057,21 @@
     {
       "family": "libc.text-math-locale-stdio",
       "id": "static-c-text-math-locale-stdio-composition"
+    },
+    {
+      "family": "sysroot.owned-artifact",
+      "id": "owned-static-artifact-reproducibility"
+    },
+    {
+      "family": "sysroot.static-tls",
+      "id": "installed-static-pthread-tls-consumer"
     }
   ],
   "source_digests": {
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "fa8a1dc3335c3c1c9f2341ddcdee698895e5e9faee01fae216119b78b1cff810",
+    "x86_parity_ledger": "30e632ca7d4c9d4907bc0e196df9d2300c1362816c521e71287f14b0f19aaed7",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
     "x86_static_c_exports": "2cdee464b5981241f16fcfc16608ccb386f0aeacda1e22889d6ebd897fdf34ca"
   },

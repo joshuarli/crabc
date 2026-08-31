@@ -13,6 +13,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Project status](../STATUS.md) — current completion state and roadmap router.
 - [Native Linux/x86-64 parity goal](../x86-64.md) — staged target-specific
   implementation and promotion contract; not current public support.
+- [Private x86-64 owned static sysroot evidence](../compat/x86_64/owned-static-sysroot.md)
+  — reproducible installed static artifact and real pthread/TLS consumer;
+  neither sysroot-family completion nor public support.
 - [Runtime ownership architecture](design/architecture.md) — layer ownership,
   dependency direction, and the private runtime wire boundary.
 - [Agent/project handoff](../AGENTS.md) — code map, source precedence, and

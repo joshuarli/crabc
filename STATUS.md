@@ -268,6 +268,20 @@ block, fresh selected worker, and malformed `PT_TLS.p_filesz` status-127
 rejection are private evidence only. It does not complete general CRT or libc
 startup ABI, pthread/TLS parity, loader TLS, a sysroot, or public x86 support.
 
+`./scripts/dev-x86_64.sh owned-static-sysroot` is the first private installed
+artifact shared by the still-planned `sysroot.static-tls` and
+`sysroot.owned-artifact` families. It builds two byte-identical trees holding
+only the regular-file project headers, five Rust CRT objects, a reconstructed
+Rust-member `libc.a`, bounded Rust-only compiler helpers, and normalized
+provenance. One real `-nostdinc`/direct-LLD consumer executes the existing
+`PIMBCAF` Static Initial TLS v1, pthread, and ordinary-exit lifecycle while
+forcing installed `__udivti3`; dependency and linker traces reject ambient
+headers, CRT, target libc, compiler runtime, and loader paths. The final
+`ET_EXEC` has no interpreter or dynamic dependency and preserves malformed
+`PT_TLS.p_filesz` status-127 rejection. No driver, shared libc, loader,
+dynamic modes, complete archive closure, distribution/extracted-smoke proof,
+family completion, promotion, or public x86 support is selected.
+
 The x86 direct Rust facade also has verified allocation-free
 `pattern::{fnmatch, FnmatchFlags}` and alloc-gated explicit-root
 `pattern::{GlobPath, glob, glob_at}` slices. Their x86 no-std archive proofs

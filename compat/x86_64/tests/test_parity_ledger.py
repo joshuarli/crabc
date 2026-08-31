@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 29)
-        self.assertEqual(report["verified_artifact_count"], 100)
+        self.assertEqual(report["verified_artifact_count"], 102)
         self.assertEqual(report["header_layout_probe_count"], 45)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -126,6 +126,47 @@ class X86ParityLedgerTests(unittest.TestCase):
         changed_artifact["description"] = "complete regex"
         with self.assertRaisesRegex(
             ledger.LedgerError, "static-c-bounded-regex description omits"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_owned_static_sysroot_is_two_private_artifacts_without_promotion(self) -> None:
+        data = self.data()
+        expectations = {
+            "sysroot.static-tls": "installed-static-pthread-tls-consumer",
+            "sysroot.owned-artifact": "owned-static-artifact-reproducibility",
+        }
+        for family_id, artifact_id in expectations.items():
+            family = self.family(data, family_id)
+            self.assertEqual(family["status"], "planned")
+            artifacts = family["verified_artifact"]
+            assert isinstance(artifacts, list)
+            artifact = next(entry for entry in artifacts if entry["id"] == artifact_id)
+            self.assertNotIn("capabilities", artifact)
+            self.assertEqual(
+                {entry["command"] for entry in artifact["native_evidence"]},
+                {"./scripts/dev-x86_64.sh owned-static-sysroot"},
+            )
+            self.assertIn("public x86 support", artifact["description"])
+            self.assertIn(
+                "scripts/build_x86_64_owned_sysroot.py", artifact["source_owners"]
+            )
+            self.assertIn(
+                "compat/x86_64/run_owned_static_sysroot.sh", artifact["source_owners"]
+            )
+
+        changed = copy.deepcopy(data)
+        family = self.family(changed, "sysroot.static-tls")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "installed-static-pthread-tls-consumer"
+        )
+        artifact["description"] = "private installed test"
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "installed-static-pthread-tls-consumer description omits",
         ):
             ledger.validate_ledger(changed)
 

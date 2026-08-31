@@ -866,6 +866,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memfd-create-header-abi",
             "vector-io-header-abi",
             "libc-crt1-static-tls",
+            "owned-static-sysroot",
             "crt-object-bundle",
             "crt-dynamic-startup|crt-dynamic-link-contract",
             "linux-5-10-uapi",
@@ -6505,6 +6506,58 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('"$link_editor" -pie', runner)
         self.assertNotIn("--whole-archive", runner)
         self.assertIn("libc-crt1-static-tls", dispatcher)
+
+    def test_owned_static_sysroot_is_reproducible_and_rejects_ambient_inputs(self) -> None:
+        builder = (
+            ROOT / "scripts" / "build_x86_64_owned_sysroot.py"
+        ).read_text(encoding="utf-8")
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_owned_static_sysroot.sh"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" / "owned_static_sysroot_builtins.c"
+        ).read_text(encoding="utf-8")
+        dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(
+            encoding="utf-8"
+        )
+        evidence = (
+            ROOT / "compat" / "x86_64" / "owned-static-sysroot.md"
+        ).read_text(encoding="utf-8")
+        normalized_evidence = " ".join(evidence.split())
+
+        for required in (
+            "crabc-x86-64-owned-static-sysroot-v1",
+            "nightly-2026-07-24",
+            "c.*.rcgu.o",
+            "stock_compiler_builtins_members_installed",
+            "ambient_target_crt_or_library_installed",
+            "private-static-pthread-tls-consumer-slice",
+            "sysroot.static-tls family completion",
+            "sysroot.owned-artifact family completion",
+            "staged_output.replace(output)",
+        ):
+            self.assertIn(required, builder)
+        for required in (
+            "-nostdinc",
+            "audit_header_dependencies",
+            "audit_link_trace",
+            "without-builtins",
+            "/usr/lib/crt1.o",
+            "/opt/musl-x86_64/lib/libc.a",
+            "libgcc.a",
+            "/lib/ld-musl-x86_64.so.1",
+            "GNU_RELRO",
+            "GNU_STACK",
+            "PIMBCAF",
+            "expect_bootstrap_rejection",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("--whole-archive", runner)
+        self.assertIn("__udivti3", fixture)
+        self.assertIn("owned-static-sysroot", dispatcher)
+        self.assertIn("still-planned `sysroot.static-tls`", normalized_evidence)
+        self.assertIn("still-planned `sysroot.owned-artifact`", normalized_evidence)
+        self.assertIn("not public x86-64 support", normalized_evidence)
 
     def test_libc_static_c_abi_termios_control_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -6739,6 +6739,138 @@ def require_static_crt1_initial_tls_handoff_artifact(family: Mapping[str, Any]) 
         )
 
 
+def require_owned_static_sysroot_artifacts(
+    static_tls_family: Mapping[str, Any],
+    owned_artifact_family: Mapping[str, Any],
+) -> None:
+    """Ratchet the shared installed static vertical without family promotion."""
+
+    specifications = (
+        (
+            static_tls_family,
+            "sysroot.static-tls",
+            "installed-static-pthread-tls-consumer",
+            (
+                "still-planned `sysroot.static-tls`",
+                "Two clean builds",
+                "regular-file project header tree",
+                "`c.*.rcgu.o`",
+                "Rust-only `libcrabc-builtins.a`",
+                "`-nostdinc`",
+                "`PIMBCAF`",
+                "`__udivti3`",
+                "ambient headers, CRT, musl libc, libgcc/compiler runtime, and loader",
+                "no interpreter/dynamic dependency/unresolved symbol",
+                "status-127",
+                "public x86 support",
+            ),
+            (
+                "pinned musl",
+                "two clean byte-identical installed trees",
+                "`-nostdinc`",
+                "direct-LLD exact-input linkage",
+                "`__udivti3`",
+                "no-builtins link fails",
+                "ambient header/CRT/musl-libc/libgcc/compiler-runtime/loader",
+                "PT_TLS p_filesz status 127",
+                "family completion",
+                "public x86 support",
+            ),
+        ),
+        (
+            owned_artifact_family,
+            "sysroot.owned-artifact",
+            "owned-static-artifact-reproducibility",
+            (
+                "still-planned `sysroot.owned-artifact`",
+                "pinned nightly Cargo/Rust producers",
+                "sealed environment",
+                "atomically installs",
+                "regular-file-only tree",
+                "byte-identical",
+                "exactly five Rust CRT objects",
+                "no symlink",
+                "no symlink, bin directory/compiler driver, libc.so, loader directory/PT_INTERP",
+                "`__udivti3`",
+                "distribution/extracted smoke",
+                "public x86 support",
+            ),
+            (
+                "two clean installed trees",
+                "pinned Rust producers",
+                "real installed static pthread/TLS/compiler-helper consumer",
+                "ambient headers, CRT, musl libc, libgcc/compiler runtime, and loader",
+                "no compiler driver",
+                "owned loader/PT_INTERP",
+                "distribution archive",
+                "extracted smoke",
+                "family completion",
+                "public x86 support",
+            ),
+        ),
+    )
+    required_owners = (
+        "scripts/build_x86_64_owned_sysroot.py",
+        "scripts/tests/test_build_x86_64_owned_sysroot.py",
+        "crt/build_x86_64.py",
+        "builtins/build_x86_64.py",
+        "builtins/src/lib.rs",
+        "compat/x86_64/libc_crt_static_tls_probe.c",
+        "compat/x86_64/libc_crt_static_tls_peer.c",
+        "compat/x86_64/owned_static_sysroot_builtins.c",
+        "compat/x86_64/run_owned_static_sysroot.sh",
+        "compat/x86_64/owned-static-sysroot.md",
+        "scripts/dev-x86_64.sh",
+    )
+    for family, family_id, artifact_id, description_phrases, scope_phrases in specifications:
+        artifacts = require_verified_artifacts(
+            family.get("verified_artifact"),
+            f"family[{family_id}].verified_artifact",
+            family.get("status", ""),
+        )
+        matching = [entry for entry in artifacts if entry.get("id") == artifact_id]
+        require(
+            len(matching) == 1,
+            f"{family_id} must contain exactly one {artifact_id} artifact",
+        )
+        require(
+            family.get("status") == "planned",
+            f"{artifact_id} must not promote {family_id}",
+        )
+        artifact = matching[0]
+        description = artifact["description"]
+        assert isinstance(description, str)
+        for phrase in description_phrases:
+            require(phrase in description, f"{artifact_id} description omits {phrase}")
+        owners = set(nonempty_strings(
+            artifact["source_owners"], f"{artifact_id}.source_owners"
+        ))
+        for owner in required_owners:
+            require(owner in owners, f"{artifact_id} source owners omit {owner}")
+        prerequisite_text = " ".join(nonempty_strings(
+            artifact["x86_abi_prerequisites"], f"{artifact_id}.x86_abi_prerequisites"
+        ))
+        for phrase in ("EM_X86_64", "libc.a", "libcrabc-builtins.a"):
+            require(phrase in prerequisite_text, f"{artifact_id} ABI prerequisites omit {phrase}")
+        header_text = " ".join(nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            f"{artifact_id}.x86_header_prerequisites",
+        ))
+        for phrase in ("-nostdinc", "installed"):
+            require(phrase in header_text, f"{artifact_id} header prerequisites omit {phrase}")
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list)
+        require(
+            {entry["command"] for entry in evidence}
+            == {"./scripts/dev-x86_64.sh owned-static-sysroot"},
+            f"{artifact_id} must use the closed owned-static-sysroot command",
+        )
+        scope = evidence[0]["scope"]
+        assert isinstance(scope, str)
+        for phrase in scope_phrases:
+            require(phrase in scope, f"{artifact_id} evidence scope omits {phrase}")
+
+
 def require_static_pie_rust_builtins_bundle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the x86 CRT/helper consumer private, closed, and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -16532,6 +16664,9 @@ def validate_ledger(
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
+    require_owned_static_sysroot_artifacts(
+        by_id["sysroot.static-tls"], by_id["sysroot.owned-artifact"]
+    )
     require_static_pthread_identity_artifact(by_id["libc.pthread-tls"])
     require_static_c11_lifecycle_artifact(by_id["libc.pthread-tls"])
     require_static_pthread_c11_detach_artifact(by_id["libc.pthread-tls"])

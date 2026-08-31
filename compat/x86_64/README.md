@@ -360,6 +360,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-static-tls-v1
 ./scripts/dev-x86_64.sh libc-crt-static-tls
 ./scripts/dev-x86_64.sh libc-crt1-static-tls
+./scripts/dev-x86_64.sh owned-static-sysroot
 ./scripts/dev-x86_64.sh libc-pthread-create-join-tls
 ./scripts/dev-x86_64.sh libc-pthread-identity
 ./scripts/dev-x86_64.sh libc-c11-lifecycle
@@ -2199,6 +2200,28 @@ no-allocation LIFO `atexit`/`__cxa_atexit` exit, and fini; no-op
 entry ABI, pthread/TLS parity, dynamic or loader TLS, a dynamic loader,
 sysroot, or public x86 support.
 
+`owned-static-sysroot` is the first private installed-artifact composition
+inside both still-planned `sysroot.static-tls` and
+`sysroot.owned-artifact`. `scripts/build_x86_64_owned_sysroot.py` atomically
+installs the regular-file project header tree, all five Rust-produced CRT
+objects, a deterministic `libc.a` rebuilt from only `c.*.rcgu.o` members, and
+the bounded Rust-only `libcrabc-builtins.a`. Two clean builds must be
+byte-identical, including normalized producer and exclusion records. The
+consumer compiles with `-nostdinc`, audits every dependency path, then links
+directly with LLD from an exact installed/object allowlist. It executes the
+existing `PIMBCAF` initialized/TBSS/4096-byte-aligned Static Initial TLS v1,
+pthread, and ordinary-exit lifecycle while forcing `__udivti3` from the
+installed helper archive; removing that archive must fail at the helper.
+Forged dependency and linker traces separately reject ambient headers, CRT,
+musl libc, libgcc/compiler runtime, and loader paths. The final `ET_EXEC` has
+one `PT_TLS`, GNU RELRO, a non-executable stack, no interpreter or dynamic
+dependency, no unresolved symbol, and retains malformed-`PT_TLS.p_filesz`
+status-127 rejection. The installed tree deliberately has no compiler driver,
+shared libc, loader, dynamic link mode, complete libc/helper closure,
+distribution archive, or extracted smoke. Both families therefore remain
+planned and x86-64 remains non-public. The exact boundary is documented in
+[`owned-static-sysroot.md`](owned-static-sysroot.md).
+
 `libc-pthread-create-join-tls` is a separately recorded static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
 project-header C body first runs against pinned musl and then in a
@@ -3612,9 +3635,9 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-string-copy`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, and `libc-math-complex` static archive harnesses, and the separately scoped
-`static-pie` CRT gate,
-the lane owns no
+`static-pie` CRT gate, and the bounded `owned-static-sysroot` installed
+artifact gate, the lane owns no
 allocator evidence and exposes no generic Cargo, shell, general `crabc-libc`
-artifact, dynamic-loader artifact, general CRT, or sysroot command. Those remain
-separate future completion work under `x86-64.md`; passing any command must
-not be reported as x86_64 runtime parity.
+artifact, dynamic-loader artifact, general CRT, or complete sysroot command.
+Those remain separate future completion work under `x86-64.md`; passing any
+command must not be reported as x86_64 runtime parity.

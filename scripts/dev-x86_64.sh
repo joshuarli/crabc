@@ -206,6 +206,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
+  owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
@@ -2662,6 +2663,10 @@ run_libc_crt1_static_tls_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_crt1_static_tls.sh
 }
 
+run_owned_static_sysroot_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_owned_static_sysroot.sh
+}
+
 run_crt_object_bundle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_crt_object_bundle.sh
 }
@@ -2857,6 +2862,7 @@ case "$command" in
     memfd-create-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
+    owned-static-sysroot) ;;
     crt-object-bundle) ;;
     crt-dynamic-startup|crt-dynamic-link-contract) ;;
     linux-5-10-uapi) ;;
@@ -3809,6 +3815,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-crt1-static-tls takes no arguments"
         ensure_image
         run_libc_crt1_static_tls_probe
+        ;;
+    owned-static-sysroot)
+        [ "$#" -eq 0 ] || fail "owned-static-sysroot takes no arguments"
+        ensure_image
+        run_owned_static_sysroot_probe
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"
