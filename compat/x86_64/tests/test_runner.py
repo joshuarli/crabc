@@ -1446,6 +1446,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
             "libc-pthread-name",
+            "libc-pthread-barrierattr-pshared",
             "libc-pthread-detach",
             "libc-thrd-yield",
             "libc-memory-sync",
@@ -1511,6 +1512,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-atfork", source)
         self.assertIn("libc-pthread-cpuclock", source)
         self.assertIn("libc-pthread-name", source)
+        self.assertIn("libc-pthread-barrierattr-pshared", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
@@ -7312,6 +7314,180 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_pthread_barrierattr_pshared_stays_record_only(
+        self,
+    ) -> None:
+        """Keep barrierattr pshared as an unconsumed raw-record pair."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pshared = (
+            ROOT
+            / "libc"
+            / "src"
+            / "c_abi"
+            / "x86_64"
+            / "pthread_barrierattr_pshared.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_barrierattr_pshared_probe.c"
+        )
+        start_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "libc_pthread_barrierattr_pshared_start.S"
+        )
+        artifact_runner_path = (
+            ROOT
+            / "compat"
+            / "x86_64"
+            / "run_libc_pthread_barrierattr_pshared.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(
+                path.is_file(), f"missing barrierattr pshared input: {path}"
+            )
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_barrierattr_pshared.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_barrierattr_setpshared.c::pthread_barrierattr_setpshared",
+            "src/thread/pthread_attr_get.c::pthread_barrierattr_getpshared",
+            "pshared > 1U",
+            "a->__attr = pshared ? INT_MIN : 0",
+            "*pshared = !!a->__attr",
+            "four-byte `pthread_barrierattr_t`",
+            "No selected barrier initializer",
+            "process-shared barrier operation",
+            "no allocation,",
+            "C-`errno`",
+        ):
+            self.assertIn(required, pshared)
+        for forbidden in (
+            "use super",
+            "raw_syscall::",
+            "static_tls::",
+            "pthread_identity::",
+            "pthread_barrier::",
+            "atomic::",
+        ):
+            self.assertNotIn(forbidden, pshared)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "sizeof(pthread_barrierattr_t) == 4",
+            "PTHREAD_PROCESS_PRIVATE == 0 && PTHREAD_PROCESS_SHARED == 1",
+            "pthread_barrierattr_setpshared",
+            "pthread_barrierattr_getpshared",
+            "CRABC_SHARED_BARRIER_ATTRIBUTE_WORD 0x80000000U",
+            "CRABC_MUTATED_BARRIER_ATTRIBUTE_WORD",
+            "pthread_barrierattr_setpshared(&attr, 2) != EINVAL",
+            "pthread_barrierattr_setpshared(&attr, -1) != EINVAL",
+            "CRABC_PTHREAD_BARRIERATTR_PSHARED_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertNotIn("pthread_barrierattr_init(", probe)
+        self.assertNotIn("pthread_barrierattr_destroy(", probe)
+        for required in (
+            "crabc_x86_64_pthread_barrierattr_pshared_probe",
+            "mov $60, %eax",
+            "syscall",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("__crabc_x86_static_tls_bootstrap", start)
+        self.assertNotIn("%fs", start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_direct_record_path",
+            "must remain TLS-free",
+            "src/thread/pthread_barrierattr_setpshared.c",
+            "src/thread/pthread_attr_get.c",
+            "assert_no_unselected_barrierattr_exports",
+            "pthread_barrier_init pthread_barrier_destroy pthread_barrier_wait",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {
+                "pthread_barrierattr_setpshared",
+                "pthread_barrierattr_getpshared",
+            }
+            <= static_exports
+        )
+        self.assertTrue(
+            {
+                "pthread_barrier_init",
+                "pthread_barrier_destroy",
+                "pthread_barrier_wait",
+            }.isdisjoint(static_exports)
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            for required in (
+                "crabc_pthread_barrierattr_setpshared_signature",
+                "crabc_pthread_barrierattr_getpshared_signature",
+                "pthread_barrierattr_setpshared signature",
+                "pthread_barrierattr_getpshared signature",
+            ):
+                self.assertIn(required, header_probe)
+        self.assertIn("crabc_force_pthread_barrierattr_setpshared", cxx_header_probe)
+        self.assertIn("crabc_force_pthread_barrierattr_getpshared", cxx_header_probe)
+        self.assertIn(
+            "pthread_barrierattr_setpshared pthread_barrierattr_getpshared",
+            header_runner,
+        )
+        self.assertIn(
+            "pthread_barrierattr_setpshared|pthread_barrierattr_getpshared",
+            header_runner,
+        )
+        self.assertIn('id = "static-c-pthread-barrierattr-pshared"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-barrierattr-pshared"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_barrierattr_pshared_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_barrierattr_pshared.sh",
+            runner,
+        )
+        self.assertIn("    libc-pthread-barrierattr-pshared) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-barrierattr-pshared)\n        [ "$#" -eq 0 ] || fail "libc-pthread-barrierattr-pshared takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
         self,
     ) -> None:
@@ -8428,7 +8604,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_cond_signal pthread_cond_broadcast\n        pthread_rwlock_init pthread_rwlock_destroy pthread_rwlock_rdlock",
             "thrd_create thrd_detach thrd_join thrd_exit thrd_sleep thrd_yield thrd_current thrd_equal",
             "call_once",
-            "pthread_rwlockattr_getpshared|pthread_once",
+            "pthread_rwlockattr_getpshared|pthread_barrierattr_setpshared|pthread_barrierattr_getpshared|pthread_once",
             "thrd_equal|call_once|tss_create|tss_delete|tss_get|tss_set|mtx_init",
         ):
             self.assertIn(required, header_runner)
@@ -8702,7 +8878,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific",
             "call_once tss_create tss_delete tss_get tss_set",
-            "pthread_equal|pthread_key_create|pthread_key_delete|pthread_getspecific|pthread_setspecific",
+            "pthread_key_create|pthread_key_delete|pthread_getspecific|pthread_setspecific",
             "call_once|tss_create|tss_delete|tss_get|tss_set",
         ):
             self.assertIn(required, header_runner)

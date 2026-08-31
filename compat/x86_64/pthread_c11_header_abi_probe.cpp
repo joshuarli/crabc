@@ -154,6 +154,10 @@ using crabc_pthread_rwlockattr_setpshared_signature = int (*)
 	(pthread_rwlockattr_t *, int);
 using crabc_pthread_rwlockattr_getpshared_signature = int (*)
 	(const pthread_rwlockattr_t *, int *);
+using crabc_pthread_barrierattr_setpshared_signature = int (*)
+	(pthread_barrierattr_t *, int);
+using crabc_pthread_barrierattr_getpshared_signature = int (*)
+	(const pthread_barrierattr_t *, int *);
 using crabc_once_init_signature = void (*)();
 using crabc_pthread_once_signature = int (*)(
 	pthread_once_t *, crabc_once_init_signature);
@@ -247,6 +251,10 @@ static_assert(__is_same(decltype(&pthread_rwlockattr_setpshared),
 	crabc_pthread_rwlockattr_setpshared_signature), "pthread_rwlockattr_setpshared signature");
 static_assert(__is_same(decltype(&pthread_rwlockattr_getpshared),
 	crabc_pthread_rwlockattr_getpshared_signature), "pthread_rwlockattr_getpshared signature");
+static_assert(__is_same(decltype(&pthread_barrierattr_setpshared),
+	crabc_pthread_barrierattr_setpshared_signature), "pthread_barrierattr_setpshared signature");
+static_assert(__is_same(decltype(&pthread_barrierattr_getpshared),
+	crabc_pthread_barrierattr_getpshared_signature), "pthread_barrierattr_getpshared signature");
 static_assert(__is_same(decltype(&pthread_once), crabc_pthread_once_signature),
 	"pthread_once signature");
 #if defined(CRABC_EXPECT_POSIX_SIGNAL_DECLARATIONS)
@@ -375,6 +383,10 @@ static crabc_pthread_rwlockattr_setpshared_signature const crabc_force_pthread_r
 	__attribute__((used)) = &pthread_rwlockattr_setpshared;
 static crabc_pthread_rwlockattr_getpshared_signature const crabc_force_pthread_rwlockattr_getpshared
 	__attribute__((used)) = &pthread_rwlockattr_getpshared;
+static crabc_pthread_barrierattr_setpshared_signature const crabc_force_pthread_barrierattr_setpshared
+	__attribute__((used)) = &pthread_barrierattr_setpshared;
+static crabc_pthread_barrierattr_getpshared_signature const crabc_force_pthread_barrierattr_getpshared
+	__attribute__((used)) = &pthread_barrierattr_getpshared;
 static crabc_pthread_once_signature const crabc_force_pthread_once
 	__attribute__((used)) = &pthread_once;
 static crabc_thrd_create_signature const crabc_force_thrd_create

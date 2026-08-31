@@ -306,6 +306,8 @@ mod pthread_affinity;
 mod pthread_cpuclock;
 #[path = "pthread_name.rs"]
 mod pthread_name;
+#[path = "pthread_barrierattr_pshared.rs"]
+mod pthread_barrierattr_pshared;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]
