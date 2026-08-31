@@ -74,7 +74,8 @@
 //! Linux interface name/index and address snapshots with private output
 //! storage, isolated from numeric netdb, resolver configuration, DNS, and
 //! conventional network databases, plus one stateless legacy netdb
-//! endhostent/endnetent terminator alias pair,
+//! endhostent/endnetent terminator alias pair and one stateless legacy
+//! service-database terminator,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
 //! C-locale binary32/binary64/x87-binary80 floating parsing plus complete
 //! fixed-C/POSIX/C.UTF-8 narrow/wide numeric parsing, legacy decimal
@@ -548,6 +549,8 @@ mod inet_classful;
 mod hstrerror;
 #[path = "endhostent.rs"]
 mod endhostent;
+#[path = "endservent.rs"]
+mod endservent;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
 #[path = "interface_discovery.rs"]

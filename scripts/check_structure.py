@@ -3838,6 +3838,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "inet_classful.rs"]',
         '#[path = "hstrerror.rs"]',
         '#[path = "hasmntopt.rs"]',
+        '#[path = "endservent.rs"]',
         '#[path = "socket_messages.rs"]',
         '#[path = "posix_semaphore.rs"]',
         '#[path = "byte_strings.rs"]',
@@ -10637,6 +10638,166 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "candidate must link only its selected member"
         )
 
+    endservent_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_endservent_probe.c"
+    )
+    endservent_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_endservent_start.S"
+    )
+    endservent_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_endservent.sh"
+    )
+    endservent_header_c_source = (
+        ROOT / "compat" / "x86_64" / "endservent_header_abi_probe.c"
+    )
+    endservent_header_cpp_source = (
+        ROOT / "compat" / "x86_64" / "endservent_header_abi_probe.cpp"
+    )
+    endservent_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_endservent_header_abi.sh"
+    )
+    for path in (
+        endservent_probe_source,
+        endservent_start_source,
+        endservent_runner_source,
+        endservent_header_c_source,
+        endservent_header_cpp_source,
+        endservent_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                f"x86 static endservent artifact is missing {path.relative_to(ROOT)}"
+            )
+            return
+
+    endservent_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "endservent.rs"
+    )
+    endservent_text = endservent_source.read_text(errors="replace")
+    endservent_probe = endservent_probe_source.read_text(errors="replace")
+    endservent_start = endservent_start_source.read_text(errors="replace")
+    endservent_runner = endservent_runner_source.read_text(errors="replace")
+    endservent_header_c = endservent_header_c_source.read_text(errors="replace")
+    endservent_header_cpp = endservent_header_cpp_source.read_text(errors="replace")
+    endservent_header_runner = endservent_header_runner_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 legacy service-database terminator C ABI boundary",
+        "musl 1.2.6 release commit",
+        "src/network/serv.c::endservent",
+        "System V AMD64 ABI",
+        'pub extern "C" fn endservent()',
+    ):
+        if required not in endservent_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/endservent.rs: selected static legacy "
+                f"service terminator boundary is missing {required!r}"
+            )
+    endservent_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            endservent_text,
+        )
+    )
+    if endservent_exports != {"endservent"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/endservent.rs: selected static legacy "
+            "service terminator artifact must export only endservent"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn getservent",
+        "fn setservent",
+        "fn getservbyname",
+        "fn getservbyport",
+    ):
+        if forbidden in endservent_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/endservent.rs: selected static legacy "
+                f"service terminator boundary must not select {forbidden!r}"
+            )
+    for required in (
+        "#include <netdb.h>",
+        "typedef void (*endservent_signature)(void)",
+        "const endservent_signature function = endservent",
+        "endservent();",
+        "function();",
+        "CRABC_ENDSERVENT_FREESTANDING",
+    ):
+        if required not in endservent_probe:
+            errors.append(
+                "compat/x86_64/libc_endservent_probe.c: static legacy service "
+                f"terminator regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_endservent_probe",
+        "mov $60, %eax",
+    ):
+        if required not in endservent_start:
+            errors.append(
+                "compat/x86_64/libc_endservent_start.S: static legacy service "
+                f"terminator entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in endservent_start:
+        errors.append(
+            "compat/x86_64/libc_endservent_start.S: static legacy service "
+            "terminator entry must not bootstrap TLS"
+        )
+    for header in (endservent_header_c, endservent_header_cpp):
+        for required in ("endservent_signature", "endservent_function"):
+            if required not in header:
+                errors.append(
+                    "compat/x86_64 endservent header probe is missing "
+                    f"{required!r}"
+                )
+    for required in (
+        "endservent_header_abi_probe.c",
+        "endservent_header_abi_probe.cpp",
+        "c11-strict",
+        "c11-posix-2008",
+        "c11-xopen-700",
+        "c11-gnu",
+        "cxx17-strict",
+        "cxx17-gnu",
+        "nm --undefined-only",
+        "retained a mangled endservent reference",
+    ):
+        if required not in endservent_header_runner:
+            errors.append(
+                "compat/x86_64/run_endservent_header_abi.sh: static legacy "
+                f"service declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "serv.lo",
+        "static_c_abi_exports.txt",
+        "assert_selected_c_abi_surface",
+        "extract_selected_member",
+        "endservent archive member also defines a service, netdb, or resolver sibling",
+        "-nostdlib -static",
+        '"$selected_member" -o "$candidate"',
+        "candidate selects errno, h_errno, or TLS",
+        "endservent unexpectedly performs a call or syscall",
+        "archive-free candidate accidentally selects",
+        "getservent setservent getservbyname getservbyport",
+        "res_init res_query res_querydomain res_search",
+        "dn_comp dn_expand dn_skipname ns_get16 ns_get32 ns_put16 ns_put32",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+    ):
+        if required not in endservent_runner:
+            errors.append(
+                "compat/x86_64/run_libc_endservent.sh: static legacy service "
+                f"terminator evidence is missing {required!r}"
+            )
+    if "--whole-archive" in endservent_runner or '"$archive" -o "$candidate"' in endservent_runner:
+        errors.append(
+            "compat/x86_64/run_libc_endservent.sh: static legacy service "
+            "terminator evidence must link only the extracted archive member"
+        )
+
     dn_skipname_probe_source = (
         ROOT / "compat" / "x86_64" / "libc_dn_skipname_probe.c"
     )
@@ -12254,6 +12415,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         inet_classful_text,
         hstrerror_text,
         hasmntopt_text,
+        endservent_text,
         dn_skipname_text,
         dn_expand_text,
         ns_flagdata_text,
@@ -12666,6 +12828,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "inet_makeaddr",
         "hasmntopt",
         "hstrerror",
+        "endservent",
         "dn_skipname",
         "__dn_expand",
         "dn_expand",
@@ -12919,6 +13082,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("inet_classful.rs", inet_classful_text),
         ("hstrerror.rs", hstrerror_text),
         ("hasmntopt.rs", hasmntopt_text),
+        ("endservent.rs", endservent_text),
         ("dn_skipname.rs", dn_skipname_text),
         ("dn_expand.rs", dn_expand_text),
         ("ns_flagdata.rs", ns_flagdata_text),

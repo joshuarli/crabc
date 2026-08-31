@@ -1431,6 +1431,8 @@ NUMERIC_NETDB_SYMBOLS = (
 
 HSTRERROR_SYMBOLS = ("hstrerror",)
 
+ENDSERVENT_SYMBOLS = ("endservent",)
+
 DN_SKIPNAME_SYMBOLS = ("dn_skipname",)
 
 DN_EXPAND_SYMBOLS = ("__dn_expand", "dn_expand")
@@ -31309,6 +31311,299 @@ def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_endhostent_probe",
     ):
         require(snippet in dispatcher, f"endhostent dispatcher omits {snippet}")
+def require_endservent_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's stateless service terminator out of netdb/resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        artifact for artifact in artifacts if artifact.get("id") == "static-c-endservent"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs exactly one static-c-endservent artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-endservent must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-endservent must not promote a service database or resolver capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-endservent needs a description")
+    for phrase in (
+        "legacy service-database terminator artifact",
+        "still-planned `libc.c-abi-compat`",
+        "only `void endservent(void)`",
+        "exactly one extracted object, never `libc.a`",
+        "`src/network/serv.c::endservent`",
+        "no-op",
+        "no mutable state, errno, h_errno, TLS",
+        "`setservent`",
+        "`getservent`",
+        "`getservbyname`",
+        "`getservbyport`",
+        "`/etc/services`",
+        "NSS",
+        "resolver behavior",
+        "generic netdb APIs",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-endservent description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-endservent.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/endservent.rs",
+        "include/features.h",
+        "include/netdb.h",
+        "compat/x86_64/endservent_header_abi_probe.c",
+        "compat/x86_64/endservent_header_abi_probe.cpp",
+        "compat/x86_64/run_endservent_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_endservent_probe.c",
+        "compat/x86_64/libc_endservent_start.S",
+        "compat/x86_64/run_libc_endservent.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-endservent source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-endservent.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "void endservent(void)" in item
+            and "no incoming C argument words" in item
+            and "no return value" in item
+            and "strong global T" in item
+            for item in prerequisites
+        ),
+        "static-c-endservent must retain its no-argument no-op C ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/serv.c::endservent" in item
+            and "empty body" in item
+            and "setservent" in item
+            and "getservent" in item
+            and "getservbyname/getservbyport" in item
+            for item in prerequisites
+        ),
+        "static-c-endservent must retain its pinned-musl serv.c mapping",
+    )
+    require(
+        any(
+            "archive-free `-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "dynamic-TLS model" in item
+            and "service enumeration" in item
+            and "resolver" in item
+            and "socket exports" in item
+            for item in prerequisites
+        ),
+        "static-c-endservent must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-endservent.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "C11/C++17" in item
+            and "<netdb.h>" in item
+            and "unconditional `void endservent(void)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "unmangled C++ linkage" in item
+            and '`extern "C"` guards' in item
+            for item in headers
+        ),
+        "static-c-endservent must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-endservent needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-endservent"},
+        "static-c-endservent must use the closed libc-endservent command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true archive-free x86 crabc-libc `-nostdlib -static` candidate",
+                "direct and function-pointer no-op calls",
+                "serv.lo/AArch64 ownership",
+                "one extracted object never libc.a",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/h_errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "service enumeration, legacy database, resolver, nameser, and socket extraction",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-endservent evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(ENDSERVENT_SYMBOLS) <= exports,
+        "static-c-endservent must retain its selected export",
+    )
+    require(
+        not exports
+        & {
+            "getservent",
+            "setservent",
+            "getservbyname",
+            "getservbyport",
+            "endprotoent",
+            "setprotoent",
+            "res_init",
+        },
+        "static-c-endservent must not expose an unselected service, netdb, or resolver entry",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "endservent.rs"]\nmod endservent;' in static_root,
+        "x86 static C ABI must compose the endservent leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "endservent.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 legacy service-database terminator C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/serv.c::endservent",
+        "System V AMD64 ABI",
+        'pub extern "C" fn endservent()',
+    ):
+        require(snippet in source, f"endservent implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn getservent",
+        "fn setservent",
+        "fn getservbyname",
+        "fn getservbyport",
+    ):
+        require(forbidden not in source, f"endservent leaf widens into {forbidden}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_endservent.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_endservent_header_abi.sh",
+        "serv.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define endservent",
+        "endservent archive member also defines a service, netdb, or resolver sibling",
+        "endservent unexpectedly performs a call or syscall",
+        "archive-free candidate accidentally selects",
+    ):
+        require(snippet in runner, f"endservent runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "endservent runner must not force-link the archive",
+    )
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_endservent_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "typedef void (*endservent_signature)(void)",
+        "const endservent_signature function = endservent",
+        "endservent();",
+        "function();",
+        "CRABC_ENDSERVENT_FREESTANDING",
+    ):
+        require(snippet in probe, f"endservent probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "endservent_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "endservent_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("endservent declaration", "endservent_function"):
+        require(snippet in header_c, f"endservent C header probe omits {snippet}")
+    for snippet in ("C++ endservent declaration", "endservent_function"):
+        require(snippet in header_cxx, f"endservent C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_endservent_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "endservent_header_abi_probe.c",
+        "endservent_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional in musl's netdb.h",
+        "c11-strict",
+        "cxx17-gnu",
+        "nm --undefined-only",
+        "retained a mangled endservent reference",
+    ):
+        require(snippet in header_runner, f"endservent header runner omits {snippet}")
+
+    dispatch = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "endservent-header-abi)",
+        "run_endservent_header_abi",
+        "libc-endservent)",
+        "run_libc_endservent.sh",
+    ):
+        require(snippet in dispatch, f"endservent dispatcher omits {snippet}")
 
 
 def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
@@ -49354,6 +49649,7 @@ def validate_ledger(
     require_ns_get32_artifact(by_id["libc.resolver"])
     require_ns_put16_artifact(by_id["libc.resolver"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
+    require_endservent_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
     require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
     require_search_hash_table_slice(by_id["libc.c-abi-compat"])

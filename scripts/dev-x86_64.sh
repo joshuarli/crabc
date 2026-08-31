@@ -165,6 +165,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   resource-header-abi  compile the staged x86 C/C++ resource-header layouts
   socket-header-abi  verify staged x86 base socket C/C++ declarations/layouts and IPv6 macros
   nameser-header-abi  verify staged x86 resolv.h C/C++ dn_skipname/dn_expand/_ns_flagdata/ns_get16/ns_get32/ns_put16 declarations
+  endservent-header-abi  verify staged x86 legacy service-terminator C/C++ declaration
   inet-address-header-abi  verify selected x86 arpa/inet C/C++ numeric-address declarations
   socket-messages-header-abi  verify staged x86 socket-message/options C/C++ declarations/layouts
   sysv-semaphore-header-abi  verify staged x86 SysV semaphore C/C++ declarations/layouts
@@ -443,6 +444,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-inet-ntoa  run the archive-free static x86 crabc-libc inet_ntoa scratch-buffer slice
   libc-inet-classful  run the archive-free static x86 crabc-libc classful IPv4 slice
   libc-hstrerror  run the static x86 crabc-libc h_errno message-string slice
+  libc-endservent  run the archive-free static x86 crabc-libc legacy service-terminator slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
   libc-interface-discovery  run the static x86 C interface index/address discovery slice
   libc-random-entropy  run the static x86 crabc-libc random-entropy slice
@@ -2891,6 +2893,10 @@ run_nameser_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_nameser_header_abi.sh
 }
 
+run_endservent_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_endservent_header_abi.sh
+}
+
 run_inet_address_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_inet_address_header_abi.sh
 }
@@ -4115,7 +4121,7 @@ case "$command" in
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10) ;;
-    inet-address-header-abi|nameser-header-abi) ;;
+    inet-address-header-abi|nameser-header-abi|endservent-header-abi) ;;
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
@@ -4194,7 +4200,7 @@ case "$command" in
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -4820,6 +4826,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "nameser-header-abi takes no arguments"
         ensure_image
         run_nameser_header_abi
+        ;;
+    endservent-header-abi)
+        [ "$#" -eq 0 ] || fail "endservent-header-abi takes no arguments"
+        ensure_image
+        run_endservent_header_abi
         ;;
     inet-address-header-abi)
         [ "$#" -eq 0 ] || fail "inet-address-header-abi takes no arguments"
@@ -6295,6 +6306,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-hstrerror takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_hstrerror.sh
+        ;;
+    libc-endservent)
+        [ "$#" -eq 0 ] || fail "libc-endservent takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_endservent.sh
         ;;
     libc-numeric-netdb)
         [ "$#" -eq 0 ] || fail "libc-numeric-netdb takes no arguments"

@@ -93,6 +93,20 @@ locale, environment, allocator, stdio, syscall, byte-string dependency, or
 parser state. It is not a second capability selection, parser/environment/
 locale completion, text/math/locale/stdio family promotion, or public x86
 support claim.
+
+`./scripts/dev-x86_64.sh libc-endservent` is a separate private
+`static-c-endservent` artifact inside still-planned `libc.c-abi-compat`, not
+service-database or resolver behavior. Its pinned-musl/project `<netdb.h>`
+C/C++ matrix proves the unconditional no-argument `void endservent(void)`
+declaration and unmangled C++ linkage in strict, POSIX, X/Open, and GNU
+profiles. The project-header fixture then executes through pinned musl 1.2.6
+and an archive-free `-nostdlib -static` candidate linked from exactly one
+extracted object, never `libc.a`. It selects only the empty
+`src/network/serv.c::endservent` body: direct and function-pointer calls have
+no mutable service cursor, errno, h_errno, TLS, allocation, syscall,
+`/etc/services`, resolver configuration, DNS, socket, or network-database
+path. It does not select `setservent`, `getservent`, service lookup, NSS,
+family completion, promotion, or public x86 support.
 `./scripts/dev-x86_64.sh libc-dn-skipname` is a private
 `static-c-dn-skipname` artifact inside still-planned `libc.resolver`. Its
 companion `./scripts/dev-x86_64.sh nameser-header-abi` gate proves the exact

@@ -231,6 +231,7 @@ eaccess
 ecvt
 endhostent
 endnetent
+endservent
 environ
 epoll_create
 epoll_create1
