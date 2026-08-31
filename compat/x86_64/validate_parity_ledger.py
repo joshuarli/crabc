@@ -27824,8 +27824,10 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     for phrase in (
         "still-planned `libc.pthread-tls`",
         "pthread_atfork`/`fork`",
-        "weak `__ldso_atfork` fallback",
-        "without routing the selected fork path through it",
+        "private weak `__ldso_atfork` and `__aio_atfork` fallbacks",
+        "`__ldso_atfork` and `__aio_atfork` fallbacks",
+        "without routing the selected fork path through either",
+        "no AIO queue, lock, request-cancellation, or file-descriptor coordination behavior",
         "child ordinary-exit callback dispatch",
         "successful join reopens the route",
         "concurrent selected-worker lifecycle calls remain excluded",
@@ -27843,10 +27845,12 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "still-planned `libc.pthread-tls`",
         "pthread_atfork",
         "__fork_handler",
-        "private weak `__ldso_atfork` fallback",
+        "private weak `__ldso_atfork` and `__aio_atfork` fallbacks",
         "weak_alias",
         "STB_WEAK",
-        "selected fork path deliberately does not invoke this fallback",
+        "selected fork path deliberately does not invoke either fallback",
+        "traps on any later dispatch",
+        "AIO queue/lock, request-cancellation, file-descriptor coordination",
         "loader lock/reset, mapping, finalization",
         "atexit`/`exit`/`__funcs_on_exit",
         "32 no-allocation hook triples",
@@ -27900,8 +27904,14 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "src/process/fork.c::fork",
         "weak_alias(dummy, __ldso_atfork)",
         "__ldso_atfork fork.lo W WEAK",
-        "caller STB_GLOBAL private definition overrides it",
-        "bounded Rust fork path deliberately does not invoke it",
+        "weak_alias(dummy, __aio_atfork)",
+        "__aio_atfork fork.lo W WEAK",
+        "__aio_atfork aio.lo T GLOBAL",
+        "src/aio/aio.c::__aio_atfork",
+        "caller STB_GLOBAL private `__aio_atfork` definition overrides its fallback",
+        "traps on any later dispatch",
+        "bounded Rust fork path deliberately does not invoke either fallback",
+        "AIO queue/lock, request-cancellation, file-descriptor coordination",
         "loader lock/reset, mapping, finalization",
         "32 optional SysV AMD64 no-argument callback triples",
         "raw fork=57",
@@ -27965,8 +27975,11 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "live selected worker with EAGAIN before any callback",
         "successful fork after joining that worker",
         "default-visible STB_WEAK `__ldso_atfork`",
-        "caller STB_GLOBAL private override after `fork` extracts the member",
-        "selected fork path does not dispatch through it",
+        "default-visible STB_WEAK `__ldso_atfork` and `__aio_atfork`",
+        "caller STB_GLOBAL private `__aio_atfork` override wins after `fork` extracts the member",
+        "traps on any later dispatch",
+        "no dispatch through either fallback",
+        "no AIO queue/lock, request-cancellation, or file-descriptor coordination behavior",
         "pthread_atfork, fork, __fork_handler",
         "raw fork=57",
         "direct errno TPOFF",
@@ -28003,7 +28016,10 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "static-c-pthread-atfork-fork musl source mapping omits atfork/fork provenance",
     )
     require(
-        isinstance(role, str) and "weak_alias(dummy, __ldso_atfork)" in role,
+        isinstance(role, str)
+        and "weak_alias(dummy, __ldso_atfork)" in role
+        and "weak_alias(dummy, __aio_atfork)" in role
+        and "src/aio/aio.c::__aio_atfork" in role,
         "static-c-pthread-atfork-fork musl source mapping omits the weak loader-atfork fallback",
     )
     require(
@@ -28014,8 +28030,11 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
             == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
             and isinstance(entry.get("role"), str)
             and "__ldso_atfork fork.lo W WEAK" in entry["role"]
+            and "__aio_atfork fork.lo W WEAK" in entry["role"]
+            and "__aio_atfork aio.lo T GLOBAL" in entry["role"]
             and "private static archive-binding evidence only" in entry["role"]
             and "not loader hook execution" in entry["role"]
+            and "not AIO behavior" in entry["role"]
             for entry in oracle_entries
         ),
         "static-c-pthread-atfork-fork must retain its pinned weak loader-atfork static-manifest oracle",
@@ -28027,10 +28046,25 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         )
     )
     require(
-        {"pthread_atfork", "fork", "__fork_handler", "__ldso_atfork"} <= static_exports,
+        {"pthread_atfork", "fork", "__fork_handler", "__ldso_atfork", "__aio_atfork"}
+        <= static_exports,
         "static-c-pthread-atfork-fork must expose its selected atfork/fork surface",
     )
-    for unselected in ("_Fork", "vfork", "clone", "execve", "posix_spawn"):
+    for unselected in (
+        "_Fork",
+        "vfork",
+        "clone",
+        "execve",
+        "posix_spawn",
+        "aio_read",
+        "aio_write",
+        "aio_fsync",
+        "aio_error",
+        "aio_return",
+        "aio_cancel",
+        "lio_listio",
+        "aio_suspend",
+    ):
         require(
             unselected not in static_exports,
             f"static-c-pthread-atfork-fork must not expose unselected {unselected}",
@@ -28047,10 +28081,15 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     )
     for phrase in (
         "__ldso_atfork",
+        "__aio_atfork",
         "CRABC_ATFORK_LOADER_HOOK_OVERRIDE",
+        "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
         "archive lost musl weak __ldso_atfork binding",
+        "archive lost musl weak __aio_atfork binding",
         "caller override did not extract the archive fork member",
         "caller strong __ldso_atfork did not override the archive weak binding",
+        "AIO-atfork caller override did not extract the archive fork member",
+        "caller strong __aio_atfork did not override the archive weak binding",
     ):
         require(
             phrase in runner_source,

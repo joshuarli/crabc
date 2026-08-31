@@ -9551,8 +9551,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "still-planned `libc.pthread-tls`",
             "pthread_atfork",
             "__fork_handler",
-            "private weak `__ldso_atfork` fallback",
-            "selected fork path deliberately does not invoke this fallback",
+            "private weak `__ldso_atfork` and `__aio_atfork` fallbacks",
+            "traps on any later dispatch",
+            "AIO queue/lock, request-cancellation, file-descriptor coordination",
+            "selected fork path deliberately does not invoke either fallback",
             "child-only bounded ordinary-exit callback",
             "EAGAIN before any hook runs",
             "successful join reopens admission",
@@ -9570,8 +9572,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "successful fork after joining that worker",
             "child atexit/exit callback dispatch after atfork hooks",
             "default-visible STB_WEAK `__ldso_atfork`",
-            "caller STB_GLOBAL private override after `fork` extracts the member",
-            "selected fork path does not dispatch through it",
+            "default-visible STB_WEAK `__ldso_atfork` and `__aio_atfork`",
+            "caller STB_GLOBAL private `__aio_atfork` override wins after `fork` extracts the member",
+            "traps on any later dispatch",
+            "no dispatch through either fallback",
+            "no AIO queue/lock, request-cancellation, or file-descriptor coordination behavior",
             "loader lock/reset/mapping/finalization",
             "family completion, promotion, and public x86 support",
         ):
@@ -9581,6 +9586,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             any(
                 entry["kind"] == "c-posix"
                 and "weak_alias(dummy, __ldso_atfork)" in entry["role"]
+                and "weak_alias(dummy, __aio_atfork)" in entry["role"]
+                and "src/aio/aio.c::__aio_atfork" in entry["role"]
                 for entry in atfork_oracles
             )
         )
@@ -9589,12 +9596,21 @@ class X86ParityLedgerTests(unittest.TestCase):
                 entry["kind"] == "aarch64-contract"
                 and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
                 and "__ldso_atfork fork.lo W WEAK" in entry["role"]
+                and "__aio_atfork fork.lo W WEAK" in entry["role"]
+                and "__aio_atfork aio.lo T GLOBAL" in entry["role"]
                 and "not loader hook execution" in entry["role"]
+                and "not AIO behavior" in entry["role"]
                 for entry in atfork_oracles
             )
         )
         self.assertIn(
             "__ldso_atfork",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
+        self.assertIn(
+            "__aio_atfork",
             (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
             .read_text(encoding="utf-8")
             .splitlines(),

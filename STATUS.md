@@ -635,14 +635,17 @@ dynamic TLS; CRT/sysroot integration; general fork/atfork/process-exit/pthread
 behavior; family completion; promotion; and public x86 support remain excluded.
 
 The same static archive now also retains musl 1.2.6
-`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` fallback:
-the pinned AArch64 static manifest records `__ldso_atfork` in `fork.lo` as
-weak. The staged archive and normal freestanding candidate preserve that
-default-visible weak definition, while a caller-owned strong private spelling
-wins after a `fork` reference extracts the archive member. This is archive
-binding evidence only. The fallback is inert and the selected `fork` route
-does not invoke it, so it adds no loader-lock, loader-reset, mapping,
-finalization, or general atfork claim.
+`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` and
+`weak_alias(dummy, __aio_atfork)` fallbacks: the pinned AArch64 static manifest
+records both in `fork.lo` as weak and records the separate strong
+`__aio_atfork` body in `aio.lo`. The staged archive and normal freestanding
+candidate preserve that default-visible weak definition, while a caller-owned
+strong private `__aio_atfork` spelling wins after a `fork` reference extracts
+the archive member and traps on any later dispatch while the selected fork
+proof completes. This is archive-binding evidence only. Neither fallback is
+invoked, so it adds no loader-lock, loader-reset, mapping, finalization, AIO
+queue/lock, request-cancellation, file-descriptor coordination, public AIO,
+or general atfork claim.
 
 `./scripts/dev-x86_64.sh libc-pthread-affinity` is a nineteenth private static
 artifact in that same still-planned family. It selects only GNU

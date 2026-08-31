@@ -2968,13 +2968,17 @@ CRT/sysroot integration; general fork, atfork, process-exit, or pthread
 behavior; full pthread/TLS or x86-64 parity; promotion; and public x86 support.
 
 The same static archive-binding check retains pinned musl 1.2.6
-`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` fallback.
-The AArch64 static manifest records weak `__ldso_atfork` in `fork.lo`; both
-the staged archive and ordinary freestanding candidate retain that binding,
-and a caller-owned strong private definition wins after `fork` extracts the
-archive member. This is not a loader hook implementation: the fallback is
-inert, the bounded `fork` route does not dispatch through it, and no loader
-lock/reset, mapping, finalization, or general atfork capability is selected.
+`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` and
+`weak_alias(dummy, __aio_atfork)` fallbacks. The AArch64 static manifest
+records both weak spellings in `fork.lo`, while `aio.lo` owns the separate
+strong `__aio_atfork` body. The staged archive and ordinary freestanding
+candidate retain the weak binding; a caller-owned strong private
+`__aio_atfork` definition wins after `fork` extracts the archive member and
+traps on any later dispatch while the bounded fork proof completes. This is
+neither a loader-hook nor AIO implementation: the fallbacks are inert, the
+bounded `fork` route does not dispatch through either, and no loader lock/reset,
+mapping, finalization, AIO queue/lock, request-cancellation, file-descriptor
+coordination, public AIO, or general atfork capability is selected.
 
 `libc-pthread-affinity` is a nineteenth private static `verified_artifact`
 under that same still-planned family. Its project-header C fixture first runs

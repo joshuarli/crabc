@@ -5275,6 +5275,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn __fork_handler",
             "fn pthread_atfork",
             "fn fork",
+            "fn __aio_atfork",
+            "weak_alias(dummy, __aio_atfork)",
+            "src/aio/aio.c",
             "ENOMEM",
             "EAGAIN",
             "callbacks must not create, join, or detach",
@@ -5298,6 +5301,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             fork_body.index("__fork_handler(if result == 0"),
             fork_body.index("c_status(result)"),
         )
+        self.assertNotIn("__aio_atfork", fork_body)
         for required in (
             "SELECTED_WORKER_REGISTRY_RESERVING",
             "has_live_selected_workers",
@@ -5320,6 +5324,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_join(worker, &result)",
             "recovery = check_parent_child_and_exit_order()",
             "atexit(child_exit_callback)",
+            "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
+            "check_aio_hook_override",
+            "__builtin_trap",
         ):
             self.assertIn(required, probe)
         self.assertLess(
@@ -5345,11 +5352,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "candidate selected dynamic interpreter",
             "candidate selected dynamic dependency",
             "candidate retains unresolved symbol",
+            "archive lost musl weak __aio_atfork binding",
+            "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
+            "caller strong __aio_atfork did not override the archive weak binding",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertTrue(
-            {"pthread_atfork", "fork", "__fork_handler", "atexit", "exit", "__funcs_on_exit"}
+            {
+                "pthread_atfork",
+                "fork",
+                "__fork_handler",
+                "__aio_atfork",
+                "atexit",
+                "exit",
+                "__funcs_on_exit",
+            }
             <= static_exports
         )
         self.assertIn("run_libc_pthread_atfork_probe()", runner)

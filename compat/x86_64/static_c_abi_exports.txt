@@ -8,6 +8,7 @@
 # glue, uninstalled and not a stable public C API.
 _Exit
 ___environ
+__aio_atfork
 __crabc_x86_fixed_graph_dlfcn_record
 __crabc_x86_static_tls_bootstrap
 __ctype_b_loc

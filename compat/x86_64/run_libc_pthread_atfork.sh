@@ -42,6 +42,33 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_fork_weak_aio_atfork_owner() {
+    local archive_path="$1"
+    local members_path="$work_dir/fork-aio-atfork-members"
+    local fork_member
+    local -a members fork_members
+
+    mapfile -t members < <(ar t "$archive_path" | grep -E '^c\..+\.rcgu\.o$')
+    [ "${#members[@]}" -gt 0 ] || fail "archive has no crabc-libc object members"
+    mkdir "$members_path"
+    (
+        cd "$members_path"
+        ar x "$archive_path" "${members[@]}"
+    )
+    mapfile -t fork_members < <(
+        (
+            cd "$members_path"
+            nm -A -g --defined-only --format=posix "${members[@]}"
+        ) | awk '$2 == "fork" && $3 ~ /^[TW]$/ { name = $1; sub(/:$/, "", name); print name }' | sort -u
+    )
+    [ "${#fork_members[@]}" = 1 ] ||
+        fail "archive does not retain one fork owner: ${fork_members[*]:-(none)}"
+    fork_member="${fork_members[0]}"
+    nm -g --defined-only --format=posix "$members_path/$fork_member" |
+        awk '$1 == "__aio_atfork" && $2 == "W" { found=1 } END { exit found ? 0 : 1 }' ||
+        fail "archive fork member lost musl weak __aio_atfork binding"
+}
+
 require_native_linux_x86_64
 for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort timeout; do
     require_tool "$tool"
@@ -55,6 +82,7 @@ cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-atfork-reference"
 candidate="$work_dir/crabc-static-pthread-atfork-candidate"
 candidate_loader_hook="$work_dir/crabc-static-pthread-atfork-loader-hook-candidate"
+candidate_aio_hook="$work_dir/crabc-static-pthread-atfork-aio-hook-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -94,6 +122,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
+assert_fork_weak_aio_atfork_owner "$archive"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     pthread_atfork fork atexit exit __funcs_on_exit pthread_create pthread_join waitpid; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
@@ -101,7 +130,10 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
 done
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$archive_elf_symbols" ||
     fail 'archive lost musl weak __ldso_atfork binding'
-for unselected in _Fork vfork clone execve posix_spawn wait3 malloc free calloc realloc; do
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$archive_elf_symbols" ||
+    fail 'archive lost musl weak __aio_atfork binding'
+for unselected in _Fork vfork clone execve posix_spawn wait3 malloc free calloc realloc \
+    aio_read aio_write aio_fsync aio_error aio_return aio_cancel lio_listio aio_suspend; do
     ! grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols" ||
         fail "archive exports unselected ${unselected}"
 done
@@ -127,6 +159,12 @@ fi
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_pthread_atfork_probe.c \
     compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate_loader_hook"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_ATFORK_FREESTANDING \
+    -DCRABC_ATFORK_AIO_HOOK_OVERRIDE -I"$ROOT_DIR/include" \
+    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    compat/x86_64/libc_pthread_atfork_probe.c \
+    compat/x86_64/libc_pthread_atfork_start.S "$archive" -o "$candidate_aio_hook"
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
@@ -140,6 +178,8 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
 done
 grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$candidate_symbols" ||
     fail 'candidate lost musl weak __ldso_atfork binding'
+grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$candidate_symbols" ||
+    fail 'candidate lost musl weak __aio_atfork binding'
 readelf --symbols --wide "$candidate_loader_hook" >"$work_dir/candidate-loader-hook-symbols"
 awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "fork" { found=1 } END { exit found ? 0 : 1 }' \
     "$work_dir/candidate-loader-hook-symbols" ||
@@ -148,6 +188,15 @@ grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-h
     fail 'caller strong __ldso_atfork did not override the archive weak binding'
 if grep -Eq 'FUNC +WEAK +DEFAULT +.*__ldso_atfork$' "$work_dir/candidate-loader-hook-symbols"; then
     fail 'caller override retained the archive weak __ldso_atfork binding'
+fi
+readelf --symbols --wide "$candidate_aio_hook" >"$work_dir/candidate-aio-hook-symbols"
+awk '$4 == "FUNC" && $5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "fork" { found=1 } END { exit found ? 0 : 1 }' \
+    "$work_dir/candidate-aio-hook-symbols" ||
+    fail 'AIO-atfork caller override did not extract the archive fork member'
+grep -Eq 'FUNC +GLOBAL +DEFAULT +.*__aio_atfork$' "$work_dir/candidate-aio-hook-symbols" ||
+    fail 'caller strong __aio_atfork did not override the archive weak binding'
+if grep -Eq 'FUNC +WEAK +DEFAULT +.*__aio_atfork$' "$work_dir/candidate-aio-hook-symbols"; then
+    fail 'caller override retained the archive weak __aio_atfork binding'
 fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 [ -z "$unresolved_symbols" ] || { printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains unresolved symbol"; }
@@ -194,5 +243,11 @@ if timeout "$EXECUTION_TIMEOUT" "$candidate_loader_hook"; then
 else
     candidate_status=$?
     fail "static loader-hook override candidate exited ${candidate_status}"
+fi
+if timeout "$EXECUTION_TIMEOUT" "$candidate_aio_hook"; then
+    :
+else
+    candidate_status=$?
+    fail "static AIO-atfork override candidate exited ${candidate_status}"
 fi
 printf 'x86 static crabc-libc pthread_atfork/fork/exit hooks: PASS\n'

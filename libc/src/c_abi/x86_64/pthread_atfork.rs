@@ -153,6 +153,23 @@ pub unsafe extern "C" fn __fork_handler(who: c_int) {
 #[linkage = "weak"]
 pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
 
+/// Static-archive fallback for musl's private AIO-atfork hook.
+///
+/// Musl 1.2.6 `src/process/fork.c` exposes its inert `dummy(int)` through
+/// `weak_alias(dummy, __aio_atfork)`. Its separate `src/aio/aio.c` object
+/// supplies the strong AIO lock-and-task-coordination body only when that
+/// optional AIO support is linked. Preserve the weak static binding next to
+/// the selected `fork` owner so a stronger application or runtime spelling
+/// can replace it.
+///
+/// This selected static fork path does not call the fallback. It therefore
+/// does not select AIO queues, AIO locks, request cancellation, file-descriptor
+/// coordination, loader state, or a general process/fork runtime.
+#[inline(never)]
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn __aio_atfork(_who: c_int) {}
+
 /// Register one fixed-capacity atfork callback triple.
 ///
 /// Registration is private to this static process image.  Each optional
