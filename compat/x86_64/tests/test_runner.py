@@ -1323,6 +1323,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
+            "libc-pthread-name",
             "libc-pthread-detach",
             "libc-thrd-yield",
             "libc-memory-sync",
@@ -1381,6 +1382,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-pthread-cancel-deferred", source)
         self.assertIn("libc-pthread-atfork", source)
         self.assertIn("libc-pthread-cpuclock", source)
+        self.assertIn("libc-pthread-name", source)
         self.assertIn("libc-termios-control", source)
         self.assertIn("getpass-header-abi", source)
         self.assertIn("libc-getpass", source)
@@ -5963,6 +5965,141 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-pthread-cpuclock) ;;", runner)
         self.assertIn(
             '    libc-pthread-cpuclock)\n        [ "$#" -eq 0 ] || fail "libc-pthread-cpuclock takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_pthread_name_artifact_stays_self_only(
+        self,
+    ) -> None:
+        """Keep GNU task names apart from general pthread task naming."""
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        pthread_name = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_name.rs"
+        ).read_text(encoding="utf-8")
+        probe_path = ROOT / "compat" / "x86_64" / "libc_pthread_name_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_pthread_name_start.S"
+        artifact_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_name.sh"
+        )
+        c_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        cxx_header_probe = (
+            ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_pthread_c11_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for path in (probe_path, start_path, artifact_runner_path):
+            self.assertTrue(path.is_file(), f"missing pthread task-name input: {path}")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "pthread_name.rs"]', static_root)
+        for required in (
+            "src/thread/pthread_setname_np.c::pthread_setname_np",
+            "src/thread/pthread_getname_np.c::pthread_getname_np",
+            "pthread_setname_np",
+            "pthread_getname_np",
+            "SYS_PRCTL",
+            "PR_SET_NAME",
+            "PR_GET_NAME",
+            "is_initial_thread_pointer",
+            "before the name input or output is",
+            "observed. It does not select worker names",
+            "neither entry writes C",
+            "or public x86",
+            "support. Pthread errors",
+        ):
+            self.assertIn(required, pthread_name)
+        for forbidden in (
+            "pthread_create_join",
+            "selected_worker_linux_thread_id",
+            "set_errno",
+            "c_status",
+            "SYS_OPEN",
+            "SYS_WRITE",
+            "pthread_setcancel",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, pthread_name)
+
+        for required in (
+            "#include <errno.h>",
+            "#include <pthread.h>",
+            "#include <sys/prctl.h>",
+            "#include <sys/syscall.h>",
+            "SYS_prctl == 157",
+            "PR_SET_NAME == 15 && PR_GET_NAME == 16",
+            "pthread_setname_np",
+            "pthread_getname_np",
+            "raw_get_name",
+            "CRABC_PTHREAD_NAME_FREESTANDING",
+            "check_candidate_nonself_rejection",
+            "ESRCH",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_pthread_name_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "run_pthread_c11_header_abi.sh",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "assert_pthread_name_path",
+            "fixed prctl syscall 157",
+            "must not publish pthread status through errno",
+            "src/thread/pthread_setname_np.c",
+            "src/thread/pthread_getname_np.c",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertTrue(
+            {"pthread_setname_np", "pthread_getname_np"} <= static_exports
+        )
+        for header_probe in (c_header_probe, cxx_header_probe):
+            self.assertIn("crabc_pthread_setname_np_signature", header_probe)
+            self.assertIn("crabc_pthread_getname_np_signature", header_probe)
+            self.assertIn("pthread_setname_np signature", header_probe)
+            self.assertIn("pthread_getname_np signature", header_probe)
+        self.assertIn("crabc_force_pthread_setname_np", cxx_header_probe)
+        self.assertIn("crabc_force_pthread_getname_np", cxx_header_probe)
+        self.assertIn("pthread_sigmask pthread_setname_np pthread_getname_np", header_runner)
+        self.assertIn("pthread_getcpuclockid|pthread_setname_np|pthread_getname_np", header_runner)
+        self.assertIn('id = "static-c-pthread-name"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-pthread-name"',
+            parity_ledger,
+        )
+        self.assertIn("run_libc_pthread_name_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_pthread_name.sh", runner
+        )
+        self.assertIn("    libc-pthread-name) ;;", runner)
+        self.assertIn(
+            '    libc-pthread-name)\n        [ "$#" -eq 0 ] || fail "libc-pthread-name takes no arguments"',
             runner,
         )
 

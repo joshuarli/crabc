@@ -287,7 +287,7 @@ x87/MXCSR exception state. This selects neither fenv-sensitive scalar math,
 numeric parsing, complex/general libm, family completion, x86 promotion, nor
 public support.
 
-The x86 lane now has twenty-one private static artifacts inside still-planned
+The x86 lane now has twenty-two private static artifacts inside still-planned
 `libc.pthread-tls`. `./scripts/dev-x86_64.sh libc-static-tls-v1` passes a
 freestanding final-static-executable fixture's untouched Linux entry stack to
 a hidden libc hook. That hook validates the final executable's program-header
@@ -362,6 +362,20 @@ handles; `clock_getcpuclockid` and general C clocks; scheduling or affinity
 attributes; lifecycle, cancellation, synchronization, TSS, a TCB/thread list,
 dynamic/loader TLS, CRT, sysroot, family completion, promotion, and public x86
 support remain excluded.
+
+The separate `./scripts/dev-x86_64.sh libc-pthread-name` artifact is a
+twenty-second private static artifact in that same still-planned family. It
+selects only GNU `pthread_setname_np`/`pthread_getname_np` for the
+bootstrapped process-main task's own `pthread_self()` handle. Musl's self path
+uses a 16-byte task-comm window through `prctl`; the static candidate validates
+its existing `%fs:0` initial-main identity and calls direct `prctl=157` with
+`PR_SET_NAME=15` or `PR_GET_NAME=16`, without a dereferenceable pthread TCB.
+The shared fixture proves self set/get, raw getter observation, the exact
+16-byte boundary, and preserved errno; candidate-only non-self calls return
+`ESRCH` before either name buffer is observed. Worker/foreign naming, musl's
+procfs route, cancellation, a general prctl API, scheduling/affinity
+attributes, lifecycle/synchronization/TSS, dynamic/loader TLS, CRT, sysroot,
+family completion, promotion, and public x86 support remain excluded.
 
 `./scripts/dev-x86_64.sh libc-pthread-mutex-normal` artifact is a tenth private static
 `verified_artifact` in the same still-planned `libc.pthread-tls` family. It admits only an all-zero or

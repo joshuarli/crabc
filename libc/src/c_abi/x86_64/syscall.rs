@@ -29,7 +29,9 @@
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
 //! identity validation, the selected raw thread exit, and the direct C11
-//! `thrd_yield` sched_yield=24 boundary here. Static Initial
+//! `thrd_yield` sched_yield=24 boundary here. The separately selected
+//! bootstrapped-main pthread task-name pair uses direct prctl=157 here;
+//! it does not expose a general prctl C API. Static Initial
 //! TLS v1 additionally uses arch_prctl(ARCH_SET_FS) while it validates and
 //! installs one final-executable TLS image before C TLS exists; its distinct
 //! private musl-shaped assembly boundary owns clone and normal-return child
@@ -377,6 +379,7 @@ pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
 pub(crate) const SYS_MLOCK: i64 = 149;
 pub(crate) const SYS_MUNLOCK: i64 = 150;
+pub(crate) const SYS_PRCTL: i64 = 157;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
 pub(crate) const SYS_ARCH_PRCTL: i64 = 158;
 pub(crate) const SYS_SETHOSTNAME: i64 = 170;

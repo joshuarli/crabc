@@ -536,6 +536,7 @@ pthread_equal
 pthread_exit
 pthread_getaffinity_np
 pthread_getcpuclockid
+pthread_getname_np
 pthread_getspecific
 pthread_join
 pthread_key_create
@@ -563,6 +564,7 @@ pthread_self
 pthread_setaffinity_np
 pthread_setcancelstate
 pthread_setcanceltype
+pthread_setname_np
 pthread_setspecific
 pthread_testcancel
 putc

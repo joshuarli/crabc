@@ -387,6 +387,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-thrd-sleep
 ./scripts/dev-x86_64.sh libc-thrd-yield
 ./scripts/dev-x86_64.sh libc-pthread-cpuclock
+./scripts/dev-x86_64.sh libc-pthread-name
 ./scripts/dev-x86_64.sh libc-pthread-mutex-normal
 ./scripts/dev-x86_64.sh libc-pthread-rwlock
 ./scripts/dev-x86_64.sh libc-pthread-cond-private
@@ -2684,6 +2685,22 @@ general C clocks; scheduler or affinity attributes; lifecycle, cancellation,
 synchronization, TSS, a TCB/thread list, dynamic/loader TLS, CRT, sysroot,
 full pthread/TLS or x86-64 parity, promotion, and public x86 support.
 
+`libc-pthread-name` is a twenty-second separately recorded private static
+`verified_artifact` under the same still-planned `libc.pthread-tls` family.
+Its project-header C body first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only GNU
+`pthread_setname_np`/`pthread_getname_np` for the bootstrapped process-main
+task's own `pthread_self()` handle. The candidate validates its `%fs:0`
+initial-main identity before observing either buffer, then uses direct
+`prctl=157` with `PR_SET_NAME=15` or `PR_GET_NAME=16` for Linux's 16-byte task
+comm. The fixture proves self set/get, raw getter observation, ERANGE at the
+length boundary, and preserved errno. Candidate-only non-self calls return
+`ESRCH` without input/output observation. Worker or foreign naming, a full
+pthread TCB/thread list, musl's procfs route, cancellation, a general prctl C
+API, scheduler/affinity attributes, lifecycle/synchronization/TSS,
+dynamic/loader TLS, CRT, sysroot, full pthread/TLS or x86-64 parity,
+promotion, and public x86 support remain excluded.
+
 `libc-pthread-mutex-normal` is a tenth separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family.
 Its project-header C body first runs against pinned musl and then through a
@@ -3790,7 +3807,7 @@ the byte-string, immediate-termination, and callback-algorithms candidates
 deliberately do neither because their selected functions do not observe errno.
 That older fixture setup does not describe `libc-static-tls-v1`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-pthread-cpuclock`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, or
 `libc-pthread-c11-once`, or `libc-pthread-c11-tsd`: their start shims
 delegate the untouched entry stack to the hidden libc Static Initial TLS v1
@@ -4628,7 +4645,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-signal-altstack`, `libc-timerfd`, and
 `libc-static-tls-v1`, `libc-crt-static-tls`,
 `libc-pthread-create-join-tls`, `libc-pthread-identity`, `libc-c11-lifecycle`,
-`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-mutex-normal`,
+`libc-pthread-detach`, `libc-thrd-sleep`, `libc-thrd-yield`, `libc-pthread-cpuclock`, `libc-pthread-name`, `libc-pthread-mutex-normal`,
 `libc-pthread-rwlock`, `libc-pthread-cond-private`, `libc-c11-plain-sync`, `libc-pthread-c11-once`,
 `libc-pthread-c11-tsd`,
 `libc-termios-control`,

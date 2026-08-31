@@ -456,6 +456,10 @@ static_assert(__is_same(decltype(&pthread_timedjoin_np),
 
 static crabc_pthread_getaffinity_np_signature const crabc_force_pthread_getaffinity_np
 	__attribute__((used)) = &pthread_getaffinity_np;
+static crabc_pthread_setname_np_signature const crabc_force_pthread_setname_np
+	__attribute__((used)) = &pthread_setname_np;
+static crabc_pthread_getname_np_signature const crabc_force_pthread_getname_np
+	__attribute__((used)) = &pthread_getname_np;
 #endif
 
 int crabc_x86_64_pthread_c11_header_abi_probe()

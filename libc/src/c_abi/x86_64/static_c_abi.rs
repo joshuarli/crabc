@@ -107,7 +107,9 @@
 //! unselected. The adjacent CPU-clock leaf admits only the bootstrapped
 //! process-main `pthread_self()` handle and encodes its direct `gettid` value;
 //! it owns no dereferenceable TCB, worker handle, or general C clock surface.
-//! The mutex
+//! The adjacent GNU task-name pair similarly admits only that bootstrapped
+//! process-main self handle through direct Linux `prctl`; it owns neither
+//! worker names nor musl's `/proc` target-name/cancellation path. The mutex
 //! block is limited to all-zero/NULL-attribute process-private normal mutexes
 //! and private futex contention. Its condition sibling retains musl's private
 //! waiter-list/barrier/requeue protocol only for all-zero/NULL-attribute
@@ -247,6 +249,8 @@ mod pthread_create_join;
 mod pthread_affinity;
 #[path = "pthread_cpuclock.rs"]
 mod pthread_cpuclock;
+#[path = "pthread_name.rs"]
+mod pthread_name;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
 #[path = "pthread_atfork.rs"]
