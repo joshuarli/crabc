@@ -970,6 +970,7 @@ wcstombs
 wcstoul
 wcstoull
 wcstoumax
+wcswcs
 wcswidth
 wcsxfrm
 wcsxfrm_l

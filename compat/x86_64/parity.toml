@@ -9941,6 +9941,47 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT C/POSIX implementation, compressed-table, return-value, classification, simple-case, and terminal-width oracle for the exact selected src/string, src/locale/wcscoll/wcsxfrm, and src/ctype leaves." }, { kind = "project-contract", source = "AArch64 crabc-libc wide-string/classification implementation in libc/src/c_abi.rs plus checked AArch64 ABI/export inventory", role = "Existing project ownership and public-symbol availability oracle. The x86 leaf does not inherit the AArch64 implementation's approximate non-ASCII classification and instead retains the pinned-musl Unicode tables." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "Signed 32-bit wchar_t, unsigned wint_t, LP64 wctype_t, pointer-shaped wctrans_t, pointer/size_t calling conventions, and unmangled C linkage." }]
 
 [[family.verified_artifact]]
+id = "static-c-wcswcs"
+description = "Private native x86 selected-static-archive `wcswcs` compatibility artifact inside still-planned `libc.text-math-locale-stdio`. One dependency-free `crabc-libc` archive resolves exactly the unconditional legacy wide-substring spelling into a freestanding C fixture after an equivalent pinned-musl execution. Musl's `src/string/wcswcs.c` forwards directly to `wcsstr`; the local one-export Rust object preserves that source closure's valid NUL-terminated signed-`wchar_t` first-suffix contract with a scalar suffix comparison rather than extracting the independently selected broad `wcsstr`/wide-character object. Direct and function-pointer calls prove the original haystack pointer for an empty needle, first rather than later repeated matches, empty-haystack/absent/overlong-needle null results, full signed x86 `wchar_t` unit equality including INT32_MIN/U+10FFFF/U+10437, and no input mutation. The final candidate rejects broad wide-string, Unicode/classification, locale, multibyte conversion, errno/TLS, allocation, cancellation, locks, syscalls, and runtime state. This capability-free ABI artifact does not select general wide text/search, `wcsstr`, locale or Unicode policy, a general C string subsystem, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/wcswcs.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stdint.h",
+  "include/wchar.h",
+  "compat/x86_64/wcswcs_header_abi_probe.c",
+  "compat/x86_64/wcswcs_header_abi_probe.cpp",
+  "compat/x86_64/run_wcswcs_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_wcswcs_probe.c",
+  "compat/x86_64/libc_wcswcs_start.S",
+  "compat/x86_64/run_libc_wcswcs.sh",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "System V AMD64 passes `wcswcs(const wchar_t *haystack, const wchar_t *needle)` in rdi/rsi and returns its mutable alias or NULL in rax. Linux/x86-64 wchar_t is a signed four-byte align-4 unit; musl's unconditional legacy declaration has no restrict qualification, and the leaf reads neither input mutably.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/string/wcswcs.c::wcswcs directly to src/string/wcsstr.c. The private scalar suffix comparison preserves the C-defined NUL-terminated first-match/empty-needle/null-result behavior without importing wcsstr's two-way acceleration or the broader wide-character object.",
+  "The final `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno/TLS path, locale, multibyte, Unicode-table, allocation, cancellation, lock, or ambient runtime dependency. It exposes wcswcs while rejecting wcsstr and broad wide-string helpers; apart from the test entry's one exit syscall, its local closure has no syscall boundary.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<wchar.h>` matrix proves unconditional `wchar_t *wcswcs(const wchar_t *, const wchar_t *)` under strict, POSIX, X/Open, GNU, and BSD profiles, with signed four-byte wchar_t layout, exact function-pointer type, and unmangled C++ linkage. It selects no general wchar header completion, broad wide-text runtime, archive linkage, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-wcswcs", scope = "Pinned-musl/project C11/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct/function-pointer empty-needle original-pointer behavior; first repeated suffix selection; empty-haystack, absent, and overlong-needle null results; signed `INT32_MIN`/U+10FFFF/U+10437 unit matching; and no input mutation. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/TLS/allocation/locale/multibyte/Unicode/panic path, and no wcswcs syscall beyond the entry shim. It rejects wcsstr, broad wide-string, locale, and conversion extraction. It does not select general wide text/search, locale or Unicode policy, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT `<wchar.h>` declaration and src/string/wcswcs.c -> wcsstr.c source/behavior oracle for unconditional pointer typing, empty-needle identity, first matching suffix, null result, and read-only wide-unit comparison." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 headers", role = "Signed 32-bit align-4 wchar_t, LP64 two-pointer/one-pointer-return ABI, C++ C linkage, and true-static ET_EXEC closure." }]
+
+[[family.verified_artifact]]
 id = "static-c-locale-object-localized-wide"
 description = "Private native x86 built-in locale-object and localized-wide artifact inside still-planned `libc.text-math-locale-stdio`. It exposes exactly `newlocale`, `freelocale`, `uselocale`, `duplocale`, `nl_langinfo`, `nl_langinfo_l`; `iswalnum_l`, `iswalpha_l`, `iswblank_l`, `iswcntrl_l`, `iswdigit_l`, `iswgraph_l`, `iswlower_l`, `iswprint_l`, `iswpunct_l`, `iswspace_l`, `iswupper_l`, `iswxdigit_l`; `iswctype_l`/`wctype_l`, `towlower_l`/`towupper_l`/`towctrans_l`/`wctrans_l`, and `wcscasecmp_l`/`wcsncasecmp_l`/`wcscoll_l`/`wcsxfrm_l`. Immutable allocation-free `C`/`POSIX` and `C.UTF-8` tokens retain only a CTYPE UTF-8 distinction; every other category and langinfo value is fixed C/POSIX data. `uselocale` is per-thread for the selected main and bounded pthread workers through Static Initial TLS v1, and new workers begin in global-following mode. One project-header fixture runs under pinned musl 1.2.6 and a true dependency-free `-nostdlib -static` candidate, proving lifecycle/state transitions, CODESET and fixed time/numeric/messages langinfo, locale-object multibyte selection, parent/worker isolation, code-point collation, and a byte-identical exhaustive U+0000 through U+110000 localized classification/case fingerprint. It deliberately excludes arbitrary locale names, environment lookup, locale maps, allocation/refcounts, gettext catalogs, general locale or legacy-encoding databases, `mbsnrtowcs`/`wcsnrtombs`, narrow `_l` ctype/string APIs, locale-specific numeric parsing, wide stdio/streams, formatting/scanning, time conversion, libc.so, CRT, loader, sysroot, family completion, promotion, and public x86 support."
 source_owners = [

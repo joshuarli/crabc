@@ -226,6 +226,8 @@ mod locale_narrow;
 mod wide_character_tables;
 #[path = "wide_character.rs"]
 mod wide_character;
+#[path = "wcswcs.rs"]
+mod wcswcs;
 #[path = "regex.rs"]
 mod regex;
 #[path = "iconv.rs"]

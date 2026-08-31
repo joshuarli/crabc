@@ -1368,6 +1368,18 @@ family completion, promotion, or public x86 support. Wide numeric parsing and
 the locale-object/localized-wide surface are separately selected and are not
 exercised by this artifact.
 
+A separate `static-c-wcswcs` artifact now records only musl's unconditional
+legacy wide-substring alias: `./scripts/dev-x86_64.sh wcswcs-header-abi` proves
+the exact strict/POSIX/X/Open/GNU/BSD C11/C++17 `<wchar.h>` spelling and
+unmangled linkage, while `./scripts/dev-x86_64.sh libc-wcswcs` first executes
+the same project-header fixture with pinned musl and then a true
+`-nostdlib -static` candidate. It covers empty-needle identity, first-suffix
+selection, null misses, signed full-width `wchar_t` units, and no input
+mutation. Its local scalar `wcswcs.c -> wcsstr.c` closure deliberately does
+not select `wcsstr`, the broad wide-character object, locale/Unicode policy,
+multibyte conversion, general wide text/search, family completion, promotion,
+or public x86 support.
+
 A separate private x86 built-in locale-object/localized-wide artifact is now
 verified by `./scripts/dev-x86_64.sh libc-locale-object-wide`. Immutable
 allocation-free `C`/`POSIX` and `C.UTF-8` tokens, fixed C/POSIX langinfo, and
