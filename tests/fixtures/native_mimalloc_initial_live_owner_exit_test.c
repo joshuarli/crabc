@@ -1,8 +1,8 @@
 /*
- * Ticket zero keeps one client live while A leaves the selected mixed
- * owner-exit route behind. B receives only the ordinary C addresses needed
- * for free; its terminal pthread finish must settle A's typed route before
- * ticket zero may resume its retained engine and reuse its own client.
+ * The initial persistent owner keeps one client live while A leaves the
+ * selected mixed owner-exit route behind. B receives only the ordinary C
+ * addresses needed for free; its terminal pthread finish settles A's typed
+ * route while the initial owner retains and later reuses its own client.
  */
 #include <malloc.h>
 #include <pthread.h>

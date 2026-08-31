@@ -1,9 +1,8 @@
 /*
- * Ticket zero retains this ordinary allocation while a later pthread needs
- * its own local allocation.  No pointer crosses the thread boundary: the
- * worker must receive a separately owned native page-engine operation while
- * the initial engine is parked, and ticket zero must resume before its exact
- * live client is inspected and freed.
+ * The initial persistent owner retains this ordinary allocation while a later
+ * pthread needs its own local allocation. No pointer or engine crosses the
+ * thread boundary: the worker receives an independently owned native
+ * operation while the initial owner remains current for its exact live client.
  */
 #include <pthread.h>
 #include <stdint.h>
@@ -50,8 +49,8 @@ int main(void)
     if (malloc_usable_size(initial) < 79)
         return 5;
 
-    /* Both query and replacement must reassemble the same initial-thread
-     * engine, then re-park it while the child owns no allocator state. */
+    /* Both query and replacement remain with the same initial-thread owner;
+     * neither operation reassembles or parks a parent engine. */
     initial = realloc(initial, 151);
     if (initial == NULL)
         return 6;

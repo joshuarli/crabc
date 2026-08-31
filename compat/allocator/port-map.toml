@@ -2743,15 +2743,15 @@ upstream = "src/alloc.c"
 name = "nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary"
 source_region = "mimalloc v3.5.0 src/alloc.c:29-159,344-451 ordinary allocation, calloc, realloc, free, and usable-size mechanics; src/free.c:100-160,221-255 exact live-page lookup, aligned block recovery, and cross-thread mi_free_block_mt publication; musl 1.2.6 malloc-family errno and zero-size C-ABI policy"
 rust_module = "crabc_libc::allocator_native_mimalloc, crabc_libc::c_abi, and crabc_libc::program_utils_exports with crabc_mimalloc::{process_page_map,runtime_lifecycle}"
-rust_item = "the `native-mimalloc-shadow` malloc/free/calloc/realloc/malloc_usable_size boundary; native_allocate_aligned/native_reallocate/native_free/native_usable_size and their persistent-owner/pointer-first helpers; ProcessPageMapLease::{lookup_live_allocation,lookup_page_for_live_client}, LiveAllocationPointer::{client,usable_size,is_associated_with}, Page::{canonical_remote_block_for_live_client_at,remote_free_producer_state_at}, and remote_free::push; MainStaticRuntimeFirstArenaPageAllocator::{prepare_dormant_page_pair,prepare_live_engine_for_later_thread,with_later_thread_page_pair}; detached-route NativePostExitRouteStorage::{free_exact,settle_exact_free}, NativePostExitRouteRegistry::{free_exact,usable_size_exact,finish_completions_for_owner}, NativePostExitRoute, NativePostExitRouteRegistryNode, NativePostExitRouteCompletion, RuntimeParkedPostExitRoute, ProcessPageMapPostExitAccess, and finish_current_thread_native_after_user_destructors"
+rust_item = "the `native-mimalloc-shadow` malloc/free/calloc/realloc/malloc_usable_size boundary; native_allocate_aligned/native_reallocate/native_free/native_usable_size and their persistent-owner/pointer-first helpers; native-shadow startup's prepare_native_later_thread_arena and NativeInitialPersistentThreadOwner::prepare_dormant_page_pair_for_later_thread; ProcessPageMapLease::{lookup_live_allocation,lookup_page_for_live_client}, LiveAllocationPointer::{client,usable_size,is_associated_with}, Page::{canonical_remote_block_for_live_client_at,remote_free_producer_state_at}, and remote_free::push; detached-route NativePostExitRouteStorage::{free_exact,settle_exact_free}, NativePostExitRouteRegistry::{free_exact,usable_size_exact,finish_completions_for_owner}, NativePostExitRoute, NativePostExitRouteRegistryNode, NativePostExitRouteCompletion, RuntimeParkedPostExitRoute, ProcessPageMapPostExitAccess, and finish_current_thread_native_after_user_destructors"
 # Shadow correction: live remote free is pointer-first. The selected direct
 # and C witnesses give B1/B2 only matching exact addresses; each derives
 # persistent PageMap/page facts and atomically publishes to the source remote
 # head without a session-local handoff. The nondefault status does not change.
 intentional_difference = """
 This is a compile-time, nondefault early-shadow lane, not a runtime selector or
-default-backend change. The initial thread retains the permanent ticket-zero
-owner. An attached worker may submit one exact still-live ticket-zero client
+default-backend change. The initial thread retains its permanent source owner.
+An attached worker may submit one exact still-live ticket-zero client
 through the source page's atomic remote head, but it receives no page engine,
 source owner, admission claim, or stored client capability. That atomic
 producer seam supplies live-owner free only; the separately mapped realloc
@@ -2761,22 +2761,22 @@ usable-size boundary returns its
 captured extent for any exact live native client without borrowing this
 producer.
 
-Immediately before a selected initial thread creates a later pthread, it may
-park one live ticket-zero engine. The typed parked token keeps the permanent
-static session, exact engine state, and matching suspended PageMap access on
-ticket zero; it lends only the immutable process map/arena pair to the child.
-The initial client address never crosses the boundary. The child must complete
-its own local operation and all-free lifecycle before ticket zero can resume
-its engine to inspect, free, reallocate, or allocate again. The selected
-initial-live/local-worker fixture proves that serial sequence only. Its
-companion keeps two independently parked later local sessions beside the same
-initial owner and releases them one at a time before ticket zero may resume.
-The third initial-live/owner-exit companion keeps that same ticket-zero engine
-parked across a later A's existing mixed aggregate route; fresh B frees only
-its ordinary exact C inputs, terminally finishes that route, and completes its
-own ordinary attachment before ticket zero may resume its initial client.
-None is concurrent initial/worker mutation, a generic worker scheduler, or a
-pointer handoff.
+Native-shadow startup calls `prepare_native_later_thread_arena` before
+constructors. That dormant-only step promotes the cold static staging owner
+into its pinned initial compiler-TLS owner and establishes the first arena.
+`pthread_create` does not reprepare, suspend, or park a live initial owner:
+the initial client remains with that direct owner while every later pthread
+attaches its own local lifecycle. The initial client address, engine, and
+session never cross the boundary. The selected initial-live/local-worker
+fixture proves that serial sequence only. Its companion synchronizes two
+independent later local workers and releases them one at a time while the
+initial live client remains direct. The third initial-live/owner-exit companion
+keeps that same initial client direct across a later A's existing mixed
+aggregate route; fresh B frees only its ordinary exact C inputs and completes
+its own ordinary attachment before the initial thread queries, reallocates, or
+frees its own client. The separate main-static parked/suspend bridge is not
+selected by this C pthread path. None is concurrent initial/worker mutation, a
+generic worker scheduler, or a pointer handoff.
 
 An attached native worker otherwise owns only its generation-checked private
 session and ledger. Its local C-facing blocks may be allocated, freed,
@@ -3060,9 +3060,9 @@ upstream = "src/free.c"
 name = "pointer-first-native-free-page-state-dispatch"
 source_region = "mimalloc v3.5.0 src/free.c:100-160 _mi_page_ptr_unalign, mi_free_generic_local, and mi_free_generic_mt; 170-255 pointer-to-page validation, mi_free_nonnull source xthread_id local-versus-remote selection, and mi_free entry. The claimed post-owner-exit collection/release tail remains separately mapped by page-owned-post-owner-exit-exact-remote-claim-terminal-tail."
 rust_module = "crabc_mimalloc::runtime_lifecycle, crabc_mimalloc::main_static_page, and crabc_mimalloc::process_page_map with crabc_mimalloc::single_thread"
-rust_item = "RuntimeProcessStorage::page_map_for_live_native_allocation/is_quiescent_on_initial_thread_for_fork; ProcessPageMapLease::lookup_live_allocation; LiveAllocationPointer; NativeInitialPersistentThreadOwner::{is_quiescent_for_held_fork_gate}; MainStaticRuntimeFirstArenaPageAllocator::{free_current_initial_thread_local,prepare_dormant_page_pair_current_initial_thread_local}; runtime_lifecycle::{native_free,native_free_pointer_first_local,native_free_pointer_first_nonlocal,current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate,prepare_native_initial_owner_for_later_thread}; and single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts"
-intentional_difference = "This private native-shadow C-facing boundary accepts only a valid live native allocation and takes one PageMap observation before it compares the source xthread identity with the caller. The matching initial owner is promoted once, before later admission, from the static ticket-zero staging slot into `NativeInitialPersistentThreadOwner`; thereafter its ordinary local allocation/free/query uses the exact compiler-TLS owner directly, without a legacy page-owner scheduler claim or parked compatibility bridge. The held zero-admission fork predicate probes that same pinned owner only for source `AwaitingFreshPage`/`DormantExistingArena`, never the vacated static slot, so its prepared child preserves the direct initial source image while live or terminal state remains non-preserving. A source-dormant promoted owner may prepare an independent later worker, while a live/terminal transfer retains rather than reviving the vacated static slot. Every nonmatching live, abandoned, or mapped-abandoned observation moves that exact LiveAllocationPointer plus process PageMap/arena and main-Heap facts into W03; W03 consumes W07's non-Copy claim internally, so W01 neither reconstructs a page/block nor selects a tail geometry. PublishedToOwner, StillLive, and Released become scalar Freed. W03's post-CAS Retained has already sealed its exact source owner and then makes the runtime page owner terminal. Detached is a valid pre-CAS NotOwnerAssociated rejection that becomes scalar Retained without runtime terminalization. A PageMap miss remains InvalidPointer; unavailable process facts fail closed as Retained. There is no former-owner route, owner/client registry or ledger scan, scheduler or park bridge in the matching initial-local continuation, top-level geometry route, or W02 realloc policy in this dispatcher."
-tests = ["crabc-mimalloc/tests/native_pointer_first_free.rs", "crabc-mimalloc/tests/native_initial_post_exit_free.rs", "crabc-mimalloc/tests/native_pointer_first_post_exit_os_release.rs", "crabc-mimalloc/tests/native_pointer_first_initial_local_free.rs", "crabc-mimalloc/tests/native_initial_persistent_live_transfer.rs", "crabc-mimalloc/tests/native_initial_persistent_preclone.rs", "crabc-mimalloc/tests/native_initial_persistent_quiescent_fork.rs"]
+rust_item = "RuntimeProcessStorage::page_map_for_live_native_allocation/is_quiescent_on_initial_thread_for_fork; ProcessPageMapLease::lookup_live_allocation; LiveAllocationPointer; NativeInitialPersistentThreadOwner::{is_quiescent_for_held_fork_gate}; MainStaticRuntimeFirstArenaPageAllocator::{free_current_initial_thread_local,prepare_dormant_page_pair_current_initial_thread_local}; runtime_lifecycle::{native_free,native_free_pointer_first_local,native_free_pointer_first_nonlocal,current_thread_initial_persistent_owner_is_quiescent_for_held_fork_gate,prepare_native_later_thread_arena}; and single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts"
+intentional_difference = "This private native-shadow C-facing boundary accepts only a valid live native allocation and takes one PageMap observation before it compares the source xthread identity with the caller. The matching initial owner is promoted once by native-shadow startup through `prepare_native_later_thread_arena`, before constructors or later-thread admission, from the static ticket-zero staging slot into `NativeInitialPersistentThreadOwner`; thereafter its ordinary local allocation/free/query uses the exact compiler-TLS owner directly, without a legacy page-owner scheduler claim or parked compatibility bridge. `pthread_create` does not reprepare or park a live initial owner: each attached child owns its independent local lifecycle while the initial client remains with its pinned compiler-TLS owner. The held zero-admission fork predicate probes that same pinned owner only for source `AwaitingFreshPage`/`DormantExistingArena`, never the vacated static slot, so its prepared child preserves the direct initial source image while live or terminal state remains non-preserving. An explicit dormant-pair preparation admits an independent later worker only from a source-dormant owner; a live or terminal request retains rather than reviving the vacated static slot. Every nonmatching live, abandoned, or mapped-abandoned observation moves that exact LiveAllocationPointer plus process PageMap/arena and main-Heap facts into W03; W03 consumes W07's non-Copy claim internally, so W01 neither reconstructs a page/block nor selects a tail geometry. PublishedToOwner, StillLive, and Released become scalar Freed. W03's post-CAS Retained has already sealed its exact source owner and then makes the runtime page owner terminal. Detached is a valid pre-CAS NotOwnerAssociated rejection that becomes scalar Retained without runtime terminalization. A PageMap miss remains InvalidPointer; unavailable process facts fail closed as Retained. There is no former-owner route, owner/client registry or ledger scan, scheduler or park bridge in the matching initial-local continuation, top-level geometry route, or W02 realloc policy in this dispatcher."
+tests = ["crabc-mimalloc/tests/native_pointer_first_free.rs", "crabc-mimalloc/tests/native_initial_post_exit_free.rs", "crabc-mimalloc/tests/native_pointer_first_post_exit_os_release.rs", "crabc-mimalloc/tests/native_pointer_first_initial_local_free.rs", "crabc-mimalloc/tests/native_initial_persistent_live_transfer.rs", "crabc-mimalloc/tests/native_initial_persistent_quiescent_fork.rs"]
 exported = false
 implemented = true
 unit_verified = true

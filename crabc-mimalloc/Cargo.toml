@@ -72,14 +72,6 @@ path = "tests/native_initial_persistent_live_transfer.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
-name = "native_initial_persistent_preclone"
-path = "tests/native_initial_persistent_preclone.rs"
-# This direct-only pre-clone witness proves cold initial preparation promotes
-# its persistent source owner before a later admission can make first local
-# native allocation terminally unavailable.
-required-features = ["native-runtime-test-audit"]
-
-[[test]]
 name = "native_initial_persistent_quiescent_fork"
 path = "tests/native_initial_persistent_quiescent_fork.rs"
 # This direct-only fork witness proves that the source-dormant promoted

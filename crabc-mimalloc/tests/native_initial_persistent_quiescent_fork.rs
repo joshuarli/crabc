@@ -67,11 +67,11 @@ fn dormant_initial_persistent_owner_fork_child() -> ! {
 }
 
 /// `before_fork` preserves the initial thread's compiler-TLS owner only when
-/// it is source-dormant. This starts from the COLD pre-clone boundary, which
-/// promotes the static staging owner into the pinned initial TLS cell and
-/// returns it to `DormantExistingArena`; the child then proves that it can
-/// continue direct local allocate/query/free without reopening the vacated
-/// process-static slot.
+/// it is source-dormant. This starts from the startup-equivalent dormant-arena
+/// preparation, which promotes the static staging owner into the pinned
+/// initial TLS cell and returns it to `DormantExistingArena`; the child then
+/// proves that it can continue direct local allocate/query/free without
+/// reopening the vacated process-static slot.
 #[test]
 fn dormant_promoted_initial_owner_is_preserved_across_prepared_fork() {
     assert!(

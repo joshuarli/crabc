@@ -2062,21 +2062,21 @@ clients through the source atomic remote head. The client itself pins its page;
 the worker takes no page engine, scheduler claim, or stored pointer capability,
 and ticket zero collects the head during its next ordinary operation. In the
 separate `native_mimalloc_initial_live_local_worker` fixture, the initial
-thread instead keeps its own ordinary client: immediately before `clone`, it
-parks the exact ticket-zero engine and releases only its long PageMap
-exclusion. The child receives the immutable process pair for one local
-allocation/free operation, not the initial engine, session, or address. After
-the child returns all-free, the initial thread resumes to query, reallocate,
-validate, free, and reuse its client. This is a serialized initial-live/local-worker witness, not
-a concurrent allocator or general pointer handoff. Its companion
-`native_mimalloc_initial_live_parallel_workers` fixture parks two distinct
-later local sessions beside that same initial client, releases and joins them
-one at a time, and proves ticket zero resumes only after both all-free thread
-finishes. It likewise admits no concurrent PageMap mutation or pointer
-handoff. The `native_mimalloc_initial_live_owner_exit` companion keeps that
-same initial client parked while a later A leaves the existing mixed
+thread keeps its ordinary client in its persistent compiler-TLS owner while
+the child attaches an independent local owner. No initial engine, session, or
+address crosses `clone`, and the parent does not suspend or park its live
+owner. After the child returns all-free, the initial thread continues to query,
+reallocate, validate, free, and reuse its client. This is a serialized
+initial-live/local-worker witness, not a concurrent allocator or general
+pointer handoff. Its companion
+`native_mimalloc_initial_live_parallel_workers` fixture synchronizes two
+distinct later local workers, releases and joins them one at a time, and then
+verifies the initial live client through its direct owner. It likewise admits
+no concurrent PageMap mutation or pointer handoff. The
+`native_mimalloc_initial_live_owner_exit` companion keeps that same initial
+client with its direct owner while a later A leaves the existing mixed
 owner-exit aggregate; fresh B terminally frees its exact C inputs and finishes
-normally before ticket zero resumes to query, reallocate, validate, and free
+normally before the initial thread queries, reallocates, validates, and frees
 its own client. It does not hand A or B the initial client or admit concurrent
 PageMap mutation. In the
 owner-exit fixture A leaves a

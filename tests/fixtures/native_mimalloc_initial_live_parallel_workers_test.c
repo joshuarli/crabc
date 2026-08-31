@@ -1,9 +1,9 @@
 /*
- * Ticket zero keeps one native client live while two later workers each park
- * a private local client. The workers are released one at a time: the test
- * observes independently parked lifecycle claims, not concurrent PageMap
- * mutation or a pointer handoff. Ticket zero may resume only after both
- * workers have completed their ordinary all-free thread finishes.
+ * The initial persistent owner keeps one native client live while two later
+ * workers each retain a private local client. The workers are released one at
+ * a time: the test observes worker-local lifecycle progress, not parent-side
+ * parking, concurrent PageMap mutation, or a pointer handoff. The initial
+ * client remains with its direct owner throughout both all-free finishes.
  */
 #include <pthread.h>
 #include <stdint.h>
@@ -105,9 +105,9 @@ int main(void)
     initial[0] = 0x31;
     initial[78] = 0x32;
 
-    /* Wait for the first local engine to park before the initial thread
-     * creates the second child. This makes the second clone observe the
-     * composed ticket-zero-plus-worker scheduler state deterministically. */
+    /* Wait until the first worker holds its own local client before the
+     * initial thread creates the second child. This fixes the fixture's
+     * worker ordering without changing the initial owner's lifecycle. */
     if (pthread_create(&first_worker, NULL, local_worker, (void *)(uintptr_t)0) != 0)
         return 2;
     if (pthread_mutex_lock(&state.lock) != 0)
@@ -146,8 +146,8 @@ int main(void)
         return 11;
 
     /* Join the first thread before releasing the second. Its no-page
-     * destructor finish must settle its own parked claim before the second
-     * worker resumes, keeping this a serial lifecycle witness. */
+     * destructor finish settles only its own local lifecycle, keeping this a
+     * serial worker-ordering witness. */
     if (pthread_join(first_worker, &result) != 0 || result != NULL)
         return 12;
     if (pthread_mutex_lock(&state.lock) != 0)

@@ -870,30 +870,30 @@ thread, retains no mapping until a valid first request, and keeps its
 After the engine proves its full local image empty, it returns only that
 Rust-side aliasing lease while retaining the permanent session and
 already-published first arena; a later ticket-zero request may reactivate
-sequentially through that same arena without a new reservation. Separately,
-when the selected initial thread is about to create a later pthread with one
-of its own native clients still live, `c_abi::pthread_create` asks
-`prepare_native_initial_owner_for_later_thread` to park that exact
-ticket-zero engine before `clone`. `MainStaticRuntimeParkedEngine` retains the
-static session, complete engine state, and the matching
-`ProcessPageMapSuspendedEngineAccess`; it releases only the long PageMap
-exclusion. The child receives the ordinary immutable process pair for a
-separately serialized local engine operation, never a ticket-zero engine,
-session, or client address. Ticket zero reclaims its matching long lease
-before an allocation, reallocation, usable-size query, or free; its all-free
-finish returns to the existing dormant first-arena state. The selected
+sequentially through that same arena without a new reservation. Under
+`native-mimalloc-shadow`, `c_abi::__libc_start_main` calls
+`prepare_native_later_thread_arena` before constructors. That dormant-only
+startup step promotes the cold static staging owner into the initial thread's
+persistent TLS cell and establishes the first arena before any later-thread
+admission. `c_abi::pthread_create` deliberately does not repeat it: a live
+initial owner remains current in its compiler-TLS cell while each later pthread
+attaches an independent local owner. No parent engine, session, or client
+crosses `clone`, and the initial thread continues direct allocation,
+reallocation, usable-size, and free operations after workers finish. The
+separate `MainStaticRuntimeParkedEngine` suspension bridge remains outside
+this C pthread-creation path. The selected
 `native_mimalloc_initial_live_local_worker` C regression proves one
-initial-live/local-worker/initial-reuse sequence. It does not admit concurrent
-initial/worker mutation, a general worker scheduler, or pointer handoff. Its
-companion `native_mimalloc_initial_live_parallel_workers` regression holds two
-independently parked later local sessions beside the same parked ticket-zero
-engine, releases them one at a time, and proves ticket zero resumes only after
-both ordinary all-free finishes. It adds no concurrent map mutation or
-cross-thread client authority. A third
-`native_mimalloc_initial_live_owner_exit` companion keeps that initial client
-parked across a later A's existing mixed owner-exit route; a fresh B
-terminally frees the aggregate and completes its ordinary finish before ticket
-zero can reassemble, query, reallocate, and free its own client. It neither
+initial-live/local-worker/initial-reuse sequence without a parent-side engine
+handoff. It does not admit concurrent initial/worker mutation, a general
+worker scheduler, or pointer handoff. Its companion
+`native_mimalloc_initial_live_parallel_workers` regression synchronizes two
+independent later local workers, releases them one at a time, and verifies the
+initial live client remains valid after their ordinary all-free finishes. It
+adds no concurrent map mutation or cross-thread client authority. A third
+`native_mimalloc_initial_live_owner_exit` companion keeps the initial client
+with its direct owner across a later A's existing mixed owner-exit route; a
+fresh B terminally frees the aggregate and completes its ordinary finish before
+the initial thread queries, reallocates, and frees its own client. It neither
 hands the initial client to A/B nor creates concurrent map authority.
 Separately,
 the lower later-main engine boundary has a Rust-only persistent storage form:

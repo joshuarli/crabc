@@ -5683,16 +5683,15 @@ fn with_current_thread_native_initial_persistent_allocator<R>(
     }
 }
 
-/// Promotes the initial static owner before a later-thread preparation can
-/// make an admission observable, then leaves only its source-dormant pair
-/// available to that later owner.
+/// Promotes the initial static owner while native-shadow startup establishes
+/// the source-dormant pair that later workers may use.
 ///
-/// This is the one preparation/clone boundary that may create the persistent
-/// initial owner while the process is still cold. It is deliberately not a
-/// steady allocation or free path: promotion holds the short fork-admission
-/// gate exactly once, after which the owner remains pinned in initial-thread
+/// This dormant-only preparation may create the persistent initial owner
+/// while the process is still cold. It is deliberately not a steady
+/// allocation or free path: promotion holds the short fork-admission gate
+/// exactly once, after which the owner remains pinned in initial-thread
 /// compiler TLS. A live or terminal initial engine is retained rather than
-/// being parked, lent, or reconstructed through the former static slot.
+/// being lent or reconstructed through the former static slot.
 fn prepare_current_thread_native_initial_persistent_owner_for_later_thread() -> bool {
     let prepared = with_current_thread_native_initial_persistent_allocator(true, |owner| {
         (
@@ -6379,24 +6378,6 @@ pub fn prepare_native_later_thread_arena() -> bool {
         return false;
     }
     prepare_current_thread_native_initial_persistent_owner_for_later_thread()
-}
-
-/// Prepares the persistent initial native owner before its creating initial
-/// thread publishes a later pthread.
-///
-/// The creator first performs the one-time static-to-TLS promotion while no
-/// later admission exists, including from `COLD`. It keeps every initial
-/// client and source engine field private while making only the immutable
-/// process pair available to one serialized worker operation. This does not
-/// attach the child, route a pointer, or change the C backend. A dormant owner
-/// stays on its direct pair path; a live/retained owner is unavailable rather
-/// than manufacturing a lifecycle repair.
-#[doc(hidden)]
-pub fn prepare_native_initial_owner_for_later_thread() {
-    if !RUNTIME_PROCESS.is_on_initial_thread() {
-        return;
-    }
-    let _ = prepare_current_thread_native_initial_persistent_owner_for_later_thread();
 }
 
 /// Allocates one C-facing native-shadow block on the current thread.
