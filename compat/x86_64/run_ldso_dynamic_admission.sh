@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native admission inventory for the four deliberately fixed x86 loader graphs.
+# Native admission inventory for the five deliberately fixed x86 loader graphs.
 #
 # This is a gate, not a generated report: it executes the existing fixtures that
 # build and inspect their candidate ELF objects, then requires each accepted and
@@ -14,13 +14,14 @@ readonly GRAPH_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_initial_graph.sh"
 readonly TLS_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_initial_tls.sh"
 readonly HANDOFF_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_owned_crt_handoff.sh"
 readonly INTROSPECTION_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_fixed_graph_introspection.sh"
+readonly DLFCN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_fixed_graph_dlfcn.sh"
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     printf '%s\n' 'ERROR: dynamic-admission inventory requires native Linux/x86-64' >&2
     exit 2
 fi
 
-for runner in "$GRAPH_RUNNER" "$TLS_RUNNER" "$HANDOFF_RUNNER" "$INTROSPECTION_RUNNER"; do
+for runner in "$GRAPH_RUNNER" "$TLS_RUNNER" "$HANDOFF_RUNNER" "$INTROSPECTION_RUNNER" "$DLFCN_RUNNER"; do
     if [ ! -f "$runner" ]; then
         printf '%s\n' "ERROR: required loader fixture is missing: $runner" >&2
         exit 2
@@ -80,6 +81,16 @@ require_runner_contract "$INTROSPECTION_RUNNER" \
     'GNU_RELRO' \
     'PT_TLS' \
     'env -i PATH=/usr/bin:/bin'
+require_runner_contract "$DLFCN_RUNNER" \
+    'readelf -dW' \
+    'readelf -rW' \
+    '__crabc_x86_64_fixed_graph_dlfcn_v1' \
+    'R_X86_64_GLOB_DAT' \
+    'GNU_RELRO' \
+    'PT_TLS' \
+    'strong-import' \
+    'dso-import' \
+    'env -i PATH=/usr/bin:/bin'
 
 run_fixture() {
     local label="$1"
@@ -113,5 +124,9 @@ run_fixture \
     'fixed-graph introspection graph' \
     'x86 fixed-graph loader introspection snapshot/address/information: PASS' \
     "$INTROSPECTION_RUNNER"
+run_fixture \
+    'fixed-graph dlfcn graph' \
+    'x86 fixed-graph loader handles/symbols/address/snapshot/information: PASS' \
+    "$DLFCN_RUNNER"
 
 printf '%s\n' 'x86 dynamic-loader fixed-graph admission inventory: PASS'

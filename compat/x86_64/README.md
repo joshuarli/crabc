@@ -4066,15 +4066,40 @@ fixed-graph `dl_iterate_phdr`, `dladdr`, and
 foundation, not public dlfcn, process RuntimeV1 publication, a general loader,
 dynamic CRT/sysroot, family promotion, or public x86 support.
 
-`ldso-dynamic-admission` is the consumed aggregate admission gate for four
+`ldso-fixed-graph-dlfcn` is a separate cfg-isolated no-TLS sibling that
+consumes those actual post-relocation graph objects through a private
+`RuntimeV1`-ordered ABI. Its exact 64-byte v1 record supplies open, symbol,
+close, address, snapshot, and per-handle information callbacks. Main has a
+permanent loader token; repeated mid/leaf opens acquire the same stable token
+with bounded atomic reference state, and the last close makes that explicit
+token stale without affecting permanent startup mapping ownership. Symbol
+lookup searches only main order or the handle's fixed dependency suffix and
+returns checked defined global/weak non-TLS dynamic-symbol addresses. Text,
+diagnostics, and metadata are always copied. The runner verifies the exact
+weak main `R_X86_64_GLOB_DAT`, dependency-free 64-byte-record ET_DYN
+interpreter, fixed DT_NEEDED topology, clean environment, and absence of
+PT_TLS, ambient libc/loader dependencies, and public `dl*` exports. A
+link-provider negative preserves the record as a strong main import, and a
+separate mid DSO preserves a weak import; the candidate rejects both with
+status 127, as it does malformed record data.
+Pinned musl separately proves matching fixed-startup-graph
+`dlopen`/`dlsym`/`dlclose`, `dladdr`, `dlinfo`, and `dl_iterate_phdr`
+observations. This artifact cannot load/search an object, promote scope,
+finalize/unmap, publish process `RuntimeV1`, or select public dlfcn, candidate
+libc, a general loader, dynamic CRT/sysroot, family promotion, or public x86
+support.
+
+`ldso-dynamic-admission` is the consumed aggregate admission gate for five
 real-ELF private transactions. It runs each fixture afresh, so its
 positive inventory is limited to the no-TLS RELATIVE/GLOB_DAT/JUMP_SLOT plus
 bounded leaf RELR graph, the GNU-Dynamic DTPMOD/DTPOFF graph, and the
-owned-CRT weak-GLOB_DAT record graph, and the callback-free fixed-graph
-introspection record. Their in-place malformed inputs retain the fail-closed
+owned-CRT weak-GLOB_DAT record graph, the callback-free fixed-graph
+introspection record, and the retained-object handle/symbol dlfcn-runtime
+record. Their in-place malformed inputs retain the fail-closed
 PT_TLS, COPY, malformed RELA/RELR, TEXTREL/static-TLS, TPOFF,
-malformed/early-handoff, and malformed-introspection-record negatives. It is
-not a generated report or a general loader/public-dlfcn/mutable-graph/
+malformed/early-handoff, malformed-introspection-record, malformed-dlfcn-record,
+and strong-dlfcn-import negatives. It is not a generated report or a general
+loader/public-dlfcn/runtime-map-or-promote/mutable-graph/finalize-or-unload/
 dynamic-CRT/sysroot/public-support claim.
 
 `ldso-initial-graph` is one separately built private ET_DYN interpreter

@@ -98,6 +98,16 @@ status 127. It does not select public dlfcn, handles, graph mutation/unload,
 candidate libc, process RuntimeV1 publication, a general loader, dynamic
 CRT/sysroot, `ldso.dynamic-runtime` promotion, or public x86 support.
 
+The cfg-isolated `ldso-fixed-graph-dlfcn` sibling consumes that published graph
+as loader-owned state through one weak-main 64-byte `RuntimeV1`-ordered record.
+It offers only retained main/mid/leaf tokens, explicit atomic references,
+handle-scoped ordinary-symbol lookup, and caller-owned copied metadata. Unknown,
+forged, stale, global-scope, malformed-record, strong-import, and DSO-import
+forms fail closed; close neither finalizes nor unmaps. Its pinned-musl
+differential and native ET_DYN evidence remain private: filesystem search,
+mapping, global promotion, a public `dl*` ABI, a general loader, dynamic
+CRT/sysroot, family promotion, and public x86 support remain excluded.
+
 The x86 static C archive also has a private
 `static-c-math-x87-extended` artifact inside still-planned
 `libc.text-math-locale-stdio`. It maps 22 pinned-musl x86 binary80 elementary,

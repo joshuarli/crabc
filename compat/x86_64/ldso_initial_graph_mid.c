@@ -27,7 +27,7 @@ int mid_leaf_relro_write_signal(void) {
     return leaf_relro_write_signal();
 }
 
-#if defined(CRABC_FIXED_GRAPH_INTROSPECTION)
+#if defined(CRABC_FIXED_GRAPH_INTROSPECTION) || defined(CRABC_FIXED_GRAPH_DLFCN)
 int *mid_leaf_data_address(void) {
     return &leaf_data;
 }
