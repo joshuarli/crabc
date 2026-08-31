@@ -4918,6 +4918,24 @@ fallback, `log2l`, other log/exp families, fenv API/policy,
 special/complex/binary80 math, dynamic linkage, TLS, and ambient-libm surface.
 Family completion, promotion, full x86-64 parity, and public x86 support
 remain unselected.
+`libc-math-exp` is the separate non-promoting `static-c-math-exp` artifact
+for binary64/binary32 `exp`/`expf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 assembly translation of musl 1.2.6 `exp.c`/`expf.c`
+preserves table argument reduction, the close-to-zero rule, scalar polynomial
+evaluation, large-result `specialcase` reconstruction, gradual subnormal
+handling, and explicit overflow/underflow expressions through its exact local
+two-table/six-error-helper closure. The 216-record raw differential compares
+signed zero, normal/subnormal and threshold boundaries, table-range values,
+large finite values, infinities, quiet/signaling NaNs, exception flags, and
+requested versus observed MXCSR direction in all four modes. Final-link proof
+requires strong crabc-owned definitions, local table/error helpers, and scalar
+`mulsd`/`addsd`/`subsd`/`addss`/`mulss`, while rejecting weak compiler-builtins
+fallback, `expl`, exp2/expm1 and log families, fenv API/policy,
+special/complex/binary80 math, dynamic linkage, TLS, and ambient-libm surface.
+Family completion, promotion, full x86-64 parity, and public x86 support
+remain unselected.
 `libc-fdim` is a separate non-promoting `static-c-fdim` artifact for the
 binary64/binary32 positive-difference pair. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl

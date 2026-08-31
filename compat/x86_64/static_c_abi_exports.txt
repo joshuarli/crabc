@@ -240,7 +240,9 @@ eventfd
 eventfd_read
 eventfd_write
 exit
+exp
 exp2l
+expf
 expl
 expm1l
 fabs

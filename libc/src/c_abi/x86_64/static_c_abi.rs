@@ -268,6 +268,8 @@ mod math_floor;
 mod math_round;
 #[path = "math_log2.rs"]
 mod math_log2;
+#[path = "math_exp.rs"]
+mod math_exp;
 #[path = "math_minmax.rs"]
 mod math_minmax;
 #[path = "math_x87_extended.rs"]

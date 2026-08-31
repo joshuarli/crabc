@@ -1255,6 +1255,23 @@ checks reject weak compiler-builtins fallback, public source helpers, `log2l`,
 other log/exp families, fenv API/policy, special/complex/binary80 math,
 family completion, promotion, and public x86 support.
 
+The separate private `static-c-math-exp` artifact records only binary64 `exp`
+and binary32 `expf`: `./scripts/dev-x86_64.sh libc-math-exp` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `exp.c`/`expf.c`, two source tables, and six
+overflow/underflow helpers preserves table argument reduction, the
+close-to-zero rule, scalar polynomial evaluation, large-result `specialcase`
+reconstruction, gradual subnormal behavior, and explicit exceptional
+expressions. The ten-source closure is localized, so only `exp`/`expf` remain
+public from that closure. The 216-record differential covers signed zero,
+normal/subnormal and threshold bounds, high finite values, infinities,
+quiet/signaling NaNs, all four requested-and-observed rounding directions,
+and exception flags. Strong target-owned definitions and final ELF checks
+reject weak compiler-builtins fallback, public source helpers, `expl`,
+exp2/expm1 and log families, fenv API/policy, special/complex/binary80 math,
+family completion, promotion, and public x86 support.
+
 The x86 static archive now also has one private allocation-free wide-character
 core: `./scripts/dev-x86_64.sh libc-wide-character` runs an exact
 `_XOPEN_SOURCE=700` C/C++ ABI gate and one shared pinned-musl/freestanding
