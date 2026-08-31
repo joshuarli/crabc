@@ -2,10 +2,10 @@
 # Native Linux/x86-64 <resolv.h> selected nameserver declaration ABI proof.
 #
 # Pinned musl 1.2.6 is the declaration and C-linkage oracle. This header-only
-# gate proves one caller-owned DNS wire-name span function and one caller-owned
-# 16-bit wire-read function through C and C++. It selects no resolver state,
-# `/etc/resolv.conf`, DNS packet I/O, socket, netdb, or general nameserver API
-# behavior.
+# gate proves one caller-owned DNS wire-name span function, one caller-owned
+# 16-bit wire-read function, and one caller-owned 16-bit wire-write function
+# through C and C++. It selects no resolver state or `/etc/resolv.conf`.
+# DNS packet I/O, socket, netdb, and general nameserver API behavior stay out.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,11 +30,11 @@ check_cxx_c_linkage() {
     local symbol mangled undefined
 
     undefined="$(nm --undefined-only "$object")"
-    for symbol in dn_skipname ns_get16; do
+    for symbol in dn_skipname ns_get16 ns_put16; do
         printf '%s\n' "$undefined" | grep -Eq "[[:space:]]${symbol}$" ||
             fail "$tree C++ probe does not retain C linkage for ${symbol}"
     done
-    for mangled in '_Z.*dn_skipname' '_Z.*ns_get16'; do
+    for mangled in '_Z.*dn_skipname' '_Z.*ns_get16' '_Z.*ns_put16'; do
         if printf '%s\n' "$undefined" | grep -Eq "$mangled"; then
             fail "$tree C++ probe retained a mangled selected-nameserver reference"
         fi

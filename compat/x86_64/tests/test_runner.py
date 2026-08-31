@@ -1331,7 +1331,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    dirent-header-abi) ;;", source)
         self.assertIn("    inet-address-header-abi|nameser-header-abi) ;;", source)
         self.assertIn(
-            "    libc-network-byte-order|libc-dn-skipname|libc-ns-get16) ;;",
+            "    libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-put16) ;;",
             source,
         )
         self.assertIn("    libc-in6addr-any)", source)
@@ -1341,6 +1341,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    libc-hstrerror)", source)
         self.assertIn("    libc-dn-skipname)", source)
         self.assertIn("    libc-ns-get16)", source)
+        self.assertIn("    libc-ns-put16)", source)
         self.assertIn("    math-special-header-abi|libc-math-special) ;;", source)
         self.assertIn(
             "    math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;",
@@ -1393,7 +1394,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ldso-bounded-dlopen",
             "math-special-header-abi|libc-math-special",
             "inet-address-header-abi|nameser-header-abi",
-            "libc-network-byte-order|libc-dn-skipname|libc-ns-get16",
+            "libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-put16",
             "ldso-target-root",
             "libc-fenv-rounding",
             "libc-math-minmax",
@@ -12222,7 +12223,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("ns_get16", static_exports.splitlines())
         self.assertFalse(
             set(static_exports.splitlines())
-            & {"dn_expand", "ns_get32", "ns_put16", "ns_put32", "ns_skiprr"}
+            & {"dn_expand", "ns_get32", "ns_put32", "ns_skiprr"}
         )
         self.assertIn('id = "static-c-ns-get16"', parity_ledger)
         self.assertIn(
@@ -12231,6 +12232,142 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("nameser-header-abi)", dispatcher)
         self.assertIn("libc-ns-get16)", dispatcher)
+
+    def test_libc_static_c_abi_ns_put16_artifact_stays_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "ns_put16.rs"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cpp = (
+            ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_nameser_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_ns_put16_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_ns_put16_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_ns_put16.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "ns_put16.rs"]', static_root)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/network/ns_parse.c",
+            "core::ptr::write",
+            "value >> 8",
+            "bytes.add(1)",
+            'pub unsafe extern "C" fn ns_put16',
+            "at least two writable bytes",
+            "truncates `value` to its low 16",
+        ):
+            self.assertIn(required, leaf)
+        self.assertEqual(
+            re.findall(
+                r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                leaf,
+            ),
+            ["ns_put16"],
+        )
+        for forbidden in (
+            "static mut",
+            "raw_syscall",
+            "__errno_location",
+            "__h_errno_location",
+            "getaddrinfo",
+            "gethostby",
+            "socket(",
+            "std::",
+            "alloc::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn ns_get16",
+            "fn ns_get32",
+            "fn ns_put32",
+        ):
+            self.assertNotIn(forbidden, leaf)
+
+        for required in (
+            "#include <resolv.h>",
+            "ns_put16_signature",
+            "NS_CMPRSFLGS == 0xc0",
+            "NS_MAXLABEL == 63",
+            "NS_MAXCDNAME == 255",
+            "NS_MAXDNAME == 1025",
+        ):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cpp)
+        for required in (
+            "check_cxx_c_linkage",
+            "nm --undefined-only",
+            "_Z.*ns_put16",
+            "resolv.h arpa/nameser.h netinet/in.h",
+            "DNS packet I/O",
+            "netdb",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "#include <resolv.h>",
+            "ns_put16_signature",
+            "NS_INT16SZ == 2",
+            "unsigned char direct",
+            "0xbeefcafeU",
+            "NS_PUT16(0xdeadU, cursor)",
+            "CRABC_NS_PUT16_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        self.assertIn("crabc_x86_64_ns_put16_probe", start)
+        self.assertIn("mov $60, %eax", start)
+        self.assertNotIn("ARCH_SET_FS", start)
+        for required in (
+            "ns_parse.lo",
+            "ns_parse.c",
+            "10",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "ns_put16 archive member also defines a nameserver sibling",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "candidate unexpectedly selects TLS",
+            "__h_errno_location",
+            "dn_expand dn_skipname ns_get16 ns_get32 ns_put32",
+            "res_query res_querydomain res_search",
+            "htonl htons ntohl ntohs",
+            "getaddrinfo freeaddrinfo",
+            "socket bind connect send recv",
+            "call|syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        self.assertIn("ns_put16", static_exports.splitlines())
+        self.assertFalse(
+            set(static_exports.splitlines())
+            & {"dn_expand", "ns_get32", "ns_put32", "ns_skiprr"}
+        )
+        self.assertIn('id = "static-c-ns-put16"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-ns-put16"',
+            parity_ledger,
+        )
+        self.assertIn("nameser-header-abi)", dispatcher)
+        self.assertIn("libc-ns-put16)", dispatcher)
 
     def test_libc_static_c_abi_socket_transport_artifact_stays_narrow(self) -> None:
         static_root = (
