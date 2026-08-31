@@ -283,7 +283,11 @@ musl `dlinfo` request is `RTLD_DI_LINKMAP`: the `-7` differential leaves its
 result pointer untouched, keeps exact `Unsupported request -7` pending through
 a succeeding valid query, then consumes it once. Within the same bound, `dlclose(NULL)` returns exactly
 one and yields one-shot `Invalid library handle 0`; non-null stale/forged close
-handling remains loader-owned. Search/mapping, graph mutation, `RTLD_NEXT`,
+handling remains loader-owned. For a live retained non-`RTLD_NEXT` handle,
+musl's `dlsym` empty-name branch returns null with one-shot `Symbol not found: `;
+the candidate substitutes that exact error only after its bounded loader reports
+`loader symbol name is invalid`. Non-empty missing names, null symbol pointers,
+and invalid handles retain their existing loader paths. Search/mapping, graph mutation, `RTLD_NEXT`,
 global promotion, finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 

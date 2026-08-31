@@ -4578,7 +4578,11 @@ proves that the unsupported request preserves its output pointer, publishes
 exact `Unsupported request -7`, and remains pending through a valid
 `RTLD_DI_LINKMAP` query. The native differential also proves that
 `dlclose(NULL)` returns one and publishes exact `Invalid library handle 0`;
-non-null invalid closes remain loader-owned. Pinned musl and project C/C++
+non-null invalid closes remain loader-owned. For a live retained non-`RTLD_NEXT`
+handle, the pinned-musl empty-name `dlsym` branch returns null and publishes
+exact `Symbol not found: `; the candidate substitutes it only after its bounded
+loader returns `loader symbol name is invalid`. Non-empty missing names, null
+symbol pointers, and invalid handles retain their existing loader paths. Pinned musl and project C/C++
 headers prove the public LP64 ABI and ordinary behavior; raw clone workers
 prove diagnostic isolation without TLS, and absent/malformed records prove
 there is no ambient loader fallback. RTLD_NEXT, global promotion,
