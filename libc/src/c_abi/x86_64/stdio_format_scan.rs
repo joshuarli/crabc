@@ -51,7 +51,7 @@
 //! | `src/stdio/vsnprintf.c`, `vsprintf.c`, `sprintf.c`, `snprintf.c` | byte-buffer count/truncation wrappers and C varargs entry boundary |
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and the sealed `vfscanf` top-level `%%` state that skips C-locale input whitespace before one literal percent |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` top-level `%%` and format-whitespace states: the former skips C-locale input whitespace before one literal percent, while the latter coalesces a format whitespace run and consumes zero or more input-space bytes without assignment |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets, positional arguments, stream
@@ -1106,6 +1106,13 @@ unsafe fn scan_from_string(
             return assignments;
         }
         if ascii_space(format_byte) {
+            // musl vfscanf's top-level format-whitespace path coalesces the
+            // format run, consumes zero or more C-locale input-space bytes,
+            // and resumes at the first nonspace without touching va_list or
+            // assignment state. The private
+            // static-c-stdio-fixed-format-whitespace-scan artifact records
+            // only this parser state; it does not promote general literal or
+            // format-whitespace scanning.
             while ascii_space(unsafe { read_byte(directive) }) {
                 directive = directive.wrapping_add(1);
             }

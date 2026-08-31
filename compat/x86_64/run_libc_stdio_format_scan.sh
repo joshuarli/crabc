@@ -8,7 +8,9 @@
 # only musl's ULLONG_MAX source-overflow behavior for narrow `%d`/`%i`/`%u`/
 # `%x` scans through the existing `sscanf`/`vsscanf` boundary. The separately
 # closed `octal-hex-scan` profile owns only the matching `%o`/`%X` behavior,
-# and `fixed-percent-scan` owns only vfscanf's literal `%%` parser state.
+# `fixed-percent-scan` owns only vfscanf's literal `%%` parser state, and
+# `fixed-format-whitespace-scan` owns only its top-level format-whitespace
+# parser state.
 # The sibling `float-hex-output` profile selects only binary64 `%a`/`%A`
 # output, while the closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
 # errno-message output through that same formatter. None selects a general
@@ -53,6 +55,13 @@ fixed-percent-scan)
     readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_percent_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_PERCENT_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="sealed stdio literal-percent scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
+    ;;
+fixed-format-whitespace-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_fixed_format_whitespace_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_fixed_format_whitespace_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_FIXED_FORMAT_WHITESPACE_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="sealed stdio format-whitespace scan"
     readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
@@ -252,6 +261,19 @@ if [ "$EVIDENCE_PROFILE" = fixed-percent-scan ]; then
         fail "literal-percent scanner no longer matches exactly one percent"
     grep -Fq 'without an assignment' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "literal-percent fixture no longer records its assignment boundary"
+fi
+if [ "$EVIDENCE_PROFILE" = fixed-format-whitespace-scan ]; then
+    grep -Fq 'if ascii_space(format_byte)' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format-whitespace scanner branch is no longer selected"
+    grep -Fq 'while ascii_space(unsafe { read_byte(directive) })' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format-whitespace scanner no longer coalesces its format run"
+    grep -Fq 'cursor = unsafe { skip_input_space(cursor) };' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "format-whitespace scanner no longer consumes C-locale input space"
+    grep -Fq 'zero input whitespace' "$ROOT_DIR/$FIXTURE_SOURCE" ||
+        fail "format-whitespace fixture no longer records zero-input-space admission"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

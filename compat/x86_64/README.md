@@ -911,6 +911,25 @@ character/string/scanset/pointer/integer/floating/wide forms, general format
 whitespace, FILE input, byte formatting, locale objects, a general scanner or
 stdio boundary, parity, promotion, and public x86 support remain outside it.
 
+The distinct `libc-stdio-fixed-format-whitespace-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-fixed-format-whitespace-scan`) records
+one private `static-c-stdio-fixed-format-whitespace-scan` artifact without
+adding an export or capability. Its independent C11/C++17 header gate proves
+only the existing `sscanf`/`vsscanf` signatures and unmangled C++ C spellings.
+The fixed project-header fixture compares pinned musl 1.2.6 with a true
+`-nostdlib -static` candidate for only vfscanf's top-level C-locale
+format-whitespace parser state: it coalesces a format-space run, consumes zero
+or more input-space bytes without a destination, assignment, or va_list
+advance, and preserves stale errno. The direct and `vsscanf` witnesses cover
+all selected whitespace, zero input whitespace before a literal,
+all-whitespace empty-input zero success, later literal EOF, and matching
+failure. This is pinned-musl parser-state evidence, not a general
+scanf-format-whitespace claim. Literal-percent `%%` is owned by the sibling
+fixed-percent profile; `%n`/`%hhn`, character/string/scanset/pointer/integer/
+floating/wide forms, conversions, FILE input, byte formatting, locale objects,
+a general scanner or stdio boundary, parity, promotion, and public x86 support
+remain outside it.
+
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private
 `static-c-stdio-float-hex-output` artifact without adding an export or

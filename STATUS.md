@@ -357,6 +357,23 @@ character/string/scanset/pointer/integer/float/wide, general literal or
 format-whitespace, FILE, general scanner, general stdio, family-completion,
 promotion, or public-x86 evidence.
 
+The separate private
+`./scripts/dev-x86_64.sh libc-stdio-fixed-format-whitespace-scan` artifact
+adds no export or capability. It narrows a pinned-musl 1.2.6 versus true
+`-nostdlib -static` differential to `sscanf`/`vsscanf`'s top-level C-locale
+format-whitespace parser state: a contiguous format-space run consumes zero or
+more input-space bytes without a variadic destination, assignment, or va_list
+advance. Its fixed direct and `vsscanf` witnesses retain stale errno while
+covering all selected C whitespace, zero input whitespace before a following
+literal, all-whitespace empty-input success with zero assignments, later
+literal EOF, and matching failure. Its independent C11/C++17 header gate
+proves only the existing declarations and unmangled C++ C spellings. This is
+pinned-musl parser-state evidence, not a general scanf-format-whitespace claim.
+Literal-percent `%%` is owned by the separate fixed-percent artifact;
+`%n`/`%hhn`, character/string/scanset/pointer/integer/floating/wide forms,
+conversion, FILE input, byte formatting, locale objects, a general scanner or
+stdio boundary, parity, promotion, and public x86 support remain excluded.
+
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64
 `%a`/`%A` byte-buffer output. It preserves musl's no-op `l` modifier,

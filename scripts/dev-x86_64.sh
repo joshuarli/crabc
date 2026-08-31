@@ -371,6 +371,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-stdio-octal-hex-scan  run the static x86 crabc-libc bounded octal/uppercase-hex scan slice
   stdio-fixed-percent-scan-header-abi  compile C11/C++17 literal-percent scanf declaration/linkage evidence
   libc-stdio-fixed-percent-scan  run the static x86 crabc-libc sealed literal-percent scan slice
+  stdio-fixed-format-whitespace-scan-header-abi  compile C11/C++17 format-whitespace scanf declaration/linkage evidence
+  libc-stdio-fixed-format-whitespace-scan  run the static x86 crabc-libc sealed format-whitespace scan slice
   libc-stdio-float-hex-output  run the static x86 crabc-libc binary64 hexadecimal-output slice
   libc-stdio-errno-output  run the static x86 crabc-libc errno-message format slice
   libc-stdio-path-stream  run the static x86 crabc-libc fixed pathname-stream slice
@@ -3747,7 +3749,7 @@ case "$command" in
     timerfd-header-abi|signalfd-header-abi) ;;
     libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset) ;;
     ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi) ;;
+    stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
     stdio-permanent-byte-io-header-abi) ;;
     stdio-permanent-status-header-abi) ;;
@@ -3815,7 +3817,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
@@ -4023,6 +4025,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "stdio-fixed-percent-scan-header-abi takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh
+        ;;
+    stdio-fixed-format-whitespace-scan-header-abi)
+        [ "$#" -eq 0 ] || fail "stdio-fixed-format-whitespace-scan-header-abi takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh
         ;;
     stdio-permanent-status-header-abi)
         [ "$#" -eq 0 ] || fail "stdio-permanent-status-header-abi takes no arguments"
@@ -5289,6 +5296,12 @@ case "$command" in
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_percent_scan_header_abi.sh
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_percent_scan.sh
+        ;;
+    libc-stdio-fixed-format-whitespace-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-fixed-format-whitespace-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_stdio_fixed_format_whitespace_scan_header_abi.sh
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_fixed_format_whitespace_scan.sh
         ;;
     libc-stdio-float-hex-output)
         [ "$#" -eq 0 ] || fail "libc-stdio-float-hex-output takes no arguments"
