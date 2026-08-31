@@ -4593,6 +4593,56 @@ oracle = [
 ]
 
 [[family.verified_artifact]]
+id = "static-c-sync-file-range"
+description = "Private native x86 selected-static-archive GNU descriptor-range writeback block. One dependency-free `crabc-libc` archive resolves only `sync_file_range(int, off_t, off_t, unsigned)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `sync_file_range=277` through rdi/rsi/rdx/r10 with signed LP64 `off_t` offset/length and unsigned flags, mapping raw status to C `-1` plus initial-TLS `errno`. The fixture compares one regular-file request's wrapper result and errno exactly with a sibling raw request, preserves its shared descriptor position, records stale errno on raw success, and proves invalid flags `EINVAL` plus a bad descriptor `EBADF`. This does not select pathname opening, descriptor ownership, cache/writeback policy, media-cache durability, system-wide `sync`/descriptor-associated `syncfs`, `fallocate`, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sync_file_range.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/syscall.h",
+  "include/bits/fcntl.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sync_file_range_header_abi_probe.c",
+  "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+  "compat/x86_64/run_sync_file_range_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sync_file_range_probe.c",
+  "compat/x86_64/libc_sync_file_range_start.S",
+  "compat/x86_64/run_libc_sync_file_range.sh",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 sync_file_range=277 receives a signed int descriptor, signed LP64 off_t offset/length, and unsigned flags in rdi/rsi/rdx/r10 through syscall4. The selected C wrapper maps only Linux's raw -4095..=-1 range to C -1 plus the selected initial-TLS errno slot",
+  "The focused fixture writes one raw-created, immediately unlinked regular file, compares its sync_file_range result and errno with a sibling raw request, and retains the descriptor's preexisting current position. A raw success leaves stale errno unchanged; invalid flags produce EINVAL and a bad descriptor produces EBADF. This does not establish cache effects, writeback policy, or media-cache durability",
+  "Pinned musl 1.2.6 src/linux/sync_file_range.c directly invokes syscall(SYS_sync_file_range, fd, pos, len, flags) on x86-64 without a cancellation-point wrapper or fallback. This selected x86 leaf preserves that direct path; storage policy, cancellation, sync, and syncfs remain outside the artifact",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The dedicated project-first/pinned-musl C/C++ GNU fcntl.h gate proves `int sync_file_range(int, off_t, off_t, unsigned)`, signed 64-bit x86 off_t, and unmangled C++ linkage. Default, strict, POSIX, XOPEN, and BSD C selector profiles keep that GNU-only spelling hidden in both header trees. The candidate fixture additionally preprocesses project errno.h, fcntl.h, features.h, sys/types.h, stddef.h, stdint.h, sys/syscall.h, bits/fcntl.h, and bits/syscall.h. This is a bounded GNU sync_file_range header facet, not closed fcntl/header completion or a general C ABI."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sync-file-range", scope = "Pinned-musl C reference plus a true dependency-free x86 crabc-libc static archive and freestanding candidate. The gate proves project-header C/C++ GNU fcntl.h provenance; exact crate-owned C object-member export closure separately from compiler-builtins; no interpreter/DT_NEEDED/unresolved symbol or final-artifact dynamic TLS model; direct initial-TLS errno access; a sync_file_range=277 wrapper with rdi/rsi/rdx/r10 forwarding; exact raw result/errno agreement and preserved shared position for one regular-file request, stale errno on raw success, invalid-flags EINVAL, and bad-descriptor EBADF. It does not select pathname opening, descriptor ownership, cache/writeback policy, media-cache durability, sync, syncfs, fallocate, cancellation, libc.so, CRT, pthread/TLS lifecycle, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping, GNU C declaration, direct syscall forwarding, and errno behavior oracle for src/linux/sync_file_range.c." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sync_file_range=277 rdi/rsi/rdx/r10 register order, signed range/flag words, stable descriptor position, and raw errno contract; a request does not establish cache or durability policy." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "Int/LP64 off_t/unsigned C register convention and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-posix-fallocate"
 description = "Private native x86 selected-static-archive mode-zero POSIX range-allocation block. One dependency-free `crabc-libc` archive resolves only `posix_fallocate(fd, off_t, off_t)` through a freestanding C fixture after matching pinned-musl execution. It forwards Linux `fallocate=285` through rdi/rsi/rdx/r10 with literal mode zero and signed LP64 `off_t` offset/length. Its raw Linux -4095..=-1 result maps to the corresponding positive `int` error directly, never changing `errno`; success leaves stale errno unchanged. The fixture proves an unlinked regular-file range extension to 8192 bytes with a retained prefix, zero-filled new range, and stable file position, plus direct EINVAL and EBADF. This does not select general `fallocate` flags, pathname allocation, filesystem fallback/policy, durability, cancellation, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, family completion, promotion, or public x86 support."
 source_owners = [

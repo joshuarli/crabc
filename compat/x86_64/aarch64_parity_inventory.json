@@ -1435,7 +1435,7 @@
       "capability_count": 9,
       "contract_state": "selected-private",
       "id": "libc.posix-runtime",
-      "verified_artifact_count": 97,
+      "verified_artifact_count": 98,
       "verified_slice_count": 3
     },
     {
@@ -2136,6 +2136,10 @@
     },
     {
       "family": "libc.posix-runtime",
+      "id": "static-c-sync-file-range"
+    },
+    {
+      "family": "libc.posix-runtime",
       "id": "static-c-system-configuration"
     },
     {
@@ -2479,9 +2483,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "d219bc6e542ec44ad23dd2d93a627706dbf42b92a437fe23ff49bb0bda56bc4e",
+    "x86_parity_ledger": "d864cb8267584bb96b99e6ea83fac7dc66f791eaad0401b1786632b300660e88",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "1eeddba52b5d3d05ba258c46e596ca1356ab9615e564520e2e3513392d6a532b"
+    "x86_static_c_exports": "bb5673f3191e20f93133d5d21481ad080a50663d5e11560d6231c547350b49e9"
   },
   "unsupported_contracts": [
     {
@@ -2493,7 +2497,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 972,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 958
+    "selected_static_export_count": 973,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 959
   }
 }

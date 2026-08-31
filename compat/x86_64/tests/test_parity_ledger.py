@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 204)
+        self.assertEqual(report["verified_artifact_count"], 205)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -17023,6 +17023,66 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh sendfile-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sendfile command"):
             ledger.validate_ledger(data)
+
+    def test_sync_file_range_artifact_keeps_direct_request_boundary(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sync-file-range"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/sync_file_range.rs",
+            "libc/src/c_abi/x86_64/errno.rs",
+            "libc/src/c_abi/x86_64/syscall.rs",
+            "include/fcntl.h",
+            "compat/x86_64/sync_file_range_header_abi_probe.c",
+            "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+            "compat/x86_64/run_sync_file_range_header_abi.sh",
+            "compat/x86_64/libc_sync_file_range_probe.c",
+            "compat/x86_64/libc_sync_file_range_start.S",
+            "compat/x86_64/run_libc_sync_file_range.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        description = artifact["description"]
+        assert isinstance(description, str)
+        for phrase in (
+            "GNU descriptor-range writeback block",
+            "sync_file_range=277",
+            "rdi/rsi/rdx/r10",
+            "wrapper result and errno exactly",
+            "shared descriptor position",
+            "stale errno on raw success",
+            "syncfs",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, description)
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sync-file-range"},
+        )
+        self.assertIn("src/linux/sync_file_range.c", artifact["oracle"][0]["role"])
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if isinstance(entry, dict)
+            and entry["id"] == "static-c-sync-file-range"
+        )
+        changed_artifact["description"] = "private range request"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sync-file-range description omits"
+        ):
+            ledger.validate_ledger(changed)
 
     def test_posix_fallocate_artifact_keeps_direct_error_boundary(self) -> None:
         data = self.data()

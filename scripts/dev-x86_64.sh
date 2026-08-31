@@ -126,6 +126,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   flock-header-abi compile the staged x86 C/C++ sys/file.h header layouts
   sendfile-header-abi compile the staged x86 C/C++ sys/sendfile.h header layouts
   tee-header-abi      compile the staged x86 C/C++ GNU fcntl.h tee declaration
+  sync-file-range-header-abi compile the staged x86 C/C++ GNU fcntl.h sync_file_range declaration
   unistd-header-abi  compile the staged x86 C/C++ unistd header declarations
   getpagesize-header-abi  compile the staged x86 C/C++ GNU/BSD getpagesize declaration
   system-header-abi  compile the staged x86 C/C++ system header layouts
@@ -357,6 +358,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-flock  run the static x86 crabc-libc advisory flock slice
   libc-sendfile  run the static x86 crabc-libc regular-file sendfile slice
   libc-tee       run the static x86 crabc-libc GNU pipe-buffer tee slice
+  libc-sync-file-range  run the static x86 crabc-libc GNU descriptor-range writeback slice
   libc-posix-fallocate  run the static x86 crabc-libc mode-zero POSIX range-allocation slice
   libc-descriptor-advice  run the static x86 crabc-libc descriptor-advice slice
   libc-filesystem-capacity  run the static x86 crabc-libc filesystem-capacity slice
@@ -795,6 +797,13 @@ zero-length success retains stale `errno`, and a bad source descriptor maps to
 `EBADF`. Fixture-local raw pipe setup is evidence plumbing, not selected pipe
 creation, ownership, descriptor policy, `splice`/`vmsplice` transfer,
 cancellation, dynamic libc, or application startup.
+`libc-sync-file-range` exercises a separate freestanding project-header C
+fixture after its equivalent pinned-musl run. It selects only one direct GNU
+regular-file range request: raw result/`errno` agreement, stable shared
+descriptor position, stale `errno` on success, and direct invalid-flags
+`EINVAL` plus bad-descriptor `EBADF`. It does not select pathname or descriptor
+ownership, cache/writeback policy or durability, `sync`/`syncfs`, `fallocate`,
+cancellation, dynamic libc, or application startup.
 `libc-posix-fallocate` exercises a separate freestanding project-header C
 fixture after its equivalent pinned-musl run. It selects only mode-zero
 `posix_fallocate`: regular-file extension with preserved file position, a
@@ -976,7 +985,7 @@ musl. It rejects AArch64 HWCAP/register leaks and does not select runtime,
 archive linkage, header-family completion, or public x86 support.
 `types-header-abi` compiles only staged C/C++ type declarations and opaque
 pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
-`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `tee-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
+`select-header-abi`, `fcntl-header-abi`, `flock-header-abi`, `sendfile-header-abi`, `tee-header-abi`, `sync-file-range-header-abi`, `ioctl-header-abi`, `unistd-header-abi`, and
 `system-header-abi` compile only their named C/C++ layout/declaration slices.
 `syscall-header-abi` compares only staged syscall number macros.
 `signal-header-abi`, `termios-header-abi`, `mman-header-abi`,
@@ -1667,6 +1676,14 @@ maps to `EBADF`. Raw fixture pipe setup does not provide pipe creation or
 ownership, generic descriptor policy, `splice`/`vmsplice` transfer,
 cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot, or public x86
 support.
+`libc-sync-file-range` links that archive into a separate freestanding
+project-header C fixture after an equivalent pinned-musl run. It selects only
+one direct GNU regular-file range request: raw result/`errno` agreement,
+stable shared descriptor position, stale `errno` on success, and direct
+invalid-flags `EINVAL` plus bad-descriptor `EBADF`. It does not provide pathname
+or descriptor ownership, cache/writeback policy or durability, `sync`/`syncfs`,
+`fallocate`, cancellation, dynamic libc, CRT/TLS lifecycle, loader, sysroot,
+or public x86 support.
 `libc-posix-fallocate` links that archive into a separate freestanding
 project-header C fixture after an equivalent pinned-musl run. It selects only
 mode-zero `posix_fallocate`: an unlinked regular-file extension with retained
@@ -2623,6 +2640,10 @@ run_sendfile_header_abi() {
 
 run_tee_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_tee_header_abi.sh
+}
+
+run_sync_file_range_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sync_file_range_header_abi.sh
 }
 
 run_unistd_header_abi() {
@@ -3684,6 +3705,10 @@ run_libc_tee_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_tee.sh
 }
 
+run_libc_sync_file_range_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_sync_file_range.sh
+}
+
 run_libc_posix_fallocate_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_posix_fallocate.sh
 }
@@ -3896,6 +3921,7 @@ case "$command" in
     stdio-permanent-fileno-unlocked-header-abi) ;;
     stdio-permanent-feof-unlocked-header-abi) ;;
     tee-header-abi) ;;
+    sync-file-range-header-abi) ;;
     image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission) ;;
     math-elementary-long-double-header-abi|libc-math-elementary-long-double) ;;
     ldso-fixed-graph-dlfcn) ;;
@@ -3981,6 +4007,7 @@ case "$command" in
     libc-interface-discovery) ;;
     libc-posix-exit) ;;
     libc-tee) ;;
+    libc-sync-file-range) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
@@ -4407,6 +4434,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "tee-header-abi takes no arguments"
         ensure_image
         run_tee_header_abi
+        ;;
+    sync-file-range-header-abi)
+        [ "$#" -eq 0 ] || fail "sync-file-range-header-abi takes no arguments"
+        ensure_image
+        run_sync_file_range_header_abi
         ;;
     unistd-header-abi)
         [ "$#" -eq 0 ] || fail "unistd-header-abi takes no arguments"
@@ -5371,6 +5403,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-tee takes no arguments"
         ensure_image
         run_libc_tee_probe
+        ;;
+    libc-sync-file-range)
+        [ "$#" -eq 0 ] || fail "libc-sync-file-range takes no arguments"
+        ensure_image
+        run_libc_sync_file_range_probe
         ;;
     libc-posix-fallocate)
         [ "$#" -eq 0 ] || fail "libc-posix-fallocate takes no arguments"

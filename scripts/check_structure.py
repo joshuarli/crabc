@@ -256,6 +256,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/tee.rs"),
+    Path("libc/src/c_abi/x86_64/sync_file_range.rs"),
     Path("libc/src/c_abi/x86_64/grantpt.rs"),
     Path("libc/src/c_abi/x86_64/unlockpt.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
@@ -3773,6 +3774,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "tee.rs"]',
+        '#[path = "sync_file_range.rs"]',
         '#[path = "grantpt.rs"]',
         '#[path = "unlockpt.rs"]',
         '#[path = "isatty.rs"]',
@@ -6496,6 +6498,44 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/tee.rs: selected static GNU pipe-buffer "
                 f"boundary must not select {forbidden!r}"
+            )
+
+    sync_file_range_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "sync_file_range.rs"
+    )
+    sync_file_range_text = sync_file_range_source.read_text(errors="replace")
+    for required in (
+        "musl 1.2.6 release commit",
+        "src/linux/sync_file_range.c",
+        "sync_file_range=277",
+        "rdi/rsi/rdx/r10",
+        "raw_syscall::SYS_SYNC_FILE_RANGE",
+        "raw_syscall::syscall4(",
+        "c_status(result)",
+        'pub unsafe extern "C" fn sync_file_range',
+        "cancellation-point",
+    ):
+        if required not in sync_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync_file_range.rs: selected static GNU "
+                f"descriptor-range boundary is missing {required!r}"
+            )
+    sync_file_range_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            sync_file_range_text,
+        )
+    )
+    if sync_file_range_exports != {"sync_file_range"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/sync_file_range.rs: selected static GNU "
+            "descriptor-range artifact must export only sync_file_range"
+        )
+    for forbidden in ("crabc_core", "crabc_mimalloc", "fn syncfs(", "fn fallocate("):
+        if forbidden in sync_file_range_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/sync_file_range.rs: selected static GNU "
+                f"descriptor-range boundary must not select {forbidden!r}"
             )
 
     gethostid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs"
@@ -10950,6 +10990,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         grantpt_text,
         unlockpt_text,
         tee_text,
+        sync_file_range_text,
         gethostid_text,
         gettid_text,
         isatty_text,
@@ -11268,6 +11309,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "grantpt",
         "unlockpt",
         "tee",
+        "sync_file_range",
         "gethostid",
         "gettid",
         "isatty",
@@ -11571,6 +11613,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("grantpt.rs", grantpt_text),
         ("unlockpt.rs", unlockpt_text),
         ("tee.rs", tee_text),
+        ("sync_file_range.rs", sync_file_range_text),
         ("gettid.rs", gettid_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),

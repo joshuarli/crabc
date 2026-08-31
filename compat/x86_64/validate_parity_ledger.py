@@ -21624,6 +21624,121 @@ def require_tee_artifact(family: Mapping[str, Any]) -> None:
         )
 
 
+def require_sync_file_range_artifact(family: Mapping[str, Any]) -> None:
+    """Keep GNU C sync_file_range on one direct descriptor-range boundary."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sync-file-range"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sync-file-range artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "GNU descriptor-range writeback block",
+        "sync_file_range=277",
+        "rdi/rsi/rdx/r10",
+        "wrapper result and errno exactly",
+        "shared descriptor position",
+        "stale errno on raw success",
+        "EINVAL",
+        "EBADF",
+        "syncfs",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sync-file-range description omits {phrase}",
+        )
+    owners = set(artifact["source_owners"])
+    for owner in (
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/sync_file_range.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/fcntl.h",
+        "compat/x86_64/sync_file_range_header_abi_probe.c",
+        "compat/x86_64/sync_file_range_header_abi_probe.cpp",
+        "compat/x86_64/run_sync_file_range_header_abi.sh",
+        "compat/x86_64/libc_sync_file_range_probe.c",
+        "compat/x86_64/libc_sync_file_range_start.S",
+        "compat/x86_64/run_libc_sync_file_range.sh",
+    ):
+        require(owner in owners, f"static-c-sync-file-range must own {owner}")
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    require(
+        any(
+            "sync_file_range=277" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "syscall4" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record its four-word syscall ABI",
+    )
+    require(
+        any(
+            "regular file" in item
+            and "sibling raw request" in item
+            and "current position" in item
+            and "stale errno" in item
+            and "EINVAL" in item
+            and "EBADF" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record its narrow regular-file behavior",
+    )
+    require(
+        any(
+            "src/linux/sync_file_range.c" in item and "cancellation" in item
+            for item in prerequisites
+        ),
+        "static-c-sync-file-range must record musl's direct non-cancellation path",
+    )
+    header = artifact["x86_header_prerequisites"]
+    assert isinstance(header, list)
+    require(
+        any(
+            "GNU fcntl.h" in item
+            and "Default, strict, POSIX, XOPEN, and BSD" in item
+            and "hidden" in item
+            for item in header
+        ),
+        "static-c-sync-file-range must retain its GNU-only C header boundary",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sync-file-range"},
+        "static-c-sync-file-range must use the closed libc-sync-file-range command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "sync_file_range=277",
+        "rdi/rsi/rdx/r10",
+        "raw result/errno agreement",
+        "shared position",
+        "stale errno on raw success",
+        "EINVAL",
+        "EBADF",
+        "syncfs",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-sync-file-range evidence scope omits {phrase}",
+        )
+
+
 def require_posix_fallocate_artifact(family: Mapping[str, Any]) -> None:
     """Keep C POSIX range allocation on its direct-error, mode-zero boundary."""
     artifacts = require_verified_artifacts(
@@ -42437,6 +42552,7 @@ def validate_ledger(
     require_flock_artifact(by_id["libc.posix-runtime"])
     require_sendfile_artifact(by_id["libc.posix-runtime"])
     require_tee_artifact(by_id["libc.posix-runtime"])
+    require_sync_file_range_artifact(by_id["libc.posix-runtime"])
     require_posix_fallocate_artifact(by_id["libc.posix-runtime"])
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])

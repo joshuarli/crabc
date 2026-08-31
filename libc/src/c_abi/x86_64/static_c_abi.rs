@@ -51,6 +51,7 @@
 //! unsupported compatibility, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
 //! regular-file sendfile transfer, direct GNU pipe-buffer duplication,
+//! direct GNU descriptor-range writeback,
 //! mode-zero POSIX range allocation,
 //! descriptor advice, timestamp updates, descriptor-I/O, vector-I/O, and
 //! selected process-resources, selected readiness/signal-waits, and selected
@@ -437,6 +438,8 @@ mod flock;
 mod sendfile;
 #[path = "tee.rs"]
 mod tee;
+#[path = "sync_file_range.rs"]
+mod sync_file_range;
 #[path = "posix_fallocate.rs"]
 mod posix_fallocate;
 #[path = "descriptor_advice.rs"]

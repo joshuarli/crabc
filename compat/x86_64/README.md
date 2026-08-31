@@ -278,6 +278,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh flock-header-abi
 ./scripts/dev-x86_64.sh sendfile-header-abi
 ./scripts/dev-x86_64.sh tee-header-abi
+./scripts/dev-x86_64.sh sync-file-range-header-abi
 ./scripts/dev-x86_64.sh filesystem-capacity-header-abi
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
@@ -489,6 +490,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-flock
 ./scripts/dev-x86_64.sh libc-sendfile
 ./scripts/dev-x86_64.sh libc-tee
+./scripts/dev-x86_64.sh libc-sync-file-range
 ./scripts/dev-x86_64.sh libc-posix-fallocate
 ./scripts/dev-x86_64.sh libc-filesystem-capacity
 ./scripts/dev-x86_64.sh libc-vector-io
@@ -1474,6 +1476,13 @@ declarations for `ssize_t tee(int, int, size_t, unsigned)`, with C++ linkage.
 It also proves default, strict, POSIX, XOPEN, and BSD C selector profiles hide
 that GNU-only spelling. It is source-only declaration evidence; it does not
 select pipe-buffer transfer behavior or `crabc-libc`.
+
+`sync-file-range-header-abi` compiles project and pinned-musl C/C++ GNU
+`<fcntl.h>` declarations for `int sync_file_range(int, off_t, off_t,
+unsigned)`, with signed x86 `off_t` and C++ linkage. It also proves default,
+strict, POSIX, XOPEN, and BSD C selector profiles hide that GNU-only spelling.
+It is source-only declaration evidence; it does not select cache/writeback or
+durability policy, descriptor ownership, `sync`/`syncfs`, or `crabc-libc`.
 
 `unistd-header-abi` compiles project and pinned-musl C/C++ `<unistd.h>`
 declarations, including the staged x86 LP64 POSIX/GNU selectors, process and
@@ -4066,6 +4075,17 @@ equal destination-pipe copy, zero-length stale errno on success, and direct
 policy, `splice`/`vmsplice`, cancellation, general runtime, or public x86
 support.
 
+`libc-sync-file-range` is a separately recorded
+`static-c-sync-file-range` `verified_artifact` gate over the same archive, not
+a descriptor/filesystem capability. Its project-header C/C++ GNU `<fcntl.h>`
+gate runs before a pinned-musl and `-nostdlib -static` candidate fixture for
+one direct regular-file range request. It proves `sync_file_range=277` x86 ABI
+forwarding, exact raw result/`errno` agreement, retained shared descriptor
+position, stale `errno` on success, and direct invalid-flags `EINVAL` and
+bad-descriptor `EBADF`. It does not select pathname or descriptor ownership,
+cache/writeback policy or durability, `sync`/`syncfs`, `fallocate`,
+cancellation, general runtime, or public x86 support.
+
 `libc-posix-fallocate` is a separately recorded
 `static-c-posix-fallocate` `verified_artifact` gate over the same archive, not
 a general allocation or descriptor capability. Its strict/no-feature and
@@ -5734,6 +5754,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-flock`,
 `libc-sendfile`,
 `libc-tee`,
+`libc-sync-file-range`,
 `libc-posix-fallocate`,
 `libc-filesystem-capacity`,
 `libc-vector-io`,

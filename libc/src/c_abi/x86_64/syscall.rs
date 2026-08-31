@@ -27,7 +27,8 @@
 //! ignores a raw affinity failure in the musl-defined CPU-0 fallback case.
 //! The separately selected bounded `flock` leaf uses direct `flock=73`, the
 //! regular-file transfer leaf uses direct `sendfile=40`, and the GNU
-//! pipe-buffer duplication leaf uses direct `tee=276`.
+//! pipe-buffer duplication leaf uses direct `tee=276`; the GNU descriptor-
+//! range writeback leaf uses direct `sync_file_range=277`.
 //! The separately selected bounded
 //! pthread create/explicit-exit/join leaf, private normal-mutex sibling, and
 //! private condition-variable handoff use mmap, munmap, futex, gettid
@@ -344,6 +345,8 @@ pub(crate) const SYS_FALLOCATE: i64 = 285;
 pub(crate) const SYS_FADVISE64: i64 = 221;
 /// Linux x86-64 `tee` uses `rdi/rsi/rdx/r10` for its four arguments.
 pub(crate) const SYS_TEE: i64 = 276;
+/// Linux x86-64 `sync_file_range` uses `rdi/rsi/rdx/r10` for four words.
+pub(crate) const SYS_SYNC_FILE_RANGE: i64 = 277;
 /// Linux x86-64 `readahead` uses `rdi/rsi/rdx` for its three arguments.
 pub(crate) const SYS_READAHEAD: i64 = 187;
 pub(crate) const SYS_FSYNC: i64 = 74;
