@@ -141,6 +141,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   termios-header-abi  compile the staged x86 C/C++ GNU termios-header layouts
   ctermid-header-abi  compile the staged x86 C/C++ POSIX/XSI ctermid declaration
   gethostid-header-abi  compile the staged x86 C/C++ X/Open gethostid declaration
+  endhostent-header-abi  compile the staged x86 C/C++ legacy netdb terminator declarations
   gettid-header-abi  compile the staged x86 C/C++ GNU gettid declaration
   posix-close-header-abi  compile the staged x86 C/C++ POSIX posix_close declaration
   isatty-header-abi  compile the staged x86 C/C++ isatty declaration
@@ -309,6 +310,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-termios-control  run the static x86 crabc-libc termios-control slice
   libc-ctermid  run the static x86 crabc-libc ctermid spelling slice
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
+  libc-endhostent  run the static x86 crabc-libc legacy netdb terminator slice
   libc-gettid  run the static x86 crabc-libc gettid compatibility slice
   libc-posix-close  run the static x86 crabc-libc posix_close compatibility slice
   libc-isatty  run the static x86 crabc-libc descriptor-observation slice
@@ -2772,6 +2774,10 @@ run_gethostid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_gethostid_header_abi.sh
 }
 
+run_endhostent_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_endhostent_header_abi.sh
+}
+
 run_gettid_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_gettid_header_abi.sh
 }
@@ -3688,6 +3694,10 @@ run_libc_gethostid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_gethostid.sh
 }
 
+run_libc_endhostent_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_endhostent.sh
+}
+
 run_libc_gettid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_gettid.sh
 }
@@ -4021,7 +4031,7 @@ case "$command" in
     usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-usleep|libc-sigaddset-sigdelset-sigfillset) ;;
     libc-sched-getcpu|libc-sched-yield) ;;
     sched-getscheduler-header-abi) ;;
-    ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
+    ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
     readlinkat-header-abi|libc-readlinkat) ;;
     stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi) ;;
     math-complex-complete-header-abi|libc-math-complex-complete) ;;
@@ -4623,6 +4633,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "gethostid-header-abi takes no arguments"
         ensure_image
         run_gethostid_header_abi
+        ;;
+    endhostent-header-abi)
+        [ "$#" -eq 0 ] || fail "endhostent-header-abi takes no arguments"
+        ensure_image
+        run_endhostent_header_abi
         ;;
     gettid-header-abi)
         [ "$#" -eq 0 ] || fail "gettid-header-abi takes no arguments"
@@ -5397,6 +5412,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-gethostid takes no arguments"
         ensure_image
         run_libc_gethostid_probe
+        ;;
+    libc-endhostent)
+        [ "$#" -eq 0 ] || fail "libc-endhostent takes no arguments"
+        ensure_image
+        run_libc_endhostent_probe
         ;;
     libc-gettid)
         [ "$#" -eq 0 ] || fail "libc-gettid takes no arguments"

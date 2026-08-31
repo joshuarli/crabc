@@ -6563,6 +6563,49 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"close boundary must not select {forbidden!r}"
             )
 
+    endhostent_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "endhostent.rs"
+    )
+    endhostent_text = endhostent_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ent.c",
+        "weak_alias(endhostent, endnetent)",
+        "System V AMD64 ABI",
+        ".weak endnetent",
+        ".set endnetent, endhostent",
+        'pub extern "C" fn endhostent()',
+    ):
+        if required not in endhostent_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/endhostent.rs: selected static legacy "
+                f"netdb terminator boundary is missing {required!r}"
+            )
+    endhostent_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            endhostent_text,
+        )
+    )
+    if endhostent_exports != {"endhostent"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/endhostent.rs: selected static legacy "
+            "netdb terminator artifact must export only the strong endhostent body"
+        )
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in endhostent_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/endhostent.rs: selected static legacy "
+                f"netdb terminator boundary must not select {forbidden!r}"
+            )
+
     isatty_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "isatty.rs"
     isatty_text = isatty_source.read_text(errors="replace")
     for required in (
@@ -11616,6 +11659,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         gethostid_text,
         gettid_text,
         posix_close_text,
+        endhostent_text,
         isatty_text,
         ttyname_r_text,
         tcgetpgrp_text,
@@ -11731,6 +11775,17 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/auxv_observation.rs: selected static "
             "artifact must retain getauxval as the musl same-address assembler alias"
         )
+    endhostent_aliases = set(
+        re.findall(
+            r'(?m)^\s*"\.set\s+(\w+)\s*,\s*endhostent",\s*$',
+            endhostent_text,
+        )
+    )
+    if endhostent_aliases != {"endnetent"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/endhostent.rs: selected static legacy "
+            "netdb terminator artifact must retain endnetent as the musl same-address assembler alias"
+        )
     pthread_rwlock_public_aliases = {public for public, _hidden in pthread_rwlock_aliases}
     process_global_data_exports = set(
         re.findall(
@@ -11766,6 +11821,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         | locale_error_string_aliases
         | timestamp_aliases
         | auxv_observation_aliases
+        | endhostent_aliases
         | pthread_rwlock_public_aliases
         | pthread_identity_exports
         | process_global_data_exports
@@ -11942,6 +11998,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "gethostid",
         "gettid",
         "posix_close",
+        "endhostent",
+        "endnetent",
         "isatty",
         "ttyname_r",
         "tcgetpgrp",
@@ -12252,6 +12310,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ctermid.rs", ctermid_text),
         ("gettid.rs", gettid_text),
         ("posix_close.rs", posix_close_text),
+        ("endhostent.rs", endhostent_text),
         ("isatty.rs", isatty_text),
         ("ttyname_r.rs", ttyname_r_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),

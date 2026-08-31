@@ -225,6 +225,8 @@ dup3
 duplocale
 eaccess
 ecvt
+endhostent
+endnetent
 environ
 epoll_create
 epoll_create1

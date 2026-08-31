@@ -1442,6 +1442,7 @@ GETTID_SYMBOLS = ("gettid",)
 GETLOADAVG_SYMBOLS = ("getloadavg",)
 SLEEP_SYMBOLS = ("sleep",)
 POSIX_CLOSE_SYMBOLS = ("posix_close",)
+ENDHOSTENT_SYMBOLS = ("endhostent", "endnetent")
 
 INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 
@@ -29637,6 +29638,285 @@ def require_posix_close_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_posix_close_probe",
     ):
         require(snippet in dispatcher, f"posix_close dispatcher omits {snippet}")
+
+
+def require_endhostent_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's stateless netdb terminator alias out of resolver state."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [artifact for artifact in artifacts if artifact.get("id") == "static-c-endhostent"]
+    require(len(matching) == 1, "libc.c-abi-compat needs exactly one static-c-endhostent artifact")
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-endhostent must not promote a netdb or resolver capability",
+    )
+
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-endhostent needs a description")
+    for phrase in (
+        "legacy netdb terminator artifact",
+        "still-planned `libc.c-abi-compat`",
+        "strong `void endhostent(void)`",
+        "weak same-address `endnetent` alias",
+        "`src/network/ent.c::endhostent`",
+        "`weak_alias(endhostent, endnetent)`",
+        "mutable state, errno, TLS, allocation, syscall",
+        "`sethostent`",
+        "`setnetent`",
+        "`gethostent`",
+        "`getnetent`",
+        "NSS",
+        "resolver behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-endhostent description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-endhostent.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/endhostent.rs",
+        "include/features.h",
+        "include/netdb.h",
+        "compat/x86_64/endhostent_header_abi_probe.c",
+        "compat/x86_64/endhostent_header_abi_probe.cpp",
+        "compat/x86_64/run_endhostent_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_endhostent_probe.c",
+        "compat/x86_64/libc_endhostent_start.S",
+        "compat/x86_64/run_libc_endhostent.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-endhostent source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-endhostent.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "void endhostent(void)" in item
+            and "void endnetent(void)" in item
+            and "strong T" in item
+            and "weak W" in item
+            and "same address" in item
+            for item in prerequisites
+        ),
+        "static-c-endhostent must retain its no-argument weak-alias ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/network/ent.c::endhostent" in item
+            and "weak_alias(endhostent, endnetent)" in item
+            and "sethostent/setnetent" in item
+            and "gethostent/getnetent" in item
+            for item in prerequisites
+        ),
+        "static-c-endhostent must retain its pinned-musl ent.c mapping",
+    )
+    require(
+        any(
+            "`-nostdlib -static`" in item
+            and "no interpreter" in item
+            and "PT_TLS" in item
+            and "dynamic-TLS model" in item
+            and "host/network enumeration and resolver exports" in item
+            for item in prerequisites
+        ),
+        "static-c-endhostent must retain its closed static boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-endhostent.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "unconditional `void endhostent(void)`" in item
+            and "`void endnetent(void)`" in item
+            and "strict, POSIX, X/Open, and GNU" in item
+            and "unmangled C++ linkage" in item
+            and "`extern \"C\"` guards" in item
+            for item in headers
+        ),
+        "static-c-endhostent must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-endhostent needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-endhostent"},
+        "static-c-endhostent must use the closed libc-endhostent command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C/C++ header",
+                "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+                "strong endhostent/weak endnetent same-address alias identity",
+                "ent.lo/AArch64 strong/weak ownership",
+                "no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall",
+                "host/network enumeration and resolver extraction",
+                "legacy database state",
+                "family completion",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-endhostent evidence must retain its bounded static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(ENDHOSTENT_SYMBOLS) <= exports,
+        "static-c-endhostent must retain both selected exports",
+    )
+    require(
+        not exports
+        & {
+            "gethostent",
+            "getnetent",
+            "sethostent",
+            "setnetent",
+        },
+        "static-c-endhostent must not expose an unselected netdb or resolver entry",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "endhostent.rs"]\nmod endhostent;' in static_root,
+        "x86 static C ABI must compose the endhostent leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "endhostent.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "Selected static Linux/x86-64 legacy netdb terminator C ABI boundary",
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/ent.c",
+        "weak_alias(endhostent, endnetent)",
+        "System V AMD64 ABI",
+        ".weak endnetent",
+        ".set endnetent, endhostent",
+        'pub extern "C" fn endhostent()',
+    ):
+        require(snippet in source, f"endhostent implementation omits {snippet}")
+    for forbidden in (
+        "raw_syscall::",
+        "errno::",
+        "static_tls::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"endhostent leaf widens into {forbidden}")
+
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_endhostent.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_endhostent_header_abi.sh",
+        "ent.lo",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define $symbol",
+        "candidate endnetent is not the same-address weak endhostent alias",
+        "candidate exports an unselected netdb enumeration or resolver entry",
+        "endhostent unexpectedly performs a call or syscall",
+    ):
+        require(snippet in runner, f"endhostent runner omits {snippet}")
+
+    probe = (
+        ROOT / "compat" / "x86_64" / "libc_endhostent_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "typedef void (*endhostent_signature)(void)",
+        "const endhostent_signature host_function = endhostent",
+        "const endhostent_signature net_function = endnetent",
+        "endhostent();",
+        "endnetent();",
+        "CRABC_ENDHOSTENT_FREESTANDING",
+    ):
+        require(snippet in probe, f"endhostent probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "endhostent_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "endhostent_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("endhostent declaration", "endnetent declaration", "endhostent_function"):
+        require(snippet in header_c, f"endhostent C header probe omits {snippet}")
+    for snippet in ("C++ endhostent declaration", "C++ endnetent declaration", "endhostent_function"):
+        require(snippet in header_cxx, f"endhostent C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_endhostent_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "endhostent_header_abi_probe.c",
+        "endhostent_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional in musl's netdb.h",
+        "c11-strict",
+        "cxx17-gnu",
+        "retained a mangled $symbol reference",
+    ):
+        require(snippet in header_runner, f"endhostent header runner omits {snippet}")
+
+    netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
+    require(
+        '#ifdef __cplusplus\nextern "C" {' in netdb_header
+        and '#ifdef __cplusplus\n}\n#endif' in netdb_header,
+        "include/netdb.h must retain C++ C-linkage guards for the selected declarations",
+    )
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "endhostent-header-abi)",
+        "run_endhostent_header_abi",
+        "libc-endhostent)",
+        "run_libc_endhostent_probe",
+    ):
+        require(snippet in dispatcher, f"endhostent dispatcher omits {snippet}")
+
+
 def require_dn_skipname_artifact(family: Mapping[str, Any]) -> None:
     """Keep the dependency-free DNS wire-span codec out of resolver state."""
     artifacts = require_verified_artifacts(
@@ -46655,6 +46935,7 @@ def validate_ledger(
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
     require_gettid_artifact(by_id["libc.c-abi-compat"])
     require_posix_close_artifact(by_id["libc.c-abi-compat"])
+    require_endhostent_artifact(by_id["libc.c-abi-compat"])
     require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_linear_search_artifact(by_id["libc.c-abi-compat"])

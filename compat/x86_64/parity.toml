@@ -10836,6 +10836,47 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT declaration, static-member, and behavior oracle: src/unistd/posix_close.c::posix_close ignores flags and delegates to close; src/unistd/close.c records the raw EINTR success mapping whose cancellation/AIO hooks remain unselected." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "close=3 consumes the signed descriptor in rdi and returns raw status; the selected fixture's pipe2=293 and close operations are harness-only descriptor setup and observation." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Two signed 32-bit C argument registers, signed int result ABI, C++ C linkage, and true-static ET_EXEC with direct initial-TLS errno closure." }]
 
 [[family.verified_artifact]]
+id = "static-c-endhostent"
+description = "Private native x86 selected-static-archive legacy netdb terminator artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves only strong `void endhostent(void)` and its weak same-address `endnetent` alias into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl's complete `src/network/ent.c::endhostent` body is a no-op and its `weak_alias(endhostent, endnetent)` preserves the overrideable ELF alias contract; direct and function-pointer calls prove the pair's shared address and no-op behavior. This source-shaped pair has no mutable state, errno, TLS, allocation, syscall, file, database, resolver, or network-policy boundary. It does not select `sethostent`, `setnetent`, `gethostent`, `getnetent`, legacy enumeration, `/etc/hosts`, `/etc/networks`, NSS, resolver behavior, generic netdb APIs, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/endhostent.rs",
+  "include/features.h",
+  "include/netdb.h",
+  "compat/x86_64/endhostent_header_abi_probe.c",
+  "compat/x86_64/endhostent_header_abi_probe.cpp",
+  "compat/x86_64/run_endhostent_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_endhostent_probe.c",
+  "compat/x86_64/libc_endhostent_start.S",
+  "compat/x86_64/run_libc_endhostent.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 C ABI passes no argument to both `void endhostent(void)` and `void endnetent(void)` and has no return-value, caller-storage, errno, or TLS boundary. The candidate emits endhostent as strong T and endnetent as weak W at the same address, preserving the selected ELF weak-alias identity rather than a Rust forwarding wrapper.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/network/ent.c::endhostent` directly to an empty body and maps `weak_alias(endhostent, endnetent)` to the paired weak no-op symbol. The source's sethostent/setnetent and null-returning gethostent/getnetent entries remain unselected.",
+  "The true `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno, dynamic-TLS model, allocator, helper call, syscall, filesystem, resolver, or ambient runtime dependency. Its endhostent disassembly returns directly, rejects host/network enumeration and resolver exports, and makes no legacy-database or network-policy claim.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<netdb.h>` matrix proves unconditional `void endhostent(void)` and `void endnetent(void)` declarations under strict, POSIX, X/Open, and GNU profiles, their exact no-argument function-pointer types, project-header provenance, and unmangled C++ linkage. The project header uses musl-style `extern \"C\"` guards solely to retain that installed-header ABI; it selects no general netdb header or runtime completion.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-endhostent", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The shared fixture proves direct and function-pointer no-op calls plus strong endhostent/weak endnetent same-address alias identity. It ratchets pinned-musl ent.lo/AArch64 strong/weak ownership, exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/dynamic-TLS model/allocator/helper-call/syscall or ambient runtime, and a direct no-call/no-syscall return disassembly while rejecting host/network enumeration and resolver extraction. It does not select legacy database state, files, NSS, resolver behavior, generic netdb APIs, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, declaration, static-member, and behavior oracle for src/network/ent.c::endhostent and weak_alias(endhostent, endnetent): both selected terminators are stateless no-op entries while enumeration and resolver-related names remain unselected." }, { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "No-argument void C ABI, C++ C linkage, weak same-address alias binding, and true-static ET_EXEC closure contract." }]
+
+[[family.verified_artifact]]
 id = "static-c-bsearch"
 description = "Private native x86 selected-static-archive `bsearch` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `bsearch` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/bsearch.c` leaf retains its midpoint and signed comparator branches for caller-owned valid contiguous records: direct and function-pointer calls cover first/last/miss, a duplicate-key midpoint return, a wide record, and zero elements without a callback. The checked multiplication guard applies only outside the valid C array domain, where musl's source pointer expression is already undefined. The final candidate rejects `qsort`, `qsort_r`, `__qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not change the existing qsort/qsort_r behavior or select general sorting/searching, callback ownership, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [

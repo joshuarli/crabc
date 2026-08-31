@@ -1,6 +1,10 @@
 #ifndef _NETDB_H
 #define _NETDB_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 #include <stdint.h>
 #include <sys/socket.h>
@@ -85,5 +89,9 @@ void sethostent(int); void setnetent(int); void setprotoent(int); void setserven
 void freeaddrinfo(struct addrinfo *);
 int getaddrinfo(const char *__restrict, const char *__restrict, const struct addrinfo *__restrict, struct addrinfo **__restrict);
 int getnameinfo(const struct sockaddr *__restrict, socklen_t, char *__restrict, socklen_t, char *__restrict, socklen_t, int);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
