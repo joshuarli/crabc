@@ -3030,3 +3030,18 @@ unit_verified = true
 differential_verified = false
 stress_verified = false
 performance_qualified = false
+
+[[item]]
+upstream = "src/theap.c"
+name = "later-persistent-owner-source-collect-abandon-exit"
+source_region = "mimalloc v3.5.0 src/theap.c:18-45 saved-successor visitor, 85-102 mi_theap_page_collect, and 110-137 mi_theap_collect_ex/_mi_theap_collect_abandon; src/page.c:193-219 _mi_page_free_collect, 263-275 _mi_page_abandon, and 438-473 _mi_theap_collect_retired; src/page-queue.c:204-274 queue/direct-cache/page-count removal; src/arena.c:1240-1249 abandonment and 1285-1311 final unmap/list removal; and src/init.c:377-421,448-481 thread teardown ordering"
+rust_module = "crabc_mimalloc::runtime_lifecycle, crabc_mimalloc::main_heap_page, crabc_mimalloc::main_heap_thread, crabc_mimalloc::single_thread, crabc_mimalloc::page_queue, crabc_mimalloc::abandoned, and crabc_mimalloc::types"
+rust_item = "NativePersistentThreadOwnerExitState::{PreDrain,RetainedTerminalEngine,AttachmentOnly}; NativePersistentThreadOwner::teardown; MainHeapThreadOwnerLocalPageEngine::finish_after_collect_abandon; MainHeapThreadOwnerExitDeferredFree; PageAllocatorEngine<MainHeapThreadPageDrainSession>::collect_abandon_owner_exit/finish_after_collect_abandon; ProductionOwnerExitCallbacks; TheapCollectAbandonPrepass/theap_collect_abandon_queues; and Page::{owner_used_at,retire_expire_at,queue_next_at,queue_prev_at}"
+intentional_difference = "This is one private later persistent-worker owner-exit connector over that worker's independently copied process PageMap/arena pair. It invokes source deferred free, forced retired-page collection, then every normal queue through BIN_FULL. Each visitor saves the raw successor before force collection; a live page then takes source false collection, intrusive removal, direct-cache repair, page-count decrement, and mapped or unmapped abandonment. An all-free page instead takes the existing exact PageMap/arena or PageMap/alias/primary/OS mapping release tail. OS abandonment inserts the exact Heap list member after abandoned identity and before unown, and an empty result removes it before terminal release. A live producer may retain only the atomic remote-free projection: callback state holds no engine, drain session, attachment, or whole Page, and raw ordinary/link field projections preserve disjointness until all-free terminal removal. Preflight failures retain PreDrain; any state-changing queue, abandonment, collection, or OS-release failure retains the exact RetainedTerminalEngine and cannot traverse again; after successful drain only AttachmentOnly may retry the no-page attachment boundary. Ticket zero remains independent and the default-off audit proves the direct worker exit adds no legacy scheduler transition. This creates no scheduler, park/resume path, global owner/client/route registry, W01/W02 pointer glue, public allocator routing, post-exit client free/reclaim, concurrent queue traversal, huge lifecycle, or general thread teardown claim."
+tests = ["crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/main_heap_thread.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/page_queue.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/tests/native_owner_local_persistent_cycles.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false

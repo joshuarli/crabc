@@ -326,6 +326,20 @@ static NATIVE_OWNER_LOCAL_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "native-runtime-test-audit")]
 static NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+// This default-off monotonic audit records every successful entry into the
+// legacy process page-owner scheduler (`COLD -> STARTING` or `* -> BUSY`). It
+// exposes no state, token, or owner identity. A direct persistent worker owns
+// its independently copied PageMap/arena pair and therefore must leave this
+// count unchanged after ticket-zero preparation has established the baseline.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_SCHEDULER_TRANSITION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "native-runtime-test-audit")]
+#[inline]
+fn note_native_scheduler_transition() {
+    NATIVE_SCHEDULER_TRANSITION_COUNT.fetch_add(1, Ordering::AcqRel);
+}
+
 /// Result of one private ticket-zero native allocation operation.
 ///
 /// This is a Rust-only friend interface for future bounded integration tests;
@@ -3302,7 +3316,10 @@ impl RuntimeProcessStorage {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => {}
+            Ok(_) => {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_native_scheduler_transition();
+            }
             Err(PAGE_OWNER_READY) => return true,
             Err(observed) if page_owner_parked_count(observed).is_some() => return true,
             Err(PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _) => return false,
@@ -3394,6 +3411,8 @@ impl RuntimeProcessStorage {
                 )
                 .is_ok()
             {
+                #[cfg(feature = "native-runtime-test-audit")]
+                note_native_scheduler_transition();
                 break observed;
             }
         };
@@ -3477,6 +3496,9 @@ impl RuntimeProcessStorage {
         {
             return None;
         }
+        #[cfg(feature = "native-runtime-test-audit")]
+        note_native_scheduler_transition();
+
         // SAFETY: READY -> BUSY serializes this mutable permanent owner with
         // ticket zero. The final slot was written before READY's Release
         // publication and is never moved or replaced.
@@ -3524,6 +3546,9 @@ impl RuntimeProcessStorage {
         {
             return None;
         }
+
+        #[cfg(feature = "native-runtime-test-audit")]
+        note_native_scheduler_transition();
 
         // SAFETY: expected -> BUSY serializes every mutable access to the
         // final permanent owner. `with_later_thread_page_pair` restores the
@@ -4093,6 +4118,7 @@ pub struct NativeRuntimeLifecycleAudit {
     pub main_heap_os_abandoned_pages_empty: usize,
     pub native_owner_local_operation_count: usize,
     pub native_parked_compatibility_operation_count: usize,
+    pub native_scheduler_transition_count: usize,
 }
 
 /// Read-only scalar accounting for the runtime's fork-admission gate.
@@ -5422,6 +5448,8 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
             .load(Ordering::Acquire),
         native_parked_compatibility_operation_count:
             NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT.load(Ordering::Acquire),
+        native_scheduler_transition_count: NATIVE_SCHEDULER_TRANSITION_COUNT
+            .load(Ordering::Acquire),
     })
 }
 
@@ -5522,9 +5550,19 @@ enum ThreadLifecycleState {
 #[must_use = "a persistent native thread owner must finish or remain retained in compiler TLS"]
 struct NativePersistentThreadOwner {
     attachment: MainHeapThreadAttachment<'static>,
-    /// `None` is valid only before initial engine publication or after the
-    /// consuming engine finish has succeeded and attachment teardown remains.
-    engine: Option<MainHeapThreadOwnerLocalPageEngine>,
+    state: NativePersistentThreadOwnerExitState,
+}
+
+/// The only persistent-owner states accepted at its one-way exit boundary.
+///
+/// The split prevents a terminal post-drain engine from being mistaken for a
+/// retryable pre-drain engine when compiler TLS retains the outer owner after
+/// an error. No variant carries a scheduler token, registry entry, route, or
+/// raw pointer capability.
+enum NativePersistentThreadOwnerExitState {
+    PreDrain(MainHeapThreadOwnerLocalPageEngine),
+    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine),
+    AttachmentOnly,
 }
 
 impl NativePersistentThreadOwner {
@@ -5535,7 +5573,9 @@ impl NativePersistentThreadOwner {
         &mut self,
         operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
     ) -> Result<R, ()> {
-        let engine = self.engine.as_mut().ok_or(())?;
+        let NativePersistentThreadOwnerExitState::PreDrain(engine) = &mut self.state else {
+            return Err(());
+        };
         let result = engine
             .with_local_allocator(&mut self.attachment, operation)
             .map_err(|_| ())?;
@@ -5544,23 +5584,63 @@ impl NativePersistentThreadOwner {
         Ok(result)
     }
 
-    /// Completes the all-free page engine and then the source attachment.
+    /// Completes source collect-abandon then the final attachment boundary.
     ///
-    /// `engine == None` records that the consuming page-engine finish already
-    /// succeeded but attachment teardown failed. A retry therefore resumes at
-    /// the remaining source boundary instead of reconstructing engine state.
+    /// Only `PreDrain` may enter the source queue traversal. A terminal
+    /// retained engine is deliberately returned untouched, while an
+    /// attachment-only continuation retries no allocator work.
     fn teardown(&mut self) -> Result<(), ()> {
-        if let Some(engine) = self.engine.take() {
-            match engine.finish(&mut self.attachment) {
-                Ok(()) => {}
-                Err(failure) => {
-                    self.engine = Some(failure.into_owner());
-                    return Err(());
+        let state = core::mem::replace(
+            &mut self.state,
+            NativePersistentThreadOwnerExitState::AttachmentOnly,
+        );
+        match state {
+            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+                match engine.finish_after_collect_abandon(&mut self.attachment) {
+                    Ok(()) => return Ok(()),
+                    Err(
+                        crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::PreDrain(
+                            engine,
+                        ),
+                    ) => {
+                        self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+                        return Err(());
+                    }
+                    Err(
+                        crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                            engine,
+                        ),
+                    ) => {
+                        self.state =
+                            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                        return Err(());
+                    }
+                    Err(
+                        crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly,
+                    ) => {}
                 }
             }
+            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) => {
+                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                return Err(());
+            }
+            NativePersistentThreadOwnerExitState::AttachmentOnly => {}
         }
+
         self.attachment
             .finish_after_user_destructors()
+            .or_else(|error| match error {
+                // This exact refusal proves the page engine already completed
+                // its source drain. No engine can be reconstructed; only the
+                // remaining root/list/TLD boundary may retry.
+                MainHeapThreadAttachmentError::PageDrainState => {
+                    // SAFETY: `AttachmentOnly` is minted only after the drain
+                    // proved queues/direct cache/page count empty and
+                    // released or abandoned every former page.
+                    unsafe { self.attachment.finish_after_detached_process_page_route() }
+                }
+                error => Err(error),
+            })
             .map_err(|_| ())
     }
 }
@@ -6767,14 +6847,14 @@ fn begin_current_thread_native_persistent_owner(
     };
     let owner = NativePersistentThreadOwner {
         attachment,
-        engine: None,
+        state: NativePersistentThreadOwnerExitState::AttachmentOnly,
     };
     let initialized = current_thread_native_persistent_owner_cell().initialize(
         owner,
         |mut owner| -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
             let owner = owner.as_mut().get_mut();
             let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut owner.attachment, pair)?;
-            owner.engine = Some(engine);
+            owner.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
             Ok(())
         },
     );
@@ -6790,11 +6870,15 @@ fn begin_current_thread_native_persistent_owner(
         }
         Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
             // The cell rejected the offered owner before initialization, so
-            // its engine field is still empty and the original attachment can
-            // be restored as the exact terminal diagnostic owner.
-            let NativePersistentThreadOwner { attachment, engine } = owner;
-            debug_assert!(engine.is_none());
-            drop(engine);
+            // its owner state is still attachment-only and the original
+            // attachment can be restored as the exact terminal diagnostic
+            // owner.
+            let NativePersistentThreadOwner { attachment, state } = owner;
+            debug_assert!(matches!(
+                state,
+                NativePersistentThreadOwnerExitState::AttachmentOnly
+            ));
+            drop(state);
             let slot = current_thread_slot();
             debug_assert!(slot.attachment.is_none());
             slot.attachment = Some(attachment);

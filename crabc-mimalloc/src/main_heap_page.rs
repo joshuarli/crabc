@@ -284,6 +284,37 @@ impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineFinishFailure {
     }
 }
 
+/// A consuming persistent-owner collect-abandon failure.
+///
+/// `PreDrain` is the only retryable state: every attachment/root preflight
+/// failed before the fixed slot and owner-local claim crossed their one-way
+/// boundary. `RetainedTerminalEngine` keeps the exact engine only as a
+/// terminal owner after source queue work may have detached state, and must
+/// never enter the drain again. `AttachmentOnly` proves the page engine has
+/// been consumed; only the remaining attachment boundary may be retried.
+#[must_use = "a failed collect-abandon finish retains its exact source owner state"]
+pub(crate) enum MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure {
+    PreDrain(MainHeapThreadOwnerLocalPageEngine),
+    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine),
+    AttachmentOnly,
+}
+
+impl core::fmt::Debug for MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::PreDrain(_) => formatter.write_str(
+                "MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::PreDrain",
+            ),
+            Self::RetainedTerminalEngine(_) => formatter.write_str(
+                "MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine",
+            ),
+            Self::AttachmentOnly => formatter.write_str(
+                "MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly",
+            ),
+        }
+    }
+}
+
 /// One closure-scoped local allocation view over the continuously stored
 /// owner engine. It deliberately exposes only raw source allocation facts;
 /// allocation tracking remains allocator metadata, not a parallel ledger.
@@ -2292,6 +2323,52 @@ impl MainHeapThreadOwnerLocalPageEngine {
                 error: MainHeapThreadOwnerLocalPageEngineAccessError::Bind(error),
             }),
         }
+    }
+
+    /// Consumes this persistent later-worker through the source
+    /// `_mi_theap_collect_abandon` transition. The lower engine derives every
+    /// page from the attached Theap queues; this wrapper owns only the
+    /// compiler-TLS failure state around that one-way drain.
+    pub(crate) fn finish_after_collect_abandon(
+        mut self,
+        attachment: &mut MainHeapThreadAttachment<'_>,
+    ) -> Result<(), MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure> {
+        let Some(engine) = self.engine.take() else {
+            return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly);
+        };
+        let drain = match self.lifecycle.begin_thread_exit_drain(attachment) {
+            Ok(drain) => drain,
+            Err(_) => {
+                self.engine = Some(engine);
+                return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::PreDrain(
+                    self,
+                ));
+            }
+        };
+        let (drain, identity) = engine.into_owner_local_thread_exit_drain(drain);
+        let drain = match drain.collect_abandon_owner_exit() {
+            Ok(drain) => drain,
+            Err(drain) => {
+                self.lifecycle.retain_terminal_after_thread_exit_failure();
+                self.engine = Some(
+                    OwnerLocalMainHeapPageAllocator::from_failed_owner_local_thread_exit(
+                        drain, identity,
+                    ),
+                );
+                return Err(
+                    MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
+                        self,
+                    ),
+                );
+            }
+        };
+        if drain.finish_after_collect_abandon().is_err() {
+            // The consumed drain already owns no PageMap/arena engine state.
+            // Keep only the attachment boundary retryable; reconstructing an
+            // owner engine here would grant a false second queue traversal.
+            return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly);
+        }
+        Ok(())
     }
 
     #[cfg(test)]

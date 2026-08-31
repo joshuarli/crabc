@@ -622,6 +622,36 @@ Low-level helpers may distinguish genuine source branches such as:
 
 Those distinctions remain beneath one coordinator.
 
+The current bounded implementation connects that coordinator only for a
+later `NativePersistentThreadOwner` and its independently held process
+`PageMap`/arena pair. Its concrete path is
+`NativePersistentThreadOwner::teardown` through
+`MainHeapThreadOwnerLocalPageEngine::finish_after_collect_abandon` to
+`PageAllocatorEngine<MainHeapThreadPageDrainSession>::collect_abandon_owner_exit`.
+Before the coordinator receives its exclusive `Theap`,
+`MainHeapThreadOwnerExitDeferredFree` and `ProductionOwnerExitCallbacks` split
+out only the disjoint TLD deferred-free cursor, PageMap/arena facts, static-main
+Heap lease, and terminal scalar slots. They retain neither a whole engine nor a
+whole `Page`; while a live remote producer remains legal, page reads use raw
+owner-field or intrusive-link projections and may overlap only the producer's
+atomic subobject.
+
+The one-way wrapper makes failure ownership explicit:
+
+- `PreDrain(engine)` is retryable because attachment/root preflight failed
+  before fast-slot or owner-local state changed;
+- `RetainedTerminalEngine(engine)` retains the exact drained engine after a
+  queue, abandonment, or release transition may have changed state and may not
+  enter collection again; and
+- `AttachmentOnly` proves the page engine was consumed, leaving only the
+  no-page attachment boundary retryable.
+
+This is not a scheduler, parked-session, global-registry, or route fallback.
+The ticket-zero owner remains independently live while a later worker exits;
+the default-off audit requires that direct worker exit add no legacy scheduler
+transition. General public allocator routing, post-exit client free/reclaim,
+and concurrent queue traversal remain outside this slice.
+
 ## 4.7 Exited threads do not remain ghost owners
 
 Pinned mimalloc can finish a thread while its live blocks remain on abandoned

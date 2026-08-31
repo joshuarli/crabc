@@ -12,7 +12,7 @@ const OWNER_LOCAL_CYCLES: usize = 6;
 const ANCHOR_REQUEST: usize = 37;
 const ANCHOR_REALLOC_REQUEST: usize = 193;
 const CYCLE_REQUEST: usize = 53;
-const RETAINED_EXIT_CHILD: &str = "CRABC_NATIVE_PERSISTENT_OWNER_RETAINED_EXIT_CHILD";
+const LIVE_OWNER_EXIT_CHILD: &str = "CRABC_NATIVE_PERSISTENT_OWNER_LIVE_EXIT_CHILD";
 
 fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
@@ -128,37 +128,79 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
     );
 }
 
-/// A live source allocation makes the consuming owner finish refuse. The
-/// exact owner remains in the retained compiler-TLS payload at that point, so
-/// the runtime must terminate the process before libc can reclaim that TLS
-/// image. Run the destructive half in a fresh copy of this test executable.
+/// A later persistent worker with a live page exits through the source
+/// collect-abandon traversal. Its abandoned page remains process-owned, while
+/// ticket zero stays the independent persistent owner; the worker must not
+/// enter the legacy scheduler/park bridge to make that transition happen.
+/// Run this retained-abandoned-state witness in a fresh process so no later
+/// test inherits the intentionally live source page.
 #[test]
-fn retained_persistent_owner_fail_stops_before_native_thread_return() {
-    if std::env::var_os(RETAINED_EXIT_CHILD).is_some() {
+fn live_persistent_owner_exits_without_scheduler_handoff() {
+    if std::env::var_os(LIVE_OWNER_EXIT_CHILD).is_some() {
         assert!(initialize_process(current_page_size()));
         assert!(prepare_native_later_thread_arena());
+        let ticket_zero = match ticket_zero_allocate(73, false) {
+            TicketZeroPageAllocationResult::Allocated(block) => block,
+            TicketZeroPageAllocationResult::Unavailable
+            | TicketZeroPageAllocationResult::AllocationFailed
+            | TicketZeroPageAllocationResult::Retained => {
+                panic!("ticket zero stays independently live while the worker exits")
+            }
+        };
+        let baseline = native_runtime_lifecycle_test_audit().expect(
+            "the live ticket-zero owner establishes the audit baseline before its worker exits",
+        );
         std::thread::spawn(|| {
             assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
             let _live = allocate_local(81);
-            let _ = finish_current_thread_native_after_user_destructors();
-            unreachable!("a retained persistent owner cannot reach native thread return");
+            assert_eq!(
+                finish_current_thread_native_after_user_destructors(),
+                ThreadFinishResult::Finished,
+                "a live persistent worker leaves through collect-abandon rather than fail-stopping"
+            );
         })
         .join()
-        .expect("the fail-stop worker terminates the complete child process");
-        unreachable!("the retained-owner child cannot survive its worker exit");
+        .expect("the source-shaped persistent worker returns normally after its exit");
+
+        let after = native_runtime_lifecycle_test_audit()
+            .expect("the abandoned-worker result retains a readable process audit");
+        assert_eq!(after.page_owner_ready, 1);
+        assert!(
+            after.main_heap_abandoned_page_count >= baseline.main_heap_abandoned_page_count + 1,
+            "the live worker leaves its page in the source static-main abandoned image"
+        );
+        assert_eq!(
+            after
+                .native_scheduler_transition_count
+                .saturating_sub(baseline.native_scheduler_transition_count),
+            0,
+            "the direct persistent worker exit never takes a scheduler transition"
+        );
+        assert_eq!(
+            after
+                .native_parked_compatibility_operation_count
+                .saturating_sub(baseline.native_parked_compatibility_operation_count),
+            0,
+            "the direct persistent worker exit never enters the parked compatibility bridge"
+        );
+
+        // SAFETY: this exact ticket-zero client stayed live through the
+        // independent worker's source collect-abandon transition.
+        assert_eq!(unsafe { ticket_zero_free(ticket_zero) }, TicketZeroPageFreeResult::Freed);
+        return;
     }
 
     let status = std::process::Command::new(
         std::env::current_exe().expect("the focused test executable has a current path"),
     )
     .arg("--exact")
-    .arg("retained_persistent_owner_fail_stops_before_native_thread_return")
-    .env(RETAINED_EXIT_CHILD, "1")
+    .arg("live_persistent_owner_exits_without_scheduler_handoff")
+    .env(LIVE_OWNER_EXIT_CHILD, "1")
     .status()
-    .expect("the retained-owner child test starts");
+    .expect("the live-owner child test starts");
     assert_eq!(
         status.code(),
-        Some(134),
-        "unresolved persistent TLS ownership terminates before thread return"
+        Some(0),
+        "the source-shaped live owner exits without retaining compiler TLS"
     );
 }

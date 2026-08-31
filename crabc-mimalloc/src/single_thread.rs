@@ -153,8 +153,8 @@ use crate::dynamic_theap::{
 #[cfg(test)]
 use crate::deferred_free::DeferredFreeTestCallback;
 use crate::main_heap_thread::{
-    MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession,
-    MainHeapThreadPageSession,
+    MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadOwnerExitDeferredFree,
+    MainHeapThreadPageDrainSession, MainHeapThreadPageSession,
 };
 use crate::main_theap::{
     MainStaticHeapLease, MainStaticHeapLeaseError, MainStaticProcessPageSession,
@@ -175,11 +175,16 @@ use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
 use crate::types::{
-    EMPTY_PAGE, HeapOsAbandonedPageListError, HeapOsAbandonedPageRemovalOutcome,
+    EMPTY_PAGE, Heap, HeapOsAbandonedPageListError, HeapOsAbandonedPageRemovalOutcome,
     LiveThreadId, MemoryId, MemoryKind, Page, PageKind, PageRemoteFreeProducerState, Theap,
 };
 use crate::types::page_queue::{
-    page_is_in_full, page_queue_enqueue_from_full_metadata,
+    page_is_in_full, theap_collect_abandon_queues, TheapCollectAbandonAbandonedPage,
+    TheapCollectAbandonCallbacks, TheapCollectAbandonCurrentPage,
+    TheapCollectAbandonPageAction, TheapCollectAbandonPrepass,
+    TheapCollectAbandonReleasedPage, TheapCollectAbandonTerminalContext,
+    theap_collect_abandon_update_direct_cache,
+    page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
     page_queue_move_to_front_metadata, page_queue_push_at_end_metadata,
     page_queue_remove_metadata,
@@ -2294,6 +2299,19 @@ impl OwnerLocalMainHeapPageSession {
                 .thread_id()
                 .expect("a later-main page session always has a live owner"),
             thread_sequence: session.thread_sequence(),
+            _not_send_or_sync: PhantomData,
+        }
+    }
+
+    #[inline]
+    fn identity(&self) -> (LiveThreadId, usize) { (self.thread, self.thread_sequence) }
+
+    #[inline]
+    fn from_identity(thread: LiveThreadId, thread_sequence: usize) -> Self {
+        Self {
+            active: None,
+            thread,
+            thread_sequence,
             _not_send_or_sync: PhantomData,
         }
     }
@@ -7764,6 +7782,35 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
             engine.finish_quiescent_in_place()
         })
     }
+
+    /// Replaces the non-self-referential persistent adapter with the exact
+    /// post-fast-slot source drain while preserving every PageMap/arena/OS
+    /// ownership fact in this engine.
+    pub(crate) fn into_owner_local_thread_exit_drain<'attachment, 'main>(
+        self,
+        drain: MainHeapThreadPageDrainSession<'attachment, 'main>,
+    ) -> (
+        PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        (LiveThreadId, usize),
+    ) {
+        let (session, state) = self.into_session_and_state();
+        let identity = session.identity();
+        (Self::from_session_and_state(drain, state), identity)
+    }
+
+    /// Rebuilds the TLS-storable adapter only to retain the exact engine after
+    /// a one-way drain became terminal. Its owner-local lease has already
+    /// entered `Terminal`, so this value cannot regain allocation or drain
+    /// authority.
+    pub(crate) fn from_failed_owner_local_thread_exit<'attachment, 'main>(
+        drain: PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        identity: (LiveThreadId, usize),
+    ) -> Self {
+        let (_session, state) = drain.into_session_and_state();
+        Self::from_session_and_state(OwnerLocalMainHeapPageSession::from_identity(
+            identity.0, identity.1,
+        ), state)
+    }
 }
 
 impl<'attachment, 'main, 'arena, 'map>
@@ -7785,6 +7832,142 @@ impl<'attachment, 'main, 'arena, 'map>
     #[inline]
     pub(crate) fn retain_terminal_thread_exit_route(&mut self) {
         self.session.retain_terminal_owner_exit();
+    }
+
+    /// Runs the source `MI_ABANDON` owner-exit traversal for the persistent
+    /// later worker's own process PageMap/arena pair.
+    ///
+    /// This is deliberately a consuming, one-way transition.  The callback
+    /// object below owns only field-level projections disjoint from the
+    /// coordinator's exclusive `Theap` borrow: the deferred-free TLD cursor,
+    /// PageMap/arena facts, static-main Heap lease, and terminal scalar slots.
+    /// It never holds this engine, the attachment, or a whole `Page` borrow.
+    /// That separation matters while a valid live client may still retain its
+    /// atomic remote-free producer projection into a page being collected or
+    /// abandoned.
+    pub(crate) fn collect_abandon_owner_exit(mut self) -> Result<Self, Self> {
+        if self.thread_exit_route_is_terminal()
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+        {
+            return Err(self);
+        }
+
+        let deferred_free = match self.session.owner_exit_deferred_free_cursor() {
+            Ok(cursor) => cursor,
+            Err(_) => return Err(self),
+        };
+        let thread = match self.session.thread_id() {
+            Some(thread) => thread,
+            None => return Err(self),
+        };
+        let main_heap = self.session.main_heap_lease();
+        let theap = deferred_free.theap();
+        // SAFETY: `owner_exit_deferred_free_cursor` proved this exact live
+        // attachment/Theap pairing.  This is a scalar Heap identity read
+        // before the exclusive coordinator borrow begins.
+        let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
+            Some(heap) => heap,
+            None => return Err(self),
+        };
+        // SAFETY: the same typed draining session establishes the frozen
+        // source option image.  A non-abandoning Theap must not be routed
+        // through this source `MI_ABANDON` connector.
+        if !unsafe { theap.as_ref().allows_page_abandon() } {
+            return Err(self);
+        }
+
+        let result = {
+            let mut callbacks = ProductionOwnerExitCallbacks {
+                deferred_free,
+                thread,
+                arena: &self.arena,
+                page_map: self.page_map,
+                main_heap,
+                heap,
+                pending_os_release: &mut self.pending_os_release,
+                collection_poison: &mut self.collection_poison,
+                page_commit_poison: self.page_commit_poison,
+                #[cfg(test)]
+                page_free_collect_failure_once: &mut self.page_free_collect_failure_once,
+            };
+            let prepass = TheapCollectAbandonPrepass::new(
+                |theap: &mut Theap,
+                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, '_, '_>| {
+                    callbacks.collect_deferred_prepass(theap)
+                },
+                |theap: &mut Theap,
+                 callbacks: &mut ProductionOwnerExitCallbacks<'_, '_, '_, '_>| {
+                    callbacks.collect_retired_prepass(theap)
+                },
+            );
+            // SAFETY: `theap` is the exact exclusive current Theap of the
+            // consuming drain.  `callbacks` contains no engine/session/
+            // attachment reference and no whole-Page reference; it can touch
+            // only its disjoint TLD, PageMap/arena, Heap, and scalar fields.
+            // The generic coordinator retains all queue/link/direct/count
+            // mutation and source ordering through `BIN_FULL`.
+            unsafe { theap_collect_abandon_queues(&mut *theap.as_ptr(), prepass, &mut callbacks) }
+        };
+        if result.is_err() {
+            self.retain_terminal_thread_exit_route();
+            return Err(self);
+        }
+
+        // The coordinator has returned and its callback context is gone.
+        // It therefore cannot overlap this final source queue/direct image
+        // check.  No page is dereferenced here.
+        let complete = unsafe {
+            let theap = theap.as_ref();
+            theap.page_count() == 0
+                && (0..=BIN_FULL).all(|bin| theap.queue(bin).is_some_and(|queue| queue.is_empty()))
+                && (0..PAGES_DIRECT)
+                    .all(|index| theap.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
+        };
+        if !complete || self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            self.retain_terminal_thread_exit_route();
+            return Err(self);
+        }
+        self.shutdown_complete = true;
+        Ok(self)
+    }
+
+    /// Finishes the attachment boundary only after
+    /// [`Self::collect_abandon_owner_exit`] emptied the old source Theap.
+    ///
+    /// All PageMap/arena/OS ownership was consumed or explicitly retained by
+    /// the preceding traversal.  No scheduler, parked owner, registry, or
+    /// route fallback participates in this final typed attachment teardown.
+    pub(crate) fn finish_after_collect_abandon(
+        self,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        let (session, state) = self.into_session_and_state();
+        let PageAllocatorEngineState {
+            arena,
+            requested_arena: _,
+            page_map: _,
+            thread_sequence: _,
+            pending_os_release,
+            collection_poison,
+            page_commit_poison,
+            #[cfg(test)]
+            page_free_collect_failure_once: _,
+            #[cfg(test)]
+            last_page_to_full: _,
+            #[cfg(test)]
+            page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
+            shutdown_complete,
+        } = state;
+        debug_assert!(pending_os_release.is_none());
+        debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
+        debug_assert!(shutdown_complete);
+        drop(arena);
+        drop(pending_os_release);
+        let attachment = unsafe { session.into_attachment_after_process_page_route() };
+        unsafe { attachment.finish_after_detached_process_page_route() }
     }
 
     /// Completes the first bounded later-main source owner-exit traversal.
@@ -37157,6 +37340,589 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
     fn owns_page(&self, page: &Page) -> bool {
         page.theap() == self.session.theap() as *const _ as *mut _
+    }
+}
+
+/// Private failure vocabulary for the source-order persistent-worker
+/// collect/abandon callback.  The outer consuming engine retains the one
+/// exact drain for every value; this enum never selects a scheduler, registry,
+/// parked session, or a replacement route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProductionOwnerExitError {
+    Deferred,
+    Retired,
+    Collection,
+    Release,
+    Abandon,
+    UnsupportedPage,
+}
+
+/// The state disjoint from the exclusive `Theap` reference held by
+/// `theap_collect_abandon_queues`.
+///
+/// In particular, this deliberately does not contain a
+/// `PageAllocatorEngine`, a `MainHeapThreadPageDrainSession`, an attachment,
+/// or a whole-page reference.  A live remote producer may retain a pointer to
+/// its atomic page projection during `collect_page` and `abandon_page`; those
+/// operations therefore use only the raw field projections in `types.rs`.
+/// Terminal release takes a whole-page mutable reference only after the
+/// source `used == 0` proof excludes a live client and its producer.
+struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map> {
+    deferred_free: MainHeapThreadOwnerExitDeferredFree,
+    thread: LiveThreadId,
+    arena: &'state ArenaView<'arena>,
+    page_map: &'map PageMap,
+    main_heap: MainStaticHeapLease<'main>,
+    heap: NonNull<Heap>,
+    pending_os_release: &'state mut Option<OsAlignedPageOwner>,
+    collection_poison: &'state mut Option<RetainedPageCollectPoison>,
+    page_commit_poison: bool,
+    #[cfg(test)]
+    page_free_collect_failure_once: &'state mut PageCollectFailureInjection,
+}
+
+impl ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
+    #[inline]
+    unsafe fn used_at(page: NonNull<Page>) -> usize {
+        // SAFETY: the source owner owns this ordinary field while a valid
+        // client can retain only the distinct atomic producer projection.
+        unsafe { Page::owner_used_at(page) }
+    }
+
+    #[inline]
+    unsafe fn retire_expire_at(page: NonNull<Page>) -> u8 {
+        // SAFETY: same field-level owner proof as `used_at`; this does not
+        // form an aliasing whole-page reference.
+        unsafe { Page::retire_expire_at(page) }
+    }
+
+    #[inline]
+    fn is_collection_poisoned(&self) -> bool {
+        self.collection_poison.is_some() || self.page_commit_poison
+    }
+
+    /// Records the one non-retryable source collection boundary.  The outer
+    /// `RetainedTerminalEngine` state preserves this record with its original
+    /// PageMap/arena pair rather than recreating a live owner.
+    fn retain_collection_poison(
+        &mut self,
+        page: NonNull<Page>,
+        error: PageCollectError,
+    ) {
+        assert!(
+            self.collection_poison.is_none(),
+            "a terminal page collection failure must be retained once"
+        );
+        #[cfg(test)]
+        let test_recoverable = matches!(error, PageCollectError::InjectedBeforeDetach);
+        #[cfg(not(test))]
+        let test_recoverable = false;
+        *self.collection_poison = Some(RetainedPageCollectPoison {
+            page,
+            error,
+            popped_block: None,
+            test_recoverable,
+        });
+    }
+
+    fn collect_deferred_prepass(
+        &mut self,
+        theap: &mut Theap,
+    ) -> Result<(), ProductionOwnerExitError> {
+        self.deferred_free
+            .collect(theap, true)
+            .map_err(|_| ProductionOwnerExitError::Deferred)
+    }
+
+    /// Ports the `MI_ABANDON` retired-page phase before the generic visitor.
+    /// It holds only the current `Theap` callback reference plus this
+    /// field-only state, so saving a successor and testing live state never
+    /// produces a whole `Page` alias next to a remote producer.
+    fn collect_retired_prepass(
+        &mut self,
+        theap: &mut Theap,
+    ) -> Result<(), ProductionOwnerExitError> {
+        if !theap.allows_page_abandon() {
+            return Err(ProductionOwnerExitError::Retired);
+        }
+        let (minimum, maximum) = theap.retired_bounds();
+        theap.reset_retired_bounds();
+        if minimum >= BIN_FULL || minimum > maximum {
+            return Ok(());
+        }
+
+        for bin in minimum..=maximum {
+            let mut current = theap
+                .queue(bin)
+                .map(|queue| queue.first())
+                .ok_or(ProductionOwnerExitError::Retired)?;
+            let mut visited = 0usize;
+            while !current.is_null() && visited < RETIRE_MAX_PAGES {
+                visited += 1;
+                let page = NonNull::new(current).ok_or(ProductionOwnerExitError::Retired)?;
+                // SAFETY: `theap` owns queue links; raw projection keeps the
+                // link read disjoint from a valid atomic producer projection.
+                let next = unsafe { Page::queue_next_at(page) };
+                let expire = unsafe { Self::retire_expire_at(page) };
+                if expire == 0 {
+                    break;
+                }
+                if unsafe { Self::used_at(page) } == 0 {
+                    // `_mi_page_try_retire` decrements before its forced
+                    // all-free release.  Zero used excludes a live client,
+                    // so the following terminal release can retire metadata.
+                    unsafe { Page::set_retire_expire_at(page, expire - 1) };
+                    if self.release_retired_page(theap, bin, page).is_err() {
+                        self.retain_collection_poison(page, PageCollectError::Lifecycle);
+                        return Err(ProductionOwnerExitError::Retired);
+                    }
+                } else {
+                    // A revived page is no longer retired; preserve it for
+                    // the following ordinary source traversal.
+                    unsafe { Page::set_retire_expire_at(page, 0) };
+                }
+                current = next;
+            }
+        }
+        Ok(())
+    }
+
+    /// Performs the source detach/direct-cache/count half of one retired
+    /// all-free release, then runs the same PageMap/backing tail as a generic
+    /// all-free page.  The generic coordinator cannot do this retired pass
+    /// because source retires it before creating current-page capability.
+    fn release_retired_page(
+        &mut self,
+        theap: &mut Theap,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> Result<(), ProductionOwnerExitError> {
+        let queue = theap
+            .queue_mut(bin)
+            .ok_or(ProductionOwnerExitError::Retired)? as *mut _;
+        // SAFETY: the retired prepass still owns this exact current queue
+        // member and its raw intrusive links.
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        if !theap_collect_abandon_update_direct_cache(theap, bin) || !theap.note_page_removed() {
+            return Err(ProductionOwnerExitError::Retired);
+        }
+        // SAFETY: zero use above excludes a live client/producer; this raw
+        // state projection avoids forming a whole page before the terminal
+        // release proof below.
+        let memory_kind = unsafe { Page::abandonment_state_at(page).memid.kind() };
+        self.release_detached_page(memory_kind, page)
+    }
+
+    fn page_free_collect_force(&mut self, page: NonNull<Page>) -> Result<(), PageCollectError> {
+        #[cfg(test)]
+        if *self.page_free_collect_failure_once == PageCollectFailureInjection::Next {
+            *self.page_free_collect_failure_once = PageCollectFailureInjection::None;
+            return Err(PageCollectError::InjectedBeforeDetach);
+        }
+        // SAFETY: the current-page capability keeps the page associated with
+        // this live owner and stable.  The projection validates the atomic
+        // low owner bit before it exposes owner-only field pointers.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .ok_or(PageCollectError::InvalidOwnerState)?;
+        // SAFETY: source force collection detaches the producer list through
+        // exactly that atomic owner state; no whole page is borrowed.
+        unsafe { remote_free::collect(owner) }.map_err(PageCollectError::Remote)?;
+        // SAFETY: the remote list is detached above and the current worker
+        // owns the local list fields for this exact live page.
+        let state = unsafe { Page::local_collect_state_for_owner_at(page, Some(self.thread)) }
+            .ok_or(PageCollectError::InvalidOwnerState)?;
+        // SAFETY: source force mode appends the local-free list before the
+        // all-free decision; `state` contains only raw field projections.
+        unsafe { crate::free_list::collect_local(state, true) }
+            .map(|_| ())
+            .map_err(PageCollectError::Local)
+    }
+
+    fn page_free_collect_false(&mut self, page: NonNull<Page>) -> Result<(), PageCollectError> {
+        #[cfg(test)]
+        if matches!(
+            *self.page_free_collect_failure_once,
+            PageCollectFailureInjection::Next | PageCollectFailureInjection::FalseOnly
+        ) {
+            *self.page_free_collect_failure_once = PageCollectFailureInjection::None;
+            return Err(PageCollectError::InjectedBeforeDetach);
+        }
+        // SAFETY: as in force collection, this derives only the source
+        // atomic remote-list owner while a valid client may coexist.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .ok_or(PageCollectError::InvalidOwnerState)?;
+        unsafe { remote_free::collect(owner) }.map_err(PageCollectError::Remote)?;
+        // SAFETY: the detached remote list leaves the owner-exclusive local
+        // fields represented by this raw state projection.
+        let state = unsafe { Page::local_collect_state_for_owner_at(page, Some(self.thread)) }
+            .ok_or(PageCollectError::InvalidOwnerState)?;
+        unsafe { crate::free_list::collect_local_false(state) }
+            .map(|_| ())
+            .map_err(PageCollectError::Local)
+    }
+
+    fn release_detached_page(
+        &mut self,
+        memory_kind: MemoryKind,
+        page: NonNull<Page>,
+    ) -> Result<(), ProductionOwnerExitError> {
+        let released = if memory_kind == MemoryKind::Arena {
+            self.release_detached_arena_page(page)
+        } else if memory_kind.is_os() {
+            self.release_detached_os_page(page) && self.pending_os_release.is_none()
+        } else {
+            false
+        };
+        released.then_some(()).ok_or(ProductionOwnerExitError::Release)
+    }
+
+    /// Reads and validates the terminal span only after a zero-use proof.
+    /// Whole-page inspection here cannot overlap a valid producer because a
+    /// producer requires a still-counted client block.
+    fn release_span(&self, page: NonNull<Page>) -> Option<ReleaseSpan> {
+        // SAFETY: callers have proved all-free terminal ownership before
+        // entering this helper.  No live client or atomic producer remains,
+        // so immutable geometry inspection is disjoint from all access.
+        let page_ref = unsafe { page.as_ref() };
+        let memory = page_ref.memid();
+        if memory.is_os() {
+            // SAFETY: the terminal release owns the exact published primary
+            // and its PageMap transition; this constructor merely validates
+            // that pre-existing source mapping image.
+            let published = unsafe {
+                PublishedOsAlignedPage::from_page(self.page_map.memory_config(), page)
+            }?;
+            // SAFETY: this one transition serializes exact PageMap entries.
+            if unsafe { !published.page_map_entries_match(self.page_map) } {
+                return None;
+            }
+            return Some(ReleaseSpan::Os(published));
+        }
+        let arena_memory = memory.arena_memory()?;
+        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
+            return None;
+        }
+        let slice_index = arena_memory.slice_index as usize;
+        let slice_count = arena_memory.slice_count as usize;
+        let size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+        let slice_start = self.arena.slice_start(slice_index)?;
+        let block_size = page_ref.block_size();
+        let kind = size_class::page_kind_for_block_size(block_size)?;
+        let expected_slice_count = match kind {
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                page::regular_page_slice_count(kind)?
+            }
+            PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+        };
+        if slice_count != expected_slice_count {
+            return None;
+        }
+        let usable_offset = page::page_usable_start_offset(block_size)?;
+        let expected_reserved = match kind {
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                page::reserved_object_count(size, usable_offset, block_size)?
+            }
+            PageKind::Singleton => 1,
+        };
+        if page_ref.reserved() != expected_reserved {
+            return None;
+        }
+        let expected_start = slice_start.addr().checked_add(usable_offset)?;
+        if expected_start >= slice_start.addr().checked_add(size)?
+            || expected_start.checked_sub(page.as_ptr().addr())? != page_ref.page_offset()
+        {
+            return None;
+        }
+        let page_map_size = arena_page_map_size(page, slice_start, size)?;
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
+            let address = slice_start.addr().checked_add(offset)? as *const u8;
+            // SAFETY: this terminal owner serializes its explicit PageMap
+            // range; checking precedes one exact unregister below.
+            if unsafe { self.page_map.checked_lookup(address) } != page.as_ptr() {
+                return None;
+            }
+        }
+        Some(ReleaseSpan::Arena {
+            memory,
+            slice_start,
+            size,
+        })
+    }
+
+    fn clear_main_arena_page(&self, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
+            return false;
+        }
+        // The outer one-way drain already proved this current worker's
+        // attachment is in `DrainingPages`.  Preserve source PageMap clear ->
+        // `pages_main` clear order without retaining an attachment borrow.
+        unsafe { self.arena.pages() }
+            .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
+            == Some(true)
+    }
+
+    fn release_detached_arena_page(&mut self, page: NonNull<Page>) -> bool {
+        let Some(ReleaseSpan::Arena {
+            memory,
+            slice_start,
+            size,
+        }) = self.release_span(page)
+        else {
+            return false;
+        };
+        // SAFETY: release action is selected only after force/false
+        // collection proved zero use; the queue coordinator detached this
+        // exact page before invoking us.  Raw reads avoid an unnecessary
+        // whole-page borrow at the assertion boundary.
+        let detached = unsafe {
+            Self::used_at(page) == 0
+                && Page::queue_next_at(page).is_null()
+                && Page::queue_prev_at(page).is_null()
+        };
+        if !detached {
+            return false;
+        }
+        let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
+            return false;
+        };
+        // SAFETY: `release_span` proved the complete current source range;
+        // no queue or client access remains after the detach/zero-use proof.
+        if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
+            return false;
+        }
+        if !self.clear_main_arena_page(memory) {
+            return false;
+        }
+        // SAFETY: all free, detached, PageMap-unregistered, and ordinary
+        // arena-bit-cleared precede metadata reset.  No producer can remain.
+        if unsafe { (&mut *page.as_ptr()).retire_exclusive() }.is_none() {
+            return false;
+        }
+        // SAFETY: these are the exact arena slices validated above; every
+        // visible PageMap/metadata predecessor has completed.
+        unsafe { release_arena_slices(memory) }
+    }
+
+    fn release_detached_os_page(&mut self, page: NonNull<Page>) -> bool {
+        let Some(ReleaseSpan::Os(published)) = self.release_span(page) else {
+            return false;
+        };
+        // SAFETY: same all-free plus queue-detached proof as the arena tail.
+        let detached = unsafe {
+            Self::used_at(page) == 0
+                && Page::queue_next_at(page).is_null()
+                && Page::queue_prev_at(page).is_null()
+        };
+        if !detached {
+            return false;
+        }
+        let layout = published.layout();
+        let expected_memory = published.memory_id();
+        // SAFETY: this exact published singleton owns the clipped PageMap
+        // range until it is removed before aliases/primary/reclaim.
+        if unsafe {
+            self.page_map.unregister_range(
+                published.slice_start().as_ptr(),
+                layout.page_map_size(),
+            )
+        }
+        .is_err()
+        {
+            return false;
+        }
+        // SAFETY: PageMap lookup is gone before secondary aliases clear.
+        if unsafe { !published.clear_secondary_metadata() } {
+            return false;
+        }
+        // SAFETY: all source predecessors for terminal primary retirement are
+        // now complete and no producer can remain after zero use.
+        let Some(retired) = (unsafe { (&mut *page.as_ptr()).retire_exclusive() }) else {
+            return false;
+        };
+        let Some(retired_os) = retired.os_memory() else {
+            return false;
+        };
+        let Some(expected_os) = expected_memory.os_memory() else {
+            return false;
+        };
+        if !retired.is_os()
+            || retired_os.base != expected_os.base
+            || retired_os.size != expected_os.size
+            || retired.initially_committed() != expected_memory.initially_committed()
+            || retired.initially_zero() != expected_memory.initially_zero()
+        {
+            return false;
+        }
+        // SAFETY: the typed `published` token is now the sole mapping owner.
+        match unsafe { published.reclaim() } {
+            Ok(()) => true,
+            Err(failure) => {
+                if self.pending_os_release.is_some() {
+                    return false;
+                }
+                *self.pending_os_release = Some(failure.into_owner());
+                true
+            }
+        }
+    }
+
+    fn push_os_abandoned_page_after_identity(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), ProductionOwnerExitError> {
+        let mut heap = self
+            .main_heap
+            .lock_heap()
+            .map_err(|_| ProductionOwnerExitError::Abandon)?;
+        // SAFETY: source abandoned identity is already established inside the
+        // before-unown callback; raw links remain exclusively owned while a
+        // client can touch only producer atomics.
+        let linked = unsafe { heap.heap_mut().push_os_abandoned_page(page) };
+        let unlock = heap.unlock();
+        match (linked, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            _ => Err(ProductionOwnerExitError::Abandon),
+        }
+    }
+
+    fn remove_os_abandoned_page_after_identity(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), ProductionOwnerExitError> {
+        let mut heap = self
+            .main_heap
+            .lock_heap()
+            .map_err(|_| ProductionOwnerExitError::Abandon)?;
+        // SAFETY: `AbandonResult::Empty` retained this exact low-bit owner;
+        // it is the source list -> terminal release edge, never a scan.
+        let removed = unsafe { heap.heap_mut().remove_os_abandoned_page(page) };
+        let unlock = heap.unlock();
+        match (removed, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            _ => Err(ProductionOwnerExitError::Abandon),
+        }
+    }
+}
+
+impl TheapCollectAbandonCallbacks for ProductionOwnerExitCallbacks<'_, '_, '_, '_> {
+    type Error = ProductionOwnerExitError;
+    type Retained = TheapCollectAbandonTerminalContext;
+
+    fn collect_page(
+        &mut self,
+        current: TheapCollectAbandonCurrentPage<'_>,
+    ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
+        let page = current.page();
+        self.page_free_collect_force(page).map_err(|error| {
+            self.retain_collection_poison(page, error);
+            ProductionOwnerExitError::Collection
+        })?;
+        // SAFETY: raw owner-field read after force collection; a live client
+        // may still retain only a disjoint atomic producer projection.
+        if unsafe { Self::used_at(page) } == 0 {
+            return Ok(TheapCollectAbandonPageAction::Release);
+        }
+        self.page_free_collect_false(page).map_err(|error| {
+            self.retain_collection_poison(page, error);
+            ProductionOwnerExitError::Collection
+        })?;
+        // SAFETY: as above, do not materialize `&Page` while a producer may
+        // race only through the atomic remote-free subobject.
+        Ok(if unsafe { Self::used_at(page) } == 0 {
+            TheapCollectAbandonPageAction::Release
+        } else {
+            TheapCollectAbandonPageAction::Abandon
+        })
+    }
+
+    fn release_page(
+        &mut self,
+        released: TheapCollectAbandonReleasedPage<'_>,
+    ) -> Result<(), Self::Error> {
+        let page = released.page();
+        // SAFETY: action `Release` is selected only from zero use.  This raw
+        // state contains no whole-page reference and names the source backing
+        // branch before the terminal PageMap/release tail.
+        let memory_kind = unsafe { Page::abandonment_state_at(page).memid.kind() };
+        self.release_detached_page(memory_kind, page)
+    }
+
+    fn abandon_page(
+        &mut self,
+        abandoned_page: TheapCollectAbandonAbandonedPage<'_>,
+    ) -> Result<(), Self::Error> {
+        let page = abandoned_page.page();
+        // SAFETY: the coordinator detached this exact page after force/false
+        // collection.  This is a raw field projection so live clients may
+        // retain only their atomic producer state until source unown resolves
+        // the final low-bit ownership.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        let memory_kind = state.memid.kind();
+        if memory_kind != MemoryKind::Arena && !memory_kind.is_os() {
+            return Err(ProductionOwnerExitError::UnsupportedPage);
+        }
+        // SAFETY: the owner controls this ordinary field through the source
+        // abandonment transition; no whole page reference is materialized.
+        let used = unsafe { core::ptr::read(state.used.as_ptr()) };
+        let reserved = usize::from(state.reserved);
+        let bin = size_class::bin(state.block_size)
+            .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
+        let page_kind = size_class::page_kind_for_block_size(state.block_size);
+        let result = if memory_kind == MemoryKind::Arena
+            && bin < ARENA_BIN_COUNT
+            && used < reserved
+            && page_kind != Some(PageKind::Singleton)
+        {
+            let map = self
+                .arena
+                .main_heap_abandoned_page(self.heap, bin)
+                .ok_or(ProductionOwnerExitError::UnsupportedPage)?;
+            // SAFETY: source order is force -> false -> queue/direct/count
+            // detach -> mapped identity/bit/count -> unown. `map` is the
+            // exact static-main bitmap/count pair for this arena and bin.
+            unsafe { abandoned::abandon_after_collect(page, Some(&map)) }
+        } else if memory_kind.is_os() {
+            // `arena.c` links a non-arena page only after abandoned identity
+            // is visible and before the common low-bit unown loop.
+            unsafe {
+                abandoned::abandon_unmappable_after_collect_with_before_unown(page, || {
+                    self.push_os_abandoned_page_after_identity(page)
+                        .map_err(|_| AbandonError::PreUnownPublication)
+                })
+            }
+        } else {
+            // Full regular pages and arena singletons remain source-unmapped
+            // at owner exit; no fallback route is selected here.
+            unsafe { abandoned::abandon_unmappable_after_collect(page) }
+        };
+        match result {
+            Ok(AbandonResult::UnownedMapped | AbandonResult::UnownedUnmapped) => Ok(()),
+            Ok(AbandonResult::Empty) => {
+                // A producer can make a just-detached live page empty in the
+                // source unown loop.  The low bit remains ours, so finish the
+                // exact backing tail rather than requeueing or recreating an
+                // owner.  OS list removal precedes PageMap/mapping release.
+                if memory_kind.is_os() {
+                    self.remove_os_abandoned_page_after_identity(page)?;
+                }
+                self.release_detached_page(memory_kind, page)
+            }
+            Err(_) => Err(ProductionOwnerExitError::Abandon),
+        }
+    }
+
+    fn retain_terminal(
+        &mut self,
+        terminal: TheapCollectAbandonTerminalContext,
+    ) -> Self::Retained {
+        // The outer consuming drain immediately turns this into its explicit
+        // `RetainedTerminalEngine` state.  Keeping this callback scalar-only
+        // avoids a raw reborrow of its whole engine/session while the generic
+        // coordinator still owns `&mut Theap`.
+        terminal
     }
 }
 

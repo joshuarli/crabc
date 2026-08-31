@@ -94,17 +94,18 @@ impl<DeferredFrees, RetiredPages> TheapCollectAbandonPrepass<DeferredFrees, Reti
     /// Runs the two source prepasses and creates the otherwise-unforgeable
     /// proof required by page-action callbacks.
     #[inline]
-    fn run<E>(
+    fn run<E, Callbacks>(
         &mut self,
         theap: &mut Theap,
+        callbacks: &mut Callbacks,
     ) -> Result<TheapCollectAbandonPageActionsReady, TheapCollectAbandonFailure<E>>
     where
-        DeferredFrees: FnMut(&mut Theap) -> Result<(), E>,
-        RetiredPages: FnMut(&mut Theap) -> Result<(), E>,
+        DeferredFrees: FnMut(&mut Theap, &mut Callbacks) -> Result<(), E>,
+        RetiredPages: FnMut(&mut Theap, &mut Callbacks) -> Result<(), E>,
     {
-        (self.deferred_frees)(theap)
+        (self.deferred_frees)(theap, callbacks)
             .map_err(TheapCollectAbandonFailure::DeferredFrees)?;
-        (self.retired_pages)(theap)
+        (self.retired_pages)(theap, callbacks)
             .map_err(TheapCollectAbandonFailure::RetiredPages)?;
         Ok(TheapCollectAbandonPageActionsReady(()))
     }
@@ -413,14 +414,14 @@ pub(crate) unsafe fn theap_collect_abandon_queues<'theap, DeferredFrees, Retired
     callbacks: &mut Callbacks,
 ) -> Result<(), TheapCollectAbandonError<'theap, Callbacks::Error, Callbacks::Retained>>
 where
-    DeferredFrees: FnMut(&mut Theap) -> Result<(), Callbacks::Error>,
-    RetiredPages: FnMut(&mut Theap) -> Result<(), Callbacks::Error>,
+    DeferredFrees: FnMut(&mut Theap, &mut Callbacks) -> Result<(), Callbacks::Error>,
+    RetiredPages: FnMut(&mut Theap, &mut Callbacks) -> Result<(), Callbacks::Error>,
     Callbacks: TheapCollectAbandonCallbacks,
 {
     // `mi_theap_collect_ex` runs this complete prepass even when the visitor
     // finds no pages, so the source empty fast path follows rather than
     // bypasses the typed prerequisite boundary.
-    let page_actions_ready = match prepass.run(theap) {
+    let page_actions_ready = match prepass.run(theap, callbacks) {
         Ok(ready) => ready,
         Err(failure) => {
             return Err(theap_collect_abandon_terminal_failure(
@@ -664,7 +665,7 @@ unsafe fn theap_collect_abandon_detach_page(
 /// repairs the direct cache even when the next owner-exit action is an arena,
 /// OS, regular, full, or singleton release. Non-small queues are a source
 /// no-op.
-fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: usize) -> bool {
+pub(crate) fn theap_collect_abandon_update_direct_cache(theap: &mut Theap, bin: usize) -> bool {
     let Some(queue) = theap.pages.get(bin) else {
         return false;
     };
@@ -1595,14 +1596,14 @@ mod tests {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |theap: &mut Theap| {
+                    |theap: &mut Theap, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
                         assert_eq!(theap.page_count(), 4);
                         events
                             .borrow_mut()
                             .push(MixedCollectAbandonEvent::DeferredFrees);
                         Ok::<_, ()>(())
                     },
-                    |theap: &mut Theap| {
+                    |theap: &mut Theap, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
                         assert_eq!(theap.page_count(), 4);
                         events
                             .borrow_mut()
@@ -1743,8 +1744,8 @@ mod tests {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
-                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
+                    |_theap: &mut Theap, _callbacks: &mut TerminalFailureCallbacks<'_>| Ok::<_, TerminalFailure>(()),
+                    |_theap: &mut Theap, _callbacks: &mut TerminalFailureCallbacks<'_>| Ok::<_, TerminalFailure>(()),
                 ),
                 &mut callbacks,
             )
@@ -1806,8 +1807,8 @@ mod tests {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Err::<(), _>(()),
-                    |_theap: &mut Theap| panic!("retired collection cannot follow deferred failure"),
+                    |_theap: &mut Theap, _callbacks: &mut QueueInvariantCallbacks| Err::<(), _>(()),
+                    |_theap: &mut Theap, _callbacks: &mut QueueInvariantCallbacks| panic!("retired collection cannot follow deferred failure"),
                 ),
                 &mut callbacks,
             )
@@ -1922,8 +1923,8 @@ mod tests {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
-                    |_theap: &mut Theap| Ok::<_, TerminalFailure>(()),
+                    |_theap: &mut Theap, _callbacks: &mut MidDrainFailureCallbacks| Ok::<_, TerminalFailure>(()),
+                    |_theap: &mut Theap, _callbacks: &mut MidDrainFailureCallbacks| Ok::<_, TerminalFailure>(()),
                 ),
                 &mut callbacks,
             )
@@ -2021,8 +2022,8 @@ mod tests {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Ok::<_, ()>(()),
-                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                    |_theap: &mut Theap, _callbacks: &mut QueueInvariantCallbacks| Ok::<_, ()>(()),
+                    |_theap: &mut Theap, _callbacks: &mut QueueInvariantCallbacks| Ok::<_, ()>(()),
                 ),
                 &mut callbacks,
             )
@@ -2067,8 +2068,8 @@ mod tests {
             theap_collect_abandon_queues(
                 &mut theap,
                 TheapCollectAbandonPrepass::new(
-                    |_theap: &mut Theap| Ok::<_, ()>(()),
-                    |_theap: &mut Theap| Ok::<_, ()>(()),
+                    |_theap: &mut Theap, _callbacks: &mut QueueInvariantCallbacks| Ok::<_, ()>(()),
+                    |_theap: &mut Theap, _callbacks: &mut QueueInvariantCallbacks| Ok::<_, ()>(()),
                 ),
                 &mut callbacks,
             )

@@ -2704,6 +2704,63 @@ impl Page {
         };
     }
 
+    /// Reads the owner-only live allocation count without borrowing the
+    /// complete page.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name stable initialized metadata whose current source owner
+    /// exclusively controls `used`. A valid remote producer may concurrently
+    /// retain only its disjoint atomic projection; it must not read or write
+    /// this ordinary field. The caller must not use a zero result to retire or
+    /// reuse metadata until it has completed the matching source collection
+    /// and queue-detach proof.
+    #[inline]
+    pub(super) unsafe fn owner_used_at(page: NonNull<Self>) -> usize {
+        // SAFETY: the caller supplies the exact ordinary-field ownership and
+        // lifetime proof; this raw read creates no whole-page reference.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).used)) }
+    }
+
+    /// Reads the owner-only retirement countdown without borrowing a whole
+    /// live page.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be stable initialized metadata whose owner exclusively
+    /// controls the ordinary retirement byte. Concurrent remote producers may
+    /// retain only the page's atomic producer projection.
+    #[inline]
+    pub(super) unsafe fn retire_expire_at(page: NonNull<Self>) -> u8 {
+        // SAFETY: same caller proof as `owner_used_at`; this is a raw
+        // subobject projection rather than an immutable page borrow.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).retire_expire)) }
+    }
+
+    /// Reads one queue successor through its raw intrusive-link subobject.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be a stable initialized member of a queue whose links the
+    /// caller exclusively owns. A remote producer may retain only disjoint
+    /// page atomics and must never access queue links.
+    #[inline]
+    pub(super) unsafe fn queue_next_at(page: NonNull<Self>) -> *mut Self {
+        // SAFETY: the caller owns this exact intrusive-link subobject.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).next)) }
+    }
+
+    /// Reads one queue predecessor through its raw intrusive-link subobject.
+    ///
+    /// # Safety
+    ///
+    /// Same as [`Self::queue_next_at`].
+    #[inline]
+    pub(super) unsafe fn queue_prev_at(page: NonNull<Self>) -> *mut Self {
+        // SAFETY: the caller owns this exact intrusive-link subobject.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).prev)) }
+    }
+
     /// Projects only the source atomic fields that a remote producer may use.
     ///
     /// # Safety

@@ -2344,7 +2344,7 @@ VM ownership and page-map transitions without broadening production support;
 the pinned toolchain does not currently install Miri itself. No allocator
 readiness or promotion claim follows from this slice.
 
-### Theap collect-abandon queue seam (pending runtime wiring)
+### Theap collect-abandon queue seam and persistent-worker connector
 
 Pinned mimalloc v3.5.0 orders a complete abandoning-Theap collection in
 `src/theap.c::{mi_theap_collect_ex,mi_theap_visit_pages,mi_theap_page_collect}`:
@@ -2357,17 +2357,38 @@ head, and decrements the Theap page count before the page reaches its terminal
 release or abandonment publication.
 
 `crabc-mimalloc/src/page_queue.rs::{theap_collect_abandon_queues,theap_collect_abandon_detach_page,theap_collect_abandon_update_direct_cache}`
-is the narrow, source-shaped coordinator for that queue half. Its owner-exit
-caller must run the deferred-free and retired-page prepass before invoking it;
-for every callback-selected page action, it preserves the exact sequence
+is the narrow, source-shaped coordinator for that queue half. Its
+`TheapCollectAbandonPrepass` owns the deferred-free then retired-page order
+inside the invocation; the prepass callbacks receive the coordinator's
+callback state rather than retaining an enclosing allocator borrow. For every
+callback-selected page action, it preserves the exact sequence
 `force/false collection -> queue membership removal -> direct-cache update ->
 Theap page-count decrement -> terminal release or abandonment callback`.
 The callback cannot select a geometry, alter queue state, or reorder the
-terminal transition. This seam does not itself detach the Theap/TLD, publish an
-abandoned bitmap, or release PageMap/backing state. Runtime owner-exit wiring
-to supply those source-specific callbacks remains pending, so this documents a
-production coordinator boundary rather than a claim that general owner exit is
-integrated.
+terminal transition.
+
+`single_thread.rs::PageAllocatorEngine<MainHeapThreadPageDrainSession>::collect_abandon_owner_exit`
+supplies the current source-specific callbacks for one later persistent
+worker's independent process PageMap/arena pair. Its
+`ProductionOwnerExitCallbacks` contains only a field-level deferred-free cursor,
+PageMap/arena/Heap facts, and terminal scalar slots; it retains no whole
+`PageAllocatorEngine`, drain session, attachment, or `Page`. Consequently a
+live remote producer may retain only its page atomic projection while owner-side
+queue links and ordinary fields are accessed through raw disjoint projections.
+Whole-page mutable access begins only after the source all-free proof excludes
+the producer. Arena and OS tails keep the source order, including OS abandoned
+list insertion before unown and removal before PageMap/metadata/mapping release.
+
+`main_heap_page.rs::MainHeapThreadOwnerLocalPageEngine::finish_after_collect_abandon`
+and `runtime_lifecycle.rs::NativePersistentThreadOwnerExitState` make the
+one-way failure table explicit: `PreDrain(engine)` remains retryable before the
+fast-slot transition, `RetainedTerminalEngine(engine)` is fail-closed and never
+drains again, and `AttachmentOnly` retains only the final no-page attachment
+boundary. This direct connector neither parks nor schedules the worker and
+does not use a global owner/client registry or a post-exit route. Ticket zero
+therefore remains independently live across the worker's exit. It is not a
+claim of general public allocator routing, post-exit free/reclaim, concurrent
+queue traversal, or complete source thread teardown.
 
 ## Scope boundary
 
