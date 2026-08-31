@@ -338,6 +338,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-in6addr-any  run the archive-free static x86 crabc-libc IPv6 unspecified-address object slice
   libc-in6addr-loopback  run the archive-free static x86 crabc-libc IPv6 loopback-address object slice
   libc-dn-skipname  run the archive-free static x86 crabc-libc DNS wire-name span slice
+  libc-dn-expand  run the archive-free static x86 crabc-libc DNS wire-name expansion slice
   libc-ns-get16  run the archive-free static x86 crabc-libc DNS 16-bit wire-read slice
   libc-ns-get32  run the archive-free static x86 crabc-libc DNS 32-bit wire-read slice
   libc-ns-put16  run the archive-free static x86 crabc-libc DNS 16-bit wire-write slice
@@ -3351,7 +3352,7 @@ case "$command" in
     ldso-bounded-dlopen) ;;
     math-special-header-abi|libc-math-special) ;;
     inet-address-header-abi|nameser-header-abi) ;;
-    libc-network-byte-order|libc-dn-skipname|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32) ;;
+    libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-math-minmax) ;;
@@ -4953,6 +4954,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-dn-skipname takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_dn_skipname.sh
+        ;;
+    libc-dn-expand)
+        [ "$#" -eq 0 ] || fail "libc-dn-expand takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_dn_expand.sh
         ;;
     libc-ns-get16)
         [ "$#" -eq 0 ] || fail "libc-ns-get16 takes no arguments"

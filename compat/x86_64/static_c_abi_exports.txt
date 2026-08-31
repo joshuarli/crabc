@@ -16,6 +16,7 @@ __ctype_tolower_loc
 __ctype_toupper_loc
 __cxa_atexit
 __cxa_finalize
+__dn_expand
 __environ
 __errno_location
 __fesetround
@@ -150,6 +151,7 @@ dlerror
 dlinfo
 dlopen
 dlsym
+dn_expand
 dn_skipname
 dngettext
 drem

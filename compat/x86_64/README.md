@@ -1281,14 +1281,15 @@ address-conversion or socket behavior, `crabc-libc`, or public x86 support.
 
 `nameser-header-abi` compile-checks project-first and pinned-musl C and C++
 `<resolv.h>` consumers for exactly
-`dn_skipname(const unsigned char *, const unsigned char *)` and
+`dn_skipname(const unsigned char *, const unsigned char *)`,
+`dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)`, and
 `ns_get16(const unsigned char *)`, `ns_get32(const unsigned char *)`, and
 `ns_put16(unsigned, unsigned char *)`, plus
 `ns_put32(unsigned long, unsigned char *)`. It ratchets `NS_CMPRSFLGS=0xc0`,
 `NS_MAXLABEL=63`, `NS_MAXCDNAME=255`, and `NS_MAXDNAME=1025`, then checks the
-C++ object retains all five unmangled C symbols. It is declaration-only
-evidence for one caller-owned DNS wire-name span, caller-owned 16-bit and
-32-bit wire reads, and caller-owned 16-bit and 32-bit wire writes; it does not
+C++ object retains all six unmangled C symbols. It is declaration-only
+evidence for caller-owned DNS wire-name span walking and expansion,
+caller-owned 16-bit and 32-bit wire reads, and caller-owned 16-bit and 32-bit wire writes; it does not
 establish archive linkage, resolver state, `/etc/resolv.conf` parsing, DNS
 packet I/O, sockets, netdb, installed-header completion, family promotion, or
 public x86 support.
@@ -1404,6 +1405,24 @@ of octets 64 through 191 as label lengths. It has no resolver state,
 I/O, socket, netdb/database, parser sibling, address-codec, interface,
 Ethernet, allocation, syscall, libc.so, CRT, loader, sysroot, family
 promotion, or public x86 support.
+
+`libc-dn-expand` (`./scripts/dev-x86_64.sh libc-dn-expand`) is a distinct
+private static caller-owned DNS wire-name expansion C ABI artifact inside
+still-planned `libc.resolver`, not resolver-network behavior or a promotion.
+Its project-header C fixture runs first through pinned musl 1.2.6 and then
+through an archive-free true `-nostdlib -static` candidate linked from exactly
+one extracted `dn_expand` object, never `libc.a`; the aggregate archive ratchet
+separately proves the hidden global `__dn_expand` and weak default `dn_expand`
+same-address alias pair. Pinned musl maps the dependency-free 292-byte
+`dn_expand.lo` object to `src/network/dn_expand.c`. The fixed differential
+covers root and label text, compressed, noncanonical top-bit, and high-offset
+pointers, initial encoded-span return length, truncated/out-of-range/loop failure, early
+source-at-end/nonpositive-space failure, the 254-byte output cap, and partial
+dotted output. It has no resolver state, `h_errno`/`errno`/TLS,
+`/etc/hosts` or `/etc/resolv.conf` access, DNS packet I/O, socket,
+netdb/database, parser sibling, `dn_skipname`, nameser read/write helper,
+address-codec, interface, Ethernet, allocation, syscall, libc.so, CRT,
+loader, sysroot, family promotion, or public x86 support.
 
 `libc-ns-get16` (`./scripts/dev-x86_64.sh libc-ns-get16`) is a distinct
 private static caller-owned nameserver 16-bit wire-read C ABI artifact inside

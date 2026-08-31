@@ -1471,7 +1471,7 @@
       "capability_count": 0,
       "contract_state": "selected-private",
       "id": "libc.resolver",
-      "verified_artifact_count": 12,
+      "verified_artifact_count": 13,
       "verified_slice_count": 0
     },
     {
@@ -2148,6 +2148,10 @@
     },
     {
       "family": "libc.resolver",
+      "id": "static-c-dn-expand"
+    },
+    {
+      "family": "libc.resolver",
       "id": "static-c-dn-skipname"
     },
     {
@@ -2311,9 +2315,9 @@
     "aarch64_abi_manifest": "33dd504470f467caac7b149e747ee2b7ff8714c4fb23dfe5ad46e7f58bfe610c",
     "aarch64_capability_ledger": "128458dde00073bc0320b94972d864e66fa10d5f54e92b1b1c83081e2b4955e0",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
-    "x86_parity_ledger": "24264a61671ed53259e3de2056f44dbed4e5060f13bead70d95b0fe3dfe483db",
+    "x86_parity_ledger": "f4dfb393a47c1bdf7319649dffd710ad440d631acf2cd73e88cdeb09630a31bc",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "234c084515577cc2700cd1137f449639eec724784f5b9b9888e5e311c1f08ee0"
+    "x86_static_c_exports": "57076c3055f9fb62dacb0b26cc0ccbe291c36c7a1d567297a7d95f38274bab9d"
   },
   "unsupported_contracts": [
     {
@@ -2325,7 +2329,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 880,
-    "selected_static_exports_in_aarch64_dynamic_candidate_set": 866
+    "selected_static_export_count": 882,
+    "selected_static_exports_in_aarch64_dynamic_candidate_set": 867
   }
 }

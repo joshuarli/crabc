@@ -8292,6 +8292,15 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     dn_skipname_runner_source = (
         ROOT / "compat" / "x86_64" / "run_libc_dn_skipname.sh"
     )
+    dn_expand_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_dn_expand_probe.c"
+    )
+    dn_expand_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_dn_expand_start.S"
+    )
+    dn_expand_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_dn_expand.sh"
+    )
     nameser_header_c_source = (
         ROOT / "compat" / "x86_64" / "nameser_header_abi_probe.c"
     )
@@ -8305,6 +8314,9 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         dn_skipname_probe_source,
         dn_skipname_start_source,
         dn_skipname_runner_source,
+        dn_expand_probe_source,
+        dn_expand_start_source,
+        dn_expand_runner_source,
         nameser_header_c_source,
         nameser_header_cpp_source,
         nameser_header_runner_source,
@@ -8322,6 +8334,11 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     dn_skipname_probe = dn_skipname_probe_source.read_text(errors="replace")
     dn_skipname_start = dn_skipname_start_source.read_text(errors="replace")
     dn_skipname_runner = dn_skipname_runner_source.read_text(errors="replace")
+    dn_expand_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dn_expand.rs"
+    dn_expand_text = dn_expand_source.read_text(errors="replace")
+    dn_expand_probe = dn_expand_probe_source.read_text(errors="replace")
+    dn_expand_start = dn_expand_start_source.read_text(errors="replace")
+    dn_expand_runner = dn_expand_runner_source.read_text(errors="replace")
     nameser_header_c = nameser_header_c_source.read_text(errors="replace")
     nameser_header_cpp = nameser_header_cpp_source.read_text(errors="replace")
     nameser_header_runner = nameser_header_runner_source.read_text(errors="replace")
@@ -8373,6 +8390,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         for required in (
             "#include <resolv.h>",
             "dn_skipname_signature",
+            "dn_expand_signature",
             "ns_get16_signature",
             "ns_get32_signature",
             "ns_put16_signature",
@@ -8391,6 +8409,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "check_cxx_c_linkage",
         "nm --undefined-only",
         "_Z.*dn_skipname",
+        "_Z.*dn_expand",
         "_Z.*ns_get16",
         "_Z.*ns_get32",
         "_Z.*ns_put16",
@@ -8456,6 +8475,116 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
     if '"$archive" -o "$candidate"' in dn_skipname_runner:
         errors.append(
             "compat/x86_64/run_libc_dn_skipname.sh: final wire-span candidate "
+            "must not link libc.a"
+        )
+
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/network/dn_expand.c",
+        'pub unsafe extern "C" fn __dn_expand',
+        "label & 0xc0 != 0",
+        "space > 254",
+        "iteration += 2",
+        ".hidden __dn_expand",
+        ".weak dn_expand",
+        ".set dn_expand, __dn_expand",
+        "output may overlap",
+    ):
+        if required not in dn_expand_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/dn_expand.rs: selected static "
+                f"wire-expansion boundary is missing {required!r}"
+            )
+    for forbidden in (
+        "static mut",
+        "raw_syscall",
+        "__errno_location",
+        "__h_errno_location",
+        "getaddrinfo",
+        "gethostby",
+        "socket(",
+        "std::",
+        "alloc::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "fn dn_skipname",
+        "fn ns_get16",
+        "fn ns_get32",
+        "fn ns_put16",
+        "fn ns_put32",
+    ):
+        if forbidden in dn_expand_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/dn_expand.rs: selected static "
+                f"wire-expansion boundary must not select {forbidden!r}"
+            )
+    dn_expand_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            dn_expand_text,
+        )
+    )
+    if dn_expand_exports != {"__dn_expand"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/dn_expand.rs: selected static artifact "
+            "must retain only the hidden implementation plus assembler alias"
+        )
+    for required in (
+        "#include <resolv.h>",
+        "dn_expand_signature",
+        "static const unsigned char compressed",
+        "noncanonical_pointer",
+        "high_offset_pointer",
+        "truncated_pointer",
+        "invalid_pointer",
+        "pointer_loop",
+        "source==end",
+        "254 bytes",
+        "CRABC_DN_EXPAND_FREESTANDING",
+    ):
+        if required not in dn_expand_probe:
+            errors.append(
+                "compat/x86_64/libc_dn_expand_probe.c: static wire-expansion "
+                f"regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_dn_expand_probe", "mov $60, %eax"):
+        if required not in dn_expand_start:
+            errors.append(
+                "compat/x86_64/libc_dn_expand_start.S: static wire-expansion "
+                f"entry is missing {required!r}"
+            )
+    if "ARCH_SET_FS" in dn_expand_start:
+        errors.append(
+            "compat/x86_64/libc_dn_expand_start.S: wire-expansion entry must "
+            "not bootstrap TLS"
+        )
+    for required in (
+        "dn_expand.lo",
+        "dn_expand.c",
+        "292",
+        "assert_selected_c_abi_surface",
+        "assert_dn_expand_alias",
+        "extract_selected_member",
+        "dn_expand archive member also defines a nameserver sibling",
+        "-nostdlib -static",
+        '\"$selected_member\" -o \"$candidate\"',
+        "candidate unexpectedly selects TLS",
+        "__h_errno_location",
+        "dn_skipname ns_get16 ns_get32 ns_put16 ns_put32",
+        "res_query res_querydomain res_search",
+        "htonl htons ntohl ntohs",
+        "getaddrinfo freeaddrinfo",
+        "socket bind connect send recv",
+        "call|syscall",
+    ):
+        if required not in dn_expand_runner:
+            errors.append(
+                "compat/x86_64/run_libc_dn_expand.sh: archive-free static "
+                f"wire-expansion evidence is missing {required!r}"
+            )
+    if '\"$archive\" -o \"$candidate\"' in dn_expand_runner:
+        errors.append(
+            "compat/x86_64/run_libc_dn_expand.sh: final wire-expansion candidate "
             "must not link libc.a"
         )
 
@@ -9655,6 +9784,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         inet_network_text,
         hstrerror_text,
         dn_skipname_text,
+        dn_expand_text,
         ns_get16_text,
         ns_get32_text,
         ns_put16_text,
@@ -9997,6 +10127,8 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "inet_network",
         "hstrerror",
         "dn_skipname",
+        "__dn_expand",
+        "dn_expand",
         "ns_get16",
         "ns_get32",
         "ns_put16",
@@ -10206,6 +10338,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("inet_network.rs", inet_network_text),
         ("hstrerror.rs", hstrerror_text),
         ("dn_skipname.rs", dn_skipname_text),
+        ("dn_expand.rs", dn_expand_text),
         ("ns_get16.rs", ns_get16_text),
         ("ns_get32.rs", ns_get32_text),
         ("ns_put16.rs", ns_put16_text),

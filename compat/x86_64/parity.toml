@@ -7820,9 +7820,9 @@ id = "libc.resolver"
 order = 100
 depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
 category = "c-abi"
-description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior. Its separately verified numeric-address codec, legacy inet_network parser-composition, shared inet_ntoa scratch-buffer, classful IPv4 arithmetic and network-part extraction, hstrerror message, dependency-free dn_skipname wire-name span codec, dependency-free dn_expand wire-name expansion codec, dependency-free ns_get16 caller-owned 16-bit wire-read codec, dependency-free ns_get32 caller-owned 32-bit wire-read codec, dependency-free ns_put16 caller-owned 16-bit wire-write codec, dependency-free ns_put32 caller-owned 32-bit wire-write codec, and deterministic numeric netdb result-lifetime slices are private static C artifacts only; none promotes resolver-network behavior, this family, or public x86 support."
 aarch64_gates = ["resolver-network", "libc-test"]
-source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "compat/resolver-network"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/ns_get16.rs", "libc/src/c_abi/x86_64/ns_get32.rs", "libc/src/c_abi/x86_64/ns_put16.rs", "libc/src/c_abi/x86_64/ns_put32.rs", "compat/resolver-network"]
 x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
 x86_header_prerequisites = ["netdb.h, arpa/inet.h, resolv.h, arpa/nameser.h, sys/socket.h, and netinet/in.h selected contracts."]
 native_evidence = [{ state = "required", command = "Define a native x86 isolated resolver-network differential gate", scope = "Use the same local-only DNS environment; do not add NSS, DoH, DoT, or mDNS." }]
@@ -8228,6 +8228,57 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for the exact dependency-free src/network/dn_skipname.c one-function wire-name span loop: zero/root result, >=192 two-byte pointer disposition without pointer following, <192 including 64..191 label lengths, and truncated-span -1 result. Resolver state/files, DNS packet I/O, socket, netdb, h_errno, and Ethernet behavior remain unselected." },
   { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "LP64 two-const-byte-pointer-in-rdi/rsi and signed-int-in-eax C-call ABI, plus the no-undefined-reference/archive-free static final-ELF boundary for exactly one dn_skipname object." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-dn-expand"
+description = "Private native x86 static `dn_expand` caller-owned DNS wire-name expansion C ABI artifact inside still-planned `libc.resolver`, not resolver-network behavior or a complete DNS parser. One project-header C fixture first executes through pinned musl 1.2.6 and then through an archive-free true `-nostdlib -static` candidate linked from exactly one extracted crabc object, never `libc.a`. It exposes the public `dn_expand` boundary and musl's same-address hidden global `__dn_expand`/weak default `dn_expand` alias pair: it follows low- and high-offset compressed pointers only within the caller-owned `base..end` message, returns the initial encoded span length, writes dotted text, caps usable output at 254 bytes, and returns -1 for truncated, out-of-range, or looping pointer/input cases. It neither reads nor writes resolver state, `h_errno`, `errno`, or TLS, and admits no `/etc/hosts` or `/etc/resolv.conf` access, DNS packet I/O, socket, netdb/database, allocation, syscall, mutable state, numeric/address parser, `dn_skipname`, ns_get16/ns_get32/ns_put16/ns_put32, interface, Ethernet, libc.so, CRT, loader, sysroot, family promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/dn_expand.rs",
+  "include/resolv.h",
+  "include/arpa/nameser.h",
+  "include/netinet/in.h",
+  "include/stddef.h",
+  "include/stdint.h",
+  "include/sys/socket.h",
+  "include/sys/types.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/nameser_header_abi_probe.c",
+  "compat/x86_64/nameser_header_abi_probe.cpp",
+  "compat/x86_64/run_nameser_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_dn_expand_probe.c",
+  "compat/x86_64/libc_dn_expand_start.S",
+  "compat/x86_64/run_libc_dn_expand.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The selected C boundary is SysV AMD64 LP64: `dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)` receives base/end/source in rdi/rsi/rdx, a mutable char pointer in rcx, and signed `space` in r8d, then returns one signed four-byte int in eax. The C caller owns the readable base..end message range in one allocation and writable output for positive space; source==end and nonpositive space return -1 before destination access.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps the dependency-free 292-byte `dn_expand.lo` object to `src/network/dn_expand.c`. Its global hidden `__dn_expand` and weak default `dn_expand` have the same address, and the decoder has no undefined code reference, call, or syscall: it treats either top compression bit as a pointer, bounds offsets by end-base, caps destination space at 254, and gives its two-byte iteration counter to pointer-loop detection.",
+  "The final candidate receives exactly one extracted `dn_expand` object, never `libc.a`, preserves that hidden/weak same-address alias pair, and has no interpreter, DT_NEEDED, unresolved symbol, TLS/errno/h_errno, dynamic TLS, call, syscall, resolver configuration, conventional-file, DNS packet I/O, socket, netdb/database, parser, byte-order helper, interface, Ethernet, allocation, or mutable-state dependency. It is a caller-owned wire-name expansion codec only, not a resolver or nameserver-state boundary.",
+]
+x86_header_prerequisites = [
+  "The shared project-first/pinned-musl C/C++ `<resolv.h>` declaration gate checks the exact `dn_expand(const unsigned char *, const unsigned char *, const unsigned char *, char *, int)` function-pointer type beside dn_skipname, ns_get16, ns_get32, ns_put16, and ns_put32, NS_CMPRSFLGS=0xc0, NS_MAXLABEL=63, NS_MAXCDNAME=255, NS_MAXDNAME=1025, and unmangled C++ C linkage. It proves no archive linkage, resolver state, DNS packet I/O, socket, netdb, installed-header completion, family promotion, or public x86 support.",
+  "The static fixture preprocesses only project `resolv.h`, `arpa/nameser.h`, `netinet/in.h`, `stddef.h`, `stdint.h`, socket/type, and alltypes headers before it compares root/label expansion, compression pointer return spans, noncanonical top-bit pointer treatment, invalid/truncated/loop failure, output capacity, and partial output with pinned musl and the archive-free candidate. It selects no resolver-configuration, h_errno, network-database, parser, or byte-order-helper header state.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-dn-expand", scope = "Pinned-musl project-header C execution followed by an archive-free x86 `-nostdlib -static` candidate. The gate ratchets the aggregate static C export surface for the hidden `__dn_expand`/weak `dn_expand` same-address alias pair, proves the pinned `dn_expand.lo` 292-byte source mapping with no code relocation/call/syscall, and links exactly one extracted object, never `libc.a`. The fixed caller-owned wire regression proves root and labels, compressed/noncanonical/high-offset pointers, initial encoded-span return lengths, truncated/out-of-range/loop failure, source==end/nonpositive-space early failure, 254-byte bounded output semantics, and partial dotted output. The final ELF has no interpreter/DT_NEEDED/unresolved symbol, TLS/errno/h_errno/dynamic TLS, calls, syscalls, resolver configuration, hosts/resolv.conf, DNS packet I/O, socket, netdb/database, parser siblings, selected nameser read/write helpers, address codecs, interfaces, Ethernet, allocation, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and C/POSIX behavior oracle for the exact `src/network/dn_expand.c` caller-owned decoder: root/label text, low- and high-offset 14-bit pointer following, initial-span return, 254-byte output cap, partial writes, and bounded pointer-loop failure. Resolver state/files, DNS packet I/O, socket, netdb, parser siblings, h_errno, and Ethernet behavior remain unselected." },
+  { kind = "elf-abi", source = "System V AMD64 psABI and pinned musl x86 static object", role = "LP64 five-argument C-call ABI plus the 292-byte global-hidden __dn_expand/weak-default dn_expand same-address alias pair and archive-free static final-ELF boundary for exactly one dn_expand object." },
 ]
 
 [[family.verified_artifact]]
