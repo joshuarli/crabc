@@ -227,6 +227,7 @@ fpathconf
 fputc
 fread
 freeaddrinfo
+freeifaddrs
 freelocale
 fremovexattr
 frexp
@@ -270,6 +271,7 @@ geteuid
 getgid
 getgroups
 gethostname
+getifaddrs
 getlogin
 getlogin_r
 getnameinfo
@@ -309,6 +311,10 @@ hypotl
 iconv
 iconv_close
 iconv_open
+if_freenameindex
+if_indextoname
+if_nameindex
+if_nametoindex
 ilogb
 ilogbf
 ilogbl

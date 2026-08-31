@@ -130,8 +130,10 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-for unselected in if_nametoindex if_indextoname \
-    gethostbyname gethostbyaddr _Fork vfork clone execve \
+# The archive ratchets the aggregate selected static C surface, which now
+# includes the separately evidenced interface-discovery exports. Keep the
+# socket artifact's negative boundary on its final candidate below instead.
+for unselected in gethostbyname gethostbyaddr _Fork vfork clone execve \
     malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -163,6 +165,9 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
 done
 if grep -Eq "[[:space:]][TW][[:space:]]ioctl$" "$candidate_symbols"; then
     fail "socket-transport candidate unexpectedly pulls generic ioctl"
+fi
+if grep -Eq '[[:space:]](if_nametoindex|if_indextoname|if_nameindex|if_freenameindex|getifaddrs|freeifaddrs)$' "$candidate_symbols"; then
+    fail "socket-transport candidate unexpectedly pulls interface discovery"
 fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then

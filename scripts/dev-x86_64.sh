@@ -324,6 +324,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-auxv-observation  run the static x86 crabc-libc initial aux-vector lookup slice
   libc-inet-address  run the static x86 crabc-libc numeric Internet-address codec slice
   libc-numeric-netdb  run the static x86 crabc-libc deterministic numeric netdb slice
+  libc-interface-discovery  run the static x86 C interface index/address discovery slice
   libc-random-entropy  run the static x86 crabc-libc random-entropy slice
   libc-memory-search  run the static x86 crabc-libc memory-search slice
   libc-string-copy  run the static x86 crabc-libc C-string-copy slice
@@ -1639,6 +1640,24 @@ ensure_image() {
 run_in_container() {
     docker run --rm --init \
         --platform "$PLATFORM" \
+        --workdir /workspace \
+        --env CARGO_HOME=/opt/cargo \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/opt/cargo" \
+        "$IMAGE" "$@"
+}
+
+# Interface discovery snapshots only the disposable container's loopback
+# namespace. Keeping network-none at this command boundary makes its lack of
+# external resolver and database behavior structural.
+run_in_network_none_container() {
+    docker run --rm --init \
+        --platform "$PLATFORM" \
+        --network none \
         --workdir /workspace \
         --env CARGO_HOME=/opt/cargo \
         --env GIT_CONFIG_COUNT=1 \
@@ -3259,6 +3278,7 @@ case "$command" in
     libc-memfd-create) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
+    libc-interface-discovery) ;;
     libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
@@ -4729,6 +4749,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-numeric-netdb takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_numeric_netdb.sh
+        ;;
+    libc-interface-discovery)
+        [ "$#" -eq 0 ] || fail "libc-interface-discovery takes no arguments"
+        ensure_image
+        run_in_network_none_container bash /workspace/compat/x86_64/run_libc_interface_discovery.sh
         ;;
     libc-random-entropy)
         [ "$#" -eq 0 ] || fail "libc-random-entropy takes no arguments"

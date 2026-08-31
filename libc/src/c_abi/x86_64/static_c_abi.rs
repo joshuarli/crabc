@@ -42,6 +42,9 @@
 //! scalar network byte-order conversion, padded socket messages/options,
 //! deterministic numeric `netdb.h` address/service translation and result
 //! ownership without resolver configuration, hosts, or DNS,
+//! Linux interface name/index and address snapshots with private output
+//! storage, isolated from numeric netdb, resolver configuration, DNS, and
+//! conventional network databases,
 //! credential-observation, integer-arithmetic, integer-parsing, selected
 //! C-locale binary32/binary64/x87-binary80 floating parsing plus complete
 //! fixed-C/POSIX/C.UTF-8 narrow/wide numeric parsing, legacy decimal
@@ -361,6 +364,8 @@ mod network_byte_order;
 mod inet_address;
 #[path = "numeric_netdb.rs"]
 mod numeric_netdb;
+#[path = "interface_discovery.rs"]
+mod interface_discovery;
 #[path = "socket_messages.rs"]
 mod socket_messages;
 #[path = "sysv_semaphore.rs"]

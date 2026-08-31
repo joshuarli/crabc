@@ -82,6 +82,18 @@ closed with `EOVERFLOW`; formatter floating-exception side effects, decimal
 output, long-double output, positional grammar, and all stream boundaries
 remain excluded.
 
+The separate private `./scripts/dev-x86_64.sh libc-interface-discovery`
+artifact inside still-planned `libc.posix-runtime` executes the six C interface
+name/index and address-snapshot entries through pinned musl 1.2.6 and a true
+`-nostdlib -static` candidate in a Docker network-none namespace. It pins
+loopback ioctl name/index behavior, terminated `if_nameindex` ownership, and
+independent `getifaddrs` snapshots with AF_PACKET plus IPv4/IPv6 loopback and
+netmask records. Its dedicated x86 compilation boundary has only private mmap
+result storage and raw ioctl/rtnetlink exchange: it excludes numeric netdb,
+resolver configuration, DNS packets, conventional network databases, public
+`ifreq`, interface mutation, general allocation, dynamic runtime artifacts,
+promotion, and public x86 support.
+
 
 The x86 lane has five private ET_DYN interpreter artifacts inside still-planned
 `ldso.dynamic-runtime`. `ldso-initial-graph` is limited to

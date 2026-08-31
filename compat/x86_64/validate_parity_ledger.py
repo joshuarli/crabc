@@ -14780,6 +14780,187 @@ def require_network_byte_order_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_interface_discovery_artifact(family: Mapping[str, Any]) -> None:
+    """Keep C interface snapshots outside numeric netdb and resolver behavior."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-interface-discovery"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-interface-discovery artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-interface-discovery must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    for phrase in (
+        "still-planned `libc.posix-runtime`",
+        "`if_nametoindex`/`if_indextoname`/`if_nameindex`/`if_freenameindex`",
+        "`getifaddrs`/`freeifaddrs`",
+        "Docker network-none",
+        "AF_PACKET, IPv4 loopback, and IPv6 loopback/netmask",
+        "`interface_discovery.rs` x86 compilation unit",
+        "resolver configuration, DNS packet behavior, and conventional network databases",
+        "public `ifreq`",
+        "NSS/plugins",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-interface-discovery description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-interface-discovery.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/interface_discovery.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/socket_transport.rs",
+        "libc/src/network_interface_exports.rs",
+        "include/ifaddrs.h",
+        "include/net/if.h",
+        "include/netpacket/packet.h",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_interface_discovery_probe.c",
+        "compat/x86_64/libc_interface_discovery_start.S",
+        "compat/x86_64/run_libc_interface_discovery.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"static-c-interface-discovery source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-interface-discovery.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "16-byte/align-8" in item
+            and "56-byte/align-8" in item
+            and "sockaddr_ll` is 20 bytes" in item
+            and "IF_NAMESIZE" in item
+            for item in prerequisites
+        ),
+        "static-c-interface-discovery must record its public record layouts",
+    )
+    require(
+        any(
+            "SIOCGIFINDEX=0x8933" in item
+            and "SIOCGIFNAME=0x8910" in item
+            and "ioctl=16" in item
+            and "RTM_GETLINK=18" in item
+            and "RTM_GETADDR=22" in item
+            and "socket=41" in item
+            and "sendto=44" in item
+            and "recvfrom=45" in item
+            for item in prerequisites
+        ),
+        "static-c-interface-discovery must record its ioctl and rtnetlink ABI",
+    )
+    require(
+        any(
+            "{0, NULL}" in item
+            and "two live snapshots" in item
+            and "no general allocation API" in item
+            for item in prerequisites
+        ),
+        "static-c-interface-discovery must record its result ownership boundary",
+    )
+    require(
+        any(
+            "no resolver configuration, DNS packet, or conventional network-database symbol" in item
+            and "TPOFF" in item
+            and "mimalloc" in item
+            for item in prerequisites
+        ),
+        "static-c-interface-discovery must retain its resolver-free final link",
+    )
+
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-interface-discovery.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project-first" in item
+            and "ifaddrs.h" in item
+            and "net/if.h" in item
+            and "netpacket/packet.h" in item
+            and "not installed-header completion" in item
+            for item in header_prerequisites
+        ),
+        "static-c-interface-discovery must record its bounded project-header surface",
+    )
+
+    static_exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (
+        "if_nametoindex",
+        "if_indextoname",
+        "if_nameindex",
+        "if_freenameindex",
+        "getifaddrs",
+        "freeifaddrs",
+    ):
+        require(
+            symbol in static_exports,
+            f"static-c-interface-discovery must be included in the selected static export ratchet ({symbol})",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-interface-discovery"},
+        "static-c-interface-discovery must use the closed libc-interface-discovery command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl project-header C execution",
+                "-nostdlib -static",
+                "Docker network-none",
+                "all six interface-discovery exports",
+                "AF_PACKET plus IPv4/IPv6 loopback",
+                "socket=41/ioctl=16/sendto=44/recvfrom=45",
+                "resolver configuration, DNS packet behavior, or conventional network-database behavior",
+                "public x86 support",
+            )
+        ),
+        "static-c-interface-discovery evidence must retain its bounded runtime boundary",
+    )
+
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    oracle_text = str(oracle)
+    for source in (
+        "src/network/if_nametoindex.c",
+        "if_indextoname.c",
+        "if_nameindex.c",
+        "if_freenameindex.c",
+        "getifaddrs.c",
+    ):
+        require(
+            source in oracle_text,
+            f"static-c-interface-discovery oracle omits {source}",
+        )
+
 def require_socket_messages_artifact(family: Mapping[str, Any]) -> None:
     """Keep the padded socket-message/options archive block private and exact."""
     artifacts = require_verified_artifacts(
@@ -25294,6 +25475,7 @@ def validate_ledger(
     require_descriptor_advice_artifact(by_id["libc.posix-runtime"])
     require_generic_ioctl_artifact(by_id["libc.posix-runtime"])
     require_network_byte_order_artifact(by_id["libc.posix-runtime"])
+    require_interface_discovery_artifact(by_id["libc.posix-runtime"])
     require_socket_messages_artifact(by_id["libc.posix-runtime"])
     require_sysv_semaphore_artifact(by_id["libc.posix-runtime"])
     require_posix_semaphore_artifact(by_id["libc.posix-runtime"])

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 37)
-        self.assertEqual(report["verified_artifact_count"], 139)
+        self.assertEqual(report["verified_artifact_count"], 140)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -5065,6 +5065,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("does not select resolver/netdb", socket_transport["description"])
         self.assertIn("cancellation semantics", socket_transport["native_evidence"][0]["scope"])
         self.assertIn("atomic CLOEXEC/NONBLOCK", socket_transport["native_evidence"][0]["scope"])
+        self.assertIn(
+            "aggregate archive also carries independently selected interface-discovery exports",
+            socket_transport["native_evidence"][0]["scope"],
+        )
         self.assertIn("null-output socketpair EFAULT", socket_transport["native_evidence"][0]["scope"])
         self.assertIn(
             "IPv6 address-classification macros",
@@ -12065,6 +12069,74 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh ioctl-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-ioctl command"):
+            ledger.validate_ledger(data)
+
+    def test_interface_discovery_artifact_keeps_resolver_behavior_out(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-interface-discovery"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-interface-discovery"},
+        )
+        for owner in (
+            "libc/src/c_abi/x86_64/interface_discovery.rs",
+            "libc/src/network_interface_exports.rs",
+            "compat/x86_64/libc_interface_discovery_probe.c",
+            "compat/x86_64/libc_interface_discovery_start.S",
+            "compat/x86_64/run_libc_interface_discovery.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "still-planned `libc.posix-runtime`",
+            "Docker network-none",
+            "`interface_discovery.rs` x86 compilation unit",
+            "resolver configuration, DNS packet behavior, and conventional network databases",
+            "public `ifreq`",
+            "NSS/plugins",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-interface-discovery"
+        )
+        description = artifact["description"]
+        assert isinstance(description, str)
+        artifact["description"] = description.replace(
+            "resolver configuration, DNS packet behavior, and conventional network databases",
+            "resolver behavior",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits resolver configuration"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-interface-discovery"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh resolver-interface"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-interface-discovery command"
+        ):
             ledger.validate_ledger(data)
 
     def test_socket_messages_artifact_keeps_its_padded_private_boundary(self) -> None:

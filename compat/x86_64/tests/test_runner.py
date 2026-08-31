@@ -1325,6 +1325,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memfd-create",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
+            "libc-interface-discovery",
             "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-intmax-arithmetic|libc-credential-observation|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
@@ -9195,6 +9196,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "sys/socket.h",
         ):
             self.assertIn(required, artifact_runner)
+        self.assertNotIn(
+            "for unselected in if_nametoindex if_indextoname",
+            artifact_runner,
+        )
+        for required in (
+            "socket-transport candidate unexpectedly pulls interface discovery",
+            "if_nametoindex|if_indextoname|if_nameindex|if_freenameindex|getifaddrs|freeifaddrs",
+        ):
+            self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         for symbol in (
             "socket",
@@ -9219,6 +9229,115 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             parity_ledger,
         )
         self.assertIn("libc-socket-transport", runner)
+
+    def test_libc_static_c_abi_interface_discovery_stays_resolver_free(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "interface_discovery.rs"
+        ).read_text(encoding="utf-8")
+        shared = (ROOT / "libc" / "src" / "network_interface_exports.rs").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_interface_discovery_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_interface_discovery_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_interface_discovery.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "interface_discovery.rs"]', static_root)
+        for required in (
+            "outside\n//! the x86 numeric-netdb boundary",
+            "private result-storage seams",
+            "SYS_IOCTL: i64 = 16",
+            "SYS_SENDTO: i64 = 44",
+            "SYS_RECVFROM: i64 = 45",
+            "InterfaceAllocationHeader",
+            "include!(\"../../network_interface_exports.rs\")",
+        ):
+            self.assertIn(required, implementation)
+        for required in (
+            "fn if_nametoindex",
+            "fn if_indextoname",
+            "fn if_nameindex",
+            "fn if_freenameindex",
+            "fn getifaddrs",
+            "fn freeifaddrs",
+            "CABI_SIOCGIFINDEX",
+            "CABI_RTM_GETLINK",
+            "CABI_RTM_GETADDR",
+            "cabi_interface_set_errno",
+            "cabi_interface_errno",
+        ):
+            self.assertIn(required, shared)
+        for forbidden in (
+            "res_query",
+            "getaddrinfo",
+            "gethostbyname",
+            "getnetbyname",
+            "ERRNO =",
+        ):
+            self.assertNotIn(forbidden, shared)
+        for required in (
+            "#include <ifaddrs.h>",
+            "#include <net/if.h>",
+            "#include <netpacket/packet.h>",
+            "name_index_cases",
+            "list_is_valid",
+            "ifaddrs_cases",
+            "AF_PACKET",
+            "CRABC_INTERFACE_DISCOVERY_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "__crabc_x86_static_tls_bootstrap",
+            "crabc_x86_64_interface_discovery_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "R_X86_64_TPOFF",
+            "resolver configuration, DNS, or network-database behavior",
+            "candidate exposes a general C allocator",
+            "0x29 0x2c 0x2d 0x10",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        for symbol in (
+            "if_nametoindex",
+            "if_indextoname",
+            "if_nameindex",
+            "if_freenameindex",
+            "getifaddrs",
+            "freeifaddrs",
+        ):
+            self.assertIn(symbol, static_export_names)
+        self.assertIn('id = "static-c-interface-discovery"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-interface-discovery"',
+            parity_ledger,
+        )
+        self.assertIn("run_in_network_none_container", runner)
+        self.assertIn("libc-interface-discovery", runner)
 
     def test_libc_static_c_abi_system_observation_artifact_stays_narrow(
         self,

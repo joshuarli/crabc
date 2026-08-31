@@ -23011,6 +23011,7 @@ include!("error_reporting_exports.rs");
 include!("gettext_exports.rs");
 include!("admin_kernel_exports.rs");
 include!("network_globals_exports.rs");
+include!("network_interface_exports.rs");
 include!("network_databases_exports.rs");
 include!("legacy_resolver_exports.rs");
 include!("ether_exports.rs");

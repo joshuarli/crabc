@@ -445,6 +445,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-auxv-observation
 ./scripts/dev-x86_64.sh libc-inet-address
 ./scripts/dev-x86_64.sh libc-numeric-netdb
+./scripts/dev-x86_64.sh libc-interface-discovery
 ./scripts/dev-x86_64.sh libc-random-entropy
 ./scripts/dev-x86_64.sh libc-memory-search
 ./scripts/dev-x86_64.sh libc-string-copy
@@ -1241,6 +1242,19 @@ this is not a general allocator. It does not read `/etc/hosts` or
 `/etc/resolv.conf`, inspect interfaces, consult service databases, send DNS,
 keep resolver state/cache, perform reverse lookup, add NSS/plugins/DoH/DoT/
 mDNS, or promote `libc.resolver`, x86 support, or any public platform claim.
+
+`libc-interface-discovery` is a separate private static C interface-name and
+address-snapshot artifact under still-planned `libc.posix-runtime`. Its
+project-header body runs through pinned musl 1.2.6 and a true
+`-nostdlib -static` candidate in a Docker network-none namespace. It selects
+only `if_nametoindex`, `if_indextoname`, `if_nameindex`, `if_freenameindex`,
+`getifaddrs`, and `freeifaddrs`, including loopback ioctl round trips,
+terminated name-list ownership, and independent AF_PACKET/IPv4/IPv6 loopback
+snapshots. The x86 `interface_discovery.rs` boundary owns only private mmap
+result storage and raw ioctl/rtnetlink exchange; it excludes numeric netdb,
+resolver configuration, DNS, conventional network databases, public `ifreq`,
+interface mutation, generic allocation, dynamic runtime artifacts, promotion,
+and public x86 support.
 
 `socket-messages-header-abi` compile-checks project-first and pinned-musl
 POSIX/GNU/BSD C/C++ `<sys/socket.h>` message/options declarations. It covers
