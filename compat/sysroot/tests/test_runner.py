@@ -303,6 +303,20 @@ class SealingAndAuditTests(unittest.TestCase):
         self.assertIn("runtime.c", audit["rejected_native_sources"][0])
         self.assertEqual(audit["counts"]["C public declaration or fixture"], 1)
 
+    def test_source_audit_excludes_explicit_non_target_x86_64_assembly(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "libc/src"
+            source = root / "c_abi/x86_64/evidence.S"
+            source.parent.mkdir(parents=True)
+            source.write_text("x86-only evidence\n", encoding="utf-8")
+            audit = TOOL.audit_runtime_sources([root])
+        self.assertEqual(audit["status"], "partial")
+        self.assertEqual(audit["rejected_native_sources"], [])
+        self.assertEqual(
+            audit["excluded_non_target_native_sources"],
+            ["libc/src/c_abi/x86_64/evidence.S"],
+        )
+
     def test_embedded_build_path_audit_catches_arbitrary_roots(self) -> None:
         paths = TOOL.embedded_build_paths(
             b"/home/alice/work/lib.rs\0"
@@ -676,6 +690,24 @@ class HarnessContractTests(unittest.TestCase):
             audit = TOOL.audit_dependencies([manifest])
         self.assertEqual(audit["status"], "rejected")
         self.assertIn("native implementation", audit["rejected"][0]["reason"])
+
+    def test_dependency_audit_excludes_crabc_libc_x86_64_assembly_from_aarch64(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "libc"
+            source = root / "src/c_abi/x86_64/evidence.S"
+            source.parent.mkdir(parents=True)
+            (root / "Cargo.toml").write_text(
+                "[package]\nname = 'crabc-libc'\nversion = '0.1.0'\n",
+                encoding="utf-8",
+            )
+            source.write_text("x86-only evidence\n", encoding="utf-8")
+            audit = TOOL.audit_dependencies([root / "Cargo.toml"])
+        self.assertEqual(audit["status"], "partial")
+        self.assertEqual(audit["rejected"], [])
+        self.assertEqual(
+            audit["manifests"][0]["excluded_non_target_native_source_inputs"],
+            ["libc/src/c_abi/x86_64/evidence.S"],
+        )
 
     def test_dependency_audit_excludes_dev_only_packages_from_runtime_closure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

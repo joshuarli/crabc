@@ -1142,6 +1142,29 @@ def classify_source_file(path: Path) -> str:
     return "other"
 
 
+def is_excluded_x86_64_native_source(
+    path: Path,
+    *,
+    runtime_root: str | None = None,
+    package_name: str | None = None,
+) -> bool:
+    """Identify crabc-libc native source that cannot enter the AArch64 target.
+
+    The repository retains separately scoped Linux/x86-64 evidence under the
+    target-local `libc/src/c_abi/x86_64` module.  Those files are not members
+    of the only supported production target named by this tool.  Keep the
+    exception bound to both the crabc-libc owner and that exact target-local
+    directory; native source anywhere else remains a purity rejection.
+    """
+
+    if path.suffix not in NATIVE_IMPLEMENTATION_SUFFIXES:
+        return False
+    relative_parts = path.parts
+    target_local = relative_parts[:2] == ("c_abi", "x86_64")
+    owned_by_libc = runtime_root == "libc/src" or package_name == "crabc-libc"
+    return target_local and owned_by_libc
+
+
 def stable_input_label(path: Path) -> str:
     """Name an audited repository input without embedding its checkout path."""
 
@@ -1156,16 +1179,23 @@ def audit_runtime_sources(source_roots: Sequence[Path]) -> dict[str, object]:
     roots = [require_directory(root, "runtime source root") for root in source_roots]
     records: list[dict[str, str]] = []
     rejected: list[str] = []
+    excluded_non_target: list[str] = []
     counts: dict[str, int] = {}
     for root in sorted(roots):
         root_label = stable_input_label(root)
         for path in sorted(item for item in root.rglob("*") if item.is_file()):
-            classification = classify_source_file(path)
+            relative_path = path.relative_to(root)
+            if is_excluded_x86_64_native_source(relative_path, runtime_root=root_label):
+                classification = "excluded non-target x86-64 native evidence"
+            else:
+                classification = classify_source_file(path)
             counts[classification] = counts.get(classification, 0) + 1
-            relative = str(path.relative_to(root))
+            relative = str(relative_path)
             records.append({"root": root_label, "path": relative, "classification": classification})
             if classification == "rejected native target runtime implementation":
                 rejected.append(f"{root_label}/{relative}")
+            elif classification == "excluded non-target x86-64 native evidence":
+                excluded_non_target.append(f"{root_label}/{relative}")
     root_labels = {stable_input_label(root) for root in roots}
     coverage_status = "complete" if FULL_RUNTIME_SOURCE_ROOTS <= root_labels else ("partial" if roots else "unverified")
     status = "rejected" if rejected else ("passed" if coverage_status == "complete" else coverage_status)
@@ -1178,6 +1208,7 @@ def audit_runtime_sources(source_roots: Sequence[Path]) -> dict[str, object]:
         "counts": counts,
         "files": records,
         "rejected_native_sources": rejected,
+        "excluded_non_target_native_sources": excluded_non_target,
     }
 
 
@@ -1415,12 +1446,20 @@ def audit_dependencies(
             native_build = _build_script_uses_native_tool(build_script_text)
         selected_source_root = manifest_path.parent / "src"
         native_source_inputs: list[str] = []
+        excluded_non_target_native_source_inputs: list[str] = []
         bundled_native_archives: list[str] = []
         if selected_source_root.is_dir():
             for source in sorted(path for path in selected_source_root.rglob("*") if path.is_file()):
                 label = f"{stable_input_label(manifest_path)[:-len('Cargo.toml')]}{source.relative_to(manifest_path.parent)}"
                 if source.suffix in NATIVE_IMPLEMENTATION_SUFFIXES:
-                    native_source_inputs.append(label)
+                    relative_source = source.relative_to(selected_source_root)
+                    if is_excluded_x86_64_native_source(
+                        relative_source,
+                        package_name=str(package.get("name")),
+                    ):
+                        excluded_non_target_native_source_inputs.append(label)
+                    else:
+                        native_source_inputs.append(label)
                 if source.suffix in {".a", ".so", ".o"}:
                     bundled_native_archives.append(label)
         package_id = package_id_by_manifest.get(manifest_path.resolve())
@@ -1450,6 +1489,7 @@ def audit_dependencies(
             "build_dependencies": sorted((manifest.get("build-dependencies") or {}).keys()),
             "selected_source_root": stable_input_label(selected_source_root) if selected_source_root.is_dir() else None,
             "native_source_inputs": native_source_inputs,
+            "excluded_non_target_native_source_inputs": excluded_non_target_native_source_inputs,
             "selected_native_build_inputs": selected_native_inputs,
             "bundled_native_archives": bundled_native_archives,
             "native_allocator_exception_contract": allocator_contract,
