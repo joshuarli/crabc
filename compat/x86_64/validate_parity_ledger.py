@@ -1196,6 +1196,8 @@ GMTIME_R_UTC_SYMBOLS = ("gmtime_r",)
 
 GETPAGESIZE_SYMBOLS = ("getpagesize",)
 
+GETDTABLESIZE_SYMBOLS = ("getdtablesize",)
+
 MEMORY_SYNC_SYMBOLS = ("msync",)
 
 MEMFD_CREATE_SYMBOLS = ("memfd_create",)
@@ -16539,6 +16541,323 @@ def require_getpagesize_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_getpagesize",
     ):
         require(snippet in dispatcher, f"getpagesize dispatcher omits {snippet}")
+
+
+def require_getdtablesize_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one descriptor-limit observation leaf below configuration promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-getdtablesize"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-getdtablesize artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-getdtablesize must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-getdtablesize must not carry capabilities",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-getdtablesize needs a description")
+    for phrase in (
+        "Private native x86 selected-static-archive `getdtablesize` C ABI artifact",
+        "existing `system_configuration.rs` source owner",
+        "still-planned `libc.posix-runtime`",
+        "src/legacy/getdtablesize.c",
+        "src/misc/getrlimit.c",
+        "successful Linux `prlimit64(RLIMIT_NOFILE)`",
+        "`--gc-sections`",
+        "retains only `getdtablesize` plus its required `__errno_location`",
+        "Linux 5.10",
+        "SYS_getrlimit fallback",
+        "candidate-only seccomp fixture",
+        "without claiming musl error-path parity",
+        "does not change or promote the broad `static-c-system-configuration` artifact",
+        "broad system configuration",
+        "general resource-limit lifecycle",
+        "getrlimit",
+        "allocator",
+        "C runtime",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-getdtablesize description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact.get("source_owners"), "static-c-getdtablesize.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/system_configuration.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "include/errno.h",
+        "include/features.h",
+        "include/limits.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "include/sys/prctl.h",
+        "include/sys/resource.h",
+        "include/sys/syscall.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/getdtablesize_header_abi_probe.c",
+        "compat/x86_64/getdtablesize_header_abi_probe.cpp",
+        "compat/x86_64/run_getdtablesize_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_getdtablesize_probe.c",
+        "compat/x86_64/libc_getdtablesize_start.S",
+        "compat/x86_64/run_libc_getdtablesize.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-getdtablesize source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-getdtablesize.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "no argument" in item
+            and "four-byte int" in item
+            and "eax" in item
+            and "prlimit64=302" in item
+            and "rdi/rsi/rdx/r10" in item
+            and "RLIMIT_NOFILE=7" in item
+            and "INT_MAX" in item
+            for item in prerequisites
+        ),
+        "static-c-getdtablesize must retain its x86 syscall and scalar ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/legacy/getdtablesize.c" in item
+            and "src/misc/getrlimit.c" in item
+            and "getdtablesize\tgetdtablesize.lo\tT\tGLOBAL\t0\t28" in item
+            and "Linux 5.10" in item
+            and "SYS_getrlimit fallback" in item
+            for item in prerequisites
+        ),
+        "static-c-getdtablesize must retain pinned-musl source and ABI provenance",
+    )
+    require(
+        any(
+            "system-configuration archive member" in item
+            and "--gc-sections" in item
+            and "getdtablesize and __errno_location" in item
+            and "PT_TLS" in item
+            and "%fs TPOFF" in item
+            and "getrlimit/setrlimit/prlimit/getrusage" in item
+            and "Fixture-local arch_prctl" in item
+            for item in prerequisites
+        ),
+        "static-c-getdtablesize must retain its final-link isolation boundary",
+    )
+    require(
+        any(
+            "Only the successful descriptor-limit result" in item
+            and "uninitialized rlimit" in item
+            and "prlimit64=EBADE" in item
+            and "not a musl failure-path parity claim" in item
+            for item in prerequisites
+        ),
+        "static-c-getdtablesize must retain the explicit error-path non-parity boundary",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-getdtablesize.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "int getdtablesize(void)" in item
+            and "GNU/BSD" in item
+            and "default/strict/POSIX/XOPEN C and C++ hiding" in item
+            and "unmangled C++ linkage" in item
+            and "unistd.h" in item
+            and "sys/resource.h" in item
+            and "sys/syscall.h" in item
+            for item in headers
+        ),
+        "static-c-getdtablesize must retain its focused C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-getdtablesize needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-getdtablesize"},
+        "static-c-getdtablesize must use the closed libc-getdtablesize command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project GNU/BSD C/C++ header",
+                "`-nostdlib -static -Wl,--gc-sections` candidate",
+                "getdtablesize.lo",
+                "direct/function-pointer RLIMIT_NOFILE-to-INT_MAX result",
+                "retains getdtablesize and __errno_location",
+                "rejecting sysconf/confstr/pathconf/fpathconf/getpagesize",
+                "getrlimit/setrlimit/prlimit/getrusage/getpriority/setpriority/nice",
+                "no interpreter, DT_NEEDED, unresolved symbols",
+                "PT_TLS and direct initial-TLS FS errno access",
+                "candidate-only fixture seccomp-forces prlimit64 EBADE",
+                "does not compare musl's undefined failed-getrlimit path",
+                "C runtime",
+                "public x86 support",
+            )
+        ),
+        "static-c-getdtablesize evidence must retain its isolated static contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(GETDTABLESIZE_SYMBOLS) <= exports,
+        "static-c-getdtablesize must retain its selected export",
+    )
+    require(
+        {symbol for symbol in exports if symbol.startswith("getdtablesize")}
+        == set(GETDTABLESIZE_SYMBOLS),
+        "static-c-getdtablesize must expose only getdtablesize",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "system_configuration.rs"]\nmod system_configuration;' in static_root,
+        "x86 static C ABI must retain the existing system-configuration source owner",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/legacy/getdtablesize.c",
+        "src/misc/getrlimit.c",
+        "Linux 5.10",
+        "SYS_getrlimit",
+        'pub extern "C" fn getdtablesize() -> c_int',
+        "raw_syscall::SYS_PRLIMIT64",
+        "RLIMIT_NOFILE",
+        "c_status(result)",
+    ):
+        require(snippet in source, f"existing getdtablesize source omits {snippet}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_getdtablesize.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_getdtablesize_header_abi.sh",
+        "getdtablesize.lo",
+        "archive_member_for_symbol",
+        "--gc-sections",
+        "-nostdlib -static",
+        "--no-undefined",
+        "candidate retained broad system-configuration or resource C ABI symbols",
+        "candidate lacks the required initial-TLS errno segment",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        require(snippet in runner, f"getdtablesize runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "getdtablesize runner must not force-link the archive",
+    )
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_getdtablesize_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "getdtablesize_signature",
+        "_Static_assert",
+        "check_musl_normal_path",
+        "indirect = getdtablesize",
+        "CRABC_GETDTABLESIZE_FREESTANDING",
+        "install_getdtablesize_error_filter",
+        "CRABC_GETDTABLESIZE_ERROR",
+        "raw_syscall4(SYS_prlimit64",
+    ):
+        require(snippet in probe, f"getdtablesize probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_getdtablesize_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "crabc_x86_64_getdtablesize_probe",
+        "crabc_x86_64_getdtablesize_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        require(snippet in start, f"getdtablesize start shim omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "getdtablesize_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "getdtablesize_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getdtablesize_signature",
+        "CRABC_EXPECT_GETDTABLESIZE",
+        "CRABC_REQUIRE_GETDTABLESIZE_HIDDEN",
+    ):
+        require(snippet in header_c, f"getdtablesize C header probe omits {snippet}")
+        require(snippet in header_cxx, f"getdtablesize C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_getdtablesize_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "getdtablesize_header_abi_probe.c",
+        "getdtablesize_header_abi_probe.cpp",
+        "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_GETDTABLESIZE)",
+        "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_GETDTABLESIZE)",
+        "outside GNU/BSD C selectors",
+        "retained a mangled getdtablesize reference",
+    ):
+        require(snippet in header_runner, f"getdtablesize header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "getdtablesize-header-abi)",
+        "run_getdtablesize_header_abi",
+        "libc-getdtablesize)",
+        "run_libc_getdtablesize",
+    ):
+        require(snippet in dispatcher, f"getdtablesize dispatcher omits {snippet}")
 
 
 def require_system_information_artifact(family: Mapping[str, Any]) -> None:
@@ -40099,6 +40418,7 @@ def validate_ledger(
     require_gmtime_r_utc_artifact(by_id["libc.posix-runtime"])
     require_system_configuration_artifact(by_id["libc.posix-runtime"])
     require_getpagesize_artifact(by_id["libc.posix-runtime"])
+    require_getdtablesize_artifact(by_id["libc.posix-runtime"])
     require_system_information_artifact(by_id["libc.posix-runtime"])
     require_mapping_core_artifact(by_id["libc.posix-runtime"])
     require_memory_sync_artifact(by_id["libc.posix-runtime"])

@@ -1421,6 +1421,22 @@ allocator, PLT, call, and syscall paths. This does not promote the broader
 system-configuration artifact or claim general page-size discovery, C runtime,
 CRT, family completion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-getdtablesize` is a separate private
+`static-c-getdtablesize` artifact in the same planned family. It maps pinned
+musl 1.2.6 `src/legacy/getdtablesize.c` through `src/misc/getrlimit.c` to the
+existing `system_configuration.rs` owner, comparing only the successful
+`prlimit64(RLIMIT_NOFILE)` result and INT_MAX clamp. Its GNU/BSD C/C++
+`<unistd.h>` gate proves the exact unmangled declaration while
+default/strict/POSIX/XOPEN profiles hide it. The true
+`-nostdlib -static -Wl,--gc-sections` candidate retains `getdtablesize` and
+its required initial-TLS errno seam, rejecting neighboring configuration and
+public resource-limit APIs. Linux 5.10 intentionally excludes musl's old
+`SYS_getrlimit` fallback. A candidate-only seccomp error route verifies
+`-1`/errno rather than treating musl's uninitialized failed-getrlimit record
+as an oracle. This does not promote system configuration or resource lifecycle,
+and does not claim allocator, C runtime, CRT, family completion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-fcntl-record-locks` is a separate private
 `static-c-fcntl-record-locks` artifact inside planned `libc.posix-runtime`.
 Its project-header C/C++ gate and pinned-musl/freestanding-static fixture prove

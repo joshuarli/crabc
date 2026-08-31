@@ -227,9 +227,14 @@ pub extern "C" fn getpagesize() -> c_int {
 
 /// Return the calling process's soft descriptor limit clamped to `INT_MAX`.
 ///
-/// The result directly follows musl's `getdtablesize` normal path. The raw
-/// `prlimit64` error is translated through the selected initial-TLS errno slot;
-/// an error cannot fabricate a descriptor-table size.
+/// Musl's source closure is `src/legacy/getdtablesize.c` through
+/// `src/misc/getrlimit.c`: its successful `prlimit64` normal path supplies the
+/// `RLIMIT_NOFILE` record. Linux 5.10 is above musl's historical
+/// `SYS_getrlimit` fallback boundary, so this selected x86 leaf deliberately
+/// does not invent that fallback. Musl's legacy caller ignores a failed
+/// `getrlimit` and reads an uninitialized local record; this safer leaf instead
+/// translates the raw `prlimit64` error through initial-TLS errno and returns
+/// `-1`, so an error cannot fabricate a descriptor-table size.
 #[no_mangle]
 pub extern "C" fn getdtablesize() -> c_int {
     let mut limit = Rlimit {

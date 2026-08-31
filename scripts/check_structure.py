@@ -3968,6 +3968,139 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"declaration evidence is missing {required!r}"
             )
 
+    getdtablesize_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+    )
+    getdtablesize_probe_source = (
+        ROOT / "compat" / "x86_64" / "libc_getdtablesize_probe.c"
+    )
+    getdtablesize_start_source = (
+        ROOT / "compat" / "x86_64" / "libc_getdtablesize_start.S"
+    )
+    getdtablesize_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_libc_getdtablesize.sh"
+    )
+    getdtablesize_header_c_source = (
+        ROOT / "compat" / "x86_64" / "getdtablesize_header_abi_probe.c"
+    )
+    getdtablesize_header_cxx_source = (
+        ROOT / "compat" / "x86_64" / "getdtablesize_header_abi_probe.cpp"
+    )
+    getdtablesize_header_runner_source = (
+        ROOT / "compat" / "x86_64" / "run_getdtablesize_header_abi.sh"
+    )
+    for path in (
+        getdtablesize_source,
+        getdtablesize_probe_source,
+        getdtablesize_start_source,
+        getdtablesize_runner_source,
+        getdtablesize_header_c_source,
+        getdtablesize_header_cxx_source,
+        getdtablesize_header_runner_source,
+    ):
+        if not path.is_file():
+            errors.append(
+                "x86 static getdtablesize artifact is missing "
+                f"{path.relative_to(ROOT)}"
+            )
+            return
+
+    getdtablesize_text = getdtablesize_source.read_text(errors="replace")
+    getdtablesize_probe = getdtablesize_probe_source.read_text(errors="replace")
+    getdtablesize_start = getdtablesize_start_source.read_text(errors="replace")
+    getdtablesize_runner = getdtablesize_runner_source.read_text(errors="replace")
+    getdtablesize_header_c = getdtablesize_header_c_source.read_text(errors="replace")
+    getdtablesize_header_cxx = getdtablesize_header_cxx_source.read_text(
+        errors="replace"
+    )
+    getdtablesize_header_runner = getdtablesize_header_runner_source.read_text(
+        errors="replace"
+    )
+    for required in (
+        "src/legacy/getdtablesize.c",
+        "src/misc/getrlimit.c",
+        "Linux 5.10",
+        "SYS_getrlimit",
+        'pub extern "C" fn getdtablesize() -> c_int',
+        "raw_syscall::SYS_PRLIMIT64",
+        "RLIMIT_NOFILE",
+        "c_status(result)",
+    ):
+        if required not in getdtablesize_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/system_configuration.rs: selected "
+                f"getdtablesize source is missing {required!r}"
+            )
+    for required in (
+        "#include <sys/resource.h>",
+        "getdtablesize_signature",
+        "check_musl_normal_path",
+        "CRABC_GETDTABLESIZE_FREESTANDING",
+        "install_getdtablesize_error_filter",
+        "CRABC_GETDTABLESIZE_ERROR",
+    ):
+        if required not in getdtablesize_probe:
+            errors.append(
+                "compat/x86_64/libc_getdtablesize_probe.c: static getdtablesize "
+                f"regression is missing {required!r}"
+            )
+    for required in (
+        "crabc_x86_64_getdtablesize_probe",
+        "crabc_x86_64_getdtablesize_thread_pointer",
+        "mov %rsi, %fs:0",
+        "mov $60, %eax",
+    ):
+        if required not in getdtablesize_start:
+            errors.append(
+                "compat/x86_64/libc_getdtablesize_start.S: static getdtablesize "
+                f"entry shim is missing {required!r}"
+            )
+    for required in (
+        "run_musl_oracle.sh",
+        "run_getdtablesize_header_abi.sh",
+        "getdtablesize.lo",
+        "archive_member_for_symbol",
+        "-nostdlib -static",
+        "--no-undefined",
+        "--gc-sections",
+        "candidate retained broad system-configuration or resource C ABI symbols",
+        "candidate lacks the required initial-TLS errno segment",
+        "candidate errno accessor does not use direct initial-TLS FS access",
+    ):
+        if required not in getdtablesize_runner:
+            errors.append(
+                "compat/x86_64/run_libc_getdtablesize.sh: static getdtablesize "
+                f"evidence is missing {required!r}"
+            )
+    if "--whole-archive" in getdtablesize_runner:
+        errors.append(
+            "compat/x86_64/run_libc_getdtablesize.sh: static getdtablesize "
+            "evidence must not force-link the archive"
+        )
+    for header_probe in (getdtablesize_header_c, getdtablesize_header_cxx):
+        for required in (
+            "getdtablesize_signature",
+            "CRABC_EXPECT_GETDTABLESIZE",
+            "CRABC_REQUIRE_GETDTABLESIZE_HIDDEN",
+        ):
+            if required not in header_probe:
+                errors.append(
+                    "x86 getdtablesize header probe is missing " f"{required!r}"
+                )
+    for required in (
+        "getdtablesize_header_abi_probe.c",
+        "getdtablesize_header_abi_probe.cpp",
+        "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_GETDTABLESIZE)",
+        "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_GETDTABLESIZE)",
+        "outside GNU/BSD C selectors",
+        "retained a mangled getdtablesize reference",
+    ):
+        if required not in getdtablesize_header_runner:
+            errors.append(
+                "compat/x86_64/run_getdtablesize_header_abi.sh: getdtablesize "
+                f"declaration evidence is missing {required!r}"
+            )
+
     static_startup_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
     static_startup_text = static_startup_source.read_text(errors="replace")
     for required in (

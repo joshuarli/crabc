@@ -1370,7 +1370,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sigaddset-sigdelset-sigfillset",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|getdtablesize-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-getdtablesize|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -17272,6 +17272,134 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-getpagesize)\n        [ "$#" -eq 0 ] || fail "libc-getpagesize takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_getdtablesize_artifact_stays_isolated(self) -> None:
+        """The descriptor-limit observation must not promote resource/configuration ABI."""
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_configuration.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "libc_getdtablesize_probe.c"
+        start_path = ROOT / "compat" / "x86_64" / "libc_getdtablesize_start.S"
+        artifact_runner_path = ROOT / "compat" / "x86_64" / "run_libc_getdtablesize.sh"
+        header_c_path = ROOT / "compat" / "x86_64" / "getdtablesize_header_abi_probe.c"
+        header_cxx_path = (
+            ROOT / "compat" / "x86_64" / "getdtablesize_header_abi_probe.cpp"
+        )
+        header_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_getdtablesize_header_abi.sh"
+        )
+        for path in (
+            source_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            header_c_path,
+            header_cxx_path,
+            header_runner_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing getdtablesize artifact input: {path}")
+
+        source = source_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        start = start_path.read_text(encoding="utf-8")
+        artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        header_c = header_c_path.read_text(encoding="utf-8")
+        header_cxx = header_cxx_path.read_text(encoding="utf-8")
+        header_runner = header_runner_path.read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line for line in static_exports.splitlines() if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "system_configuration.rs"]', static_root)
+        for required in (
+            "src/legacy/getdtablesize.c",
+            "src/misc/getrlimit.c",
+            "Linux 5.10",
+            "SYS_getrlimit",
+            'pub extern "C" fn getdtablesize() -> c_int',
+            "raw_syscall::SYS_PRLIMIT64",
+            "RLIMIT_NOFILE",
+            "c_status(result)",
+        ):
+            self.assertIn(required, source)
+        for required in (
+            "#include <sys/resource.h>",
+            "getdtablesize_signature",
+            "_Static_assert",
+            "check_musl_normal_path",
+            "indirect = getdtablesize",
+            "CRABC_GETDTABLESIZE_FREESTANDING",
+            "install_getdtablesize_error_filter",
+            "CRABC_GETDTABLESIZE_ERROR",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_getdtablesize_probe",
+            "crabc_x86_64_getdtablesize_thread_pointer",
+            "mov %rsi, %fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header_probe in (header_c, header_cxx):
+            for required in (
+                "getdtablesize_signature",
+                "CRABC_EXPECT_GETDTABLESIZE",
+                "CRABC_REQUIRE_GETDTABLESIZE_HIDDEN",
+            ):
+                self.assertIn(required, header_probe)
+        for required in (
+            "bsd_definitions=(-D_BSD_SOURCE -DCRABC_EXPECT_GETDTABLESIZE)",
+            "gnu_definitions=(-D_GNU_SOURCE -DCRABC_EXPECT_GETDTABLESIZE)",
+            "outside GNU/BSD C selectors",
+            "retained a mangled getdtablesize reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_getdtablesize_header_abi.sh",
+            "getdtablesize.lo",
+            "archive_member_for_symbol",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "-Wl,--gc-sections",
+            "candidate retained broad system-configuration or resource C ABI symbols",
+            "candidate lacks the required initial-TLS errno segment",
+            "candidate errno accessor does not use direct initial-TLS FS access",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn("getdtablesize", static_export_names)
+        self.assertIn('id = "static-c-getdtablesize"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-getdtablesize"',
+            parity_ledger,
+        )
+        self.assertIn("run_getdtablesize_header_abi()", runner)
+        self.assertIn("run_libc_getdtablesize()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_getdtablesize_header_abi.sh", runner
+        )
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_getdtablesize.sh", runner
+        )
+        self.assertIn(
+            '    getdtablesize-header-abi)\n        [ "$#" -eq 0 ] || fail "getdtablesize-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-getdtablesize)\n        [ "$#" -eq 0 ] || fail "libc-getdtablesize takes no arguments"',
             runner,
         )
 

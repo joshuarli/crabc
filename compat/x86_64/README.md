@@ -279,6 +279,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh vector-io-header-abi
 ./scripts/dev-x86_64.sh unistd-header-abi
 ./scripts/dev-x86_64.sh getpagesize-header-abi
+./scripts/dev-x86_64.sh getdtablesize-header-abi
 ./scripts/dev-x86_64.sh system-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
@@ -456,6 +457,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-gmtime-r
 ./scripts/dev-x86_64.sh libc-system-configuration
 ./scripts/dev-x86_64.sh libc-getpagesize
+./scripts/dev-x86_64.sh libc-getdtablesize
 ./scripts/dev-x86_64.sh libc-mapping-core
 ./scripts/dev-x86_64.sh libc-memory-sync
 ./scripts/dev-x86_64.sh libc-memory-locking
@@ -1445,6 +1447,13 @@ C++ linkage while proving default, strict, POSIX, and XOPEN hiding. It is
 header-only evidence; it does not select general page-size discovery,
 `sysconf`/path configuration behavior, archive linkage, C runtime, or public
 x86 support.
+
+`getdtablesize-header-abi` is the disjoint project-first/pinned-musl C11/C++17
+`<unistd.h>` declaration gate for only `int getdtablesize(void)`. It proves
+GNU/BSD visibility, the exact no-argument signed-int signature, unmangled C++
+linkage, and default, strict, POSIX, and XOPEN C/C++ hiding. It is header-only
+evidence; it does not select broad system configuration, resource-limit APIs,
+archive linkage, C runtime, or public x86 support.
 
 `system-header-abi` compiles project and pinned-musl C/C++ `<sys/utsname.h>`
 and `<sys/sysinfo.h>` declarations, including the GNU 65-byte `nodename` and
@@ -3733,6 +3742,23 @@ and call/syscall paths. This does not alter or promote
 `static-c-system-configuration`; it is not general page-size discovery,
 `sysconf`/path configuration, C-runtime, CRT, or public x86 support.
 
+`libc-getdtablesize` is a separate private `static-c-getdtablesize`
+`verified_artifact`, derived from that same existing
+`system_configuration.rs` source owner rather than a new configuration or
+resource subsystem. Pinned musl 1.2.6 `src/legacy/getdtablesize.c` calls
+`src/misc/getrlimit.c`; the fixture compares only its successful
+`prlimit64(RLIMIT_NOFILE)` / INT_MAX-clamp result before linking a true
+`-nostdlib -static -Wl,--gc-sections` candidate. The GNU/BSD-only C/C++ header
+gate proves the exact `int getdtablesize(void)` declaration and hides it in
+default, strict, POSIX, and XOPEN profiles. Final-link collection retains
+`getdtablesize` with its necessary initial-TLS errno seam and rejects
+`sysconf`, `confstr`, `pathconf`, `fpathconf`, `getpagesize`, and public
+resource-limit APIs. Linux 5.10 intentionally omits musl's old
+`SYS_getrlimit` fallback. A candidate-only seccomp route proves crabc's safe
+`-1`/errno error result; it does not compare musl's uninitialized failure
+record. This does not alter or promote `static-c-system-configuration`, broad
+configuration/resource lifecycle, C runtime, or public x86 support.
+
 `libc-mapping-core` is a separately recorded `static-c-mman-mapping-core`
 `verified_artifact` gate over that archive, not a general C mapping or runtime
 capability. Its project-header C body first executes through pinned musl and
@@ -5555,6 +5581,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-gmtime-r`,
 `libc-system-configuration`,
 `libc-getpagesize`,
+`libc-getdtablesize`,
 `libc-mapping-core`,
 `libc-memory-sync`,
 `libc-memory-locking`,
