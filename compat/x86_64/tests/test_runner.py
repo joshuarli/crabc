@@ -9826,6 +9826,147 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-in6addr-loopback)", dispatcher)
 
+    def test_libc_static_c_abi_endservent_artifact_stays_private(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "endservent.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_endservent_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_endservent_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_endservent.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_endservent_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "endservent_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "endservent_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "endservent.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 legacy service-database terminator C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/network/serv.c::endservent",
+            "System V AMD64 ABI",
+            'pub extern "C" fn endservent()',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "fn getservent",
+            "fn setservent",
+            "fn getservbyname",
+            "fn getservbyport",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertIn("endservent", static_exports)
+        self.assertFalse(
+            static_exports
+            & {
+                "getservent",
+                "setservent",
+                "getservbyname",
+                "getservbyport",
+                "endhostent",
+                "endnetent",
+                "endprotoent",
+                "res_init",
+            }
+        )
+
+        for required in (
+            "#include <netdb.h>",
+            "typedef void (*endservent_signature)(void)",
+            "const endservent_signature function = endservent",
+            "endservent();",
+            "function();",
+            "CRABC_ENDSERVENT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_endservent_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertNotIn("ARCH_SET_FS", start)
+
+        for header in (header_c, header_cxx):
+            self.assertIn("endservent_signature", header)
+            self.assertIn("endservent_function", header)
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', netdb_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', netdb_header)
+        for required in (
+            "endservent_header_abi_probe.c",
+            "endservent_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "nm --undefined-only",
+            "retained a mangled endservent reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_endservent_header_abi.sh",
+            "serv.lo",
+            "static_c_abi_exports.txt",
+            "assert_selected_c_abi_surface",
+            "extract_selected_member",
+            "endservent archive member also defines a service, netdb, or resolver sibling",
+            "-nostdlib -static",
+            '"$selected_member" -o "$candidate"',
+            "candidate selects errno, h_errno, or TLS",
+            "endservent unexpectedly performs a call or syscall",
+            "archive-free candidate accidentally selects",
+            "getservent setservent getservbyname getservbyport",
+            "res_init res_query res_querydomain res_search",
+            "dn_comp dn_expand dn_skipname ns_get16 ns_get32 ns_put16 ns_put32",
+            "getaddrinfo freeaddrinfo",
+            "socket bind connect send recv",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn('"$archive" -o "$candidate"', artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-endservent"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-endservent"', parity_ledger
+        )
+        self.assertIn("endservent-header-abi)", dispatcher)
+        self.assertIn("run_endservent_header_abi()", dispatcher)
+        self.assertIn("libc-endservent)", dispatcher)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_endservent.sh", dispatcher
+        )
+
     def test_libc_static_c_abi_dn_skipname_artifact_stays_private(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"

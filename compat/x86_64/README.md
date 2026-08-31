@@ -470,6 +470,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-inet-netof
 ./scripts/dev-x86_64.sh libc-inet-network
 ./scripts/dev-x86_64.sh libc-hstrerror
+./scripts/dev-x86_64.sh endservent-header-abi
+./scripts/dev-x86_64.sh libc-endservent
 ./scripts/dev-x86_64.sh libc-numeric-netdb
 ./scripts/dev-x86_64.sh libc-interface-discovery
 ./scripts/dev-x86_64.sh libc-random-entropy
@@ -1392,6 +1394,23 @@ writes `h_errno` or `errno`, nor selects h_errno storage, TLS, locale catalogs,
 allocation, stdio, syscalls, `/etc/hosts`, `/etc/resolv.conf`, resolver
 configuration, DNS, network-database/NSS, interface, socket, libc.so, CRT,
 loader, sysroot, resolver completion, family promotion, or public x86 support.
+
+`libc-endservent` (`./scripts/dev-x86_64.sh libc-endservent`) is a separate
+private static C ABI leaf under still-planned `libc.c-abi-compat`, not a
+service-database or resolver-network capability. The paired
+`endservent-header-abi` matrix compares pinned-musl and project `<netdb.h>` C
+and C++ consumers under strict, POSIX, X/Open, and GNU profiles, proving the
+unconditional `void endservent(void)` declaration, exact no-argument function
+pointer type, and unmangled C++ linkage. Its project-header body first executes
+through pinned musl 1.2.6, then through an archive-free true
+`-nostdlib -static` candidate linked from exactly one extracted `endservent`
+object, never `libc.a`; the aggregate archive export ratchet is separate.
+Pinned musl maps the selected direct return to `src/network/serv.c::endservent`.
+The direct/function-pointer differential and disassembly admit no service
+cursor, `/etc/services`, `setservent`, `getservent`, service lookup, resolver
+state/configuration, DNS, h_errno, errno, TLS, allocation, syscall, socket,
+NSS, libc.so, CRT, loader, sysroot, family completion, promotion, or public
+x86 support.
 
 `libc-dn-skipname` (`./scripts/dev-x86_64.sh libc-dn-skipname`) is a distinct
 private static C ABI artifact inside still-planned `libc.resolver`, not

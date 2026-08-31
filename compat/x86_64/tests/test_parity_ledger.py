@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 40)
-        self.assertEqual(report["verified_artifact_count"], 164)
+        self.assertEqual(report["verified_artifact_count"], 165)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -16121,6 +16121,96 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["scope"] = "static h_errno strings"
         with self.assertRaisesRegex(ledger.LedgerError, "fixed-profile hstrerror regression"):
+            ledger.validate_ledger(data)
+
+    def test_endservent_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-endservent"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "legacy service-database terminator artifact",
+            "`void endservent(void)`",
+            "`src/network/serv.c::endservent`",
+            "no-op",
+            "`setservent`",
+            "`getservent`",
+            "`getservbyname`",
+            "`/etc/services`",
+            "NSS",
+            "resolver behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/endservent.rs",
+            "include/netdb.h",
+            "compat/x86_64/endservent_header_abi_probe.c",
+            "compat/x86_64/endservent_header_abi_probe.cpp",
+            "compat/x86_64/run_endservent_header_abi.sh",
+            "compat/x86_64/libc_endservent_probe.c",
+            "compat/x86_64/libc_endservent_start.S",
+            "compat/x86_64/run_libc_endservent.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "void endservent(void)" in item
+                and "no incoming C argument words" in item
+                and "no return value" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/network/serv.c::endservent" in item
+                and "empty body" in item
+                and "setservent" in item
+                and "getservent" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-endservent",
+        )
+        for phrase in (
+            "Pinned-musl/project C/C++ header",
+            "true archive-free x86 crabc-libc `-nostdlib -static` candidate",
+            "direct and function-pointer no-op calls",
+            "serv.lo/AArch64 ownership",
+            "one extracted object never libc.a",
+            "service enumeration, legacy database, resolver, nameser, and socket extraction",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "src/network/serv.c::endservent", "src/network/serv.c::setservent"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-endservent must retain its pinned-musl serv.c mapping",
+        ):
             ledger.validate_ledger(data)
 
     def test_extended_attributes_artifact_keeps_its_bounded_boundary(self) -> None:
