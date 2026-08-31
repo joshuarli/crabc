@@ -1372,7 +1372,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|grantpt-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-grantpt|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-getpagesize|libc-gettid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -9968,6 +9968,116 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("int grantpt(int);", stdlib_header)
         self.assertIn("grantpt-header-abi", runner)
         self.assertIn("libc-grantpt", runner)
+
+    def test_libc_static_c_abi_unlockpt_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlockpt.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_unlockpt_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_unlockpt_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_unlockpt.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_unlockpt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        stdlib_header = (ROOT / "include" / "stdlib.h").read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "unlockpt.rs"]', static_root)
+        self.assertIn("unlockpt", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"unlockpt"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/unlockpt.c::unlockpt",
+            "TIOCSPTLCK",
+            "private zero-valued",
+            "raw ioctl/status boundary",
+            "# Safety",
+            "raw_syscall::SYS_IOCTL",
+            "c_status(result)",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "termios_control::",
+            "getpass::",
+            "crabc_core",
+            "crabc_mimalloc",
+            "global_asm!",
+            'pub unsafe extern "C" fn ioctl',
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "unlockpt_signature",
+            "invoke(-1)",
+            "unlockpt(null_fd)",
+            "invoke(master)",
+            "FIXTURE_TIOCGPTPEER",
+            "errno = 313",
+            "CRABC_UNLOCKPT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in ("crabc_x86_64_unlockpt_probe", "mov $60, %eax"):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_unlockpt_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "archive does not define unlockpt",
+            "--disassemble=unlockpt",
+            "candidate retains a dynamic TLS model",
+            "fixed TIOCSPTLCK request",
+            "private zero lock value",
+            "assert_candidate_excludes_pty_policy",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "unlockpt_header_abi_probe.c",
+            "unlockpt_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "outside X/Open/GNU/BSD",
+            "retained a mangled unlockpt reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("unlockpt declaration", "unlockpt_function", "unlockpt_must_be_hidden"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("int unlockpt(int);", stdlib_header)
+        self.assertIn("unlockpt-header-abi", runner)
+        self.assertIn("libc-unlockpt", runner)
 
     def test_libc_static_c_abi_isatty_artifact_stays_narrow(self) -> None:
         static_root = (

@@ -342,6 +342,8 @@ mod termios_control;
 mod ctermid;
 #[path = "grantpt.rs"]
 mod grantpt;
+#[path = "unlockpt.rs"]
+mod unlockpt;
 #[path = "gethostid.rs"]
 mod gethostid;
 #[path = "gettid.rs"]

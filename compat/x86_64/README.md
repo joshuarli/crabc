@@ -428,6 +428,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ctermid
 ./scripts/dev-x86_64.sh grantpt-header-abi
 ./scripts/dev-x86_64.sh libc-grantpt
+./scripts/dev-x86_64.sh unlockpt-header-abi
+./scripts/dev-x86_64.sh libc-unlockpt
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
 ./scripts/dev-x86_64.sh gettid-header-abi
@@ -3411,6 +3413,21 @@ discovery or session policy, `posix_openpt`, `unlockpt`, `ptsname`/`ptsname_r`,
 openpty/forkpty/login_tty/vhangup, generic ioctl, dynamic runtime, family
 completion, promotion, and public x86 support.
 
+`libc-unlockpt` is a separately recorded static `static-c-unlockpt`
+`verified_artifact` gate over that archive, not a PTY or terminal capability.
+Its X/Open/GNU/BSD C/C++ `<stdlib.h>` declaration gate proves exact
+`int unlockpt(int)` linkage and strict/POSIX hiding before one project-header C
+body executes through pinned musl and a `-nostdlib -static` candidate. It
+selects only musl's fixed private-zero `TIOCSPTLCK=0x40045431` bridge: `-1`
+reports `EBADF`, a raw-opened non-PTY reports `ENOTTY`, and one fresh raw-opened
+devpts master succeeds with stale errno preserved before fixture-only peer
+observation. The candidate includes only the existing errno translation and
+fixed request; it rejects generic ioctl and all unselected terminal/PTY
+helpers. It excludes PTY allocation/grant/naming, descriptor ownership,
+terminal discovery or session/process policy, `posix_openpt`, `grantpt`,
+`ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, dynamic runtime,
+family completion, promotion, and public x86 support.
+
 `libc-gethostid` is a separate static `verified_artifact` inside
 still-planned `libc.c-abi-compat`, not a `system.kernel-admin` capability. Its
 focused X/Open/GNU/BSD `<unistd.h>` C/C++ gate proves `long gethostid(void)`,
@@ -5662,6 +5679,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`,
 `libc-ctermid`,
 `libc-grantpt`,
+`libc-unlockpt`,
 `libc-gethostid`,
 `libc-gettid`,
 `libc-isatty`,

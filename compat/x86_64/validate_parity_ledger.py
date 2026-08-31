@@ -13463,6 +13463,272 @@ def require_grantpt_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_unlockpt_artifact(family: Mapping[str, Any]) -> None:
+    """Keep musl's fixed PTY lock-release bridge below promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-unlockpt"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-unlockpt artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-unlockpt must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-unlockpt must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "fixed-PTY-lock-release boundary",
+        "still-planned `libc.posix-runtime`",
+        "exactly `int unlockpt(int)`",
+        "src/unistd/unlockpt.c::unlockpt",
+        "private zero-valued four-byte int",
+        "`TIOCSPTLCK=0x40045431`",
+        "raw `EBADF`/`ENOTTY` failures return `-1` and publish errno",
+        "Fixture-local raw syscalls create, observe, and close one fresh devpts master only",
+        "selected-private leaf",
+        "PTY allocation/grant/naming",
+        "terminal/session/process policy",
+        "generic ioctl",
+        "`posix_openpt`, `grantpt`, `ptsname`/`ptsname_r`",
+        "openpty/forkpty/login_tty/vhangup",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-unlockpt description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact["source_owners"], "static-c-unlockpt.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/unlockpt.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/stdlib.h",
+        "include/sys/syscall.h",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/bits/syscall.h",
+        "compat/x86_64/unlockpt_header_abi_probe.c",
+        "compat/x86_64/unlockpt_header_abi_probe.cpp",
+        "compat/x86_64/run_unlockpt_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_unlockpt_probe.c",
+        "compat/x86_64/libc_unlockpt_start.S",
+        "compat/x86_64/run_libc_unlockpt.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-unlockpt source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"], "static-c-unlockpt.x86_abi_prerequisites"
+    )
+    require(
+        any(
+            "System V AMD64" in item
+            and "rdi/rsi/rdx" in item
+            and "eax" in item
+            and "TIOCSPTLCK=0x40045431" in item
+            and "four-byte zero int" in item
+            for item in prerequisites
+        ),
+        "static-c-unlockpt must retain its fixed ioctl ABI",
+    )
+    require(
+        any(
+            "src/unistd/unlockpt.c::unlockpt" in item
+            and "int unlock = 0" in item
+            and "return ioctl(fd, TIOCSPTLCK, &unlock)" in item
+            for item in prerequisites
+        ),
+        "static-c-unlockpt must retain its exact pinned-musl mapping",
+    )
+    require(
+        any(
+            "-nostdlib -static" in item
+            and "no dynamic TLS relocation/resolver" in item
+            and "fixture-local raw `/dev/ptmx`/TIOCGPTPEER observation" in item
+            for item in prerequisites
+        ),
+        "static-c-unlockpt must retain its bounded static closure",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-unlockpt.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "`int unlockpt(int)`" in item
+            and "unmangled C++ reference" in item
+            and "X/Open, GNU, and BSD" in item
+            and "Strict and POSIX profiles hide" in item
+            for item in header_prerequisites
+        ),
+        "static-c-unlockpt must retain its XSI C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-unlockpt"},
+        "static-c-unlockpt must use the closed libc-unlockpt command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "EBADF and non-PTY ENOTTY errno translation",
+                "fresh raw-opened devpts master",
+                "stale errno preserved",
+                "fixture-only TIOCGPTPEER observation",
+                "-nostdlib -static",
+                "dynamic TLS resolver",
+                "TIOCSPTLCK=0x40045431",
+                "posix_openpt/grantpt/ptsname/ptsname_r",
+                "openpty/forkpty/login_tty/vhangup",
+                "terminal discovery or session/process policy",
+                "public x86 support",
+            )
+        ),
+        "static-c-unlockpt evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("unlockpt" in exports, "static C ABI export contract omits unlockpt")
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "unlockpt.rs"]\nmod unlockpt;' in static_root,
+        "x86 static C ABI must compose the unlockpt leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlockpt.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/unlockpt.c::unlockpt",
+        "TIOCSPTLCK",
+        "private zero-valued",
+        "raw ioctl/status boundary",
+        "# Safety",
+        'pub unsafe extern "C" fn unlockpt',
+        "raw_syscall::SYS_IOCTL",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+    ):
+        require(snippet in source, f"unlockpt implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(exported == {"unlockpt"}, "unlockpt implementation must export only unlockpt")
+    for forbidden in (
+        "termios_control::",
+        "getpass::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+        'pub unsafe extern "C" fn ioctl',
+    ):
+        require(forbidden not in source, f"unlockpt implementation selects {forbidden}")
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_unlockpt.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_unlockpt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define unlockpt",
+        "--disassemble=unlockpt",
+        "candidate retains a dynamic TLS model",
+        "fixed TIOCSPTLCK request",
+        "private zero lock value",
+        "assert_candidate_excludes_pty_policy",
+        'timeout "$EXECUTION_TIMEOUT"',
+    ):
+        require(snippet in runner, f"unlockpt runner omits {snippet}")
+    probe = (ROOT / "compat" / "x86_64" / "libc_unlockpt_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "unlockpt_signature",
+        "invoke(-1)",
+        "unlockpt(null_fd)",
+        "invoke(master)",
+        "FIXTURE_TIOCGPTPEER",
+        "errno = 313",
+        "CRABC_UNLOCKPT_FREESTANDING",
+    ):
+        require(snippet in probe, f"unlockpt probe omits {snippet}")
+    start = (ROOT / "compat" / "x86_64" / "libc_unlockpt_start.S").read_text(
+        encoding="utf-8"
+    )
+    for snippet in ("crabc_x86_64_unlockpt_probe", "mov $60, %eax"):
+        require(snippet in start, f"unlockpt static entry shim omits {snippet}")
+    header_c = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("unlockpt declaration", "unlockpt_function", "unlockpt_must_be_hidden"):
+        require(snippet in header_c, f"unlockpt C header probe omits {snippet}")
+        require(snippet in header_cxx, f"unlockpt C++ header probe omits {snippet}")
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_unlockpt_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "unlockpt_header_abi_probe.c",
+        "unlockpt_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside X/Open/GNU/BSD",
+        "retained a mangled unlockpt reference",
+    ):
+        require(snippet in header_runner, f"unlockpt header runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "unlockpt-header-abi)",
+        "libc-unlockpt)",
+        "run_unlockpt_header_abi()",
+        "run_libc_unlockpt_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_getpass_artifact(family: Mapping[str, Any]) -> None:
     """Keep historical terminal password input below family promotion."""
     artifacts = require_verified_artifacts(
@@ -42015,6 +42281,7 @@ def validate_ledger(
     require_static_login_name_artifact(by_id["libc.posix-runtime"])
     require_ctermid_artifact(by_id["libc.posix-runtime"])
     require_grantpt_artifact(by_id["libc.posix-runtime"])
+    require_unlockpt_artifact(by_id["libc.posix-runtime"])
     require_isatty_artifact(by_id["libc.posix-runtime"])
     require_tcgetpgrp_artifact(by_id["libc.posix-runtime"])
     require_tcsetpgrp_artifact(by_id["libc.posix-runtime"])

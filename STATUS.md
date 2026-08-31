@@ -136,6 +136,21 @@ authority, terminal discovery or session policy, `posix_openpt`, `unlockpt`,
 `ptsname`/`ptsname_r`, openpty/forkpty/login_tty/vhangup, generic ioctl,
 family completion, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-unlockpt` is a separate private
+`static-c-unlockpt` artifact inside still-planned `libc.posix-runtime`. Its
+pinned-musl/project-header C/C++ gate proves the exact X/Open/GNU/BSD
+`int unlockpt(int)` declaration, strict/POSIX hiding, and unmangled C++
+linkage. Its pinned-musl and freestanding-static routes then prove only musl's
+fixed `TIOCSPTLCK=0x40045431` bridge: `EBADF` and non-PTY `ENOTTY` become `-1`
+with errno, while a call on one fresh raw-opened devpts master succeeds with
+stale errno preserved and permits fixture-only peer observation. The wrapper
+owns one private zero `int`, the fixed ioctl request, and existing errno
+translation; it adds no generic ioctl API, PTY opening/grant/naming, descriptor
+ownership, terminal discovery, termios state, or terminal/session/process
+policy. `posix_openpt`, `grantpt`, `ptsname`/`ptsname_r`,
+openpty/forkpty/login_tty/vhangup, family completion, promotion, and public x86
+support remain excluded.
+
 `./scripts/dev-x86_64.sh libc-gethostid` is a private `static-c-gethostid`
 artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
 X/Open C/C++ header gate proves `long gethostid(void)` visibility only under

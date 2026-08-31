@@ -905,6 +905,7 @@ umask
 uname
 ungetc
 unlink
+unlockpt
 unsetenv
 uselocale
 utime

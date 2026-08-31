@@ -256,6 +256,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/strsignal.rs"),
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/grantpt.rs"),
+    Path("libc/src/c_abi/x86_64/unlockpt.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
     Path("libc/src/c_abi/x86_64/tcgetpgrp.rs"),
     Path("libc/src/c_abi/x86_64/tcsetpgrp.rs"),
@@ -3771,6 +3772,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "pthread_once.rs"]',
         '#[path = "termios_control.rs"]',
         '#[path = "grantpt.rs"]',
+        '#[path = "unlockpt.rs"]',
         '#[path = "isatty.rs"]',
         '#[path = "tcgetpgrp.rs"]',
         '#[path = "tcsetpgrp.rs"]',
@@ -6414,6 +6416,51 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary must not select {forbidden!r}"
             )
 
+    unlockpt_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "unlockpt.rs"
+    unlockpt_text = unlockpt_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/unlockpt.c::unlockpt",
+        "TIOCSPTLCK",
+        "private zero-valued",
+        "raw ioctl/status boundary",
+        "# Safety",
+        'pub unsafe extern "C" fn unlockpt',
+        "raw_syscall::SYS_IOCTL",
+        "raw_syscall::syscall3(",
+        "c_status(result)",
+    ):
+        if required not in unlockpt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
+                f"lock-release boundary is missing {required!r}"
+            )
+    unlockpt_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            unlockpt_text,
+        )
+    )
+    if unlockpt_exports != {"unlockpt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
+            "lock-release artifact must export only unlockpt"
+        )
+    for forbidden in (
+        "termios_control::",
+        "getpass::",
+        "crabc_core",
+        "crabc_mimalloc",
+        "global_asm!",
+        'pub unsafe extern "C" fn ioctl',
+    ):
+        if forbidden in unlockpt_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/unlockpt.rs: selected static fixed PTY "
+                f"lock-release boundary must not select {forbidden!r}"
+            )
+
     gethostid_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gethostid.rs"
     gethostid_text = gethostid_source.read_text(errors="replace")
     for required in (
@@ -7218,6 +7265,93 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if required not in x86_runner:
             errors.append(
                 "scripts/dev-x86_64.sh: selected legacy grantpt dispatcher is "
+                f"missing {required!r}"
+            )
+
+    unlockpt_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_unlockpt.sh"
+    ).read_text(errors="replace")
+    unlockpt_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_unlockpt_header_abi.sh"
+    ).read_text(errors="replace")
+    unlockpt_header_c = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.c"
+    ).read_text(errors="replace")
+    unlockpt_header_cxx = (
+        ROOT / "compat" / "x86_64" / "unlockpt_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    unlockpt_probe = (
+        ROOT / "compat" / "x86_64" / "libc_unlockpt_probe.c"
+    ).read_text(errors="replace")
+    unlockpt_start = (
+        ROOT / "compat" / "x86_64" / "libc_unlockpt_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_unlockpt_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define unlockpt",
+        "--disassemble=unlockpt",
+        "candidate retains a dynamic TLS model",
+        "fixed TIOCSPTLCK request",
+        "private zero lock value",
+        "assert_candidate_excludes_pty_policy",
+        'timeout "$EXECUTION_TIMEOUT"',
+    ):
+        if required not in unlockpt_runner:
+            errors.append(
+                "compat/x86_64/run_libc_unlockpt.sh: selected static fixed PTY "
+                f"lock-release evidence is missing {required!r}"
+            )
+    for required in (
+        "unlockpt_header_abi_probe.c",
+        "unlockpt_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "outside X/Open/GNU/BSD",
+        "retained a mangled unlockpt reference",
+    ):
+        if required not in unlockpt_header_runner:
+            errors.append(
+                "compat/x86_64/run_unlockpt_header_abi.sh: selected static fixed "
+                f"PTY lock-release declaration evidence is missing {required!r}"
+            )
+    for required in ("unlockpt declaration", "unlockpt_function", "unlockpt_must_be_hidden"):
+        if required not in unlockpt_header_c or required not in unlockpt_header_cxx:
+            errors.append(
+                "compat/x86_64/unlockpt_header_abi_probe: selected static fixed "
+                f"PTY lock-release declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "unlockpt_signature",
+        "invoke(-1)",
+        "unlockpt(null_fd)",
+        "invoke(master)",
+        "FIXTURE_TIOCGPTPEER",
+        "errno = 313",
+        "CRABC_UNLOCKPT_FREESTANDING",
+    ):
+        if required not in unlockpt_probe:
+            errors.append(
+                "compat/x86_64/libc_unlockpt_probe.c: selected static fixed PTY "
+                f"lock-release regression is missing {required!r}"
+            )
+    for required in ("crabc_x86_64_unlockpt_probe", "mov $60, %eax"):
+        if required not in unlockpt_start:
+            errors.append(
+                "compat/x86_64/libc_unlockpt_start.S: selected static fixed PTY "
+                f"lock-release fixture is missing {required!r}"
+            )
+    for required in (
+        "unlockpt-header-abi)",
+        "run_unlockpt_header_abi",
+        "libc-unlockpt)",
+        "run_libc_unlockpt_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected fixed PTY lock-release dispatcher is "
                 f"missing {required!r}"
             )
 
@@ -10777,6 +10911,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         termios_control_text,
         ctermid_text,
         grantpt_text,
+        unlockpt_text,
         gethostid_text,
         gettid_text,
         isatty_text,
@@ -11093,6 +11228,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "tcsetwinsize",
         "ctermid",
         "grantpt",
+        "unlockpt",
         "gethostid",
         "gettid",
         "isatty",
@@ -11394,6 +11530,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("termios_control.rs", termios_control_text),
         ("ctermid.rs", ctermid_text),
         ("grantpt.rs", grantpt_text),
+        ("unlockpt.rs", unlockpt_text),
         ("gettid.rs", gettid_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
