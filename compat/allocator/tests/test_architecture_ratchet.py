@@ -389,6 +389,26 @@ pub unsafe fn native_free() {
             self.assertEqual(repeated_identity["status"], "forbidden")
             self.assertTrue(repeated_identity["structural_violation"])
 
+    def test_caller_identity_dispatch_excludes_cfg_test_branch(self) -> None:
+        policy = copy.deepcopy(self.manifest)
+        policy["caller_identity_first_free_dispatch"]["path"] = "runtime.rs"
+        source_text = """\
+pub unsafe fn native_free() {
+    #[cfg(test)]
+    if RUNTIME_PROCESS.is_on_initial_thread() {}
+    lookup_page_for_live_client();
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "runtime.rs").write_text(source_text, encoding="utf-8")
+            dispatch = RATCHET.caller_identity_first_free_dispatch(root, policy)
+
+        self.assertEqual(dispatch["status"], "pointer_dispatch_first")
+        self.assertFalse(dispatch["caller_identity_first"])
+        self.assertEqual(dispatch["caller_identity_matches"], [])
+        self.assertTrue(dispatch["pointer_dispatch_matches"])
+
     def test_native_reallocate_requires_pagemap_first_source_routing_and_rejects_current_refusal(self) -> None:
         policy = copy.deepcopy(self.manifest)
         policy["selected_production"]["runtime_source"] = "runtime.rs"
@@ -998,6 +1018,41 @@ pub fn native_post_exit_registry_test_audit() {}
                 {"post_exit_registry_audit_type"},
             )
 
+    def test_phase_ef_detects_production_variants_after_a_cfg_test_legacy_variant(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        policy = manifest["phase_ef_forbidden_scaffolding"]
+        for section in (
+            "production_symbols",
+            "semantic_route_or_ledger_scans",
+            "normal_lifecycle_failure_routes",
+            "test_only_audits",
+        ):
+            for rule in policy[section]["rules"].values():
+                rule["path"] = "runtime.rs"
+
+        source_text = """\
+pub enum NativePostExitFreeRoute {
+    #[cfg(test)]
+    TestOnlyLegacyRoute,
+    Aggregate,
+    SoleMappedRegular,
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "runtime.rs").write_text(source_text, encoding="utf-8")
+            report = RATCHET.phase_ef_forbidden_scaffolding(root, manifest)
+
+        self.assertTrue(report["production_retains_forbidden_surface"])
+        self.assertEqual(
+            set(report["production_symbols"]["found"]),
+            {
+                "native_post_exit_free_route_aggregate",
+                "native_post_exit_free_route_sole_mapped_regular",
+            },
+        )
+        self.assertEqual(report["test_only_audits"]["selected_in_production"], {})
+
     def test_unknown_production_cfg_fails_closed(self) -> None:
         source = """\
 #[cfg(allocator_magic)]
@@ -1386,7 +1441,7 @@ fn forbidden_helper() {
             ["local_hot_path_process_scheduler_ops: 1 source indicators exceed ratchet ceiling 0"],
         )
 
-    def test_cli_writes_a_report_but_gate_refuses_the_current_unmet_architecture(self) -> None:
+    def test_cli_check_writes_a_current_report_but_gate_refuses_final_architecture(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             report = Path(temporary) / "architecture.json"
             checked = subprocess.run(
@@ -1395,10 +1450,12 @@ fn forbidden_helper() {
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(checked.returncode, 1)
+            self.assertEqual(checked.returncode, 0)
             self.assertTrue(report.is_file())
-            self.assertIn("allocator architecture ratchet: FAIL:", checked.stderr)
-            self.assertFalse(json.loads(report.read_text(encoding="utf-8"))["summary"]["final_architecture_passed"])
+            self.assertEqual(checked.stderr, "")
+            checked_report = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(checked_report["ratchet"]["regressions"], [])
+            self.assertFalse(checked_report["summary"]["final_architecture_passed"])
             gated = subprocess.run(
                 [sys.executable, str(SCRIPT), "--root", str(ROOT), "--report", str(report), "--gate"],
                 check=False,

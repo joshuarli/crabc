@@ -321,9 +321,9 @@ def excluded_cfg_item_end(source: str, attribute_end: int) -> int:
 
     This is deliberately a narrow lexical boundary, not a Rust parser.  It
     handles the production shapes used here: cfg-gated modules, functions,
-    impls, declarations, fields, and block/semicolon statements.  Masking the
-    whole outer `#[cfg(test)] mod tests` is what keeps nested harness helpers
-    out of the selected production graph.
+    impls, declarations, fields, enum variants, and block/semicolon
+    statements.  Masking the whole outer `#[cfg(test)] mod tests` is what
+    keeps nested harness helpers out of the selected production graph.
     """
 
     cursor = attribute_end
@@ -350,10 +350,44 @@ def excluded_cfg_item_end(source: str, attribute_end: int) -> int:
             raise RatchetError("cfg-gated Rust block item has no body")
         return matching_rust_delimiter(source, opening, "{", "}") + 1
 
+    def delimited_end(delimiters: set[str]) -> int | None:
+        """Find one outer item delimiter without stopping inside a variant."""
+
+        nesting: list[str] = []
+        pairs = {"(": ")", "[": "]", "{": "}"}
+        for index in range(cursor, len(source)):
+            character = source[index]
+            if character in pairs:
+                nesting.append(pairs[character])
+            elif nesting and character == nesting[-1]:
+                nesting.pop()
+            elif not nesting and character in delimiters:
+                return index + 1
+            elif not nesting and character == "}":
+                # A variant/field at the end of its surrounding aggregate has
+                # no trailing comma.  Do not consume the enclosing brace.
+                return index
+        return None
+
     field = re.match(r"(?:pub(?:\([^)]*\))?\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:", source[cursor:])
     if field is not None:
-        comma = source.find(",", cursor)
-        return len(source) if comma < 0 else comma + 1
+        return delimited_end({",", ";"}) or len(source)
+
+    # Rust permits attributes on enum variants and match arms.  Treat an
+    # outer comma as the item's boundary before the generic statement fallback
+    # below; otherwise `#[cfg(test)] TestOnly, Production` masks the following
+    # production variant through the next unrelated block.
+    variant_or_arm = re.match(
+        r"(?:pub(?:\([^)]*\))?\s+)?"
+        r"(?!async\b|const\b|extern\b|fn\b|impl\b|let\b|mod\b|static\b|trait\b|type\b|use\b)"
+        r"[A-Za-z_][A-Za-z0-9_]*",
+        source[cursor:],
+    )
+    if variant_or_arm is not None:
+        comma_or_end = delimited_end({","})
+        semicolon = source.find(";", cursor)
+        if comma_or_end is not None and (semicolon < 0 or comma_or_end <= semicolon):
+            return comma_or_end
 
     semicolon = source.find(";", cursor)
     opening = source.find("{", cursor)
@@ -475,16 +509,25 @@ def cfg_attribute_expression(attribute: str) -> str:
     return attribute[opening + 1 : closing]
 
 
-def production_rust_source(source: str, cfg_environment: Mapping[str, Any]) -> str:
-    """Mask comments, strings, and cfg items not selected in production."""
+def production_rust_source(
+    source: str, cfg_environment: Mapping[str, Any], *, mask_comments: bool = True
+) -> str:
+    """Mask cfg-excluded Rust while preserving positions and optional comments.
 
-    code = strip_rust_comments(source)
+    Call-site patterns need comments/literals hidden.  The Phase-A bridge
+    marker is intentionally a source comment, so its selected function body
+    asks for the same cfg masking while retaining comments.  Both forms use
+    the comment-masked delimiter walker to keep attribute boundaries stable.
+    """
+
+    code = strip_rust_comments(source) if mask_comments else source
+    boundary_code = strip_rust_comments(source)
     cfg_code = strip_rust_comments(source, mask_literals=False)
     excluded_ranges: list[tuple[int, int]] = []
     for start, end, attribute in rust_cfg_attribute_spans(cfg_code):
         expression = cfg_attribute_expression(attribute)
         if not CfgParser(expression, cfg_environment).parse():
-            excluded_ranges.append((start, excluded_cfg_item_end(code, end)))
+            excluded_ranges.append((start, excluded_cfg_item_end(boundary_code, end)))
     for start, end in sorted(excluded_ranges, reverse=True):
         code = mask_source_range(code, start, end)
     return code
@@ -558,7 +601,11 @@ def source_matches(
     return matches
 
 
-def rust_function_body(source: str, function: str) -> tuple[int, str, str]:
+def rust_function_body(
+    source: str,
+    function: str,
+    cfg_environment: Mapping[str, Any] | None = None,
+) -> tuple[int, str, str]:
     """Return one Rust function body's offset plus raw and comment-masked bodies.
 
     This intentionally recognizes only the narrow free-dispatch boundary
@@ -567,7 +614,12 @@ def rust_function_body(source: str, function: str) -> tuple[int, str, str]:
     grep, while comments and ordinary strings cannot supply a false branch.
     """
 
-    code = strip_rust_comments(source)
+    selected_source = (
+        production_rust_source(source, cfg_environment, mask_comments=False)
+        if cfg_environment is not None
+        else source
+    )
+    code = strip_rust_comments(selected_source)
     header = re.compile(
         rf"\b(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?fn\s+{re.escape(function)}\b[^{{]*\{{",
         re.MULTILINE,
@@ -585,29 +637,39 @@ def rust_function_body(source: str, function: str) -> tuple[int, str, str]:
             if depth == 0:
                 return (
                     opening_brace + 1,
-                    source[opening_brace + 1 : index],
+                    selected_source[opening_brace + 1 : index],
                     code[opening_brace + 1 : index],
                 )
     raise RatchetError(f"selected function has an unclosed body: {function}")
 
 
 def function_matches(
-    root: Path, relative_path: str, function: str, pattern: str
+    root: Path,
+    relative_path: str,
+    function: str,
+    pattern: str,
+    cfg_environment: Mapping[str, Any] | None = None,
 ) -> list[SourceMatch]:
     return [
         source_match
-        for _, source_match in function_match_offsets(root, relative_path, function, pattern)
+        for _, source_match in function_match_offsets(
+            root, relative_path, function, pattern, cfg_environment
+        )
     ]
 
 
 def function_match_offsets(
-    root: Path, relative_path: str, function: str, pattern: str
+    root: Path,
+    relative_path: str,
+    function: str,
+    pattern: str,
+    cfg_environment: Mapping[str, Any] | None = None,
 ) -> list[tuple[int, SourceMatch]]:
     path = root / relative_path
     if not path.is_file():
         raise RatchetError(f"selected production source is absent: {relative_path}")
     source = path.read_text(encoding="utf-8")
-    body_offset, _, body = rust_function_body(source, function)
+    body_offset, _, body = rust_function_body(source, function, cfg_environment)
     return [
         (
             match.start(),
@@ -622,7 +684,11 @@ def function_match_offsets(
 
 
 def function_literal_match_offsets(
-    root: Path, relative_path: str, function: str, literal: str
+    root: Path,
+    relative_path: str,
+    function: str,
+    literal: str,
+    cfg_environment: Mapping[str, Any] | None = None,
 ) -> list[tuple[int, SourceMatch]]:
     """Find literal documentation markers in the selected function body only."""
 
@@ -630,7 +696,7 @@ def function_literal_match_offsets(
     if not path.is_file():
         raise RatchetError(f"selected production source is absent: {relative_path}")
     source = path.read_text(encoding="utf-8")
-    body_offset, raw_body, _ = rust_function_body(source, function)
+    body_offset, raw_body, _ = rust_function_body(source, function, cfg_environment)
     matches: list[tuple[int, SourceMatch]] = []
     start = 0
     while True:
@@ -1233,11 +1299,15 @@ def caller_identity_first_free_dispatch(
     )
     path = required_string(policy.get("path"), "caller_identity_first_free_dispatch.path")
     function = required_string(policy.get("function"), "caller_identity_first_free_dispatch.function")
+    cfg_environment = required_mapping(
+        phase_bc_policy(manifest).get("cfg_environment"),
+        "phase_bc_call_graph.cfg_environment",
+    )
     identity_matches_with_offsets = sorted(
         (
             match
             for pattern in policy["caller_identity_patterns"]
-            for match in function_match_offsets(root, path, function, pattern)
+            for match in function_match_offsets(root, path, function, pattern, cfg_environment)
         ),
         key=lambda item: item[0],
     )
@@ -1245,7 +1315,7 @@ def caller_identity_first_free_dispatch(
         (
             match
             for pattern in policy["pointer_dispatch_patterns"]
-            for match in function_match_offsets(root, path, function, pattern)
+            for match in function_match_offsets(root, path, function, pattern, cfg_environment)
         ),
         key=lambda item: item[0],
     )
@@ -1263,7 +1333,9 @@ def caller_identity_first_free_dispatch(
         bridge.get("marker"),
         "caller_identity_first_free_dispatch.phase_a_bridge.marker",
     )
-    marker_matches_with_offsets = function_literal_match_offsets(root, path, function, marker)
+    marker_matches_with_offsets = function_literal_match_offsets(
+        root, path, function, marker, cfg_environment
+    )
     marker_matches = [match for _, match in marker_matches_with_offsets]
     marker_matches_before_or_at_identity = [
         match
@@ -1278,6 +1350,7 @@ def caller_identity_first_free_dispatch(
             bridge.get("source_anchor_pattern"),
             "caller_identity_first_free_dispatch.phase_a_bridge.source_anchor_pattern",
         ),
+        cfg_environment,
     )
     bridge_active = (
         caller_identity_first
