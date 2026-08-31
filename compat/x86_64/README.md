@@ -508,6 +508,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh ldso-fixed-graph-introspection
 ./scripts/dev-x86_64.sh ldso-fixed-graph-dlfcn
 ./scripts/dev-x86_64.sh ldso-public-dlfcn
+./scripts/dev-x86_64.sh ldso-dladdr-symbol-bounds
 ./scripts/dev-x86_64.sh ldso-dynamic-admission
 ```
 
@@ -4579,6 +4580,18 @@ filesystem search/mapping, graph mutation, finalization, and unload remain
 excluded. This artifact deliberately selects neither dlfcn capability,
 `ldso.dynamic-runtime`, nor public x86 support.
 
+`ldso-dladdr-symbol-bounds` is a separate fixed-graph `dladdr` differential
+over that already-existing bridge, not an additional loader admission path.
+Its real leaf has one four-byte default-visible dynamic object immediately
+followed by local mapped padding. Pinned musl and the no-ambient candidate
+agree that the exact object and an interior byte return its symbol, while the
+one-past address still identifies the leaf but returns null `dli_sname` and
+`dli_saddr`. The runner preserves the exact weak 64-byte record/GLOB_DAT
+boundary, verifies the unchanged seven-symbol static archive and no PT_TLS,
+and proves absent or malformed records fail closed. It adds no name search,
+handle rule, graph mapping, unload/finalization behavior, dlfcn capability,
+or public x86 support.
+
 `ldso-bounded-dlopen` advances one real loader-mapping prerequisite without
 widening that public claim. The cfg-isolated interpreter keeps the same
 64-byte RuntimeV1-shaped record and initial main/mid/leaf graph, then
@@ -4616,13 +4629,13 @@ and no generic unload lifecycle is selected. General search/mutation, TLS growth
 `DT_FINI_ARRAY`, finalization/unload, both dlfcn
 capability selections, and public x86 support remain excluded.
 
-`ldso-dynamic-admission` is the consumed aggregate admission gate for seven
+`ldso-dynamic-admission` is the consumed aggregate admission gate for eight
 real-ELF private interpreter/bridge transactions. It runs each fixture afresh, so its
 positive inventory is limited to the no-TLS RELATIVE/GLOB_DAT/JUMP_SLOT plus
 bounded leaf RELR graph, the GNU-Dynamic DTPMOD/DTPOFF graph, and the
 owned-CRT weak-GLOB_DAT record graph, the callback-free fixed-graph
 introspection record, the retained-object handle/symbol dlfcn-runtime record,
-its public-C bridge, and the one-slot runtime mapper. Their in-place malformed inputs retain the fail-closed
+its public-C bridge, its finite-symbol `dladdr` boundary, and the one-slot runtime mapper. Their in-place malformed inputs retain the fail-closed
 PT_TLS, COPY, malformed RELA/RELR, TEXTREL/static-TLS, TPOFF,
 malformed/early-handoff, malformed-introspection-record, malformed-dlfcn-record,
 and strong-dlfcn-import negatives. It is not a generated report or a general

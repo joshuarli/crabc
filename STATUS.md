@@ -282,6 +282,15 @@ stale handles. Search/mapping, graph mutation, `RTLD_NEXT`, global promotion,
 finalization, and unload remain excluded, so neither dlfcn capability nor the
 dynamic-runtime family or public x86 platform is promoted.
 
+`ldso-dladdr-symbol-bounds` adds one separate private differential over that
+same already-loaded no-TLS graph: a four-byte public leaf dynamic object names
+its exact/interior bytes, while one-past local mapped padding retains the leaf
+identity but clears `dli_sname`/`dli_saddr`, matching pinned musl 1.2.6. It
+ratchets the unchanged seven-symbol archive, weak 64-byte record, no-ambient
+ELF shape, and malformed/absent fail-closure; it does not add `dlopen`, name
+lookup, mapping, handle identity, unload/finalization, capability selection,
+or public x86 support.
+
 The cfg-isolated `ldso-bounded-dlopen` sibling then admits one append-only
 no-TLS RELA-only ET_DYN mapping through the initial main's absolute RUNPATH,
 with only already-retained dependencies, one validated executable legacy

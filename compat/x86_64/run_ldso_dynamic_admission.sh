@@ -16,6 +16,7 @@ readonly HANDOFF_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_owned_crt_handoff.sh"
 readonly INTROSPECTION_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_fixed_graph_introspection.sh"
 readonly DLFCN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_fixed_graph_dlfcn.sh"
 readonly PUBLIC_DLFCN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_public_dlfcn.sh"
+readonly DLADDR_SYMBOL_BOUNDS_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_dladdr_symbol_bounds.sh"
 readonly BOUNDED_DLOPEN_RUNNER="$ROOT_DIR/compat/x86_64/run_ldso_bounded_dlopen.sh"
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
@@ -23,7 +24,7 @@ if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     exit 2
 fi
 
-for runner in "$GRAPH_RUNNER" "$TLS_RUNNER" "$HANDOFF_RUNNER" "$INTROSPECTION_RUNNER" "$DLFCN_RUNNER" "$PUBLIC_DLFCN_RUNNER" "$BOUNDED_DLOPEN_RUNNER"; do
+for runner in "$GRAPH_RUNNER" "$TLS_RUNNER" "$HANDOFF_RUNNER" "$INTROSPECTION_RUNNER" "$DLFCN_RUNNER" "$PUBLIC_DLFCN_RUNNER" "$DLADDR_SYMBOL_BOUNDS_RUNNER" "$BOUNDED_DLOPEN_RUNNER"; do
     if [ ! -f "$runner" ]; then
         printf '%s\n' "ERROR: required loader fixture is missing: $runner" >&2
         exit 2
@@ -102,6 +103,17 @@ require_runner_contract "$PUBLIC_DLFCN_RUNNER" \
     'main-crabc-public-dlfcn-malformed' \
     'main-crabc-public-dlfcn-absent' \
     'env -i PATH=/usr/bin:/bin'
+require_runner_contract "$DLADDR_SYMBOL_BOUNDS_RUNNER" \
+    'static_c_abi_exports.txt' \
+    '__crabc_x86_64_fixed_graph_dlfcn_v1' \
+    'R_X86_64_GLOB_DAT' \
+    'dladdr_bounded_data' \
+    'libleaf-dladdr-symbol-bounds.so' \
+    'main-musl-dladdr-symbol-bounds' \
+    'main-crabc-dladdr-symbol-bounds-malformed' \
+    'main-crabc-dladdr-symbol-bounds-absent' \
+    'PT_TLS' \
+    'env -i PATH=/usr/bin:/bin'
 require_runner_contract "$BOUNDED_DLOPEN_RUNNER" \
     'crabc_bounded_runtime_dlopen' \
     '__crabc_x86_64_fixed_graph_dlfcn_v1' \
@@ -165,6 +177,10 @@ run_fixture \
     'public fixed-graph dlfcn bridge' \
     'x86 public C fixed-graph dlfcn ABI/diagnostics/introspection: PASS' \
     "$PUBLIC_DLFCN_RUNNER"
+run_fixture \
+    'fixed-graph dladdr finite-symbol bounds' \
+    'x86 fixed-graph dladdr finite-symbol bounds: PASS' \
+    "$DLADDR_SYMBOL_BOUNDS_RUNNER"
 run_fixture \
     'bounded runtime dlopen graph' \
     'x86 bounded runtime dlopen search/mapping/concurrency: PASS' \
