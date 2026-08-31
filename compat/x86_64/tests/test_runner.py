@@ -1368,7 +1368,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             "timerfd-header-abi|signalfd-header-abi",
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset",
-            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
             "stdio-permanent-byte-io-header-abi",
@@ -1498,6 +1498,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("libc-termios-control", source)
         self.assertIn("ctermid-header-abi", source)
         self.assertIn("libc-ctermid", source)
+        self.assertIn("tcsetpgrp-header-abi", source)
+        self.assertIn("libc-tcsetpgrp", source)
         self.assertIn("getpass-header-abi", source)
         self.assertIn("libc-getpass", source)
         self.assertIn("mkfifo-header-abi", source)
@@ -2929,6 +2931,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-tcgetpgrp)\n        [ "$#" -eq 0 ] || fail "libc-tcgetpgrp takes no arguments"',
+            source,
+        )
+        self.assertIn('run_tcsetpgrp_header_abi()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_tcsetpgrp_header_abi.sh', source
+        )
+        self.assertIn('run_libc_tcsetpgrp_probe()', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_tcsetpgrp.sh', source
+        )
+        self.assertIn(
+            '    libc-tcsetpgrp)\n        [ "$#" -eq 0 ] || fail "libc-tcsetpgrp takes no arguments"',
             source,
         )
         self.assertIn('run_getpass_header_abi()', source)
@@ -9108,6 +9122,141 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, header_cxx)
         self.assertIn("tcgetpgrp-header-abi", runner)
         self.assertIn("libc-tcgetpgrp", runner)
+
+    def test_libc_static_c_abi_tcsetpgrp_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tcsetpgrp.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_tcsetpgrp_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_tcsetpgrp_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_tcsetpgrp.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_tcsetpgrp_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "tcsetpgrp_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "tcsetpgrp_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "tcsetpgrp.rs"]', static_root)
+        self.assertIn("tcsetpgrp", static_export_names)
+        self.assertEqual(
+            set(
+                re.findall(
+                    r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+                    source,
+                )
+            ),
+            {"tcsetpgrp"},
+        )
+        for required in (
+            "pinned musl 1.2.6 release commit",
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "src/unistd/tcsetpgrp.c::tcsetpgrp",
+            "TIOCSPGRP: i64 = 0x5410",
+            "let mut pgrp_int = pgrp;",
+            "raw_syscall::SYS_IOCTL",
+            "c_status(result)",
+            "neither creates a session",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "termios_control::",
+            "raw_syscall::SYS_SETSID",
+            "raw_syscall::SYS_FORK",
+            "raw_syscall::SYS_SETPGID",
+            "raw_syscall::SYS_OPEN",
+            "raw_syscall::SYS_OPENAT",
+            "TIOCSCTTY",
+            "TIOCGPGRP",
+            "TIOCGSID",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, source)
+        for required in (
+            "FIXTURE_EBADF",
+            "FIXTURE_ENOTTY",
+            "FIXTURE_TIOCSCTTY",
+            "FIXTURE_TIOCGPGRP",
+            "FIXTURE_TIOCSPGRP",
+            "FIXTURE_TIOCSPTLCK",
+            "FIXTURE_TIOCGPTPEER",
+            "__builtin_types_compatible_p(pid_t, int)",
+            "open_pty_pair",
+            "child_assigns_foreground_group",
+            "check_foreground_group_assignment",
+            "raw_syscall2(SYS_setpgid, member, member)",
+            "tcsetpgrp(slave, (pid_t)member) != 0 || errno != 313",
+            "foreground_group != (int)member",
+            "tcsetpgrp(-1, 0) != -1 || errno != FIXTURE_EBADF",
+            "tcsetpgrp(null_fd, 0) != -1 || errno != FIXTURE_ENOTTY",
+        ):
+            self.assertIn(required, probe)
+        for forbidden in (
+            "tcgetpgrp(",
+            "tcgetsid(",
+            "tcgetattr(",
+            "tcsetattr(",
+            "ttyname(",
+            "getpass(",
+        ):
+            self.assertNotIn(forbidden, probe)
+        for required in (
+            "ARCH_SET_FS",
+            "mov %rsi, %fs:0",
+            "crabc_x86_64_tcsetpgrp_probe",
+        ):
+            self.assertIn(required, start)
+        for required in (
+            "run_musl_oracle.sh",
+            "run_tcsetpgrp_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "for symbol in __errno_location tcsetpgrp",
+            "--disassemble=tcsetpgrp",
+            "project-header tcsetpgrp fixture contract drifted",
+            "fixture did not use the project",
+            "fixed TIOCSPGRP request",
+            "terminal-control request",
+            "candidate selects an excluded session or terminal helper",
+            'timeout "$EXECUTION_TIMEOUT"',
+        ):
+            self.assertIn(required, artifact_runner)
+        for required in (
+            "tcsetpgrp_header_abi_probe.c",
+            "tcsetpgrp_header_abi_probe.cpp",
+            "Pinned musl 1.2.6",
+            "unconditional <unistd.h> declaration",
+            "retained a mangled tcsetpgrp reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in ("tcsetpgrp declaration", "tcsetpgrp_function = tcsetpgrp"):
+            self.assertIn(required, header_c)
+            self.assertIn(required, header_cxx)
+        self.assertIn("tcsetpgrp-header-abi", runner)
+        self.assertIn("libc-tcsetpgrp", runner)
 
     def test_libc_static_c_abi_getpass_artifact_stays_narrow(self) -> None:
         static_root = (

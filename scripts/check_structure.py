@@ -236,6 +236,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/termios_control.rs"),
     Path("libc/src/c_abi/x86_64/isatty.rs"),
     Path("libc/src/c_abi/x86_64/tcgetpgrp.rs"),
+    Path("libc/src/c_abi/x86_64/tcsetpgrp.rs"),
     Path("libc/src/c_abi/x86_64/getpass.rs"),
     Path("libc/src/c_abi/x86_64/thread_pointer.rs"),
     Path("libc/src/c_abi/x86_64/uts_identity.rs"),
@@ -3741,6 +3742,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "termios_control.rs"]',
         '#[path = "isatty.rs"]',
         '#[path = "tcgetpgrp.rs"]',
+        '#[path = "tcsetpgrp.rs"]',
         '#[path = "getpass.rs"]',
         '#[path = "process_context.rs"]',
         '#[path = "login_name.rs"]',
@@ -6130,6 +6132,170 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         if required not in x86_runner:
             errors.append(
                 "scripts/dev-x86_64.sh: selected static tcgetpgrp dispatcher is "
+                f"missing {required!r}"
+            )
+
+    tcsetpgrp_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tcsetpgrp.rs"
+    )
+    tcsetpgrp_text = tcsetpgrp_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/unistd/tcsetpgrp.c::tcsetpgrp",
+        "TIOCSPGRP: i64 = 0x5410",
+        "let mut pgrp_int = pgrp;",
+        "raw_syscall::SYS_IOCTL",
+        "c_status(result)",
+        "neither creates a session",
+    ):
+        if required not in tcsetpgrp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tcsetpgrp.rs: selected static foreground "
+                f"group assignment boundary is missing {required!r}"
+            )
+    tcsetpgrp_exports = set(
+        re.findall(
+            r'(?m)^pub\s+unsafe\s+extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            tcsetpgrp_text,
+        )
+    )
+    if tcsetpgrp_exports != {"tcsetpgrp"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/tcsetpgrp.rs: selected static foreground "
+            "group assignment artifact must export only tcsetpgrp"
+        )
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_SETSID",
+        "raw_syscall::SYS_FORK",
+        "raw_syscall::SYS_SETPGID",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TIOCSCTTY",
+        "TIOCGPGRP",
+        "TIOCGSID",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        if forbidden in tcsetpgrp_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/tcsetpgrp.rs: selected static foreground "
+                f"group assignment boundary must not select {forbidden!r}"
+            )
+
+    tcsetpgrp_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_tcsetpgrp.sh"
+    ).read_text(errors="replace")
+    tcsetpgrp_header_runner = (
+        ROOT / "compat" / "x86_64" / "run_tcsetpgrp_header_abi.sh"
+    ).read_text(errors="replace")
+    tcsetpgrp_header_c = (
+        ROOT / "compat" / "x86_64" / "tcsetpgrp_header_abi_probe.c"
+    ).read_text(errors="replace")
+    tcsetpgrp_header_cxx = (
+        ROOT / "compat" / "x86_64" / "tcsetpgrp_header_abi_probe.cpp"
+    ).read_text(errors="replace")
+    tcsetpgrp_probe = (
+        ROOT / "compat" / "x86_64" / "libc_tcsetpgrp_probe.c"
+    ).read_text(errors="replace")
+    tcsetpgrp_start = (
+        ROOT / "compat" / "x86_64" / "libc_tcsetpgrp_start.S"
+    ).read_text(errors="replace")
+    for required in (
+        "run_musl_oracle.sh",
+        "run_tcsetpgrp_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location tcsetpgrp",
+        "--disassemble=tcsetpgrp",
+        "project-header tcsetpgrp fixture contract drifted",
+        "fixture did not use the project",
+        "fixed TIOCSPGRP request",
+        "terminal-control request",
+        "candidate selects an excluded session or terminal helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "candidate retains a dynamic TLS model",
+    ):
+        if required not in tcsetpgrp_runner:
+            errors.append(
+                "compat/x86_64/run_libc_tcsetpgrp.sh: selected static foreground "
+                f"group assignment evidence is missing {required!r}"
+            )
+    for required in (
+        "tcsetpgrp_header_abi_probe.c",
+        "tcsetpgrp_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "unconditional <unistd.h> declaration",
+        "retained a mangled tcsetpgrp reference",
+    ):
+        if required not in tcsetpgrp_header_runner:
+            errors.append(
+                "compat/x86_64/run_tcsetpgrp_header_abi.sh: selected foreground "
+                f"group assignment declaration evidence is missing {required!r}"
+            )
+    for required in ("tcsetpgrp declaration", "tcsetpgrp_function = tcsetpgrp"):
+        if required not in tcsetpgrp_header_c or required not in tcsetpgrp_header_cxx:
+            errors.append(
+                "compat/x86_64/tcsetpgrp_header_abi_probe: selected foreground "
+                f"group assignment declaration evidence is missing {required!r}"
+            )
+    for required in (
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "FIXTURE_TIOCSCTTY",
+        "FIXTURE_TIOCGPGRP",
+        "FIXTURE_TIOCSPGRP",
+        "FIXTURE_TIOCSPTLCK",
+        "FIXTURE_TIOCGPTPEER",
+        "__builtin_types_compatible_p(pid_t, int)",
+        "open_pty_pair",
+        "child_assigns_foreground_group",
+        "check_foreground_group_assignment",
+        "raw_syscall2(SYS_setpgid, member, member)",
+        "tcsetpgrp(slave, (pid_t)member) != 0 || errno != 313",
+        "foreground_group != (int)member",
+        "tcsetpgrp(-1, 0) != -1 || errno != FIXTURE_EBADF",
+        "tcsetpgrp(null_fd, 0) != -1 || errno != FIXTURE_ENOTTY",
+    ):
+        if required not in tcsetpgrp_probe:
+            errors.append(
+                "compat/x86_64/libc_tcsetpgrp_probe.c: selected foreground "
+                f"group assignment regression is missing {required!r}"
+            )
+    for forbidden in (
+        "tcgetpgrp(",
+        "tcgetsid(",
+        "tcgetattr(",
+        "tcsetattr(",
+        "ttyname(",
+        "getpass(",
+    ):
+        if forbidden in tcsetpgrp_probe:
+            errors.append(
+                "compat/x86_64/libc_tcsetpgrp_probe.c: selected foreground "
+                f"group assignment fixture must not select {forbidden!r}"
+            )
+    for required in (
+        "ARCH_SET_FS",
+        "mov %rsi, %fs:0",
+        "crabc_x86_64_tcsetpgrp_probe",
+    ):
+        if required not in tcsetpgrp_start:
+            errors.append(
+                "compat/x86_64/libc_tcsetpgrp_start.S: selected foreground "
+                f"group assignment TLS fixture is missing {required!r}"
+            )
+    for required in (
+        "tcsetpgrp-header-abi)",
+        "run_tcsetpgrp_header_abi",
+        "libc-tcsetpgrp)",
+        "run_libc_tcsetpgrp_probe",
+    ):
+        if required not in x86_runner:
+            errors.append(
+                "scripts/dev-x86_64.sh: selected static tcsetpgrp dispatcher is "
                 f"missing {required!r}"
             )
 
@@ -9300,6 +9466,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         gethostid_text,
         isatty_text,
         tcgetpgrp_text,
+        tcsetpgrp_text,
         process_context_text,
         login_name_text,
         child_reaping_text,
@@ -9597,6 +9764,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "gethostid",
         "isatty",
         "tcgetpgrp",
+        "tcsetpgrp",
         "getpid",
         "getppid",
         "getuid",
@@ -9829,7 +9997,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -9877,6 +10045,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("ctermid.rs", ctermid_text),
         ("isatty.rs", isatty_text),
         ("tcgetpgrp.rs", tcgetpgrp_text),
+        ("tcsetpgrp.rs", tcsetpgrp_text),
         ("mktemp.rs", mktemp_text),
         ("process_context.rs", process_context_text),
         ("child_reaping.rs", child_reaping_text),

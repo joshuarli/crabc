@@ -1896,6 +1896,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh libc-ctermid", scope = "The completed historical static pathname-spelling artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close terminal policy, filesystem behavior, temporary-file families, or an archive family." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-isatty", scope = "The completed selected-private static descriptor-observation artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close terminal, descriptor, header, or archive families." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-tcgetpgrp", scope = "The completed selected-private static foreground-group-observation artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close terminal, session, process-control, header, or archive families." },
+  { state = "required", command = "./scripts/dev-x86_64.sh libc-tcsetpgrp", scope = "The completed selected-private static foreground-group-assignment artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close terminal, session, process-control, header, or archive families." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-getpass", scope = "The completed historical static terminal-input artifact is recorded under libc.posix-runtime as `verified_artifact`; it does not close a terminal, password, session, or archive family." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-process-context", scope = "The completed static artifact is recorded under libc.posix-runtime as `verified_artifact`; aggregate header/layout closure remains required." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-child-reaping", scope = "The completed static artifact is recorded under libc.posix-runtime as `verified_artifact`; aggregate header/layout closure remains required." },
@@ -2517,6 +2518,50 @@ x86_abi_prerequisites = [
 x86_header_prerequisites = ["The focused pinned-musl/project-header-first strict, POSIX, X/Open, GNU, and BSD C11/C++17 gate proves the unconditional `pid_t tcgetpgrp(int)` `unistd.h` declaration, exact C++ C linkage, and project `sys/types.h`/`features.h` provenance. It selects no terminal behavior, static archive linkage, installed-header completion, or public x86 support."]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-tcgetpgrp", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate under a deterministic timeout. The fixture proves child-established foreground-pid success and stale-errno preservation, invalid-fd EBADF, and /dev/null ENOTTY. Its child-only raw fork/setsid/TIOCSCTTY devpts transition supplies a kernel precondition only; the archive neither exports nor selects it as session/process-control policy. The gate audits exact crate-owned exports, initial-TLS errno, no interpreter/DT_NEEDED/unresolved symbol or dynamic-TLS resolver, direct tcgetpgrp ioctl=16/TIOCGPGRP=0x540f code, and absence of TCGETS/TCSETS, TIOCSPGRP, TIOCGSID, or terminal naming/password/PTY/session helpers. It excludes terminal discovery, terminal path/session discovery, termios mutation/control, PTY/session policy, tcsetpgrp, tcgetsid, ttyname, getpass, generic ioctl, dynamic runtime, family completion, promotion, and public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/tcgetpgrp.c supplies the fixed TIOCGPGRP private-int-output behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "ioctl=16 register words, TIOCGPGRP=0x540f private pid output, EBADF/ENOTTY, and child-only devpts foreground-group fixture contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "pid_t/int argument/result ABI and static initial-exec TLS Variant-II fixture contract." }]
+
+[[family.verified_artifact]]
+id = "static-c-tcsetpgrp"
+description = "Private native x86 selected-static-archive `tcsetpgrp` foreground-group-assignment boundary inside still-planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive resolves exactly `int tcsetpgrp(int, pid_t)` into a freestanding C fixture after equivalent pinned-musl execution. Pinned musl `src/unistd/tcsetpgrp.c` maps fixed Linux `ioctl=16`/`TIOCSPGRP=0x5410` and a private four-byte int copy of the caller-supplied group: a successful ioctl assigns that in-session foreground group and preserves errno, while raw `EBADF`/`ENOTTY` errors return `-1` and publish the raw errno. It reuses the existing exact raw ioctl/errno boundary without creating a generic ioctl owner. Fixture-local raw devpts setup plus one child-only fork/setsid/TIOCSCTTY/setpgid transition merely establishes a distinct in-session group and the kernel precondition; neither the archive nor its C ABI exports session/process-control policy. The leaf neither creates a session nor chooses a group, changes process membership, establishes a controlling terminal, opens or names a terminal, or selects terminal discovery, termios mutation/control, PTY/session policy, `tcgetpgrp`, `tcgetsid`, `ttyname`, `getpass`, generic ioctl, generic filesystem completion, temporary-file creation family, dynamic runtime, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/tcsetpgrp.rs",
+  "include/errno.h",
+  "include/fcntl.h",
+  "include/stdint.h",
+  "include/unistd.h",
+  "include/features.h",
+  "include/sys/types.h",
+  "include/sys/syscall.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/tcsetpgrp_header_abi_probe.c",
+  "compat/x86_64/tcsetpgrp_header_abi_probe.cpp",
+  "compat/x86_64/run_tcsetpgrp_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_tcsetpgrp_probe.c",
+  "compat/x86_64/libc_tcsetpgrp_start.S",
+  "compat/x86_64/run_libc_tcsetpgrp.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `int tcsetpgrp(int, pid_t)` ABI receives signed four-byte descriptor and pid_t words in rdi/rsi and returns signed four-byte int in eax. Linux x86-64 ioctl=16 receives fd/request/private-pgrp-pointer in rdi/rsi/rdx; this leaf admits only TIOCSPGRP=0x5410 and a four-byte align-4 private int copy",
+  "Pinned musl 1.2.6 `src/unistd/tcsetpgrp.c` performs `int pgrp_int = pgrp; return ioctl(fd, TIOCSPGRP, &pgrp_int);`. The selected implementation forwards the same private copy through the shared raw-status translator: ioctl success returns zero without changing errno, and raw -EBADF/-ENOTTY become -1 plus initial-TLS errno",
+  "The final static candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no TLSGD/TLSLD/TLSDESC/GOTTPOFF/DTPMOD/DTPOFF model form or __tls_get_addr; fixture-local startup writes one Variant-II thread-pointer self word at %fs:0 without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The focused pinned-musl/project-header-first strict, POSIX, X/Open, GNU, and BSD C11/C++17 gate proves the unconditional `int tcsetpgrp(int, pid_t)` `unistd.h` declaration, exact C++ C linkage, and project `sys/types.h`/`features.h` provenance. It selects no terminal behavior, static archive linkage, installed-header completion, or public x86 support."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-tcsetpgrp", scope = "Pinned-musl/project C/C++ header compilation plus equivalent pinned-musl C execution and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate under a deterministic timeout. The fixture proves distinct in-session foreground-group assignment and stale-errno preservation, invalid-fd EBADF, and /dev/null ENOTTY. Its child-only raw fork/setsid/TIOCSCTTY/setpgid devpts transition supplies a kernel precondition and a distinct target group only; the archive neither exports nor selects it as session/process-control policy. The gate audits exact crate-owned exports, initial-TLS errno, no interpreter/DT_NEEDED/unresolved symbol or dynamic-TLS resolver, direct tcsetpgrp ioctl=16/TIOCSPGRP=0x5410 code, raw TIOCGPGRP postcondition, and absence of TCGETS/TCSETS, TIOCGSID, or terminal naming/password/PTY/session helpers. It excludes terminal discovery, terminal path/session discovery, termios mutation/control, PTY/session policy, tcgetpgrp, tcgetsid, ttyname, getpass, generic ioctl, dynamic runtime, family completion, promotion, and public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping: src/unistd/tcsetpgrp.c supplies the fixed TIOCSPGRP private-int-copy behavior oracle." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "ioctl=16 register words, TIOCSPGRP=0x5410 private pid input, EBADF/ENOTTY, and child-only devpts foreground-group fixture contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "int/pid_t argument/result ABI and static initial-exec TLS Variant-II fixture contract." }]
 
 [[family.verified_artifact]]
 id = "static-c-getpass"

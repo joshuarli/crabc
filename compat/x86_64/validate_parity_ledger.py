@@ -13181,6 +13181,283 @@ def require_tcgetpgrp_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
 
+def require_tcsetpgrp_artifact(family: Mapping[str, Any]) -> None:
+    """Keep one named foreground-group assignment below terminal/session promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-tcsetpgrp"]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-tcsetpgrp artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-tcsetpgrp must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-tcsetpgrp must not promote terminal/session control",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "`tcsetpgrp` foreground-group-assignment boundary",
+        "still-planned `libc.posix-runtime`",
+        "exactly `int tcsetpgrp(int, pid_t)`",
+        "src/unistd/tcsetpgrp.c",
+        "`ioctl=16`/`TIOCSPGRP=0x5410`",
+        "private four-byte int",
+        "preserves errno",
+        "`EBADF`/`ENOTTY`",
+        "fork/setsid/TIOCSCTTY/setpgid",
+        "session/process-control policy",
+        "terminal discovery",
+        "termios mutation/control",
+        "PTY/session policy",
+        "`tcgetpgrp`",
+        "`tcgetsid`",
+        "`ttyname`",
+        "`getpass`",
+        "generic ioctl",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-tcsetpgrp description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-tcsetpgrp.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/syscall.rs",
+        "libc/src/c_abi/x86_64/tcsetpgrp.rs",
+        "include/errno.h",
+        "include/fcntl.h",
+        "include/stdint.h",
+        "include/unistd.h",
+        "include/sys/syscall.h",
+        "compat/x86_64/tcsetpgrp_header_abi_probe.c",
+        "compat/x86_64/tcsetpgrp_header_abi_probe.cpp",
+        "compat/x86_64/run_tcsetpgrp_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_tcsetpgrp_probe.c",
+        "compat/x86_64/libc_tcsetpgrp_start.S",
+        "compat/x86_64/run_libc_tcsetpgrp.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-tcsetpgrp source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-tcsetpgrp.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64 `int tcsetpgrp(int, pid_t)`" in item
+            and "ioctl=16" in item
+            and "TIOCSPGRP=0x5410" in item
+            and "four-byte align-4" in item
+            for item in prerequisites
+        ),
+        "static-c-tcsetpgrp must retain its SysV/ioctl/pid contract",
+    )
+    require(
+        any(
+            "src/unistd/tcsetpgrp.c" in item
+            and "ioctl(fd, TIOCSPGRP, &pgrp_int)" in item
+            and "-EBADF/-ENOTTY" in item
+            for item in prerequisites
+        ),
+        "static-c-tcsetpgrp must retain its exact pinned-musl branch",
+    )
+    require(
+        any("PT_TLS errno" in item and "__tls_get_addr" in item for item in prerequisites),
+        "static-c-tcsetpgrp must retain its static errno TLS boundary",
+    )
+    header_prerequisites = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-tcsetpgrp.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "strict, POSIX, X/Open, GNU, and BSD" in item
+            and "unconditional `int tcsetpgrp(int, pid_t)`" in item
+            and "C++ C linkage" in item
+            for item in header_prerequisites
+        ),
+        "static-c-tcsetpgrp must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-tcsetpgrp"},
+        "static-c-tcsetpgrp must use the closed libc-tcsetpgrp command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "distinct in-session foreground-group assignment",
+                "stale-errno preservation",
+                "EBADF",
+                "ENOTTY",
+                "fork/setsid/TIOCSCTTY/setpgid",
+                "ioctl=16/TIOCSPGRP=0x5410",
+                "TIOCGPGRP",
+                "TCGETS/TCSETS",
+                "TIOCGSID",
+                "terminal discovery",
+                "termios mutation/control",
+                "PTY/session policy",
+                "tcgetpgrp",
+                "tcgetsid",
+                "ttyname",
+                "getpass",
+                "public x86 support",
+            )
+        ),
+        "static-c-tcsetpgrp evidence must retain its observable bounded contract",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require("tcsetpgrp" in exports, "static C ABI export contract omits tcsetpgrp")
+
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "tcsetpgrp.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "src/unistd/tcsetpgrp.c::tcsetpgrp",
+        "TIOCSPGRP: i64 = 0x5410",
+        "let mut pgrp_int = pgrp;",
+        "raw_syscall::SYS_IOCTL",
+        "c_status(result)",
+        'pub unsafe extern "C" fn tcsetpgrp',
+        "neither creates a session",
+    ):
+        require(snippet in source, f"tcsetpgrp implementation omits {snippet}")
+    exported = set(re.findall(r'pub unsafe extern "C" fn ([A-Za-z0-9_]+)', source))
+    require(
+        exported == {"tcsetpgrp"},
+        "tcsetpgrp implementation must export only tcsetpgrp",
+    )
+    for forbidden in (
+        "termios_control::",
+        "raw_syscall::SYS_SETSID",
+        "raw_syscall::SYS_FORK",
+        "raw_syscall::SYS_SETPGID",
+        "raw_syscall::SYS_OPEN",
+        "raw_syscall::SYS_OPENAT",
+        "TIOCSCTTY",
+        "TIOCGPGRP",
+        "TIOCGSID",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(
+            forbidden not in source,
+            f"tcsetpgrp implementation selects {forbidden}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_tcsetpgrp.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_tcsetpgrp_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "for symbol in __errno_location tcsetpgrp",
+        "--disassemble=tcsetpgrp",
+        "project-header tcsetpgrp fixture contract drifted",
+        "fixture did not use the project",
+        "fixed TIOCSPGRP request",
+        "terminal-control request",
+        "candidate selects an excluded session or terminal helper",
+        'timeout "$EXECUTION_TIMEOUT"',
+        "__tls_get_addr",
+    ):
+        require(snippet in runner, f"tcsetpgrp runner omits {snippet}")
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_tcsetpgrp_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "FIXTURE_EBADF",
+        "FIXTURE_ENOTTY",
+        "FIXTURE_TIOCSCTTY",
+        "FIXTURE_TIOCGPGRP",
+        "FIXTURE_TIOCSPGRP",
+        "FIXTURE_TIOCSPTLCK",
+        "FIXTURE_TIOCGPTPEER",
+        "__builtin_types_compatible_p(pid_t, int)",
+        "open_pty_pair",
+        "child_assigns_foreground_group",
+        "check_foreground_group_assignment",
+        "raw_syscall2(SYS_setpgid, member, member)",
+        "tcsetpgrp(slave, (pid_t)member) != 0 || errno != 313",
+        "foreground_group != (int)member",
+        "tcsetpgrp(-1, 0) != -1 || errno != FIXTURE_EBADF",
+        "tcsetpgrp(null_fd, 0) != -1 || errno != FIXTURE_ENOTTY",
+    ):
+        require(snippet in probe, f"tcsetpgrp probe omits {snippet}")
+    for forbidden in (
+        "tcgetpgrp(",
+        "tcgetsid(",
+        "tcgetattr(",
+        "tcsetattr(",
+        "ttyname(",
+        "getpass(",
+    ):
+        require(forbidden not in probe, f"tcsetpgrp fixture selects {forbidden}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "tcsetpgrp_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "tcsetpgrp_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("tcsetpgrp declaration", "tcsetpgrp_function = tcsetpgrp"):
+        require(snippet in header_c, f"tcsetpgrp C header probe omits {snippet}")
+        require(snippet in header_cxx, f"tcsetpgrp C++ header probe omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "tcsetpgrp-header-abi)",
+        "libc-tcsetpgrp)",
+        "run_tcsetpgrp_header_abi()",
+        "run_libc_tcsetpgrp_probe()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
 def require_mktemp_artifact(family: Mapping[str, Any]) -> None:
     """Keep historical pathname selection below filesystem capability promotion."""
     artifacts = require_verified_artifacts(
@@ -34293,6 +34570,7 @@ def validate_ledger(
     require_ctermid_artifact(by_id["libc.posix-runtime"])
     require_isatty_artifact(by_id["libc.posix-runtime"])
     require_tcgetpgrp_artifact(by_id["libc.posix-runtime"])
+    require_tcsetpgrp_artifact(by_id["libc.posix-runtime"])
     require_getpass_artifact(by_id["libc.posix-runtime"])
     require_mktemp_artifact(by_id["libc.posix-runtime"])
     require_child_reaping_artifact(by_id["libc.posix-runtime"])

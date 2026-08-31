@@ -419,6 +419,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-isatty
 ./scripts/dev-x86_64.sh tcgetpgrp-header-abi
 ./scripts/dev-x86_64.sh libc-tcgetpgrp
+./scripts/dev-x86_64.sh tcsetpgrp-header-abi
+./scripts/dev-x86_64.sh libc-tcsetpgrp
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
@@ -3211,6 +3213,22 @@ mutation/control, PTY/session policy, `tcsetpgrp`, `tcgetsid`, `ttyname`,
 `getpass`, generic ioctl, dynamic runtime, family completion, promotion, and
 public x86 support.
 
+`libc-tcsetpgrp` is a separately recorded static `static-c-tcsetpgrp`
+`verified_artifact` gate over that archive, not a terminal/session capability.
+Its strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
+project-header C body first execute through pinned musl and then through a
+`-nostdlib -static` candidate. It selects only `int tcsetpgrp(int, pid_t)`:
+pinned musl's direct `ioctl=16`/`TIOCSPGRP=0x5410` private `int` copy. The
+fixture proves assignment of a distinct in-session child group with
+stale-errno preservation, invalid-fd `EBADF`, and `/dev/null` `ENOTTY`; its
+child-only raw devpts `fork`/`setsid`/`TIOCSCTTY`/`setpgid` transition and raw
+`TIOCGPGRP` postcondition are kernel-precondition plumbing, not archive
+session/process-control APIs. It neither creates a session nor chooses a
+group, changes process membership, or establishes a controlling terminal. It
+excludes terminal discovery, termios mutation/control, PTY/session policy,
+`tcgetpgrp`, `tcgetsid`, `ttyname`, `getpass`, generic ioctl, dynamic runtime,
+family completion, promotion, and public x86 support.
+
 `libc-getpass` is a separately recorded static `verified_artifact` gate over
 that archive, not a terminal or password capability. Its GNU/BSD C/C++ header
 gate and one project-header C body first execute through pinned musl and then
@@ -5141,6 +5159,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-gethostid`,
 `libc-isatty`,
 `libc-tcgetpgrp`,
+`libc-tcsetpgrp`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and

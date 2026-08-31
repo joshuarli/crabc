@@ -158,6 +158,21 @@ session/process-control policy. The leaf excludes terminal discovery, termios
 mutation/control, PTY/session policy, `tcsetpgrp`, `tcgetsid`, `ttyname`,
 `getpass`, generic ioctl, family completion, promotion, and public x86 support.
 
+`./scripts/dev-x86_64.sh libc-tcsetpgrp` is a separate private
+`static-c-tcsetpgrp` artifact inside still-planned `libc.posix-runtime`. Its
+strict/POSIX/X/Open/GNU/BSD C/C++ declaration gate and pinned-musl/static C
+fixture select only `int tcsetpgrp(int, pid_t)` foreground-group assignment:
+musl's fixed `ioctl=16`/`TIOCSPGRP=0x5410` private `int` copy, successful
+assignment of one distinct in-session group with preserved errno, invalid-fd
+`EBADF`, and `/dev/null` `ENOTTY`. A child-only raw devpts
+`fork`/`setsid`/`TIOCSCTTY`/`setpgid` transition supplies the controlling
+terminal and target group only; raw `TIOCGPGRP` is a fixture postcondition,
+not an archive observation API. The leaf neither creates a session nor chooses
+a group, changes process membership, or establishes a controlling terminal.
+It excludes terminal discovery, termios mutation/control, PTY/session policy,
+`tcgetpgrp`, `tcgetsid`, `ttyname`, `getpass`, generic ioctl, family
+completion, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

@@ -33,9 +33,10 @@
 //! `pthread_equal` and `thrd_current`/`thrd_equal` identity aliases,
 //! one single-threaded fixed-capacity `pthread_atfork`/`fork` transition that
 //! can compose the existing bounded ordinary-exit callback block in its child,
-//! termios-control, two direct terminal-descriptor observations, one historical
-//! `/dev/tty` pathname-spelling leaf, one historical `/dev/tty` password-input
-//! compatibility leaf, selected process-context, bounded process-environment,
+//! termios-control, two direct terminal-descriptor observations, one named
+//! foreground-group assignment, one historical `/dev/tty` pathname-spelling
+//! leaf, one historical `/dev/tty` password-input compatibility leaf, selected
+//! process-context, bounded process-environment,
 //! environment-backed login-name observation, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, one historical `mktemp`
 //! pathname-selection leaf, fixed Linux `lchmod`
@@ -309,6 +310,8 @@ mod gethostid;
 mod isatty;
 #[path = "tcgetpgrp.rs"]
 mod tcgetpgrp;
+#[path = "tcsetpgrp.rs"]
+mod tcsetpgrp;
 #[path = "getpass.rs"]
 mod getpass;
 #[path = "process_context.rs"]

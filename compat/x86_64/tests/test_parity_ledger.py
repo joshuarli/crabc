@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 173)
+        self.assertEqual(report["verified_artifact_count"], 174)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6304,6 +6304,58 @@ class X86ParityLedgerTests(unittest.TestCase):
             "tcgetsid",
         ):
             self.assertIn(phrase, tcgetpgrp_scope)
+        tcsetpgrp = artifacts_by_id["static-c-tcsetpgrp"]
+        assert isinstance(tcsetpgrp, dict)
+        self.assertNotIn("capabilities", tcsetpgrp)
+        for owner in (
+            "libc/src/c_abi/x86_64/tcsetpgrp.rs",
+            "compat/x86_64/tcsetpgrp_header_abi_probe.c",
+            "compat/x86_64/tcsetpgrp_header_abi_probe.cpp",
+            "compat/x86_64/run_tcsetpgrp_header_abi.sh",
+            "compat/x86_64/libc_tcsetpgrp_probe.c",
+            "compat/x86_64/libc_tcsetpgrp_start.S",
+            "compat/x86_64/run_libc_tcsetpgrp.sh",
+            "compat/x86_64/validate_parity_ledger.py",
+            "scripts/check_structure.py",
+        ):
+            self.assertIn(owner, tcsetpgrp["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in tcsetpgrp["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-tcsetpgrp"},
+        )
+        for phrase in (
+            "`tcsetpgrp` foreground-group-assignment boundary",
+            "`ioctl=16`/`TIOCSPGRP=0x5410`",
+            "private four-byte int",
+            "fork/setsid/TIOCSCTTY/setpgid",
+            "session/process-control policy",
+            "terminal discovery",
+            "termios mutation/control",
+            "PTY/session policy",
+            "`tcgetpgrp`",
+            "`tcgetsid`",
+            "`ttyname`",
+            "`getpass`",
+            "family completion",
+            "promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, tcsetpgrp["description"])
+        tcsetpgrp_scope = tcsetpgrp["native_evidence"][0]["scope"]
+        for phrase in (
+            "distinct in-session foreground-group assignment",
+            "stale-errno preservation",
+            "EBADF",
+            "ENOTTY",
+            "fork/setsid/TIOCSCTTY/setpgid",
+            "ioctl=16/TIOCSPGRP=0x5410",
+            "TIOCGPGRP",
+            "TCGETS/TCSETS",
+            "TIOCGSID",
+            "tcgetpgrp",
+            "tcgetsid",
+        ):
+            self.assertIn(phrase, tcsetpgrp_scope)
         getpass = artifacts_by_id["static-c-getpass"]
         assert isinstance(getpass, dict)
         self.assertNotIn("capabilities", getpass)
@@ -12572,6 +12624,63 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-tcgetpgrp command"
+        ):
+            ledger.validate_ledger(data)
+
+    def test_static_tcsetpgrp_artifact_keeps_its_nonpromoting_contract(
+        self,
+    ) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-tcsetpgrp must not promote"
+        ):
+            ledger.require_tcsetpgrp_artifact(family)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-tcsetpgrp"
+        )
+        artifact["description"] = artifact["description"].replace(
+            "private four-byte int", "generic group storage"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "description omits private four-byte int"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-tcsetpgrp"
+        )
+        artifact["capabilities"] = ["terminal.session-control"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "must not carry capabilities"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-tcsetpgrp"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh libc-termios-control"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed libc-tcsetpgrp command"
         ):
             ledger.validate_ledger(data)
 

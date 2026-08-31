@@ -831,6 +831,7 @@ tcgetpgrp
 tcgetwinsize
 tcsendbreak
 tcsetattr
+tcsetpgrp
 tcsetwinsize
 tdelete
 tdestroy
