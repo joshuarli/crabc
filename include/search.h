@@ -46,7 +46,7 @@ void *tfind(const void *, void *const *, int(*)(const void *, const void *));
 void *tsearch(const void *, void **, int (*)(const void *, const void *));
 void twalk(const void *, void (*)(const void *, VISIT, int));
 
-#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#ifdef _GNU_SOURCE
 struct qelem {
 	struct qelem *q_forw, *q_back;
 	char q_data[1];

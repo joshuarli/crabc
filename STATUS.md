@@ -423,6 +423,18 @@ musl-derived parser through target-local errno/multibyte/string/permanent-stream
 adapters only. It deliberately owns no environment object or mutation API,
 auxv/secure state, loader startup, general locale/stdio, allocator, libc.so,
 CRT family, sysroot, C ABI closure, promotion, or public x86 support.
+
+The same still-planned C ABI family now has a private selected
+`search.tree-intrusive` slice. `./scripts/dev-x86_64.sh
+libc-search-tree-intrusive` compares pinned musl's AVL callbacks with a true
+freestanding x86 archive: strong `tdelete`/`tdestroy`/`tfind`/`tsearch`/`twalk`
+and hidden global `__tsearch_balance`, GNU-only `tdestroy`/`struct qelem`,
+AVL rotations and traversal, duplicate/parent-return deletion semantics,
+optional key destruction, allocation-failure rollback, and private
+mmap/munmap node release. It remains allocation-API-free and does not select
+general containers, `search.hash-table`, libc.so, CRT, loader, sysroot,
+family promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh consumer-native-facade-lto` is the second private
 artifact in that family. It compiles an AArch64-native-facade-shaped no-std
 x86 workload—getpid, `/dev/null`, pipe, eventfd, descriptor flags, read/write,

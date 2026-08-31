@@ -58,7 +58,8 @@
 //! find-first-set, immutable C-locale error strings, C11 immediate-termination,
 //! a bounded private static
 //! startup/ordinary-exit lifecycle, startup-published program-name globals
-//! and option parsing, callback-algorithms, POSIX `nanosleep`
+//! and option parsing, callback-algorithms, and allocator-export-free AVL
+//! callback-tree search, POSIX `nanosleep`
 //! and `clock_nanosleep`, and direct clock-observation artifacts, plus one
 //! bounded System V message-queue/shared-memory artifact, one bounded
 //! unnamed POSIX semaphore artifact, and one bounded event-descriptor
@@ -256,6 +257,8 @@ mod stdio_standard;
 mod stdio_format_scan;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
+#[path = "search_tree_intrusive.rs"]
+mod search_tree_intrusive;
 #[path = "clock_nanosleep.rs"]
 mod clock_nanosleep;
 #[path = "clock_gettime.rs"]

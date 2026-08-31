@@ -1418,6 +1418,14 @@ PROCESS_GLOBALS_GETOPT_SYMBOLS = (
     "program_invocation_short_name",
 )
 
+SEARCH_TREE_INTRUSIVE_SYMBOLS = (
+    "tdelete",
+    "tdestroy",
+    "tfind",
+    "tsearch",
+    "twalk",
+)
+
 MATH_COMPLEX_FOUNDATION_SYMBOLS = (
     "__fpclassify",
     "__fpclassifyf",
@@ -16128,6 +16136,208 @@ def require_process_globals_getopt_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_search_tree_intrusive_slice(family: Mapping[str, Any]) -> None:
+    """Keep the standalone musl callback-tree capability private and exact."""
+    slices = require_verified_slices(
+        family.get("verified_slice"),
+        "family[libc.c-abi-compat].verified_slice",
+        family.get("status", ""),
+        list(family.get("capabilities", [])),
+    )
+    matching = [entry for entry in slices if entry.get("id") == "search.tree-intrusive"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat needs one search.tree-intrusive slice",
+    )
+    require(
+        family.get("status") == "planned",
+        "tree selection must not promote libc.c-abi-compat",
+    )
+    selected = matching[0]
+    require(
+        selected["capabilities"] == ["search.tree-intrusive"],
+        "tree slice must select exactly search.tree-intrusive",
+    )
+    description = selected["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "still-planned `libc.c-abi-compat`",
+        "hidden global archive helper `__tsearch_balance`",
+        "no weak aliases",
+        "malloc/free node ownership",
+        "private mmap/munmap nodes",
+        "`search.hash-table` remains missing",
+        "promotion/public_support=false",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"search.tree-intrusive description omits {phrase}",
+        )
+    for symbol in SEARCH_TREE_INTRUSIVE_SYMBOLS:
+        require(
+            f"`{symbol}`" in description,
+            f"search.tree-intrusive description omits {symbol}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            selected["source_owners"],
+            "search.tree-intrusive.source_owners",
+        )
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/search_tree_intrusive.rs",
+        "include/search.h",
+        "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/search_tree_intrusive_header_abi_probe.c",
+        "compat/x86_64/search_tree_intrusive_header_abi_probe.cpp",
+        "compat/x86_64/search_tree_intrusive_header_hidden_probe.c",
+        "compat/x86_64/libc_search_tree_intrusive_probe.c",
+        "compat/x86_64/libc_search_tree_intrusive_start.S",
+        "compat/x86_64/run_libc_search_tree_intrusive.sh",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(
+            owner in owners,
+            f"search.tree-intrusive source owners omit {owner}",
+        )
+
+    prerequisites = nonempty_strings(
+        selected["x86_abi_prerequisites"],
+        "search.tree-intrusive.x86_abi_prerequisites",
+    )
+    for phrase in (
+        "size 32/alignment 8",
+        "MAXH=96",
+        "root deletion's arbitrary non-null return",
+        "one zero-filled page mapping per node",
+        "No malloc/calloc/realloc/free export",
+        "external synchronization",
+    ):
+        require(
+            any(phrase in item for item in prerequisites),
+            f"search.tree-intrusive ABI prerequisites omit {phrase}",
+        )
+    headers = nonempty_strings(
+        selected["x86_header_prerequisites"],
+        "search.tree-intrusive.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU" in item
+            and "GNU-only" in item
+            and "hidden under BSD" in item
+            for item in headers
+        ),
+        "search.tree-intrusive must pin exact header visibility",
+    )
+
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in (*SEARCH_TREE_INTRUSIVE_SYMBOLS, "__tsearch_balance"):
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for symbol in ("malloc", "calloc", "realloc", "free"):
+        require(
+            symbol not in exports,
+            f"tree slice selects allocator export {symbol}",
+        )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "search_tree_intrusive.rs"]\nmod search_tree_intrusive;'
+        in static_root,
+        "x86 static C ABI must compose the standalone tree leaf",
+    )
+    source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "search_tree_intrusive.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/search/tsearch.c",
+        "MAX_HEIGHT",
+        "size_of::<Node>() == 32",
+        'global_asm!(".hidden __tsearch_balance")',
+        "selected_mmap",
+        "selected_munmap",
+        "wrapping_sub(right_height)",
+        'pub unsafe extern "C" fn tdelete',
+        'pub unsafe extern "C" fn tdestroy',
+    ):
+        require(
+            snippet in source,
+            f"search.tree-intrusive source omits {snippet}",
+        )
+    require(
+        '#[linkage = "weak"]' not in source,
+        "search.tree-intrusive must not add a weak alias",
+    )
+
+    evidence = selected["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-search-tree-intrusive"},
+        "search.tree-intrusive must use its closed native command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "RLIMIT_AS",
+        "mincore",
+        "hidden-global helper ABI",
+        "family promotion",
+        "hash-table capability promotion",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"search.tree-intrusive evidence omits {phrase}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_search_tree_intrusive.sh"
+    ).read_text(encoding="utf-8")
+    fixture = (
+        ROOT / "compat" / "x86_64" / "libc_search_tree_intrusive_probe.c"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "assert_selected_c_abi_surface",
+        "assert_hidden_function",
+        "--wrap=malloc",
+        "assert_gnu_tree_hidden",
+        "-nostdlib -static",
+    ):
+        require(
+            snippet in runner,
+            f"search.tree-intrusive runner omits {snippet}",
+        )
+    require(
+        "run_libc_search_linear_intrusive.sh" not in runner,
+        "search.tree-intrusive must remain independent of removed sibling runners",
+    )
+    for snippet in (
+        "check_balancing_find_and_walk",
+        "check_delete_parent_identity_and_ownership",
+        "check_allocation_failure_rollback_and_repeated_cycles",
+        "raw_prlimit64",
+        "mapping_is_live",
+    ):
+        require(
+            snippet in fixture,
+            f"search.tree-intrusive fixture omits {snippet}",
+        )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    require(
+        "run_libc_search_tree_intrusive.sh" in dispatcher,
+        "search.tree-intrusive dispatcher binding is missing",
+    )
+
+
 def require_descriptor_lifecycle_artifact(family: Mapping[str, Any]) -> None:
     """Keep the composed descriptor proof private and tied to its boundaries."""
     artifacts = require_verified_artifacts(
@@ -21857,6 +22067,7 @@ def validate_ledger(
     require_inet_address_artifact(by_id["libc.resolver"])
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])
+    require_search_tree_intrusive_slice(by_id["libc.c-abi-compat"])
     require_descriptor_lifecycle_artifact(by_id["libc.posix-runtime"])
     require_descriptor_pipeline_artifact(by_id["libc.posix-runtime"])
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])

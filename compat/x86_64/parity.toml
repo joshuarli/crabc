@@ -7030,6 +7030,56 @@ oracle = [
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size/scalar C calling convention plus strong/weak same-address static ELF symbol contract." },
 ]
 
+[[family.verified_slice]]
+id = "search.tree-intrusive"
+description = "Private native x86 selected-static-archive completion of the AArch64 `search.tree-intrusive` capability inside still-planned `libc.c-abi-compat`. This independent musl-compatible AVL leaf supplies strong `tdelete`, `tdestroy`, `tfind`, `tsearch`, and `twalk` plus hidden global archive helper `__tsearch_balance`, with no weak aliases. Caller-owned roots and keys retain duplicate identity, comparator order, deterministic AVL rotations, musl parent-return deletion, predecessor-node release, four-phase traversal, optional key destruction, allocation-failure rollback, and repeated create/destroy ownership. Musl's malloc/free node ownership is represented by private mmap/munmap nodes without any public or hidden C allocator export. This selects only the private capability: `libc.c-abi-compat` remains planned, `search.hash-table` remains missing, promotion/public_support=false is unchanged, and libc.so, CRT, loader, sysroot, general allocation/containers, process/environment state, stdio/locale, and public x86 support remain outside it."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/search_tree_intrusive.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/memory_mapping.rs",
+  "include/search.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/search_tree_intrusive_header_abi_probe.c",
+  "compat/x86_64/search_tree_intrusive_header_abi_probe.cpp",
+  "compat/x86_64/search_tree_intrusive_header_hidden_probe.c",
+  "compat/x86_64/libc_search_tree_intrusive_probe.c",
+  "compat/x86_64/libc_search_tree_intrusive_start.S",
+  "compat/x86_64/run_libc_search_tree_intrusive.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 ABI supplies eight-byte root/node/key/callback pointers, four-byte comparator and VISIT values, and an opaque returned node whose first word is the stored key. Pinned musl's private node is size 32/alignment 8 with key/left/right/height offsets 0/8/16/24, MAXH=96, and hidden global `__tsearch_balance`; `tdelete`, `tdestroy`, `tfind`, `tsearch`, and `twalk` are strong globals with no weak aliases.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/search/tsearch.c`, `tdelete.c`, `tfind.c`, `twalk.c`, `tdestroy.c`, and `tsearch.h` to the x86 AVL leaf. It preserves search-key-first comparison, duplicate node identity, single/double rotation heights, root deletion's arbitrary non-null return, in-order-predecessor key replacement, leaf/preorder/postorder/endorder traversal and GNU optional key callback.",
+  "Musl allocates and frees each 32-byte private node with malloc/free. The x86 leaf instead owns one zero-filled page mapping per node through the already selected mmap/munmap and initial-TLS errno seams. Failed mapping leaves every prior root/link/height unchanged; deletion unmaps exactly the removed node and destruction unmaps every remaining node while preserving caller-owned keys unless the GNU callback releases them. No malloc/calloc/realloc/free export or dependency is selected.",
+  "The leaf owns no global tree, callback registry, synchronization, process/environment mutation, stdio/locale state, or allocator API; callers own roots, keys, comparator stability, callback safety, and external synchronization.",
+]
+x86_header_prerequisites = [
+  "Default, strict, POSIX.1-2008, XOPEN-700, BSD, and GNU project-first/pinned-musl C11/C++17 probes keep `tdelete`, `tfind`, `tsearch`, `twalk`, and VISIT unconditional with exact C linkage and values 0/1/2/3. Negative compilation proves `tdestroy` and `struct qelem` are GNU-only, including hidden under BSD; GNU proves exact `tdestroy` and qelem layout. This is not installed-header closure or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-search-tree-intrusive", scope = "Runs a six-profile pinned-musl/project C/C++ tree header matrix with negative GNU-only visibility, pinned-musl static project-header reference with wrapped malloc/free, and a true `-nostdlib -static` selected-archive candidate. It ratchets strong public and hidden-global helper ABI; proves AVL single/double rotations, ascending-tree height/traversal, comparator order, duplicate/find identity, exact tdelete parent/predecessor semantics, optional key callbacks, null/empty calls, allocation-failure rollback/retry, repeated create/destroy, RLIMIT_AS injection, mincore node unmap, and exact no-allocator export/dependency. The gate also rejects weak public tree bindings, panic machinery, dynamic TLS, unresolved symbols, interpreter/DT_NEEDED, general allocator/process/environment/stdio/locale dependencies, family promotion, hash-table capability promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, header-feature, strong/hidden ELF binding, AVL behavior, callback order, allocation rollback, deletion, and destruction oracle for include/search.h plus src/search/{tsearch,tdelete,tfind,twalk,tdestroy}.c and tsearch.h." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 opaque node/key/root and callback calling convention, four-byte enums/results, strong public functions, hidden global helper, C++ C linkage, and static ET_EXEC closure." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 mmap/munmap/mincore/prlimit64 ABI", role = "Intentional private node-mapping mechanism, deterministic allocation failure, and mapped/unmapped ownership evidence; it does not replace musl as the API oracle." },
+]
+capabilities = ["search.tree-intrusive"]
+
 [[family]]
 id = "ldso.relative-relocation"
 order = 120

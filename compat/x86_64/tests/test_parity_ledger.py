@@ -49,7 +49,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
-        self.assertEqual(report["verified_slice_count"], 33)
+        self.assertEqual(report["verified_slice_count"], 34)
         self.assertEqual(report["verified_artifact_count"], 126)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
@@ -12861,6 +12861,62 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "evidence scope omits environment storage/mutation",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_search_tree_intrusive_slice_is_selected_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        slices = family["verified_slice"]
+        assert isinstance(slices, list)
+        selected = next(
+            entry
+            for entry in slices
+            if isinstance(entry, dict) and entry["id"] == "search.tree-intrusive"
+        )
+        self.assertEqual(selected["capabilities"], ["search.tree-intrusive"])
+        for symbol in ledger.SEARCH_TREE_INTRUSIVE_SYMBOLS:
+            self.assertIn(f"`{symbol}`", selected["description"])
+        for phrase in (
+            "hidden global archive helper `__tsearch_balance`",
+            "private mmap/munmap nodes",
+            "`search.hash-table` remains missing",
+            "promotion/public_support=false",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, selected["description"])
+        owners = selected["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/search_tree_intrusive.rs",
+            "include/search.h",
+            "compat/x86_64/search_tree_intrusive_header_hidden_probe.c",
+            "compat/x86_64/libc_search_tree_intrusive_probe.c",
+            "compat/x86_64/run_libc_search_tree_intrusive.sh",
+            "compat/x86_64/aarch64_parity_inventory.json",
+        ):
+            self.assertIn(owner, owners)
+        evidence = selected["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-search-tree-intrusive",
+        )
+        for phrase in (
+            "RLIMIT_AS",
+            "mincore",
+            "hidden-global helper ABI",
+            "family promotion",
+            "hash-table capability promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        selected["capabilities"] = ["search.hash-table"]
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "tree slice must select exactly search.tree-intrusive",
         ):
             ledger.validate_ledger(data)
 

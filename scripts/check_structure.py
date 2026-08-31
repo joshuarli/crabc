@@ -159,6 +159,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/ioctl.rs"),
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
+    Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
     Path("libc/src/c_abi/x86_64/ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_ctype.rs"),
     Path("libc/src/c_abi/x86_64/locale_multibyte.rs"),
@@ -3708,6 +3709,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "child_reaping.rs"]',
         '#[path = "immediate_termination.rs"]',
         '#[path = "callback_algorithms.rs"]',
+        '#[path = "search_tree_intrusive.rs"]',
         '#[path = "clock_gettime.rs"]',
         '#[path = "clock_nanosleep.rs"]',
         '#[path = "nanosleep.rs"]',
@@ -5726,6 +5728,71 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "artifact must retain qsort_r as the musl same-address assembler alias"
         )
 
+    search_tree_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "search_tree_intrusive.rs"
+    )
+    search_tree_text = search_tree_source.read_text(errors="replace")
+    for required in (
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/search/tsearch.c",
+        "MAX_HEIGHT",
+        "size_of::<Node>() == 32",
+        'global_asm!(".hidden __tsearch_balance")',
+        "selected_mmap",
+        "selected_munmap",
+        "allocation failure rollback",
+        "parent-return deletion",
+    ):
+        if required not in search_tree_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/search_tree_intrusive.rs: selected "
+                f"tree boundary is missing {required!r}"
+            )
+    search_tree_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            search_tree_text,
+        )
+    )
+    if search_tree_exports != {
+        "__tsearch_balance",
+        "tdelete",
+        "tdestroy",
+        "tfind",
+        "tsearch",
+        "twalk",
+    }:
+        errors.append(
+            "libc/src/c_abi/x86_64/search_tree_intrusive.rs: selected static "
+            "tree leaf must export five public functions plus its hidden helper"
+        )
+    if '#[linkage = "weak"]' in search_tree_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/search_tree_intrusive.rs: musl tree "
+            "functions and hidden helper must not be weak"
+        )
+    for forbidden in (
+        "libmimalloc",
+        'extern "C" fn malloc',
+        'extern "C" fn calloc',
+        'extern "C" fn realloc',
+        'extern "C" fn free',
+    ):
+        if forbidden in search_tree_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/search_tree_intrusive.rs: selected "
+                f"tree boundary selects forbidden allocator seam {forbidden!r}"
+            )
+
+    search_header_text = (ROOT / "include" / "search.h").read_text(errors="replace")
+    if "#ifdef _GNU_SOURCE\nstruct qelem" not in search_header_text:
+        errors.append("include/search.h: tdestroy/qelem must retain exact GNU-only visibility")
+    if (
+        "#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)\nstruct qelem"
+        in search_header_text
+    ):
+        errors.append("include/search.h: BSD must not expose musl GNU tdestroy/qelem")
+
     clock_nanosleep_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "clock_nanosleep.rs"
     )
@@ -7377,6 +7444,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         child_reaping_text,
         immediate_termination_text,
         callback_algorithms_text,
+        search_tree_text,
         clock_gettime_text,
         clock_nanosleep_text,
         memory_mapping_text,
@@ -7816,6 +7884,12 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "__qsort_r",
         "qsort",
         "qsort_r",
+        "__tsearch_balance",
+        "tdelete",
+        "tdestroy",
+        "tfind",
+        "tsearch",
+        "twalk",
         "rust_eh_personality",
     }
     if exports != expected_exports:
@@ -7862,6 +7936,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("child_reaping.rs", child_reaping_text),
         ("immediate_termination.rs", immediate_termination_text),
         ("callback_algorithms.rs", callback_algorithms_text),
+        ("search_tree_intrusive.rs", search_tree_text),
         ("clock_gettime.rs", clock_gettime_text),
         ("clock_nanosleep.rs", clock_nanosleep_text),
         ("memory_mapping.rs", memory_mapping_text),

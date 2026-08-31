@@ -55,6 +55,7 @@ __sigsetjmp
 __strtod_l
 __strtof_l
 __strtold_l
+__tsearch_balance
 __xpg_strerror_r
 __xstat
 _environ
@@ -697,7 +698,10 @@ tcgetwinsize
 tcsendbreak
 tcsetattr
 tcsetwinsize
+tdelete
+tdestroy
 telldir
+tfind
 tgamma
 tgammaf
 tgammal
@@ -727,10 +731,12 @@ towupper
 towupper_l
 truncate
 truncl
+tsearch
 tss_create
 tss_delete
 tss_get
 tss_set
+twalk
 umask
 uname
 ungetc
