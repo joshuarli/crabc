@@ -11,7 +11,7 @@
 // geometry), `src/page-map.c:468-511` (range registration and checked pointer
 // lookup), `src/free.c:93-248` (atomic `xthread_id` snapshot, canonical
 // aligned-block recovery, and free pointer dispatch), `src/alloc.c:364-439`
-// (usable-size and realloc pointer consumers), `src/page-map.c:228-365`
+// (usable-size plus realloc's exact old-client copy prefix), `src/page-map.c:228-365`
 // (`mi_page_map_init_once` and `_mi_page_map_init`), and
 // `src/subproc.c:253-255` (the main-subprocess process-lifetime ownership of
 // the global page map).
@@ -130,6 +130,72 @@ pub(crate) struct LiveAllocationPointer {
     has_interior_pointers: bool,
 }
 
+/// One nonlocal-reallocation source derived from a current live allocation.
+///
+/// Pinned `mi_theap_realloc_zero_ex` copies from the exact old client, not
+/// from its canonical free-list block. For an adjusted aligned allocation the
+/// former starts after the latter, so the readable old extent is only the
+/// client-relative usable prefix. This token keeps all three facts from one
+/// PageMap observation together until the caller either releases the old
+/// allocation through the normal pointer-centered path or returns it intact
+/// after replacement allocation failure.
+///
+/// The token deliberately has no `Clone` or `Copy` implementation. Its
+/// `copy_prefix_len` is frozen when it is formed, before replacement
+/// allocation or old-block release, and it cannot be recomputed from a
+/// replacement pointer or a later page lookup. It grants no page,
+/// PageMap, owner, replacement-allocation, or release authority.
+#[must_use = "the old live allocation must remain held through its replacement copy or failure path"]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct LiveAllocationReallocationSource {
+    allocation: LiveAllocationPointer,
+    copy_prefix_len: usize,
+}
+
+impl LiveAllocationReallocationSource {
+    /// Returns the exact old client pointer that starts the readable prefix.
+    ///
+    /// This is the source address for replacement copying. In particular, it
+    /// is not interchangeable with [`Self::canonical_block_for_release`] when
+    /// the source page permits interior allocation pointers.
+    #[inline]
+    pub(crate) const fn copy_client(&self) -> NonNull<u8> { self.allocation.client }
+
+    /// Returns the source free-list block recovered for the old client.
+    ///
+    /// This is retained for the later pointer-centered release operation. It
+    /// is never the start of the replacement copy for an interior client.
+    #[inline]
+    pub(crate) const fn canonical_block_for_release(&self) -> NonNull<u8> {
+        self.allocation.canonical_block
+    }
+
+    /// Returns the complete readable prefix that begins at [`Self::copy_client`].
+    ///
+    /// This is the PageMap observation's client-relative usable extent, not
+    /// the page block size. It excludes aligned-allocation adjustment bytes
+    /// before the client pointer.
+    #[inline]
+    pub(crate) const fn usable_prefix_len(&self) -> usize { self.allocation.usable_size }
+
+    /// Returns the exact prefix length a replacement may copy.
+    ///
+    /// This equals `min(replacement_request, usable_prefix_len())`, captured
+    /// with the old allocation before replacement allocation and old-block
+    /// release. It is therefore safe from both an interior-pointer over-copy
+    /// and accidental reuse of a replacement allocation's extent.
+    #[inline]
+    pub(crate) const fn copy_prefix_len(&self) -> usize { self.copy_prefix_len }
+
+    /// Returns the original one-operation PageMap observation.
+    ///
+    /// Call this only after replacement copying has completed or replacement
+    /// allocation has failed. The returned observation must then follow its
+    /// own existing general-free or failure-preservation contract.
+    #[inline]
+    pub(crate) fn into_live_allocation(self) -> LiveAllocationPointer { self.allocation }
+}
+
 impl LiveAllocationPointer {
     /// Returns the source page selected by the two-level PageMap.
     #[inline]
@@ -153,6 +219,23 @@ impl LiveAllocationPointer {
     /// Returns the source usable extent beginning at the exact client pointer.
     #[inline]
     pub(crate) const fn usable_size(&self) -> usize { self.usable_size }
+
+    /// Consumes this observation into a bounded source for one replacement.
+    ///
+    /// The returned token fixes the exact old client, canonical release block,
+    /// and `min(replacement_request, usable_size)` copy prefix from this one
+    /// observation. This preserves the old allocation's one-operation
+    /// lifetime boundary across a nonlocal replacement: callers cannot copy
+    /// from a canonical aligned block by accident or derive the old extent
+    /// from a later replacement allocation.
+    #[inline]
+    pub(crate) fn into_reallocation_copy_source(
+        self,
+        replacement_request: usize,
+    ) -> LiveAllocationReallocationSource {
+        let copy_prefix_len = core::cmp::min(replacement_request, self.usable_size);
+        LiveAllocationReallocationSource { allocation: self, copy_prefix_len }
+    }
 
     /// Returns the raw source `mi_page_t::xthread_id` atomic snapshot.
     ///
@@ -1300,6 +1383,14 @@ mod tests {
             )
         }
         .expect("the live pointer fixture page is source-valid");
+        // A fresh page begins with zero committed block capacity. Model the
+        // source page-extension step before handing out its first client:
+        // remote collection bounds its detached list by `capacity`, so a
+        // still-counted client on a zero-capacity page is not a valid source
+        // state and would correctly reject its one published block.
+        // SAFETY: this fixture still exclusively owns every ordinary page
+        // field before it exposes the current client to its PageMap lookup.
+        assert!(unsafe { page.as_mut() }.set_capacity_reserved(RESERVED, RESERVED));
         // The fixture hands out exactly its first block, so its still-counted
         // `used` value supplies the source PageMap lifetime proof through the
         // later remote publication.
@@ -1327,6 +1418,66 @@ mod tests {
             core::ptr::drop_in_place(page.as_ptr());
             dealloc(base.as_ptr(), layout);
         }
+    }
+
+    #[test]
+    fn live_reallocation_copy_source_keeps_an_interior_client_prefix_bounded() {
+        with_live_pointer_remote_fixture(|lease, mut page, block| {
+            const INTERIOR_ADJUSTMENT: usize = 5;
+            const BLOCK_SIZE: usize = 48;
+            const SHORT_REPLACEMENT_REQUEST: usize = 17;
+            // SAFETY: this fixture owns the page exclusively through its
+            // final source remote-free collection. The adjusted client below
+            // models one aligned allocation within its canonical source block.
+            unsafe { page.as_mut() }.set_has_interior_pointers(true);
+            // SAFETY: this remains inside the exact current source block and
+            // the fixture's still-counted allocation keeps its PageMap entry
+            // and metadata live through the complete operation.
+            let client = NonNull::new(unsafe { block.as_ptr().add(INTERIOR_ADJUSTMENT) })
+                .expect("the interior client remains non-null");
+
+            // SAFETY: `client` is the fixture's exact live adjusted client;
+            // no PageMap writer overlaps this source observation.
+            let source = unsafe { lease.lookup_live_allocation(client) }
+                .expect("the fixture map remains ready")
+                .expect("the live interior client resolves")
+                .into_reallocation_copy_source(usize::MAX);
+
+            // A replacement copies from the client pointer, never from the
+            // preceding canonical block base. Its maximum copy is only the
+            // prefix that starts at that exact adjusted client.
+            assert_eq!(source.copy_client(), client);
+            assert_eq!(source.canonical_block_for_release(), block);
+            assert_eq!(source.usable_prefix_len(), BLOCK_SIZE - INTERIOR_ADJUSTMENT);
+            assert_eq!(source.copy_prefix_len(), BLOCK_SIZE - INTERIOR_ADJUSTMENT);
+
+            // A failed replacement leaves the old client live, so it returns
+            // the non-Copy observation and a later operation may form one new
+            // bounded source. That second request proves the token freezes
+            // `min(request, usable-prefix)`, not merely the old usable extent.
+            let source = source
+                .into_live_allocation()
+                .into_reallocation_copy_source(SHORT_REPLACEMENT_REQUEST);
+            assert_eq!(source.copy_client(), client);
+            assert_eq!(source.canonical_block_for_release(), block);
+            assert_eq!(source.usable_prefix_len(), BLOCK_SIZE - INTERIOR_ADJUSTMENT);
+            assert_eq!(source.copy_prefix_len(), SHORT_REPLACEMENT_REQUEST);
+
+            // The non-Copy source token returns the original observation only
+            // after the caller has finished the replacement copy phase. The
+            // normal pointer-centered free path then consumes that observation
+            // and its canonical block.
+            let live = source.into_live_allocation();
+            assert_eq!(live.client(), client);
+            assert_eq!(live.canonical_block(), block);
+            assert_eq!(
+                unsafe { remote_free::push_live_allocation(live) },
+                Ok(LiveRemoteFreePublish::PublishedToOwner),
+            );
+            let owner = unsafe { Page::remote_free_owner_state_at(page) }
+                .expect("the fixture owner stays source-associated");
+            assert_eq!(unsafe { remote_free::collect_live_page(owner) }, Ok(1));
+        });
     }
 
     #[test]
