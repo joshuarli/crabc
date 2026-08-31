@@ -107,8 +107,8 @@ fn native_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attach
     #[cfg(feature = "native-runtime-test-audit")]
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
-        1,
-        "the detached aggregate retains A's exact worker-admission claim before B attaches"
+        0,
+        "A's completed persistent owner releases its worker-admission claim before B attaches"
     );
 
     let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
@@ -119,8 +119,8 @@ fn native_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attach
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "B attaches beside, rather than consumes, A's detached-route admission"
+            1,
+            "B owns the only active worker-admission claim after A's persistent owner completed"
         );
         // SAFETY: A has completed its typed detached route, and the test
         // passes each exact C-shaped client to its fresh B consumer.
@@ -205,8 +205,8 @@ fn native_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attach
         #[cfg(feature = "native-runtime-test-audit")]
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
-            2,
-            "the terminal source release leaves both A's typed proof and B's attachment admitted until B finishes"
+            1,
+            "source consumption leaves B's independent worker-admission claim active until B finishes"
         );
         let continued = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
@@ -241,7 +241,7 @@ fn native_post_exit_replacement_releases_the_dormant_pair_while_b_remains_attach
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             0,
-            "only B's successful lifecycle completion consumes A's typed admission proof"
+            "B's successful lifecycle completion releases its remaining worker-admission claim"
         );
     });
 

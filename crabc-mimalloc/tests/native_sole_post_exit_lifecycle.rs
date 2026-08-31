@@ -8,6 +8,9 @@ use crabc_mimalloc::__crabc_runtime::{
     ticket_zero_allocate, ticket_zero_free, TicketZeroPageAllocationResult, TicketZeroPageFreeResult,
 };
 
+#[cfg(feature = "native-runtime-test-audit")]
+use crabc_mimalloc::__crabc_runtime::native_runtime_fork_admission_test_audit;
+
 fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
         .expect("the native Linux test process exposes AT_PAGESZ")
@@ -66,12 +69,24 @@ fn native_sole_post_exit_replacement_releases_the_dormant_pair_while_b_remains_a
     owner
         .join()
         .expect("A completes after the sole route owns its detached page");
+    #[cfg(feature = "native-runtime-test-audit")]
+    assert_eq!(
+        native_runtime_fork_admission_test_audit().active_later_thread_count,
+        0,
+        "A's completed persistent owner releases its worker-admission claim before B attaches"
+    );
 
     let (terminal_sender, terminal_receiver) = mpsc::sync_channel(0);
     let release_b = Arc::new(Barrier::new(2));
     let b_release = Arc::clone(&release_b);
     let releaser = std::thread::spawn(move || {
         assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            1,
+            "B owns the only active worker-admission claim after A's persistent owner completed"
+        );
         // SAFETY: A has completed its typed sole-page route, and the test
         // passes B the exact C-shaped client address it is allowed to free.
         let medium = unsafe { core::ptr::NonNull::new_unchecked(medium as *mut u8) };
@@ -111,6 +126,12 @@ fn native_sole_post_exit_replacement_releases_the_dormant_pair_while_b_remains_a
             NativePageFreeResult::Freed,
             "B releases its successful replacement without touching A's consumed source"
         );
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            1,
+            "source consumption leaves B's independent worker-admission claim active until B finishes"
+        );
         let continued = match native_allocate_aligned(73, 16, false) {
             NativePageAllocationResult::Allocated(block) => block,
             _ => panic!(
@@ -138,6 +159,12 @@ fn native_sole_post_exit_replacement_releases_the_dormant_pair_while_b_remains_a
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
             "B finishes its own local session before releasing A's completion"
+        );
+        #[cfg(feature = "native-runtime-test-audit")]
+        assert_eq!(
+            native_runtime_fork_admission_test_audit().active_later_thread_count,
+            0,
+            "B's successful lifecycle completion releases its remaining worker-admission claim"
         );
     });
 
