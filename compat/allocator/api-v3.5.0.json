@@ -507,8 +507,8 @@
             "CMakeLists.txt:24",
             "CMakeLists.txt:322-329"
           ],
-          "classification_reason": "The pinned root CMake configuration disables ETW tracking on non-Windows targets.",
-          "target_applicability": "inapplicable",
+          "classification_reason": "The value is accepted on Linux/AArch64 and the pinned root CMake configuration warns and resets MI_TRACK to OFF; that fallback is required observable behavior.",
+          "target_applicability": "applicable",
           "token": "ETW"
         }
       ],
@@ -771,18 +771,18 @@
         "CMakeLists.txt:36",
         "CMakeLists.txt:254-274"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "macOS-only allocator interposition selection guarded by APPLE in the pinned root CMake configuration.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional root-CMake option is accepted on Linux/AArch64 and omitted from the APPLE-only interposition branch; that no-op result is required observable behavior.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "ON",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_OSX_INTERPOSE",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 36,
@@ -790,26 +790,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:36",
-            "CMakeLists.txt:254-274"
-          ],
-          "classification_reason": "macOS-only allocator interposition selection guarded by APPLE in the pinned root CMake configuration.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:36",
-            "CMakeLists.txt:254-274"
-          ],
-          "classification_reason": "macOS-only allocator interposition selection guarded by APPLE in the pinned root CMake configuration.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -821,18 +815,18 @@
         "CMakeLists.txt:37",
         "CMakeLists.txt:254-274"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "macOS-only malloc-zone override selection guarded by APPLE in the pinned root CMake configuration.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional root-CMake option is accepted on Linux/AArch64 and omitted from the APPLE-only malloc-zone branch; that no-op result is required observable behavior.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "ON",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_OSX_ZONE",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 37,
@@ -840,26 +834,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:37",
-            "CMakeLists.txt:254-274"
-          ],
-          "classification_reason": "macOS-only malloc-zone override selection guarded by APPLE in the pinned root CMake configuration.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:37",
-            "CMakeLists.txt:254-274"
-          ],
-          "classification_reason": "macOS-only malloc-zone override selection guarded by APPLE in the pinned root CMake configuration.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -871,18 +859,18 @@
         "CMakeLists.txt:38",
         "CMakeLists.txt:276-281"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Windows DLL redirection-module build selector guarded by WIN32.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional root-CMake option is accepted on Linux/AArch64 and omitted from the WIN32-only redirection branch; that no-op result is required observable behavior.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "ON",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_WIN_REDIRECT",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 38,
@@ -890,26 +878,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:38",
-            "CMakeLists.txt:276-281"
-          ],
-          "classification_reason": "Windows DLL redirection-module build selector guarded by WIN32.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:38",
-            "CMakeLists.txt:276-281"
-          ],
-          "classification_reason": "Windows DLL redirection-module build selector guarded by WIN32.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -1457,18 +1439,18 @@
         "CMakeLists.txt:59",
         "CMakeLists.txt:565-589"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Windows-only initialization strategy selector.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional Windows initialization cache selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-cache-string",
       "default_source_token": "DEFAULT",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_WIN_INIT",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 59,
@@ -1476,53 +1458,38 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:59",
-            "CMakeLists.txt:565-589"
-          ],
-          "classification_reason": "Windows-only initialization strategy selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "CRT_TLS"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:59",
-            "CMakeLists.txt:565-589"
-          ],
-          "classification_reason": "Windows-only initialization strategy selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "RAW_DLLMAIN"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:59",
-            "CMakeLists.txt:565-589"
-          ],
-          "classification_reason": "Windows-only initialization strategy selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "TLS_DLLMAIN"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:59",
-            "CMakeLists.txt:565-589"
-          ],
-          "classification_reason": "Windows-only initialization strategy selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "FLS"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:59",
-            "CMakeLists.txt:565-589"
-          ],
-          "classification_reason": "Windows-only initialization strategy selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "DEFAULT"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -1577,8 +1544,8 @@
             "include/mimalloc/prim-tls.h:22-25",
             "include/mimalloc/prim-tls.h:297-341"
           ],
-          "classification_reason": "The direct Win32 TlsAlloc model is platform-inapplicable to Linux/AArch64.",
-          "target_applicability": "inapplicable",
+          "classification_reason": "The value is accepted by root CMake and selects the direct Win32 TlsAlloc source path; its Linux/AArch64 compile result is required observable behavior.",
+          "target_applicability": "applicable",
           "token": "WIN32"
         },
         {
@@ -1586,8 +1553,8 @@
             "CMakeLists.txt:62",
             "include/mimalloc/prim-tls.h:342-365"
           ],
-          "classification_reason": "The pinned fixed-slot TLS source has no Linux fixed-slot definition and emits a compile error without an out-of-contract custom slot definition.",
-          "target_applicability": "inapplicable",
+          "classification_reason": "The value is accepted by root CMake and the pinned fixed-slot TLS source emits a compile error on Linux/AArch64 without an out-of-contract custom slot definition; that rejection is required observable behavior.",
+          "target_applicability": "applicable",
           "token": "FIXED"
         },
         {
@@ -1938,18 +1905,18 @@
         "CMakeLists.txt:74",
         "include/mimalloc/prim-tls.h:342-365"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "The pinned fixed-slot TLS source has slot definitions only for Apple and Windows and emits a compile error on Linux/AArch64 unless out-of-contract custom slots are supplied.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional deprecated option is accepted on Linux/AArch64 and selects a fixed-slot source path that emits a compile error without out-of-contract custom slots; that rejection is required observable behavior.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "OFF",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_TLS_MODEL_FIXED",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 74,
@@ -1957,26 +1924,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:74",
-            "include/mimalloc/prim-tls.h:342-365"
-          ],
-          "classification_reason": "The pinned fixed-slot TLS source has slot definitions only for Apple and Windows and emits a compile error on Linux/AArch64 unless out-of-contract custom slots are supplied.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:74",
-            "include/mimalloc/prim-tls.h:342-365"
-          ],
-          "classification_reason": "The pinned fixed-slot TLS source has slot definitions only for Apple and Windows and emits a compile error on Linux/AArch64 unless out-of-contract custom slots are supplied.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -2029,18 +1990,18 @@
         "CMakeLists.txt:76",
         "CMakeLists.txt:565-586"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Deprecated Windows Fiber Local Storage initialization selector.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional deprecated FLS selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "OFF",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_WIN_USE_FLS",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 76,
@@ -2048,26 +2009,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:76",
-            "CMakeLists.txt:565-586"
-          ],
-          "classification_reason": "Deprecated Windows Fiber Local Storage initialization selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:76",
-            "CMakeLists.txt:565-586"
-          ],
-          "classification_reason": "Deprecated Windows Fiber Local Storage initialization selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -2079,18 +2034,18 @@
         "CMakeLists.txt:77",
         "CMakeLists.txt:565-577"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Deprecated Windows raw-DllMain initialization selector.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional deprecated raw-DllMain selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "OFF",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_WIN_INIT_USE_RAW_DLLMAIN",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 77,
@@ -2098,26 +2053,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:77",
-            "CMakeLists.txt:565-577"
-          ],
-          "classification_reason": "Deprecated Windows raw-DllMain initialization selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:77",
-            "CMakeLists.txt:565-577"
-          ],
-          "classification_reason": "Deprecated Windows raw-DllMain initialization selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -2129,18 +2078,18 @@
         "CMakeLists.txt:78",
         "CMakeLists.txt:565-582"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Deprecated Windows TLS-DllMain initialization selector.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional deprecated TLS-DllMain selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "OFF",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_WIN_INIT_USE_TLS_DLLMAIN",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 78,
@@ -2148,26 +2097,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:78",
-            "CMakeLists.txt:565-582"
-          ],
-          "classification_reason": "Deprecated Windows TLS-DllMain initialization selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:78",
-            "CMakeLists.txt:565-582"
-          ],
-          "classification_reason": "Deprecated Windows TLS-DllMain initialization selector.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -2179,18 +2122,18 @@
         "CMakeLists.txt:79",
         "CMakeLists.txt:560-563"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Windows direct TlsAlloc-slot fast-path selection.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional deprecated Windows direct-TLS selector is accepted by root CMake on Linux/AArch64; its platform-limited compile behavior remains a parity obligation.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "OFF",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_WIN_DIRECT_TLS",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 79,
@@ -2198,26 +2141,20 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:79",
-            "CMakeLists.txt:560-563"
-          ],
-          "classification_reason": "Windows direct TlsAlloc-slot fast-path selection.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:79",
-            "CMakeLists.txt:560-563"
-          ],
-          "classification_reason": "Windows direct TlsAlloc-slot fast-path selection.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     },
     {
@@ -2311,18 +2248,18 @@
         "CMakeLists.txt:82",
         "CMakeLists.txt:322-329"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Windows ETW tracking alias; the pinned configuration disables ETW on non-Windows targets.",
-      "completion_status": "not-required",
+      "classification": "platform-limited-mode",
+      "classification_reason": "The unconditional deprecated option is accepted on Linux/AArch64; its Windows-only ETW request is disabled by the pinned configuration, which is required observable behavior.",
+      "completion_status": "blocked",
       "declaration_kind": "cmake-option",
       "default_source_token": "OFF",
       "differential_verified": false,
-      "implementation_blocker": "",
+      "implementation_blocker": "No complete Linux/AArch64 Rust mode implementation and required evidence chain is recorded.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "name": "MI_TRACK_ETW",
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
       "source": {
         "line": 82,
@@ -2330,37 +2267,31 @@
       },
       "source_values": [
         {
-          "applicability_sources": [
-            "CMakeLists.txt:82",
-            "CMakeLists.txt:322-329"
-          ],
-          "classification_reason": "Windows ETW tracking alias; the pinned configuration disables ETW on non-Windows targets.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "OFF"
         },
         {
-          "applicability_sources": [
-            "CMakeLists.txt:82",
-            "CMakeLists.txt:322-329"
-          ],
-          "classification_reason": "Windows ETW tracking alias; the pinned configuration disables ETW on non-Windows targets.",
-          "target_applicability": "inapplicable",
+          "applicability_sources": [],
+          "classification_reason": "Applicable source value for this Linux/AArch64 compile-time mode.",
+          "target_applicability": "applicable",
           "token": "ON"
         }
       ],
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "unit_verified": false
     }
   ],
   "completion_tracks": {
     "full_linux_aarch64_v3_5_0_parity": {
       "authority": "compat/allocator/api-v3.5.0.json",
-      "blocked_api_item_count": 331,
-      "blocked_compile_time_mode_count": 42,
+      "blocked_api_item_count": 334,
+      "blocked_compile_time_mode_count": 52,
       "inventory_driven": true,
-      "required_api_item_count": 331,
-      "required_compile_time_mode_count": 42,
+      "required_api_item_count": 334,
+      "required_compile_time_mode_count": 52,
       "status": "blocked"
     },
     "malloc_engine_readiness": {
@@ -8398,11 +8329,12 @@
       "adapter_surface": "source-only",
       "applicability_sources": [
         "include/mimalloc.h:484",
+        "src/options.c:143",
         "src/prim/unix/prim.c:367-377"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "macOS-only OS logging tag option in the pinned v3.5.0 header.",
-      "completion_status": "not-required",
+      "classification": "platform-specific-effect-option",
+      "classification_reason": "Unconditional public enum value backed by the Linux option table and accepted by option get/set; only its OS logging effect is platform-specific.",
+      "completion_status": "blocked",
       "crabc_libc_exported": false,
       "differential_verified": false,
       "exported": false,
@@ -8410,18 +8342,18 @@
       "headers": [
         "include/mimalloc.h"
       ],
-      "implementation_blocker": "",
+      "implementation_blocker": "No public Linux/AArch64 crabc implementation and complete evidence chain is recorded for this item.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "kind": "option",
       "name": "mi_option_os_tag",
       "oracle_release_exported": false,
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
-      "profile": "not-applicable-linux-aarch64",
+      "profile": "linux-aarch64-platform-specific-effect",
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "test_adapter_applicable": false,
       "test_references": [
         "test/test-wrong.c"
@@ -8866,11 +8798,12 @@
       "adapter_surface": "source-only",
       "applicability_sources": [
         "include/mimalloc.h:493",
+        "src/options.c:152",
         "src/prim/windows/prim.c:321-340"
       ],
-      "classification": "unsupported-linux-aarch64",
-      "classification_reason": "Windows-only out-of-memory retry option in the pinned v3.5.0 header.",
-      "completion_status": "not-required",
+      "classification": "platform-specific-effect-option",
+      "classification_reason": "Unconditional public enum value backed by the Linux option table and accepted by option get/set; only its out-of-memory retry effect is Windows-specific.",
+      "completion_status": "blocked",
       "crabc_libc_exported": false,
       "differential_verified": false,
       "exported": false,
@@ -8878,18 +8811,18 @@
       "headers": [
         "include/mimalloc.h"
       ],
-      "implementation_blocker": "",
+      "implementation_blocker": "No public Linux/AArch64 crabc implementation and complete evidence chain is recorded for this item.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "kind": "option",
       "name": "mi_option_retry_on_oom",
       "oracle_release_exported": false,
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
-      "profile": "not-applicable-linux-aarch64",
+      "profile": "linux-aarch64-platform-specific-effect",
       "stress_verified": false,
-      "target_applicability": "inapplicable",
+      "target_applicability": "applicable",
       "test_adapter_applicable": false,
       "test_references": [
         "test/test-wrong.c"
@@ -12280,14 +12213,14 @@
       "unit_verified": false
     },
     {
-      "adapter_surface": "source-only",
+      "adapter_surface": "test-c-api-adapter-only",
       "applicability_sources": [
         "include/mimalloc.h:564",
         "src/alloc-posix.c:157-175"
       ],
-      "classification": "unsupported-linux-aarch64",
+      "classification": "linux-einval-operation",
       "classification_reason": "The pinned src/alloc-posix.c body explicitly reports this Windows wide-environment operation unsupported on non-Windows targets. The Linux C oracle still defines the EINVAL-returning symbol, and the release-symbol contract records it.",
-      "completion_status": "not-required",
+      "completion_status": "blocked",
       "crabc_libc_exported": false,
       "differential_verified": false,
       "exported": false,
@@ -12295,19 +12228,19 @@
       "headers": [
         "include/mimalloc.h"
       ],
-      "implementation_blocker": "",
+      "implementation_blocker": "No public Linux/AArch64 crabc implementation and complete evidence chain is recorded for this item.",
       "implemented": false,
       "integration_verified": false,
       "intentional_difference": "",
       "kind": "external-function",
       "name": "mi_wdupenv_s",
       "oracle_release_exported": true,
-      "parity_requirement": "not-required",
+      "parity_requirement": "required",
       "performance_qualified": false,
-      "profile": "not-applicable-linux-aarch64",
+      "profile": "linux-aarch64-limited-operation",
       "stress_verified": false,
-      "target_applicability": "inapplicable",
-      "test_adapter_applicable": false,
+      "target_applicability": "applicable",
+      "test_adapter_applicable": true,
       "test_references": [
         "test/test-wrong.c"
       ],
@@ -13192,21 +13125,21 @@
     "MI_ZU"
   ],
   "summary": {
-    "applicable_item_count": 331,
-    "blocked_applicable_item_count": 331,
-    "blocked_required_mode_count": 42,
+    "applicable_item_count": 334,
+    "blocked_applicable_item_count": 334,
+    "blocked_required_mode_count": 52,
     "compile_time_mode_count": 52,
     "configuration_macro_count": 138,
     "cxx_convenience_count": 1,
     "cxx_template_count": 3,
     "external_function_count": 194,
-    "inapplicable_item_count": 5,
-    "inapplicable_mode_count": 10,
+    "inapplicable_item_count": 2,
+    "inapplicable_mode_count": 0,
     "macro_count": 26,
     "option_count": 52,
     "override_macro_count": 37,
-    "required_mode_count": 42,
-    "source_only_count": 147,
+    "required_mode_count": 52,
+    "source_only_count": 146,
     "source_only_macro_count": 63,
     "static_inline_count": 7,
     "total_item_count": 336,

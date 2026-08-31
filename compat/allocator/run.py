@@ -375,10 +375,10 @@ NORMAL_RELEASE_SYMBOL_EXCEPTIONS: Mapping[str, str] = {
 STALE_EXTERNAL_DECLARATIONS = frozenset({"mi_collect_reduce", "mi_stats_merge"})
 OVERRIDE_ONLY_EXTERNAL_DECLARATIONS = frozenset({"mi_malloc_size", "mi_malloc_usable_size"})
 
-# The wide-environment helper remains in the symbol cross-check so the C
-# oracle's actual export is never hidden by its target applicability.  Its
-# source body explicitly returns EINVAL on non-Windows targets.
-UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS: Mapping[str, str] = {
+# The wide-environment helper is an applicable Linux interface: the pinned C
+# oracle exports it, and its non-Windows EINVAL result is observable behavior
+# that a parity implementation must preserve.
+LINUX_AARCH64_LIMITED_EXTERNAL_REASONS: Mapping[str, str] = {
     "mi_wdupenv_s": (
         "The pinned src/alloc-posix.c body explicitly reports this Windows "
         "wide-environment operation unsupported on non-Windows targets. The "
@@ -387,17 +387,19 @@ UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS: Mapping[str, str] = {
     ),
 }
 
-API_INAPPLICABILITY_SOURCES: Mapping[str, tuple[str, ...]] = {
+API_CLASSIFICATION_SOURCES: Mapping[str, tuple[str, ...]] = {
     "mi_collect_reduce": (
         "include/mimalloc.h:450",
         "normal-release-source-set:no-definition",
     ),
     "mi_option_os_tag": (
         "include/mimalloc.h:484",
+        "src/options.c:143",
         "src/prim/unix/prim.c:367-377",
     ),
     "mi_option_retry_on_oom": (
         "include/mimalloc.h:493",
+        "src/options.c:152",
         "src/prim/windows/prim.c:321-340",
     ),
     "mi_stats_merge": (
@@ -483,50 +485,58 @@ GUARDED_MODE_OPTIONS = frozenset(
     }
 )
 
-UNSUPPORTED_LINUX_AARCH64_OPTIONS: Mapping[str, str] = {
-    "mi_option_os_tag": "macOS-only OS logging tag option in the pinned v3.5.0 header.",
-    "mi_option_retry_on_oom": "Windows-only out-of-memory retry option in the pinned v3.5.0 header.",
+PLATFORM_SPECIFIC_EFFECT_OPTIONS: Mapping[str, str] = {
+    "mi_option_os_tag": (
+        "Unconditional public enum value backed by the Linux option table and accepted by option get/set; "
+        "only its OS logging effect is platform-specific."
+    ),
+    "mi_option_retry_on_oom": (
+        "Unconditional public enum value backed by the Linux option table and accepted by option get/set; "
+        "only its out-of-memory retry effect is Windows-specific."
+    ),
 }
 
-INAPPLICABLE_LINUX_AARCH64_COMPILE_MODES: Mapping[str, tuple[str, tuple[str, ...]]] = {
+PLATFORM_LIMITED_LINUX_AARCH64_COMPILE_MODES: Mapping[
+    str, tuple[str, tuple[str, ...]]
+] = {
     "MI_OSX_INTERPOSE": (
-        "macOS-only allocator interposition selection guarded by APPLE in the pinned root CMake configuration.",
+        "The unconditional root-CMake option is accepted on Linux/AArch64 and omitted from the APPLE-only interposition branch; that no-op result is required observable behavior.",
         ("CMakeLists.txt:36", "CMakeLists.txt:254-274"),
     ),
     "MI_OSX_ZONE": (
-        "macOS-only malloc-zone override selection guarded by APPLE in the pinned root CMake configuration.",
+        "The unconditional root-CMake option is accepted on Linux/AArch64 and omitted from the APPLE-only malloc-zone branch; that no-op result is required observable behavior.",
         ("CMakeLists.txt:37", "CMakeLists.txt:254-274"),
     ),
     "MI_TRACK_ETW": (
-        "Windows ETW tracking alias; the pinned configuration disables ETW on non-Windows targets.",
+        "The unconditional deprecated option is accepted on Linux/AArch64; its Windows-only ETW request is disabled by the pinned configuration, which is required observable behavior.",
         ("CMakeLists.txt:82", "CMakeLists.txt:322-329"),
     ),
     "MI_TLS_MODEL_FIXED": (
-        "The pinned fixed-slot TLS source has slot definitions only for Apple and Windows and emits a compile error on Linux/AArch64 unless out-of-contract custom slots are supplied.",
+        "The unconditional deprecated option is accepted on Linux/AArch64 and selects a fixed-slot source path that emits a compile error without out-of-contract custom slots; that rejection is required observable behavior.",
         ("CMakeLists.txt:74", "include/mimalloc/prim-tls.h:342-365"),
     ),
     "MI_WIN_DIRECT_TLS": (
-        "Windows direct TlsAlloc-slot fast-path selection.",
+        "The unconditional deprecated Windows direct-TLS selector is accepted by root CMake on Linux/AArch64; its platform-limited compile behavior remains a parity obligation.",
         ("CMakeLists.txt:79", "CMakeLists.txt:560-563"),
     ),
     "MI_WIN_INIT": (
-        "Windows-only initialization strategy selector.",
+        "The unconditional Windows initialization cache selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
         ("CMakeLists.txt:59", "CMakeLists.txt:565-589"),
     ),
     "MI_WIN_INIT_USE_RAW_DLLMAIN": (
-        "Deprecated Windows raw-DllMain initialization selector.",
+        "The unconditional deprecated raw-DllMain selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
         ("CMakeLists.txt:77", "CMakeLists.txt:565-577"),
     ),
     "MI_WIN_INIT_USE_TLS_DLLMAIN": (
-        "Deprecated Windows TLS-DllMain initialization selector.",
+        "The unconditional deprecated TLS-DllMain selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
         ("CMakeLists.txt:78", "CMakeLists.txt:565-582"),
     ),
     "MI_WIN_REDIRECT": (
-        "Windows DLL redirection-module build selector guarded by WIN32.",
+        "The unconditional root-CMake option is accepted on Linux/AArch64 and omitted from the WIN32-only redirection branch; that no-op result is required observable behavior.",
         ("CMakeLists.txt:38", "CMakeLists.txt:276-281"),
     ),
     "MI_WIN_USE_FLS": (
-        "Deprecated Windows Fiber Local Storage initialization selector.",
+        "The unconditional deprecated FLS selector is accepted by root CMake on Linux/AArch64; its platform-limited selection behavior remains a parity obligation.",
         ("CMakeLists.txt:76", "CMakeLists.txt:565-586"),
     ),
 }
@@ -559,19 +569,19 @@ SOURCE_BUILD_CONTROL_MODES = frozenset(
 
 ARTIFACT_COMPILE_MODES = frozenset({"MI_BUILD_OBJECT", "MI_BUILD_SHARED", "MI_BUILD_STATIC"})
 
-INAPPLICABLE_LINUX_AARCH64_MODE_VALUES: Mapping[
+PLATFORM_LIMITED_LINUX_AARCH64_MODE_VALUES: Mapping[
     tuple[str, str], tuple[str, tuple[str, ...]]
 ] = {
     ("MI_TLS_MODEL", "FIXED"): (
-        "The pinned fixed-slot TLS source has no Linux fixed-slot definition and emits a compile error without an out-of-contract custom slot definition.",
+        "The value is accepted by root CMake and the pinned fixed-slot TLS source emits a compile error on Linux/AArch64 without an out-of-contract custom slot definition; that rejection is required observable behavior.",
         ("CMakeLists.txt:62", "include/mimalloc/prim-tls.h:342-365"),
     ),
     ("MI_TLS_MODEL", "WIN32"): (
-        "The direct Win32 TlsAlloc model is platform-inapplicable to Linux/AArch64.",
+        "The value is accepted by root CMake and selects the direct Win32 TlsAlloc source path; its Linux/AArch64 compile result is required observable behavior.",
         ("CMakeLists.txt:62", "include/mimalloc/prim-tls.h:22-25", "include/mimalloc/prim-tls.h:297-341"),
     ),
     ("MI_TRACK", "ETW"): (
-        "The pinned root CMake configuration disables ETW tracking on non-Windows targets.",
+        "The value is accepted on Linux/AArch64 and the pinned root CMake configuration warns and resets MI_TRACK to OFF; that fallback is required observable behavior.",
         ("CMakeLists.txt:24", "CMakeLists.txt:322-329"),
     ),
 }
@@ -3249,14 +3259,14 @@ def cmake_compile_mode_declarations(text: str) -> list[dict[str, Any]]:
 
 
 def compile_mode_classification(name: str) -> dict[str, Any]:
-    inapplicable = INAPPLICABLE_LINUX_AARCH64_COMPILE_MODES.get(name)
-    if inapplicable is not None:
-        reason, sources = inapplicable
+    platform_limited = PLATFORM_LIMITED_LINUX_AARCH64_COMPILE_MODES.get(name)
+    if platform_limited is not None:
+        reason, sources = platform_limited
         return {
             "applicability_sources": list(sources),
-            "classification": "unsupported-linux-aarch64",
+            "classification": "platform-limited-mode",
             "classification_reason": reason,
-            "target_applicability": "inapplicable",
+            "target_applicability": "applicable",
         }
     if name in DEPRECATED_COMPILE_MODES:
         classification = "deprecated-mode"
@@ -3304,17 +3314,17 @@ def compile_mode_record(declaration: Mapping[str, Any]) -> dict[str, Any]:
     applicable = classification["target_applicability"] == "applicable"
     source_values: list[dict[str, Any]] = []
     for token in declaration["allowed_source_tokens"]:
-        value_inapplicable = INAPPLICABLE_LINUX_AARCH64_MODE_VALUES.get(
+        limited_value = PLATFORM_LIMITED_LINUX_AARCH64_MODE_VALUES.get(
             (str(declaration["name"]), str(token))
         )
         if not applicable:
             value_reason = classification["classification_reason"]
             value_sources = classification["applicability_sources"]
             value_applicability = "inapplicable"
-        elif value_inapplicable is not None:
-            value_reason, value_source_tuple = value_inapplicable
+        elif limited_value is not None:
+            value_reason, value_source_tuple = limited_value
             value_sources = list(value_source_tuple)
-            value_applicability = "inapplicable"
+            value_applicability = "applicable"
         else:
             value_reason = "Applicable source value for this Linux/AArch64 compile-time mode."
             value_sources = []
@@ -3426,10 +3436,10 @@ def classify_api_item(name: str, kind: str) -> dict[str, Any]:
         test_adapter_applicable = False
     elif kind == "option":
         test_adapter_applicable = False
-        if name in UNSUPPORTED_LINUX_AARCH64_OPTIONS:
-            classification = "unsupported-linux-aarch64"
-            reason = UNSUPPORTED_LINUX_AARCH64_OPTIONS[name]
-            profile = "not-applicable-linux-aarch64"
+        if name in PLATFORM_SPECIFIC_EFFECT_OPTIONS:
+            classification = "platform-specific-effect-option"
+            reason = PLATFORM_SPECIFIC_EFFECT_OPTIONS[name]
+            profile = "linux-aarch64-platform-specific-effect"
         elif name in HEADER_DEPRECATED_OPTIONS:
             classification = "deprecated"
             reason = "Explicit `mi_option_deprecated_*` enumerator retained by the pinned v3.5.0 header."
@@ -3452,11 +3462,10 @@ def classify_api_item(name: str, kind: str) -> dict[str, Any]:
             reason = NORMAL_RELEASE_SYMBOL_EXCEPTIONS[name]
             profile = "upstream-unavailable"
             test_adapter_applicable = False
-        elif name in UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS:
-            classification = "unsupported-linux-aarch64"
-            reason = UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS[name]
-            profile = "not-applicable-linux-aarch64"
-            test_adapter_applicable = False
+        elif name in LINUX_AARCH64_LIMITED_EXTERNAL_REASONS:
+            classification = "linux-einval-operation"
+            reason = LINUX_AARCH64_LIMITED_EXTERNAL_REASONS[name]
+            profile = "linux-aarch64-limited-operation"
         elif name in OVERRIDE_ONLY_EXTERNAL_DECLARATIONS:
             classification = "override-only"
             reason = NORMAL_RELEASE_SYMBOL_EXCEPTIONS[name]
@@ -3496,7 +3505,7 @@ def item_record(name: str, kind: str, headers: Sequence[str], tests: Sequence[st
     return {
         "adapter_surface": "test-c-api-adapter-only" if applicable_external else "source-only",
         **classification,
-        "applicability_sources": list(API_INAPPLICABILITY_SOURCES.get(name, ())),
+        "applicability_sources": list(API_CLASSIFICATION_SOURCES.get(name, ())),
         "completion_status": "blocked" if applicable else "not-required",
         "crabc_libc_exported": False,
         "differential_verified": False,
@@ -3598,6 +3607,10 @@ def validate_api_parity_inventory(inventory: Mapping[str, Any]) -> dict[str, int
                 raise HarnessError(
                     f"inapplicable API item {name} lacks a source-backed rationale"
                 )
+            if item.get("classification") != "upstream-unavailable-declaration":
+                raise HarnessError(
+                    f"normal-release public API item {name} cannot be inapplicable merely because its behavior is platform-limited"
+                )
             if item.get("parity_requirement") != "not-required" or item.get("completion_status") != "not-required":
                 raise HarnessError(f"inapplicable API item {name} has a contradictory parity requirement")
             if item["implemented"] or item["exported"] or any(item[field] for field in verification_fields):
@@ -3636,6 +3649,17 @@ def validate_api_parity_inventory(inventory: Mapping[str, Any]) -> dict[str, int
             raise HarnessError(f"compile-time mode {name} has an invalid classification rationale")
         if not isinstance(sources, list) or not all(isinstance(source, str) and source for source in sources):
             raise HarnessError(f"compile-time mode {name} has invalid applicability sources")
+        if applicability == "inapplicable" and mode.get("declaration_kind") in {
+            "cmake-cache-string",
+            "cmake-option",
+        }:
+            if not mode["classification_reason"] or not sources:
+                raise HarnessError(
+                    f"inapplicable compile-time mode {name} lacks a source-backed rationale"
+                )
+            raise HarnessError(
+                f"unconditional root-CMake mode {name} remains an applicable observable interface on Linux/AArch64"
+            )
         allowed = mode.get("allowed_source_tokens")
         if not isinstance(allowed, list) or not allowed or not all(isinstance(token, str) for token in allowed):
             raise HarnessError(f"compile-time mode {name} lacks its source value inventory")
@@ -3664,6 +3688,10 @@ def validate_api_parity_inventory(inventory: Mapping[str, Any]) -> dict[str, int
             ):
                 raise HarnessError(
                     f"inapplicable mode value {name}={token} lacks a source-backed rationale"
+                )
+            if value_applicability == "inapplicable":
+                raise HarnessError(
+                    f"declared mode value {name}={token} remains applicable because its fallback, no-op, or rejection behavior is observable"
                 )
             if applicability == "inapplicable" and value_applicability != "inapplicable":
                 raise HarnessError(f"inapplicable compile-time mode {name} has an applicable source value")

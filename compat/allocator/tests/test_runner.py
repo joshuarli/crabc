@@ -671,8 +671,8 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(override["classification"], "override-only")
         self.assertEqual(override["profile"], "linux-aarch64-override")
         wide = RUNNER.classify_api_item("mi_wdupenv_s", "external-function")
-        self.assertEqual(wide["classification"], "unsupported-linux-aarch64")
-        self.assertFalse(wide["test_adapter_applicable"])
+        self.assertEqual(wide["classification"], "linux-einval-operation")
+        self.assertTrue(wide["test_adapter_applicable"])
 
     def test_cxx_declaration_macros_and_legacy_option_aliases_keep_their_source_roles(self) -> None:
         declaration = RUNNER.classify_api_item("mi_decl_new", "macro")
@@ -1809,21 +1809,21 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             inventory["summary"],
             {
-                "applicable_item_count": 331,
-                "blocked_applicable_item_count": 331,
-                "blocked_required_mode_count": 42,
+                "applicable_item_count": 334,
+                "blocked_applicable_item_count": 334,
+                "blocked_required_mode_count": 52,
                 "compile_time_mode_count": 52,
                 "configuration_macro_count": 138,
                 "cxx_convenience_count": 1,
                 "cxx_template_count": 3,
                 "external_function_count": 194,
-                "inapplicable_item_count": 5,
-                "inapplicable_mode_count": 10,
+                "inapplicable_item_count": 2,
+                "inapplicable_mode_count": 0,
                 "macro_count": 26,
                 "option_count": 52,
                 "override_macro_count": 37,
-                "required_mode_count": 42,
-                "source_only_count": 147,
+                "required_mode_count": 52,
+                "source_only_count": 146,
                 "source_only_macro_count": 63,
                 "static_inline_count": 7,
                 "total_item_count": 336,
@@ -1838,11 +1838,22 @@ class ContractTests(unittest.TestCase):
             len(inventory["release_symbol_contract"]["expected_defined_symbol_names"]), 190
         )
         items = {item["name"]: item for item in inventory["items"]}
-        self.assertEqual(items["mi_wdupenv_s"]["classification"], "unsupported-linux-aarch64")
-        self.assertEqual(items["mi_wdupenv_s"]["target_applicability"], "inapplicable")
+        self.assertEqual(
+            {
+                item["name"]
+                for item in inventory["items"]
+                if item["target_applicability"] == "inapplicable"
+            },
+            {"mi_collect_reduce", "mi_stats_merge"},
+        )
+        self.assertEqual(items["mi_wdupenv_s"]["classification"], "linux-einval-operation")
+        self.assertEqual(items["mi_wdupenv_s"]["target_applicability"], "applicable")
+        self.assertEqual(items["mi_wdupenv_s"]["completion_status"], "blocked")
         self.assertTrue(items["mi_wdupenv_s"]["applicability_sources"])
         self.assertTrue(items["mi_wdupenv_s"]["oracle_release_exported"])
-        self.assertEqual(items["mi_option_os_tag"]["classification"], "unsupported-linux-aarch64")
+        self.assertEqual(items["mi_option_os_tag"]["classification"], "platform-specific-effect-option")
+        self.assertEqual(items["mi_option_os_tag"]["target_applicability"], "applicable")
+        self.assertEqual(items["mi_option_retry_on_oom"]["target_applicability"], "applicable")
         self.assertEqual(
             items["mi_collect_reduce"]["classification"],
             "upstream-unavailable-declaration",
@@ -1853,22 +1864,34 @@ class ContractTests(unittest.TestCase):
         self.assertFalse(any(item["crabc_libc_exported"] for item in inventory["items"]))
 
         modes = {mode["name"]: mode for mode in inventory["compile_time_modes"]}
+        self.assertTrue(
+            all(
+                mode["target_applicability"] == "applicable"
+                and all(
+                    value["target_applicability"] == "applicable"
+                    for value in mode["source_values"]
+                )
+                for mode in modes.values()
+            )
+        )
         self.assertEqual(modes["MI_DEBUG"]["allowed_source_tokens"], ["OFF", "ON", "INTERNAL", "FULL", "DEFAULT"])
         self.assertEqual(modes["MI_DEBUG"]["target_applicability"], "applicable")
         self.assertEqual(modes["MI_DEBUG"]["completion_status"], "blocked")
-        self.assertEqual(modes["MI_OSX_ZONE"]["target_applicability"], "inapplicable")
+        self.assertEqual(modes["MI_OSX_ZONE"]["target_applicability"], "applicable")
+        self.assertEqual(modes["MI_OSX_ZONE"]["completion_status"], "blocked")
         self.assertTrue(modes["MI_OSX_ZONE"]["applicability_sources"])
-        self.assertEqual(modes["MI_TLS_MODEL_FIXED"]["target_applicability"], "inapplicable")
+        self.assertEqual(modes["MI_TLS_MODEL_FIXED"]["target_applicability"], "applicable")
+        self.assertEqual(modes["MI_TLS_MODEL_FIXED"]["completion_status"], "blocked")
         tls_values = {
             value["token"]: value for value in modes["MI_TLS_MODEL"]["source_values"]
         }
         self.assertEqual(tls_values["LOCAL"]["target_applicability"], "applicable")
-        self.assertEqual(tls_values["FIXED"]["target_applicability"], "inapplicable")
-        self.assertEqual(tls_values["WIN32"]["target_applicability"], "inapplicable")
+        self.assertEqual(tls_values["FIXED"]["target_applicability"], "applicable")
+        self.assertEqual(tls_values["WIN32"]["target_applicability"], "applicable")
         track_values = {
             value["token"]: value for value in modes["MI_TRACK"]["source_values"]
         }
-        self.assertEqual(track_values["ETW"]["target_applicability"], "inapplicable")
+        self.assertEqual(track_values["ETW"]["target_applicability"], "applicable")
         self.assertEqual(
             inventory["completion_tracks"]["malloc_engine_readiness"]["inventory_driven"],
             False,
@@ -1918,10 +1941,48 @@ class ContractTests(unittest.TestCase):
             if mode["name"] == "MI_TLS_MODEL"
         )
         value = next(value for value in mode["source_values"] if value["token"] == "FIXED")
+        value["target_applicability"] = "inapplicable"
         value["classification_reason"] = ""
         value["applicability_sources"] = []
         with self.assertRaisesRegex(RUNNER.HarnessError, "mode value.*source-backed rationale"):
             RUNNER.validate_api_parity_inventory(unsupported_value_without_source)
+
+        observable_api = json.loads(json.dumps(inventory))
+        item = next(
+            item for item in observable_api["items"] if item["name"] == "mi_wdupenv_s"
+        )
+        item["target_applicability"] = "inapplicable"
+        item["parity_requirement"] = "not-required"
+        item["completion_status"] = "not-required"
+        item["implementation_blocker"] = ""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "normal-release public API"):
+            RUNNER.validate_api_parity_inventory(observable_api)
+
+        observable_mode = json.loads(json.dumps(inventory))
+        mode = next(
+            mode for mode in observable_mode["compile_time_modes"]
+            if mode["name"] == "MI_OSX_ZONE"
+        )
+        mode["target_applicability"] = "inapplicable"
+        mode["parity_requirement"] = "not-required"
+        mode["completion_status"] = "not-required"
+        mode["implementation_blocker"] = ""
+        for value in mode["source_values"]:
+            value["target_applicability"] = "inapplicable"
+            value["applicability_sources"] = list(mode["applicability_sources"])
+            value["classification_reason"] = mode["classification_reason"]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unconditional root-CMake mode"):
+            RUNNER.validate_api_parity_inventory(observable_mode)
+
+        observable_value = json.loads(json.dumps(inventory))
+        mode = next(
+            mode for mode in observable_value["compile_time_modes"]
+            if mode["name"] == "MI_TLS_MODEL"
+        )
+        value = next(value for value in mode["source_values"] if value["token"] == "FIXED")
+        value["target_applicability"] = "inapplicable"
+        with self.assertRaisesRegex(RUNNER.HarnessError, "declared mode value"):
+            RUNNER.validate_api_parity_inventory(observable_value)
 
     def test_api_parity_inventory_keeps_readiness_separate_from_full_parity(self) -> None:
         inventory = RUNNER.read_json(RUNNER.API_CONTRACT)
