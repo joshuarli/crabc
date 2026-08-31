@@ -249,6 +249,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh memory-search-header-abi
 ./scripts/dev-x86_64.sh string-copy-header-abi
 ./scripts/dev-x86_64.sh error-strings-header-abi
+./scripts/dev-x86_64.sh string-duplication-header-abi
 ./scripts/dev-x86_64.sh random-entropy-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
 ./scripts/dev-x86_64.sh timerfd-header-abi
@@ -409,6 +410,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-memory-locking
 ./scripts/dev-x86_64.sh libc-memfd-create
 ./scripts/dev-x86_64.sh libc-allocator-runtime
+./scripts/dev-x86_64.sh libc-allocator-string-duplication
 ./scripts/dev-x86_64.sh libc-allocator-observability
 ./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential
 ./scripts/dev-x86_64.sh qualification-posix-abi-admission
@@ -1055,6 +1057,13 @@ references to all public functions. Musl's private `__xpg_strerror_r` and
 `__strerror_l` aliases are intentionally absent from the header and remain
 runtime/ELF evidence. This is compile-only evidence; it does not select
 diagnostics, termination, locale state, or `crabc-libc`.
+
+`string-duplication-header-abi` compiles project-first and pinned-musl C/C++
+`<string.h>` declarations for POSIX `strdup(const char *)` and
+`strndup(const char *, size_t)`. Strict C keeps both hidden, while POSIX/GNU C
+and GNU-selected C++ retain their exact unmangled signatures. This is
+compile-only header evidence; it does not select C allocation or string
+behavior, or `crabc-libc`.
 
 `random-entropy-header-abi` compiles project-first and pinned-musl C/C++
 `<sys/random.h>` and `<unistd.h>` declarations for `getrandom`, its GRND
@@ -2311,6 +2320,20 @@ wrapper integration but not a standalone runtime, dynamic interposition,
 general thread/fork/exit lifecycle, an owned CRT/sysroot, the separately paused
 fixed mimalloc v3.5.0 Rust port, allocator-family closure, promotion, or public
 x86 support.
+
+`libc-allocator-string-duplication` is the separately opt-in mixed-runtime
+allocation-client artifact over that exact wrapper, not a new allocator
+surface. Its one crate-owned object exports only strong `strdup`/`strndup` and
+a private witness, then calls the prior weak `malloc` ABI; it is paired with
+the wrapper, errno owner, and unchanged bundled mimalloc v3.3.2 object. The
+link map rejects musl's two duplication and all nine allocator implementation
+objects. The project-header musl/crabc executions prove high-byte returned
+copy ownership, bounded and zero-limit `strndup`, stale errno across `free`,
+and full/bounded protected-page source edges. Pinned musl still supplies the
+candidate's static startup and process prerequisites. This does not select
+`memory.allocator-basic`, `text.byte-strings-stateful`, allocator lifecycle or
+interposition/failure injection, general C string/locale behavior, an owned
+CRT/sysroot, promotion, or public x86 support.
 
 `libc-allocator-observability` completes the distinct one-symbol AArch64
 `memory.allocator-observability` contract without widening the earlier weak
@@ -3597,6 +3620,18 @@ x86 support. The separate `libc-locale-error-strings` artifact owns the fixed
 profile `strerror_l` spellings; this original error-reporting leaf neither
 invokes nor establishes them.
 
+`libc-allocator-string-duplication` is separately recorded as the
+mixed-runtime `static-c-allocator-string-duplication` artifact rather than a
+dependency-free string leaf. Its project-header body first runs through pinned
+musl and then through the opt-in crabc client/wrapper/errno/backend archive.
+It selects exactly `strdup` and `strndup`: a returned allocation is owned by
+the existing `free` boundary; its bounded variant reads no byte beyond its
+explicit limit. The runner rejects musl duplicate/allocator owners and proves
+high-byte ownership, zero-limit and truncated output, stale errno, and
+protected-page full/bounded inputs. It excludes allocator lifecycle, general
+string or locale state, dynamic interposition/failure injection, full runtime
+closure, promotion, and public x86 support.
+
 `libc-ctype` is a separately recorded `static-c-ctype`
 `verified_artifact` gate over that archive, not a general locale or C text
 capability. Its project-header C body first executes through pinned musl and
@@ -4568,13 +4603,15 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-system-observation`, `libc-system-information`, `libc-uts-identity`, `libc-socket-transport`,
 `libc-socket-messages`,
 `libc-byte-strings`, `libc-random-entropy`, `libc-memory-search`,
-`libc-string-copy`, `libc-error-strings`, `libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
+`libc-string-copy`, `libc-allocator-string-duplication`, `libc-error-strings`,
+`libc-locale-error-strings`, `libc-ctype`, `libc-integer-arithmetic`,
 `libc-integer-parse`, `libc-float-parse`, `libc-intmax-arithmetic`, `libc-credential-observation`,
 `libc-ffs`, `libc-math-complex`, `libc-elementary-sqrt-fenv`, and
 `libc-fenv-rounding` static archive harnesses, and the separately scoped
 `static-pie` CRT gate, and the bounded `owned-static-sysroot` installed
 artifact gate, the lane owns no
-allocator evidence and exposes no generic Cargo, shell, general `crabc-libc`
-artifact, dynamic-loader artifact, general CRT, or complete sysroot command.
-Those remain separate future completion work under `x86-64.md`; passing any
-command must not be reported as x86_64 runtime parity.
+allocator evidence beyond the separately scoped wrapper, string-duplication,
+and observability artifacts, and exposes no generic Cargo, shell, general
+`crabc-libc` artifact, dynamic-loader artifact, general CRT, or complete
+sysroot command. Those remain separate future completion work under
+`x86-64.md`; passing any command must not be reported as x86_64 runtime parity.

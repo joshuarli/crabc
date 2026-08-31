@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 38)
-        self.assertEqual(report["verified_artifact_count"], 141)
+        self.assertEqual(report["verified_artifact_count"], 142)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -307,6 +307,52 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ledger.LedgerError, "closed libc-allocator-runtime command"
+        ):
+            ledger.validate_ledger(changed)
+
+    def test_allocator_string_duplication_stays_a_nonpromoting_client(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-allocator-string-duplication"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "mixed-runtime",
+            "`strdup`/`strndup`",
+            "weak `malloc` ABI",
+            "pinned musl",
+            "allocator lifecycle",
+            "`memory.allocator-basic`",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-allocator-string-duplication"},
+        )
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.posix-runtime")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-allocator-string-duplication"
+        )
+        changed_artifact["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh libc-allocator-string-duplication-broad"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "closed libc-allocator-string-duplication command",
         ):
             ledger.validate_ledger(changed)
 
@@ -4682,7 +4728,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "does not select libc.so", credentials["native_evidence"][0]["scope"]
         )
         posix_artifacts = posix_runtime["verified_artifact"]
-        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 64
+        assert isinstance(posix_artifacts, list) and len(posix_artifacts) == 65
         artifacts_by_id = {
             artifact["id"]: artifact
             for artifact in posix_artifacts

@@ -1056,6 +1056,7 @@ STRING_COPY_SYMBOLS = (
 )
 
 ERROR_STRING_SYMBOLS = ("strerror", "strerror_r", "__xpg_strerror_r")
+STRING_DUPLICATION_SYMBOLS = ("strdup", "strndup")
 
 CTYPE_SYMBOLS = (
     "isalnum",
@@ -19142,6 +19143,89 @@ def require_allocator_wrapper_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_allocator_string_duplication_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the opt-in allocation client outside allocator/runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-allocator-string-duplication"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-allocator-string-duplication artifact",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in STRING_DUPLICATION_SYMBOLS:
+        require(
+            symbol in description,
+            f"static-c-allocator-string-duplication description omits {symbol}",
+        )
+    for phrase in (
+        "mixed-runtime",
+        "weak `malloc` ABI",
+        "pinned musl 1.2.6",
+        "allocator lifecycle",
+        "memory.allocator-basic",
+        "text.byte-strings-stateful",
+        "an owned runtime/CRT/sysroot",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-allocator-string-duplication description omits {phrase}",
+        )
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-allocator-string-duplication.source_owners",
+    )
+    for owner in (
+        "libc/Cargo.toml",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/allocator_string_duplication.rs",
+        "include/string.h",
+        "compat/x86_64/string_duplication_header_abi_probe.c",
+        "compat/x86_64/string_duplication_header_abi_probe.cpp",
+        "compat/x86_64/run_string_duplication_header_abi.sh",
+        "compat/x86_64/libc_allocator_string_duplication_probe.c",
+        "compat/x86_64/run_libc_allocator_string_duplication.sh",
+        "compat/x86_64/tests/test_libc_allocator_string_duplication.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-allocator-string-duplication omits {owner}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-allocator-string-duplication"},
+        "static-c-allocator-string-duplication must use the closed libc-allocator-string-duplication command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "feature-gated",
+                "pinned-musl duplication and allocator object",
+                "no-glibc purity",
+                "Pinned musl still supplies startup/process prerequisites",
+                "does not select allocator lifecycle",
+            )
+        ),
+        "static-c-allocator-string-duplication evidence must retain its client boundary",
+    )
+
+
 def require_allocator_observability_slice(family: Mapping[str, Any]) -> None:
     """Keep the exact AArch64 observer complete, private, and non-promoting."""
     family_capabilities = string_list(
@@ -25637,6 +25721,7 @@ def validate_ledger(
     require_timestamp_updates_artifact(by_id["libc.posix-runtime"])
     require_ffs_artifact(by_id["libc.posix-runtime"])
     require_allocator_wrapper_artifact(by_id["libc.posix-runtime"])
+    require_allocator_string_duplication_artifact(by_id["libc.posix-runtime"])
     require_allocator_observability_slice(by_id["libc.c-abi-compat"])
     require_float_parse_artifact(by_id["libc.text-math-locale-stdio"])
     require_float_parse_locale_slice(by_id["libc.text-math-locale-stdio"])

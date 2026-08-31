@@ -1230,6 +1230,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("    byte-strings-header-abi) ;;", source)
         self.assertIn("    memory-search-header-abi) ;;", source)
         self.assertIn("    string-copy-header-abi) ;;", source)
+        self.assertIn("    string-duplication-header-abi) ;;", source)
         self.assertIn("    linux-5-10-uapi) ;;", source)
         self.assertIn("    candidate-header-closure) ;;", source)
         self.assertIn("    installed-header-tree-closure) ;;", source)
@@ -1306,6 +1307,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "memory-search-header-abi",
             "string-copy-header-abi",
             "error-strings-header-abi|gettext-catalog-header-abi",
+            "string-duplication-header-abi",
             "random-entropy-header-abi",
             "sysv-semaphore-header-abi|posix-semaphore-header-abi",
             "sysv-message-shared-memory-header-abi",
@@ -1324,6 +1326,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-memory-locking",
             "libc-memfd-create",
             "libc-allocator-runtime",
+            "libc-allocator-string-duplication",
             "libc-allocator-observability",
             "libc-static-c-abi-differential",
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
@@ -2934,6 +2937,20 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/compat/x86_64/run_libc_string_copy.sh', source)
         self.assertIn(
             '    libc-string-copy)\n        [ "$#" -eq 0 ] || fail "libc-string-copy takes no arguments"',
+            source,
+        )
+        self.assertIn('libc-allocator-string-duplication', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_libc_allocator_string_duplication.sh',
+            source,
+        )
+        self.assertIn(
+            '    libc-allocator-string-duplication)\n        [ "$#" -eq 0 ] || fail "libc-allocator-string-duplication takes no arguments"',
+            source,
+        )
+        self.assertIn('string-duplication-header-abi', source)
+        self.assertIn(
+            '/workspace/compat/x86_64/run_string_duplication_header_abi.sh',
             source,
         )
         self.assertIn('run_libc_thread_pointer_probe()', source)

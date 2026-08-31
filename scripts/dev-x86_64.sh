@@ -88,6 +88,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
   string-copy-header-abi  compile the staged x86 C/C++ C-string-copy declarations
+  string-duplication-header-abi  compile the staged x86 C/C++ C-string-duplication declarations
   error-strings-header-abi  compile the staged x86 C/C++ error-string declarations
   gettext-catalog-header-abi  verify staged x86 libintl/nl_types C/C++ declarations and linkage
   random-entropy-header-abi  compile the staged x86 C/C++ random-source declarations
@@ -269,6 +270,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-locking  run the static x86 crabc-libc per-range memory-locking slice
   libc-memfd-create  run the static x86 crabc-libc memfd_create slice
   libc-allocator-runtime  run the opt-in mixed-runtime crabc-libc allocator wrapper slice
+  libc-allocator-string-duplication  run the opt-in mixed-runtime crabc-libc strdup/strndup slice
   libc-allocator-observability  run the complete x86 malloc_usable_size capability slice
   libc-static-c-abi-differential  run the private static-C ABI musl differential bootstrap
   libc-static-c-abi-same-object-differential  run the private same-object static-C ABI differential
@@ -331,6 +333,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-search  run the static x86 crabc-libc memory-search slice
   libc-string-copy  run the static x86 crabc-libc C-string-copy slice
   libc-error-strings  run the static x86 crabc-libc error-string slice
+  string-duplication-header-abi  run the C/C++ x86 string-duplication declaration gate
   libc-socket-transport  run the static x86 crabc-libc base socket transport slice
   libc-socket-messages  run the static x86 crabc-libc socket-message/options slice
   libc-thread-pointer  run the source-only x86 opaque %fs:0 thread-pointer probe
@@ -1986,6 +1989,10 @@ run_libc_allocator_runtime() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_runtime.sh
 }
 
+run_libc_allocator_string_duplication() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_allocator_string_duplication.sh
+}
+
 run_libc_allocator_observability() {
     run_in_container bash /workspace/compat/x86_64/run_libc_allocator_observability.sh
 }
@@ -2088,6 +2095,10 @@ run_error_strings_header_abi() {
 
 run_gettext_catalog_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_gettext_catalog_header_abi.sh
+}
+
+run_string_duplication_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_string_duplication_header_abi.sh
 }
 
 run_random_entropy_header_abi() {
@@ -3269,6 +3280,7 @@ case "$command" in
     memory-search-header-abi) ;;
     string-copy-header-abi) ;;
     error-strings-header-abi|gettext-catalog-header-abi) ;;
+    string-duplication-header-abi) ;;
     random-entropy-header-abi) ;;
     sysv-semaphore-header-abi|posix-semaphore-header-abi) ;;
     sysv-message-shared-memory-header-abi) ;;
@@ -3287,6 +3299,7 @@ case "$command" in
     libc-memory-locking) ;;
     libc-memfd-create) ;;
     libc-allocator-runtime) ;;
+    libc-allocator-string-duplication) ;;
     libc-allocator-observability) ;;
     libc-static-c-abi-differential) ;;
     libc-static-c-abi-same-object-differential|qualification-posix-abi-admission) ;;
@@ -4637,6 +4650,11 @@ case "$command" in
         ensure_image
         run_libc_allocator_runtime
         ;;
+    libc-allocator-string-duplication)
+        [ "$#" -eq 0 ] || fail "libc-allocator-string-duplication takes no arguments"
+        ensure_image
+        run_libc_allocator_string_duplication
+        ;;
     libc-allocator-observability)
         [ "$#" -eq 0 ] || fail "libc-allocator-observability takes no arguments"
         ensure_image
@@ -4796,6 +4814,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-error-strings takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_error_strings.sh
+        ;;
+    string-duplication-header-abi)
+        [ "$#" -eq 0 ] || fail "string-duplication-header-abi takes no arguments"
+        ensure_image
+        run_string_duplication_header_abi
         ;;
     libc-thread-pointer)
         [ "$#" -eq 0 ] || fail "libc-thread-pointer takes no arguments"

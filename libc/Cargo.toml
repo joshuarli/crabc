@@ -20,6 +20,11 @@ default = []
 # dependency-free selected-static artifacts from silently acquiring bundled C
 # allocator objects before the wider x86 runtime composition is ready.
 x86-allocator-runtime = ["dep:libmimalloc-sys"]
+# A separate opt-in allocation-client leaf keeps strdup/strndup out of the
+# completed allocator-wrapper object's exact public surface. It reuses only
+# that feature's private wrapper/backend boundary and does not select a wider
+# string or allocator runtime.
+x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # Complete the distinct strong AArch64 allocator-observation entry only for
 # its closed capability gate. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.

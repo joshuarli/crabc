@@ -5068,6 +5068,47 @@ x86_header_prerequisites = ["The shared fixture preprocesses project errno.h, st
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-allocator-runtime", scope = "Native x86 pinned-musl/crabc allocator-wrapper differential. It verifies project-header provenance; feature-gated reuse of the exact AArch64 wrapper; one wrapper, errno, and bundled-backend archive owner; exact ten-name private wrapper surface; required backend mi_malloc_aligned/mi_zalloc/mi_realloc/mi_free definitions; absence of every pinned-musl allocator object from the mixed candidate link; static ELF/TLS and no-glibc purity; then executes zero-size, alignment, grow/shrink/failure including overflow-preserving reallocarray, zeroing/overflow, stale-errno free, aligned-allocation, zero-alignment memalign, 4-KiB valloc, output-preservation, and realloc-to-zero behavior under an empty fixed environment. Pinned musl still supplies startup/process prerequisites, the backend object retains private mi_* globals, and this does not select a complete x86 C runtime, fixed Rust mimalloc port, owned CRT/sysroot, promotion, or public x86 support." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Project-header C allocation behavior, errno, zero-size, alignment, reallocarray overflow preservation, output-preservation, and static runtime-provider oracle; its own allocator objects are forbidden from the candidate link." }, { kind = "project-contract", source = "Active Linux/AArch64 crabc-libc allocator boundary", role = "The exact shared allocator_mimalloc.rs wrapper and libmimalloc-sys 0.1.49 backend define current cross-architecture implementation parity while the fixed v3.5.0 Rust engine stays paused and unpromoted." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 allocation entry ABI, archive ownership, static TLS, and ELF link-map purity contract." }]
 
+[[family.verified_artifact]]
+id = "static-c-allocator-string-duplication"
+description = "Private native x86 opt-in mixed-runtime C-string-duplication client artifact inside still-planned `libc.posix-runtime`. A separate feature maps pinned musl 1.2.6 `strdup`/`strndup` to one crate-owned object whose only allocation route is the completed wrapper's weak `malloc` ABI and whose representational-overflow result writes only the calling thread's initial-TLS errno. The candidate packages that client with the existing wrapper, errno owner, and bundled mimalloc v3.3.2 backend, then rejects pinned-musl `strdup`/`strndup` and all nine allocator implementation objects. The paired project-header executions prove high-byte copy ownership, bounded-prefix and zero-limit results, stale errno across success/free, a terminator at a protected-page edge, and a non-terminated bounded range ending at one. Pinned musl still owns startup/process prerequisites and the backend retains private `mi_*` globals. This client validates neither `memory.allocator-basic` nor `text.byte-strings-stateful`, allocator lifecycle/interposition/failure injection, general string/locale behavior, an owned runtime/CRT/sysroot, the paused fixed-v3.5.0 Rust port, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/allocator_string_duplication.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/allocator_mimalloc.rs",
+  "include/errno.h",
+  "include/stddef.h",
+  "include/stdlib.h",
+  "include/string.h",
+  "include/sys/mman.h",
+  "include/sys/syscall.h",
+  "compat/x86_64/string_duplication_header_abi_probe.c",
+  "compat/x86_64/string_duplication_header_abi_probe.cpp",
+  "compat/x86_64/run_string_duplication_header_abi.sh",
+  "compat/x86_64/libc_allocator_string_duplication_probe.c",
+  "compat/x86_64/run_libc_allocator_string_duplication.sh",
+  "compat/x86_64/tests/test_libc_allocator_string_duplication.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "scripts/dev-x86_64.sh",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+]
+x86_abi_prerequisites = [
+  "SysV AMD64 passes strdup's const char pointer in rdi and returns char * in rax; strndup adds its LP64 size_t bound in rsi. Both selected client entries are strong globals, while their sole allocation call resolves the separately evidenced weak malloc entry. The caller owns every returned non-null allocation and releases it through the selected free boundary.",
+  "Pinned musl 1.2.6 src/string/strdup.c maps a full C-string measurement plus terminator-inclusive allocation/copy; src/string/strndup.c maps a bounded strnlen measurement, terminator-inclusive allocation, exact prefix copy, and appended NUL. The scalar Rust leaf performs no source read after strndup's exact limit and does not manufacture a broader text helper.",
+  "The dedicated x86 feature implies x86-allocator-runtime but emits one separately audited client object with exactly strdup, strndup, and a private evidence witness. The candidate extracts that client, the prior wrapper, the initial-TLS errno owner, and the one bundled static backend object; the link map rejects pinned-musl duplicate and every allocator implementation object.",
+  "Pinned musl 1.2.6 still supplies static startup and process/runtime prerequisites because the candidate is deliberately mixed. The final ELF is static with one TLS image, no dynamic TLS resolver, interpreter, DT_NEEDED, unresolved symbol, or glibc input; none of those facts establishes an owned allocator lifecycle, CRT, or full runtime.",
+]
+x86_header_prerequisites = ["The dedicated C/C++ string-duplication header gate compares pinned-musl and project-first string.h declarations: strdup(const char *) and strndup(const char *, size_t) are POSIX-selected, hidden under strict C, and retain unmangled C++ linkage. The runtime differential also uses project errno.h, stddef.h, stdint.h, stdlib.h, sys/mman.h, and sys/syscall.h solely for stale-errno/free observation and fixture-local protected-page plumbing; it does not select header-family or string-runtime completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-allocator-string-duplication", scope = "Native x86 pinned-musl/crabc mixed-runtime client differential. It verifies project-header provenance and feature-gated source ownership; exact one-object strong strdup/strndup plus private witness surface; separate weak allocator-wrapper, errno, and bundled-backend owners; absence of every pinned-musl duplication and allocator object; static ELF/TLS and no-glibc purity; then executes owned high-byte copies, bounded and zero-limit strndup, stale errno/free, and guarded full/bounded page-edge reads under an empty fixed environment. Pinned musl still supplies startup/process prerequisites, and this does not select allocator lifecycle, allocator-family/string-family closure, dynamic interposition, failure injection, owned CRT/sysroot, promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source/declaration/behavior oracle for src/string/strdup.c and src/string/strndup.c, their malloc-owned returned storage, POSIX feature visibility, exact bounded read behavior, and static startup/process provider boundary; musl duplicate and allocator objects are forbidden from the candidate link." }, { kind = "project-contract", source = "Existing active crabc allocator_mimalloc.rs wrapper", role = "The selected existing weak malloc/free C ABI and libmimalloc-sys 0.1.49 bundled mimalloc v3.3.2 backend are the only allocation route for this client; that does not promote allocator ownership." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 pointer/size_t argument and return ABI, strong client versus weak allocation binding, static TLS, archive ownership, and link-map purity contract." }]
+
 [[family]]
 id = "libc.pthread-tls"
 order = 80

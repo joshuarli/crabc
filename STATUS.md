@@ -105,6 +105,17 @@ process primitives, and the backend retains private `mi_*` globals, so this is
 not an owned x86 runtime, fixed-v3.5.0 Rust-port promotion, allocator-family
 closure, or public x86 support.
 
+The separately opt-in `strdup`/`strndup` client artifact now proves a narrow
+allocation-consumer boundary over that same wrapper. Its crate-owned object
+has only the weak `malloc` ABI route and initial-TLS errno for the otherwise
+unrepresentable size boundary; the candidate rejects musl duplication and all
+allocator objects. Pinned-musl/project-header executions cover owned high-byte
+copies, bounded and zero-limit duplication, stale errno across `free`, and
+full/bounded guarded-page reads. This remains a mixed-runtime client proof:
+it does not select `memory.allocator-basic`, stateful-text completion,
+allocator lifecycle/interposition/failure injection, a CRT/sysroot, or public
+x86 support.
+
 The separate `memory.allocator-observability` capability is now a complete
 private x86 slice over the exact AArch64 one-symbol surface. A strong
 `malloc_usable_size` owner reuses the active backend's direct `mi_usable_size`

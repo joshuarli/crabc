@@ -419,6 +419,14 @@ mod allocator {
     }
 }
 
+// POSIX string duplication is an allocation client, not another allocator
+// entry point. Keep its object and feature separate so the completed wrapper
+// artifact retains its exact nine-entry public surface and this mixed-runtime
+// evidence cannot imply allocator lifecycle closure.
+#[cfg(feature = "x86-allocator-string-duplication")]
+#[path = "allocator_string_duplication.rs"]
+mod allocator_string_duplication;
+
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps
 // archive ownership independently auditable in the feature-built x86 image.
