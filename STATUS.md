@@ -213,6 +213,19 @@ syscall, or mutable runtime state. It does not change qsort/qsort_r behavior,
 select general sorting/searching or callback ownership, family completion,
 promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-qsort` is a separate private `static-c-qsort`
+artifact inside still-planned `libc.c-abi-compat`. Its pinned-musl/project
+C/C++ `<stdlib.h>` matrix proves the unconditional four-argument declaration
+from strict through BSD selection and unmangled C++ linkage. Equivalent
+pinned-musl and freestanding-static routes then prove direct/function-pointer
+comparator calls, duplicate-key sorting, record permutation, a 308-byte
+cycling-buffer record, and zero-count callback suppression. The selected
+candidate contains `qsort` and its private smoothsort worker without bsearch,
+`__qsort_r`/qsort_r, TLS/errno, allocation, locale, syscall, or mutable
+runtime state. It preserves the separate qsort_r ABI and does not select
+general sorting/searching or callback ownership, family completion, promotion,
+or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-getpass` is a separate private
 `static-c-getpass` artifact inside still-planned `libc.posix-runtime`. Its
 pinned-musl and freestanding-static routes select only the historical C

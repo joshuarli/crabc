@@ -1414,7 +1414,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "xattr-header-abi",
             "madvise-reference",
             "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|callback-algorithms-header-abi",
+            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|getsubopt-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|immediate-termination-header-abi|bsearch-header-abi|qsort-header-abi|callback-algorithms-header-abi",
             "posix-exit-header-abi",
             "ffs-header-abi",
             "byte-strings-header-abi",
@@ -1455,7 +1455,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
             "libc-interface-discovery",
             "libc-posix-exit",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
+            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-immediate-termination|libc-bsearch|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline",
             "libc-vector-io|libc-uio-cxx-linkage",
             "libc-sysv-semaphore|libc-posix-semaphore",
             "libc-sysv-message-shared-memory",
@@ -15249,12 +15249,154 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
+    def test_libc_static_c_abi_qsort_artifact_stays_standalone(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs"
+        ).read_text(encoding="utf-8")
+        context_abi = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "callback_algorithms.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_qsort_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_qsort_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_qsort.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_qsort_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "qsort_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "qsort_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "qsort.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 C `qsort` ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/stdlib/qsort.c::__qsort_r",
+            "src/stdlib/qsort_nr.c::qsort",
+            "qsort_with_context",
+            "14 * core::mem::size_of::<usize>() + 1",
+            "12 * core::mem::size_of::<usize>()",
+            "qsort_copy_nonoverlapping",
+            'pub unsafe extern "C" fn qsort',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "global_asm!",
+            ".weak qsort_r",
+            ".set qsort_r",
+            "raw_syscall::",
+            "errno::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        for required in (
+            "qsort_with_context",
+            ".weak qsort_r",
+            ".set qsort_r, __qsort_r",
+            'pub unsafe extern "C" fn __qsort_r',
+        ):
+            self.assertIn(required, context_abi)
+        self.assertIn("qsort", static_exports)
+
+        for required in (
+            "qsort_signature",
+            "const qsort_signature function = qsort",
+            "payload[300]",
+            "seen == 0xffu",
+            "zero_count_calls == 0",
+            "CRABC_QSORT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_qsort_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        for header in (header_c, header_cxx):
+            for required in ("qsort declaration", "qsort_signature", "qsort_function"):
+                self.assertIn(required, header)
+        for required in (
+            "qsort_header_abi_probe.c",
+            "qsort_header_abi_probe.cpp",
+            "-D__STRICT_ANSI__",
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_GNU_SOURCE",
+            "-D_BSD_SOURCE",
+            "nm --undefined-only",
+            "retained a mangled qsort reference",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "run_qsort_header_abi.sh",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,-e,_start",
+            "-Wl,--no-undefined",
+            "--disassemble=qsort",
+            "qsort candidate unexpectedly retains TLS",
+            "qsort unexpectedly performs a syscall",
+            "outside the test entry shim",
+            "__qsort_r qsort_r",
+            "candidate accidentally selects ${symbol}",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-qsort"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-qsort"',
+            parity_ledger,
+        )
+        self.assertIn("run_qsort_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_qsort_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_qsort()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_qsort.sh", runner
+        )
+        self.assertIn(
+            '    qsort-header-abi)\n        [ "$#" -eq 0 ] || fail "qsort-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-qsort)\n        [ "$#" -eq 0 ] || fail "libc-qsort takes no arguments"',
+            runner,
+        )
+
     def test_libc_static_c_abi_callback_algorithms_artifact_stays_narrow(self) -> None:
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
         ).read_text(encoding="utf-8")
         bsearch = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "bsearch.rs"
+        ).read_text(encoding="utf-8")
+        qsort = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs"
         ).read_text(encoding="utf-8")
         callback_algorithms = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" /
@@ -15292,10 +15434,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "bsearch.rs"]', static_root)
+        self.assertIn('#[path = "qsort.rs"]', static_root)
         self.assertIn('#[path = "callback_algorithms.rs"]', static_root)
         self.assertIn("bsearch", bsearch)
         self.assertIn("bsearch", static_export_names)
-        for symbol in ("__qsort_r", "qsort", "qsort_r"):
+        self.assertIn("qsort", qsort)
+        self.assertIn("qsort", static_export_names)
+        for symbol in ("__qsort_r", "qsort_r"):
             self.assertIn(symbol, callback_algorithms)
             self.assertIn(symbol, static_export_names)
         for required in (
@@ -15308,17 +15453,25 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, bsearch)
         for required in (
             "musl 1.2.6 release commit",
-            "src/stdlib/qsort.c",
+            "src/stdlib/qsort.c::__qsort_r",
             "src/stdlib/qsort_nr.c",
+            "smoothsort",
+            "qsort_with_context",
+            ".weak qsort_r",
+            ".set qsort_r, __qsort_r",
+        ):
+            self.assertIn(required, callback_algorithms)
+        for required in (
+            "musl 1.2.6 release commit",
+            "src/stdlib/qsort.c::__qsort_r",
+            "src/stdlib/qsort_nr.c::qsort",
             "smoothsort",
             "14 * core::mem::size_of::<usize>() + 1",
             "12 * core::mem::size_of::<usize>()",
-            ".weak qsort_r",
-            ".set qsort_r, __qsort_r",
             "qsort_copy_nonoverlapping",
             "MaybeUninit",
         ):
-            self.assertIn(required, callback_algorithms)
+            self.assertIn(required, qsort)
         for forbidden in (
             "crabc_core",
             "crabc_mimalloc",

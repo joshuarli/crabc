@@ -168,6 +168,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/immediate_termination.rs"),
     Path("libc/src/c_abi/x86_64/posix_exit.rs"),
     Path("libc/src/c_abi/x86_64/bsearch.rs"),
+    Path("libc/src/c_abi/x86_64/qsort.rs"),
     Path("libc/src/c_abi/x86_64/callback_algorithms.rs"),
     Path("libc/src/c_abi/x86_64/search_tree_intrusive.rs"),
     Path("libc/src/c_abi/x86_64/search_hash_table.rs"),
@@ -3763,6 +3764,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "immediate_termination.rs"]',
         '#[path = "posix_exit.rs"]',
         '#[path = "bsearch.rs"]',
+        '#[path = "qsort.rs"]',
         '#[path = "callback_algorithms.rs"]',
         '#[path = "search_tree_intrusive.rs"]',
         '#[path = "search_hash_table.rs"]',
@@ -7190,18 +7192,51 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
                 f"boundary widens into {forbidden!r}"
             )
 
+    qsort_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs"
+    qsort_text = qsort_source.read_text(errors="replace")
+    for required in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/stdlib/qsort.c::__qsort_r",
+        "src/stdlib/qsort_nr.c::qsort",
+        "qsort_with_context",
+        "14 * core::mem::size_of::<usize>() + 1",
+        "12 * core::mem::size_of::<usize>()",
+        "qsort_copy_nonoverlapping",
+        "pub unsafe extern \"C\" fn qsort",
+    ):
+        if required not in qsort_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/qsort.rs: selected static qsort "
+                f"boundary is missing {required!r}"
+            )
+    qsort_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            qsort_text,
+        )
+    )
+    if qsort_exports != {"qsort"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/qsort.rs: selected static artifact must "
+            "export qsort only as a Rust entry"
+        )
+    for forbidden in ("global_asm!", ".weak qsort_r", ".set qsort_r", "raw_syscall::", "errno::"):
+        if forbidden in qsort_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/qsort.rs: selected static qsort "
+                f"boundary widens into {forbidden!r}"
+            )
+
     callback_algorithms_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "callback_algorithms.rs"
     )
     callback_algorithms_text = callback_algorithms_source.read_text(errors="replace")
     for required in (
         "musl 1.2.6 release commit",
-        "src/stdlib/qsort.c",
-        "src/stdlib/qsort_nr.c",
+        "src/stdlib/qsort.c::__qsort_r",
+        "qsort_with_context",
         "smoothsort",
-        "14 * core::mem::size_of::<usize>() + 1",
-        "12 * core::mem::size_of::<usize>()",
-        "qsort_copy_nonoverlapping",
         "global_asm!",
         ".weak qsort_r",
         ".set qsort_r, __qsort_r",
@@ -7217,10 +7252,10 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             callback_algorithms_text,
         )
     )
-    if callback_algorithms_exports != {"__qsort_r", "qsort"}:
+    if callback_algorithms_exports != {"__qsort_r"}:
         errors.append(
             "libc/src/c_abi/x86_64/callback_algorithms.rs: selected static "
-            "artifact must export __qsort_r and qsort only as Rust entries"
+            "artifact must export __qsort_r only as a Rust entry"
         )
     callback_algorithms_aliases = set(
         re.findall(
@@ -9821,6 +9856,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         immediate_termination_text,
         posix_exit_text,
         bsearch_text,
+        qsort_text,
         callback_algorithms_text,
         search_tree_text,
         search_hash_table_text,
@@ -10412,6 +10448,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("immediate_termination.rs", immediate_termination_text),
         ("posix_exit.rs", posix_exit_text),
         ("bsearch.rs", bsearch_text),
+        ("qsort.rs", qsort_text),
         ("callback_algorithms.rs", callback_algorithms_text),
         ("search_tree_intrusive.rs", search_tree_text),
         ("search_hash_table.rs", search_hash_table_text),

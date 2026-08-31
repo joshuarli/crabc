@@ -428,6 +428,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-tcsetpgrp
 ./scripts/dev-x86_64.sh bsearch-header-abi
 ./scripts/dev-x86_64.sh libc-bsearch
+./scripts/dev-x86_64.sh qsort-header-abi
+./scripts/dev-x86_64.sh libc-qsort
 ./scripts/dev-x86_64.sh getpass-header-abi
 ./scripts/dev-x86_64.sh libc-getpass
 ./scripts/dev-x86_64.sh mktemp-header-abi
@@ -3468,6 +3470,20 @@ state. It neither changes qsort/qsort_r behavior nor selects general
 sorting/searching, callback ownership, libc.so, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
 
+`libc-qsort` is a separate capability-free `static-c-qsort`
+`verified_artifact` inside still-planned `libc.c-abi-compat`. Its strict,
+POSIX, X/Open, GNU, and BSD C/C++ `<stdlib.h>` matrix proves the unconditional
+four-argument `qsort` declaration and unmangled C++ linkage. One
+project-header C fixture then executes through pinned musl and a
+`-nostdlib -static` candidate. It pins direct/function-pointer comparator
+calls, duplicate-key sorting, record permutation, a 308-byte smoothsort
+cycling-buffer stride, and zero-count callback suppression. The candidate
+contains qsort plus its private worker but rejects bsearch,
+__qsort_r/qsort_r, search-container helpers, TLS/errno, allocation, locale,
+syscall, and runtime state. It preserves qsort_r behavior separately and
+selects neither general sorting/searching nor callback ownership, libc.so,
+CRT, loader, sysroot, family completion, promotion, or public x86 support.
+
 `libc-callback-algorithms` is a separately recorded
 `static-c-callback-algorithms` `verified_artifact` gate over that archive, not
 a general sorting/searching capability. Its project-header C body first
@@ -3475,8 +3491,8 @@ executes the public `bsearch`, `qsort`, and `qsort_r` cases through pinned musl
 and then through a `-nostdlib -static` candidate; the candidate also directly
 exercises private `__qsort_r`. It closes exactly `bsearch`, `__qsort_r`, and
 `qsort` as strong exports plus weak, same-address `qsort_r`. The fixed musl
-smoothsort core retains its O(1) cycling buffer; `qsort` adapts its
-two-argument callback, and GNU/BSD `qsort_r` retains its final-context
+smoothsort core retains its O(1) cycling buffer; qsort's separate adapter calls
+the private worker, and GNU/BSD `qsort_r` retains its final-context
 callback ABI. The fixture proves bsearch hit/miss/zero-element behavior,
 ordinary and wide-record sorting with byte preservation, context identity,
 the private helper, and a caller's strong `qsort_r` override. This stateless,
@@ -3486,9 +3502,10 @@ callback registries, C longjmp/C++ exception transport, dynamic runtime, and
 public x86 support.
 
 The same callback proof now additionally selects only the ABI-only
-`numeric.qsort-helper` capability: strong, uninstalled `__qsort_r` and its
-weak same-address `qsort_r` alias. The direct candidate proves helper sorting
-and a strong caller override, while the public qsort/qsort_r surface remains
+`numeric.qsort-helper` capability: strong, uninstalled `__qsort_r` context ABI
+over the private smoothsort worker and its weak same-address `qsort_r` alias.
+The direct candidate proves helper sorting and a strong caller override, while
+the public qsort/qsort_r surface remains
 under `numeric.scalar-legacy-callback`. This does not promote the planned
 `libc.c-abi-compat` family or select general sorting, runtime ownership, or
 public x86 support.
@@ -5320,6 +5337,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-tcgetpgrp`,
 `libc-tcsetpgrp`,
 `libc-bsearch`,
+`libc-qsort`,
 `libc-getpass`,
 `libc-mktemp`,
 `libc-process-context`, `libc-environment`, `libc-secure-environment`, `libc-login-name`, `libc-child-reaping`, and

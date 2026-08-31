@@ -2929,13 +2929,14 @@ oracle = [
 
 [[family.verified_artifact]]
 id = "static-c-callback-algorithms"
-description = "Private native x86 selected-static-archive callback-algorithms block. One dependency-free `crabc-libc` archive resolves separately owned `bsearch`, `__qsort_r`, `qsort`, and weak same-address `qsort_r` into a freestanding C fixture after an equivalent pinned-musl execution. The fixed musl smoothsort has its O(1) cycling buffer and unstable equal-key ordering; `qsort` adapts the two-argument comparator through `__qsort_r`, while GNU/BSD `qsort_r` keeps its (a,b,arg) final-context ABI. The fixture proves bsearch hit/miss/zero element, ordinary qsort, wide-record byte preservation, qsort_r context identity, private helper candidate behavior, ELF weak-alias equality, and strong caller qsort_r override. `__qsort_r` remains a private internal header name. This stateless allocation-free callback-algorithms block has no syscall, no errno, no initial-TLS, no allocator, locale, lock, callback registry, process state, C longjmp/C++ exception transport, libc.so, CRT, dynamic TLS, loader, sysroot, or public x86 support."
+description = "Private native x86 selected-static-archive callback-algorithms block. One dependency-free `crabc-libc` archive resolves separately owned `bsearch`, `__qsort_r`, `qsort`, and weak same-address `qsort_r` into a freestanding C fixture after an equivalent pinned-musl execution. The fixed musl smoothsort has its O(1) cycling buffer and unstable equal-key ordering; qsort's separate qsort_nr two-argument comparator adapter calls the same private worker, while GNU/BSD `qsort_r` keeps its (a,b,arg) final-context ABI. The fixture proves bsearch hit/miss/zero element, ordinary qsort, wide-record byte preservation, qsort_r context identity, private helper candidate behavior, ELF weak-alias equality, and strong caller qsort_r override. `__qsort_r` remains a private internal header name. This stateless allocation-free callback-algorithms block has no syscall, no errno, no initial-TLS, no allocator, locale, lock, callback registry, process state, C longjmp/C++ exception transport, libc.so, CRT, dynamic TLS, loader, sysroot, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/bsearch.rs",
+  "libc/src/c_abi/x86_64/qsort.rs",
   "libc/src/c_abi/x86_64/callback_algorithms.rs",
   "include/features.h",
   "include/bits/alltypes.h",
@@ -9366,6 +9367,46 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional stdlib declaration, and executable behavior oracle for src/stdlib/bsearch.c::bsearch: midpoint selection, signed comparator branches, found pointer, miss, and zero-count behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 five-argument function/callback register convention, pointer/int result ABI, C++ C linkage, and true-static ET_EXEC closure." }]
 
 [[family.verified_artifact]]
+id = "static-c-qsort"
+description = "Private native x86 selected-static-archive `qsort` compatibility artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive resolves exactly `qsort` and its non-exported smoothsort worker into a freestanding C fixture after an equivalent pinned-musl execution. Musl's complete `src/stdlib/qsort.c` smoothsort and `src/stdlib/qsort_nr.c` two-argument comparator adapter retain their O(1) 256-byte cycling buffer, unsigned Leonardo state, and unstable equal-key behavior for valid caller-owned records: direct and function-pointer calls cover signed integer ordering, duplicate keys, record permutation, a 308-byte record width, and zero elements without a callback. The target-local private worker preserves the existing `__qsort_r`/weak `qsort_r` context-ABI behavior without extracting either symbol into this candidate. The checked multiplication guard applies only outside the valid C array domain, where musl's source multiplication/pointer expression is already undefined. The final candidate rejects `bsearch`, `__qsort_r`, `qsort_r`, search-container helpers, TLS/errno, allocation, locale, locks, syscalls, and runtime state. This capability-free ABI artifact does not select general sorting/searching or callback ownership, alter qsort_r behavior, or select libc.so, CRT, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/qsort.rs",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/stddef.h",
+  "include/stdlib.h",
+  "compat/x86_64/qsort_header_abi_probe.c",
+  "compat/x86_64/qsort_header_abi_probe.cpp",
+  "compat/x86_64/run_qsort_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_qsort_probe.c",
+  "compat/x86_64/libc_qsort_start.S",
+  "compat/x86_64/run_libc_qsort.sh",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 LP64 C ABI passes qsort(base, nel, width, cmp) in rdi/rsi/rdx/rcx and returns no value. Its caller-owned two-pointer comparator receives left/right in rdi/rsi and returns one signed four-byte ordering word in eax; the caller supplies valid writable records, a non-null comparator, and a normal C return.",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps src/stdlib/qsort.c::__qsort_r to qsort.rs's private smoothsort worker and src/stdlib/qsort_nr.c::qsort to the two-argument adapter. The worker preserves the 14 * sizeof(size_t) + 1 pointer cycle stack, 12 * sizeof(size_t) Leonardo stack, and C callback boundary; its checked-multiply return applies only outside the C-defined array domain.",
+  "The final `-nostdlib -static` candidate has no interpreter, DT_NEEDED, unresolved symbol, PT_TLS, errno path, allocation, locale, or ambient runtime dependency. It exposes qsort while rejecting bsearch, __qsort_r, qsort_r, and search-container helper symbols; apart from the test entry's one exit syscall, its qsort closure has no syscall boundary.",
+]
+x86_header_prerequisites = [
+  "The focused pinned-musl/project-first C11/C++17 `<stdlib.h>` matrix proves unconditional `void qsort(void *, size_t, size_t, int (*)(const void *, const void *))` under strict, POSIX, X/Open, GNU, and BSD profiles, with the same function-pointer type and unmangled C++ linkage. It selects no qsort_r declaration, general stdlib lifecycle, archive linkage, installed-header completion, or public x86 support.",
+]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-qsort", scope = "Pinned-musl/project C11/C++ header compilation plus equivalent pinned-musl C execution and one true dependency-free x86 crabc-libc `-nostdlib -static` candidate. The fixture proves the SysV comparator ABI through direct and function-pointer calls; signed integer sorting with duplicates; record permutation; a 308-byte cycling-buffer width; and zero-count callback suppression. It audits exact crate-owned export closure, no interpreter/DT_NEEDED/unresolved symbol/PT_TLS/errno/allocation/locale/panic path, and no qsort syscall beyond the fixture entry. It rejects bsearch/__qsort_r/qsort_r plus search-container extraction, preserving the existing qsort_r ABI separately. It does not select general sorting/searching or callback ownership, libc.so, CRT, loader, sysroot, family promotion, or public x86 support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, unconditional stdlib declaration, and executable behavior oracle for src/stdlib/qsort.c::__qsort_r and src/stdlib/qsort_nr.c::qsort: smoothsort comparator calls, record movement, zero-count return, and qsort's intentionally unstable equal-key behavior." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 four-argument function/two-pointer callback register convention, void return, C++ C linkage, and true-static ET_EXEC closure." }]
+
+[[family.verified_artifact]]
 id = "static-c-process-globals-getopt"
 description = "Private native x86 selected-static-archive program-name/getopt artifact inside still-planned `libc.c-abi-compat`. One dependency-free `crabc-libc` archive publishes `__progname`, `__progname_full`, weak same-address `program_invocation_short_name`/`program_invocation_name`, `optarg`, `optind`, `opterr`, `optopt`, `__optpos`, `__optreset`, weak same-address `optreset`, `getopt`, `getopt_long`, `getopt_long_only`, and weak same-address `__posix_getopt`. Its bounded static `__libc_start_main` validates argc/argv/envp/auxv delimiters and publishes the empty-or-argv[0] program-name view before its init callback and main. The parser preserves the established AArch64 musl translation for short clusters, attached and separate arguments, both reset spellings, UTF-8 option code points under C.UTF-8, quiet unknown/missing-option results, GNU long required/optional/flag arguments, ambiguity, permutation, and long-only short-option precedence. The x86 leaf adds only target-local errno/stream adapters and exact musl ELF aliases. Environment storage and mutation, direct auxv observation beyond the separately qualified `static-c-auxv-observation` boundary, secure-execution policy, loader/dynamic startup, arbitrary locale selection, general stdio, libc.so, CRT family completion, sysroot, C ABI closure, family promotion, and public x86 support remain outside this artifact."
 source_owners = [
@@ -9735,12 +9776,13 @@ capabilities = ["catalog.gettext"]
 
 [[family.verified_slice]]
 id = "numeric.qsort-helper"
-description = "Private native x86 selected-static-archive completion of the AArch64 `numeric.qsort-helper` capability inside still-planned `libc.c-abi-compat`. It selects exactly musl's uninstalled `__qsort_r` helper: one strong global smoothsort implementation paired with the weak same-address `qsort_r` alias that is public. The independently recorded callback-algorithms artifact retains `bsearch`, `qsort`, and public `qsort_r` behavior; this ABI-only slice accounts only for the private helper without changing the existing native `numeric.scalar-legacy-callback` classification. Pinned musl's static-archive symbol record and the true freestanding candidate establish the direct helper path, while public qsort/qsort_r behavior is compared through the pinned musl dynamic reference. The fixed smoothsort preserves its O(1) cycling buffer, final-context comparator ABI, and strong-caller alias override. It owns no errno, TLS, allocator, syscall, locale, callback registry, or mutable process state. `libc.c-abi-compat` remains planned, the separate `search.hash-table` selection remains private, promotion/public_support=false is unchanged, and general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, and public x86 support remain outside this capability."
+description = "Private native x86 selected-static-archive completion of the AArch64 `numeric.qsort-helper` capability inside still-planned `libc.c-abi-compat`. It selects exactly musl's uninstalled `__qsort_r` helper: one strong global context-ABI wrapper over the non-exported smoothsort worker, paired with the weak same-address `qsort_r` alias that is public. The independently recorded callback-algorithms artifact retains `bsearch`, `qsort`, and public `qsort_r` behavior; this ABI-only slice accounts only for the private helper without changing the existing native `numeric.scalar-legacy-callback` classification. Pinned musl's static-archive symbol record and the true freestanding candidate establish the direct helper path, while public qsort/qsort_r behavior is compared through the pinned musl dynamic reference. The fixed smoothsort preserves its O(1) cycling buffer, final-context comparator ABI, and strong-caller alias override. It owns no errno, TLS, allocator, syscall, locale, callback registry, or mutable process state. `libc.c-abi-compat` remains planned, the separate `search.hash-table` selection remains private, promotion/public_support=false is unchanged, and general C sorting/searching, C longjmp/C++ exception transport, libc.so, CRT, loader, sysroot, and public x86 support remain outside this capability."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/qsort.rs",
   "libc/src/c_abi/x86_64/callback_algorithms.rs",
   "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
   "include/features.h",

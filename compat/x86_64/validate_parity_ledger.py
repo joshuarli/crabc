@@ -1423,6 +1423,8 @@ INET_CLASSFUL_SYMBOLS = ("inet_lnaof", "inet_makeaddr")
 GETSUBOPT_SYMBOLS = ("getsubopt",)
 BSEARCH_SYMBOLS = ("bsearch",)
 
+QSORT_SYMBOLS = ("qsort",)
+
 INET_ADDRESS_UNSELECTED_SYMBOLS = (
     "calloc",
     "free",
@@ -23690,6 +23692,301 @@ def require_hstrerror_artifact(family: Mapping[str, Any]) -> None:
 
 
 
+def require_qsort_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the standalone musl qsort artifact capability-free."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.c-abi-compat].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [entry for entry in artifacts if entry.get("id") == "static-c-qsort"]
+    require(
+        len(matching) == 1,
+        "libc.c-abi-compat must contain exactly one static-c-qsort artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-qsort must not promote libc.c-abi-compat",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-qsort must remain capability-free",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "static-c-qsort needs a description")
+    for phrase in (
+        "`qsort` compatibility artifact",
+        "still-planned `libc.c-abi-compat`",
+        "non-exported smoothsort worker",
+        "src/stdlib/qsort.c",
+        "src/stdlib/qsort_nr.c",
+        "308-byte record width",
+        "zero elements without a callback",
+        "`__qsort_r`/weak `qsort_r`",
+        "rejects `bsearch`, `__qsort_r`, `qsort_r`",
+        "capability-free ABI artifact",
+        "does not select general sorting/searching or callback ownership",
+        "alter qsort_r behavior",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"static-c-qsort description omits {phrase}")
+
+    owners = set(
+        nonempty_strings(artifact.get("source_owners"), "static-c-qsort.source_owners")
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/qsort.rs",
+        "include/features.h",
+        "include/bits/alltypes.h",
+        "include/stddef.h",
+        "include/stdlib.h",
+        "compat/x86_64/qsort_header_abi_probe.c",
+        "compat/x86_64/qsort_header_abi_probe.cpp",
+        "compat/x86_64/run_qsort_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_qsort_probe.c",
+        "compat/x86_64/libc_qsort_start.S",
+        "compat/x86_64/run_libc_qsort.sh",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-qsort source owners omit {owner}")
+
+    prerequisites = nonempty_strings(
+        artifact.get("x86_abi_prerequisites"),
+        "static-c-qsort.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "SysV AMD64" in item
+            and "rdi/rsi/rdx/rcx" in item
+            and "eax" in item
+            and "returns no value" in item
+            for item in prerequisites
+        ),
+        "static-c-qsort must retain its LP64 function and comparator ABI",
+    )
+    require(
+        any(
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
+            and "src/stdlib/qsort.c::__qsort_r" in item
+            and "src/stdlib/qsort_nr.c::qsort" in item
+            and "14 * sizeof(size_t) + 1" in item
+            and "C-defined array domain" in item
+            for item in prerequisites
+        ),
+        "static-c-qsort must retain its bounded musl source closure",
+    )
+    require(
+        any(
+            "no interpreter" in item
+            and "PT_TLS" in item
+            and "bsearch" in item
+            and "qsort_r" in item
+            and "one exit syscall" in item
+            for item in prerequisites
+        ),
+        "static-c-qsort must retain its standalone static closure",
+    )
+
+    headers = nonempty_strings(
+        artifact.get("x86_header_prerequisites"),
+        "static-c-qsort.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "void qsort(" in item
+            and "strict" in item
+            and "POSIX" in item
+            and "X/Open" in item
+            and "GNU" in item
+            and "BSD" in item
+            and "unmangled C++ linkage" in item
+            for item in headers
+        ),
+        "static-c-qsort must retain its unconditional C/C++ header ABI",
+    )
+
+    evidence = artifact.get("native_evidence")
+    require(isinstance(evidence, list), "static-c-qsort needs evidence")
+    require(
+        {entry.get("command") for entry in evidence if isinstance(entry, Mapping)}
+        == {"./scripts/dev-x86_64.sh libc-qsort"},
+        "static-c-qsort must use the closed libc-qsort command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl/project C11/C++ header",
+                "`-nostdlib -static` candidate",
+                "direct and function-pointer calls",
+                "308-byte cycling-buffer width",
+                "zero-count callback suppression",
+                "bsearch/__qsort_r/qsort_r",
+                "preserving the existing qsort_r ABI separately",
+                "family promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-qsort evidence must retain its standalone static closure",
+    )
+
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(QSORT_SYMBOLS) <= exports,
+        "static-c-qsort must retain its selected export",
+    )
+
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "qsort.rs"]\nmod qsort;' in static_root,
+        "x86 static C ABI must compose the standalone qsort leaf",
+    )
+    source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "pinned musl 1.2.6 release commit",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+        "src/stdlib/qsort.c::__qsort_r",
+        "src/stdlib/qsort_nr.c::qsort",
+        "qsort_with_context",
+        "14 * core::mem::size_of::<usize>() + 1",
+        "12 * core::mem::size_of::<usize>()",
+        "qsort_copy_nonoverlapping",
+        'pub unsafe extern "C" fn qsort',
+    ):
+        require(snippet in source, f"qsort implementation omits {snippet}")
+    qsort_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            source,
+        )
+    )
+    require(
+        qsort_exports == {"qsort"},
+        "qsort implementation must expose qsort only as a Rust C entry",
+    )
+    for forbidden in (
+        "global_asm!",
+        ".weak qsort_r",
+        ".set qsort_r",
+        "raw_syscall::",
+        "errno::",
+        "crabc_core",
+        "crabc_mimalloc",
+    ):
+        require(forbidden not in source, f"qsort leaf widens into {forbidden}")
+
+    callback_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "callback_algorithms.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "qsort_with_context",
+        ".weak qsort_r",
+        ".set qsort_r, __qsort_r",
+        'pub unsafe extern "C" fn __qsort_r',
+    ):
+        require(
+            snippet in callback_source,
+            f"qsort companion context ABI omits {snippet}",
+        )
+
+    runner = (ROOT / "compat" / "x86_64" / "run_libc_qsort.sh").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "run_musl_oracle.sh",
+        "run_qsort_header_abi.sh",
+        "static_c_abi_exports.txt",
+        "-nostdlib -static",
+        "--no-undefined",
+        "archive does not define qsort",
+        "--disassemble=qsort",
+        "qsort candidate unexpectedly retains TLS",
+        "qsort unexpectedly performs a syscall",
+        "outside the test entry shim",
+        "__qsort_r qsort_r",
+        "candidate accidentally selects ${symbol}",
+    ):
+        require(snippet in runner, f"qsort runner omits {snippet}")
+    require(
+        "--whole-archive" not in runner,
+        "qsort runner must preserve archive-member extraction",
+    )
+
+    probe = (ROOT / "compat" / "x86_64" / "libc_qsort_probe.c").read_text(
+        encoding="utf-8"
+    )
+    for snippet in (
+        "qsort_signature",
+        "const qsort_signature function = qsort",
+        "payload[300]",
+        "seen == 0xffu",
+        "zero_count_calls == 0",
+        "CRABC_QSORT_FREESTANDING",
+    ):
+        require(snippet in probe, f"qsort probe omits {snippet}")
+
+    header_c = (
+        ROOT / "compat" / "x86_64" / "qsort_header_abi_probe.c"
+    ).read_text(encoding="utf-8")
+    header_cxx = (
+        ROOT / "compat" / "x86_64" / "qsort_header_abi_probe.cpp"
+    ).read_text(encoding="utf-8")
+    for snippet in ("qsort declaration", "qsort_signature", "qsort_function"):
+        require(snippet in header_c, f"qsort C header probe omits {snippet}")
+        require(snippet in header_cxx, f"qsort C++ header probe omits {snippet}")
+
+    header_runner = (
+        ROOT / "compat" / "x86_64" / "run_qsort_header_abi.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "qsort_header_abi_probe.c",
+        "qsort_header_abi_probe.cpp",
+        "Pinned musl 1.2.6",
+        "-D__STRICT_ANSI__",
+        "-D_POSIX_C_SOURCE=200809L",
+        "-D_XOPEN_SOURCE=700",
+        "-D_GNU_SOURCE",
+        "-D_BSD_SOURCE",
+        "retained a mangled qsort reference",
+    ):
+        require(snippet in header_runner, f"qsort header runner omits {snippet}")
+
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "qsort-header-abi)",
+        "run_qsort_header_abi",
+        "libc-qsort)",
+        "run_libc_qsort",
+    ):
+        require(snippet in dispatcher, f"qsort dispatcher omits {snippet}")
+
+
 def require_bsearch_artifact(family: Mapping[str, Any]) -> None:
     """Keep the standalone musl binary-search artifact capability-free."""
 
@@ -25293,6 +25590,7 @@ def require_numeric_qsort_helper_slice(family: Mapping[str, Any]) -> None:
         )
     )
     for owner in (
+        "libc/src/c_abi/x86_64/qsort.rs",
         "libc/src/c_abi/x86_64/callback_algorithms.rs",
         "include/stdlib.h",
         "compat/x86_64/callback_algorithms_header_abi_probe.c",
@@ -25346,20 +25644,32 @@ def require_numeric_qsort_helper_slice(family: Mapping[str, Any]) -> None:
             f"numeric.qsort-helper selects allocator export {symbol}",
         )
 
-    source = (
+    callback_source = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "callback_algorithms.rs"
     ).read_text(encoding="utf-8")
+    qsort_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "qsort.rs"
+    ).read_text(encoding="utf-8")
     for snippet in (
-        "src/stdlib/qsort.c",
+        "src/stdlib/qsort.c::__qsort_r",
         ".weak qsort_r",
         ".set qsort_r, __qsort_r",
         "pub unsafe extern \"C\" fn __qsort_r",
+        "qsort_with_context",
+    ):
+        require(
+            snippet in callback_source,
+            f"numeric.qsort-helper context ABI source omits {snippet}",
+        )
+    for snippet in (
+        "src/stdlib/qsort.c::__qsort_r",
+        "qsort_with_context",
         "14 * core::mem::size_of::<usize>() + 1",
         "12 * core::mem::size_of::<usize>()",
     ):
         require(
-            snippet in source,
-            f"numeric.qsort-helper source omits {snippet}",
+            snippet in qsort_source,
+            f"numeric.qsort-helper smoothsort source omits {snippet}",
         )
 
     evidence = selected["native_evidence"]
@@ -36836,6 +37146,7 @@ def validate_ledger(
     require_numeric_netdb_artifact(by_id["libc.resolver"])
     require_hstrerror_artifact(by_id["libc.resolver"])
     require_gethostid_artifact(by_id["libc.c-abi-compat"])
+    require_qsort_artifact(by_id["libc.c-abi-compat"])
     require_bsearch_artifact(by_id["libc.c-abi-compat"])
     require_auxv_observation_artifact(by_id["libc.c-abi-compat"])
     require_process_globals_getopt_artifact(by_id["libc.c-abi-compat"])

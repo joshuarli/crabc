@@ -351,6 +351,8 @@ mod stdio_standard;
 mod stdio_format_scan;
 #[path = "bsearch.rs"]
 mod bsearch;
+#[path = "qsort.rs"]
+mod qsort;
 #[path = "callback_algorithms.rs"]
 mod callback_algorithms;
 #[path = "search_tree_intrusive.rs"]

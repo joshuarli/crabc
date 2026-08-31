@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 183)
+        self.assertEqual(report["verified_artifact_count"], 184)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -7523,6 +7523,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/upstreams.toml",
             "libc/src/c_abi/x86_64/static_c_abi.rs",
             "libc/src/c_abi/x86_64/bsearch.rs",
+            "libc/src/c_abi/x86_64/qsort.rs",
             "libc/src/c_abi/x86_64/callback_algorithms.rs",
             "include/stdlib.h",
             "compat/x86_64/callback_algorithms_header_abi_probe.c",
@@ -17911,6 +17912,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         owners = selected["source_owners"]
         assert isinstance(owners, list)
         for owner in (
+            "libc/src/c_abi/x86_64/qsort.rs",
             "libc/src/c_abi/x86_64/callback_algorithms.rs",
             "include/stdlib.h",
             "compat/x86_64/libc_callback_algorithms_probe.c",
@@ -18274,6 +18276,87 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ledger.LedgerError,
             "static-c-bsearch evidence must retain its standalone static closure",
+        ):
+            ledger.validate_ledger(data)
+
+    def test_qsort_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-qsort"
+        )
+        self.assertNotIn("capabilities", artifact)
+        self.assertIn("`qsort`", artifact["description"])
+        self.assertIn("non-exported smoothsort worker", artifact["description"])
+        self.assertIn("does not select general sorting/searching or callback ownership", artifact["description"])
+        self.assertIn("public x86 support", artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/qsort.rs",
+            "include/stdlib.h",
+            "compat/x86_64/qsort_header_abi_probe.c",
+            "compat/x86_64/qsort_header_abi_probe.cpp",
+            "compat/x86_64/run_qsort_header_abi.sh",
+            "compat/x86_64/libc_qsort_probe.c",
+            "compat/x86_64/libc_qsort_start.S",
+            "compat/x86_64/run_libc_qsort.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "rdi/rsi/rdx/rcx" in item
+                and "eax" in item
+                and "returns no value" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/stdlib/qsort.c::__qsort_r" in item
+                and "src/stdlib/qsort_nr.c::qsort" in item
+                and "14 * sizeof(size_t) + 1" in item
+                and "C-defined array domain" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-qsort",
+        )
+        for phrase in (
+            "Pinned-musl/project C11/C++ header",
+            "`-nostdlib -static` candidate",
+            "direct and function-pointer calls",
+            "308-byte cycling-buffer width",
+            "zero-count callback suppression",
+            "bsearch/__qsort_r/qsort_r",
+            "preserving the existing qsort_r ABI separately",
+            "family promotion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        evidence[0]["scope"] = evidence[0]["scope"].replace(
+            "308-byte cycling-buffer width", "ordinary record width"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-qsort evidence must retain its standalone static closure",
         ):
             ledger.validate_ledger(data)
 
