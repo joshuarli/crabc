@@ -1,6 +1,10 @@
 #ifndef _LANGINFO_H
 #define _LANGINFO_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <features.h>
 
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
@@ -75,10 +79,25 @@ typedef int nl_item;
 #define NOEXPR 0x50001
 #define CRNCYSTR 0x4000f
 
+#define _NL_LOCALE_NAME(cat) (((cat)<<16) | 0xffff)
+
+#if defined(_GNU_SOURCE)
+#define NL_LOCALE_NAME(cat) _NL_LOCALE_NAME(cat)
+#endif
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define YESSTR 0x50002
+#define NOSTR 0x50003
+#endif
+
 char *nl_langinfo(int);
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 char *nl_langinfo_l(nl_item, locale_t);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

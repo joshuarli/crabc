@@ -1523,6 +1523,15 @@ WIDE_CHARACTER_SYMBOLS = (
     "iswupper", "iswxdigit", "iswctype", "wctype", "towlower",
     "towupper", "towctrans", "wctrans",
 )
+LOCALE_OBJECT_WIDE_SYMBOLS = (
+    "newlocale", "freelocale", "uselocale", "duplocale", "nl_langinfo",
+    "nl_langinfo_l", "iswalnum_l", "iswalpha_l", "iswblank_l",
+    "iswcntrl_l", "iswdigit_l", "iswgraph_l", "iswlower_l",
+    "iswprint_l", "iswpunct_l", "iswspace_l", "iswupper_l",
+    "iswxdigit_l", "iswctype_l", "wctype_l", "towlower_l",
+    "towupper_l", "towctrans_l", "wctrans_l", "wcscasecmp_l",
+    "wcsncasecmp_l", "wcscoll_l", "wcsxfrm_l",
+)
 
 
 class LedgerError(ValueError):
@@ -18429,7 +18438,7 @@ def require_named_locale_multibyte_artifact(family: Mapping[str, Any]) -> None:
         "--no-undefined",
         "R_X86_64_TPOFF",
         "__errno_location",
-        "newlocale",
+        "locale-object",
         "C.UTF-8",
     ):
         require(
@@ -18680,8 +18689,8 @@ def require_locale_wide_iconv_artifact(family: Mapping[str, Any]) -> None:
         family.get("status", ""),
     )
     require(
-        len(artifacts) == 13,
-        "libc.text-math-locale-stdio must retain exactly thirteen private verified artifacts",
+        len(artifacts) == 14,
+        "libc.text-math-locale-stdio must retain exactly fourteen private verified artifacts",
     )
     matching = [
         entry for entry in artifacts if entry.get("id") == "static-c-locale-wide-iconv"
@@ -19042,8 +19051,7 @@ def require_wide_character_artifact(family: Mapping[str, Any]) -> None:
     for symbol in WIDE_CHARACTER_SYMBOLS:
         require(symbol in exports, f"static C ABI export contract omits {symbol}")
     for unselected in (
-        "wcsdup", "wcscoll_l", "wcsxfrm_l", "iswalpha_l", "towlower_l",
-        "fgetwc", "swprintf", "wcsftime", "newlocale", "malloc",
+        "wcsdup", "fgetwc", "swprintf", "wcsftime", "malloc",
     ):
         require(unselected not in exports, f"wide core promoted unselected {unselected}")
 
@@ -19077,6 +19085,136 @@ def require_wide_character_artifact(family: Mapping[str, Any]) -> None:
         "wide-character-header-abi)",
         "libc-wide-character)",
         "run_wide_character_header_abi()",
+    ):
+        require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
+
+
+def require_locale_object_wide_artifact(family: Mapping[str, Any]) -> None:
+    """Keep built-in locale objects exact, thread-local, and non-promoting."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.text-math-locale-stdio].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts
+        if entry.get("id") == "static-c-locale-object-localized-wide"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.text-math-locale-stdio must contain exactly one static-c-locale-object-localized-wide artifact",
+    )
+    artifact = matching[0]
+    require("capabilities" not in artifact, "locale-object artifact must not promote capabilities")
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for symbol in LOCALE_OBJECT_WIDE_SYMBOLS:
+        require(symbol in description, f"locale-object artifact description omits {symbol}")
+    for phrase in (
+        "built-in locale-object and localized-wide artifact",
+        "allocation-free `C`/`POSIX` and `C.UTF-8` tokens",
+        "Static Initial TLS v1",
+        "global-following mode",
+        "U+0000 through U+110000",
+        "arbitrary locale names",
+        "general locale or legacy-encoding databases",
+        "`mbsnrtowcs`/`wcsnrtombs`",
+        "locale-specific numeric parsing",
+        "wide stdio/streams",
+        "family completion",
+        "promotion",
+        "public x86 support",
+    ):
+        require(phrase in description, f"locale-object artifact omits {phrase}")
+    owners = nonempty_strings(
+        artifact["source_owners"],
+        "static-c-locale-object-localized-wide.source_owners",
+    )
+    for owner in (
+        "libc/src/c_abi.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/locale_multibyte.rs",
+        "libc/src/c_abi/x86_64/locale_objects.rs",
+        "libc/src/c_abi/x86_64/wide_character.rs",
+        "include/langinfo.h",
+        "include/locale.h",
+        "include/wchar.h",
+        "include/wctype.h",
+        "compat/x86_64/locale_object_wide_header_abi_probe.c",
+        "compat/x86_64/locale_object_wide_header_abi_probe.cpp",
+        "compat/x86_64/run_locale_object_wide_header_abi.sh",
+        "compat/x86_64/libc_locale_object_wide_probe.c",
+        "compat/x86_64/libc_locale_object_wide_start.S",
+        "compat/x86_64/run_libc_locale_object_wide.sh",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"locale-object artifact omits {owner}")
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-locale-object-wide"},
+        "locale-object artifact must use the closed libc-locale-object-wide command",
+    )
+    oracles = artifact["oracle"]
+    assert isinstance(oracles, list)
+    require(
+        any(
+            entry.get("kind") == "project-contract"
+            and "AArch64" in str(entry.get("source"))
+            and "strengthens" in str(entry.get("role"))
+            for entry in oracles
+        ),
+        "locale-object artifact must record its bounded AArch64 oracle",
+    )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require(
+        '#[path = "locale_objects.rs"]\nmod locale_objects;' in static_root,
+        "x86 static C ABI must compose locale_objects",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "locale_objects.rs"
+    ).read_text(encoding="utf-8")
+    exports = static_c_abi_export_names(
+        ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+    )
+    for symbol in LOCALE_OBJECT_WIDE_SYMBOLS:
+        require(
+            f"fn {symbol}(" in implementation
+            or f"localized_classifier!({symbol}," in implementation,
+            f"locale_objects leaf omits {symbol}",
+        )
+        require(symbol in exports, f"static C ABI export contract omits {symbol}")
+    for snippet in (
+        "#[thread_local]",
+        "THREAD_GLOBAL",
+        "current_ctype_override",
+        "TIME_STRINGS",
+        "No locale map, environment lookup, allocation",
+        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+    ):
+        require(snippet in implementation, f"locale_objects leaf omits {snippet}")
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_locale_object_wide.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "run_locale_object_wide_header_abi.sh",
+        "-nostdlib -static",
+        "pthread_create",
+        "R_X86_64_TPOFF",
+        "reference-fingerprint",
+        "candidate-fingerprint",
+        "mbsnrtowcs wcsnrtombs",
+    ):
+        require(snippet in runner, f"locale-object runner omits {snippet}")
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "locale-object-wide-header-abi)",
+        "libc-locale-object-wide)",
+        "run_locale_object_wide_header_abi()",
     ):
         require(snippet in dispatcher, f"x86 dispatcher omits {snippet}")
 
@@ -19721,6 +19859,7 @@ def validate_ledger(
     require_bounded_regex_artifact(by_id["libc.text-math-locale-stdio"])
     require_locale_wide_iconv_artifact(by_id["libc.text-math-locale-stdio"])
     require_wide_character_artifact(by_id["libc.text-math-locale-stdio"])
+    require_locale_object_wide_artifact(by_id["libc.text-math-locale-stdio"])
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")

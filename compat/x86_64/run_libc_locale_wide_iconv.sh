@@ -110,14 +110,13 @@ for symbol in __ctype_get_mb_cur_max btowc localeconv mblen mbrlen mbrtowc \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in newlocale duplocale uselocale freelocale nl_langinfo mbsnrtowcs wcsnrtombs wcsftime_l wcscoll_l \
-    wcsxfrm_l fwide fgetwc fputwc; do
+for unselected in mbsnrtowcs wcsnrtombs wcsftime_l fwide fgetwc fputwc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
 done
-# A separately evidenced allocation-free wide-character core shares the
-# aggregate archive; this iconv fixture neither invokes nor establishes it.
+# Separately evidenced locale-object and allocation-free wide-character cores
+# share the aggregate archive; this iconv fixture invokes neither.
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
@@ -160,7 +159,7 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|newlocale|uselocale|duplocale|freelocale|malloc|free' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi

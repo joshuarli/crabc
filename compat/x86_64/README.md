@@ -232,6 +232,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh locale-multibyte-header-abi
 ./scripts/dev-x86_64.sh iconv-header-abi
 ./scripts/dev-x86_64.sh wide-character-header-abi
+./scripts/dev-x86_64.sh locale-object-wide-header-abi
 ./scripts/dev-x86_64.sh integer-arithmetic-header-abi
 ./scripts/dev-x86_64.sh integer-parse-header-abi
 ./scripts/dev-x86_64.sh float-parse-header-abi
@@ -445,6 +446,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-locale-multibyte
 ./scripts/dev-x86_64.sh libc-locale-wide-iconv
 ./scripts/dev-x86_64.sh libc-wide-character
+./scripts/dev-x86_64.sh libc-locale-object-wide
 ./scripts/dev-x86_64.sh libc-memory
 ./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh libc-atomic
@@ -693,9 +695,10 @@ It composes C.UTF-8 `mbrtowc`, C-locale `strtod`, `__fpclassify`, initial-exec
 errno, and pipe-observed `fputc`/`fflush(stdout)`: a valid UTF-8 conversion
 preserves stale errno, an invalid lead establishes EILSEQ, and successful
 parsing plus explicit stream output retain that datum. It rejects dynamic TLS,
-format/path/wide streams (including the separate format/scan artifact), locale
-objects, scalar libm, iconv, allocation, and ambient runtime dependencies; it
-does not exercise the independently selected `_l` parser wrappers. It does not establish general
+scalar libm, allocation, and ambient runtime dependencies. It does not
+exercise the format/path/wide-stream, locale-object, iconv, wide-character, or
+independently selected `_l` parser contracts, even though shared selected roots
+can materialize sibling symbols in the final link. It does not establish general
 text/math/locale/stdio behavior, parity, promotion, or public x86 support.
 
 `libc-directory-streams` is the separate private static C runtime artifact
@@ -3533,11 +3536,34 @@ all selected classification, simple-case, descriptor, and width behavior
 against musl 1.2.6. The checked-in compressed alpha, punctuation, case-map,
 nonspacing, and wide tables are a mechanical MIT-licensed transcription of
 the pinned musl release, not a runtime locale or legacy-encoding database.
-`wcsdup`, locale objects and every `_l` entry, Unicode normalization, wide
-stdio/streams, formatting/scanning, time conversion, allocation,
+This core excludes `wcsdup`, locale objects and every `_l` entry, Unicode
+normalization, wide stdio/streams, formatting/scanning, time conversion, allocation,
 general text/locale completion, `libc.so`, CRT, loader, sysroot, promotion,
-and public x86 support remain unselected. Wide numeric parsing belongs to the
-separate selected numeric-parse slice and is not exercised by this artifact.
+and public x86 support remain outside this core artifact. Wide numeric parsing
+belongs to the separately selected numeric-parse slice and is not exercised by
+this artifact. The built-in locale-object/localized-wide artifact below is
+independently judged.
+
+`locale-object-wide-header-abi` and `libc-locale-object-wide` record the
+separate private `static-c-locale-object-localized-wide` artifact. The
+`_XOPEN_SOURCE=700` C11/C++17 matrix proves the pointer-shaped `locale_t`,
+`LC_GLOBAL_LOCALE`, category masks, `nl_item` values, all 28 selected
+locale-object/langinfo/wide `_l` declarations, and unmangled C linkage. The
+shared runtime fixture then runs under pinned musl and a true
+`-nostdlib -static` candidate. Immutable allocation-free `C`/`POSIX` and
+`C.UTF-8` tokens retain only a CTYPE encoding distinction; fixed C/POSIX
+langinfo data and the selected wide Unicode tables need no locale database.
+The existing Static Initial TLS v1 image makes `uselocale` independent for the
+selected main and bounded pthread workers, and a new worker begins in
+global-following mode. The fixture proves lifecycle transitions, CODESET,
+time/numeric/messages items, per-thread multibyte selection, parent/worker
+isolation, localized code-point collation, and an exhaustive
+U+0000-through-U+110000 localized classification/case fingerprint. Arbitrary
+locale names, environment lookup, locale maps/refcounts, allocation, gettext,
+legacy encodings, bounded multibyte extensions, narrow `_l` strings/ctype,
+locale-specific numeric parsing, wide stdio/format/time conversion, general
+locale/text completion, `libc.so`, CRT, loader, sysroot, promotion, and public
+x86 support remain unselected.
 
 `libc-memory` compiles only `libc/src/c_abi/x86_64/memory.rs`, then runs one C
 fixture against pinned musl and the isolated x86 object with project

@@ -4,10 +4,10 @@
 # The project-header fixture first executes against pinned musl 1.2.6, then
 # links as a true -nostdlib/-static candidate through the one selected x86
 # crabc-libc archive. This proves the named C/POSIX/C.UTF-8 global-state,
-# CTYPE-only built-in UTF-8 map, and multibyte block without selecting locale
-# objects, environment lookup, wide-streams, collation, libc.so, a CRT, or
-# public x86 support. Separate iconv and allocation-free wide-character
-# artifacts may share the archive, but this fixture invokes neither.
+# CTYPE-only built-in UTF-8 map, and multibyte block. Separately evidenced
+# locale-object, iconv, and allocation-free wide-character artifacts may share
+# the archive, but this fixture invokes none of them. Environment lookup,
+# wide-streams, libc.so, a CRT, and public x86 support remain excluded.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -110,15 +110,13 @@ for symbol in __ctype_get_mb_cur_max btowc localeconv mblen mbrlen mbrtowc \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in newlocale duplocale uselocale freelocale nl_langinfo \
-    mbsnrtowcs wcsnrtombs wcsftime_l wcscoll_l \
-    wcsxfrm_l fwide fgetwc fputwc; do
+for unselected in mbsnrtowcs wcsnrtombs wcsftime_l fwide fgetwc fputwc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"
     fi
 done
-# A separately evidenced allocation-free wide-character core shares the
-# aggregate archive; this fixture neither invokes nor establishes it.
+# Separately evidenced locale-object and allocation-free wide-character cores
+# share the aggregate archive; this fixture neither invokes nor establishes them.
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
@@ -161,7 +159,7 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|newlocale|uselocale|duplocale|freelocale' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi

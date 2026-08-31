@@ -9,7 +9,7 @@
 //! representation while `C.UTF-8` uses musl's UTF-8 state machine. The global
 //! selection has a small atomic lock solely for the named category state and `LC_ALL` result
 //! serialization; it has no environment lookup, locale database, allocator,
-//! locale object, per-thread locale, collation, iconv, wide-stream, syscall,
+//! locale-object allocation, collation, iconv, wide-stream, syscall,
 //! loader, CRT, or general stdio boundary.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
@@ -25,9 +25,11 @@
 //!   map to the corresponding entries below.
 //!
 //! The source's optional environment-backed `setlocale(category, "")`,
-//! arbitrary locale-map names, mixed-name parser variants beyond the exact
-//! serialized six-category form, locale objects, and per-thread overrides
-//! require later ownership work and intentionally remain unselected. An
+//! arbitrary locale-map names and mixed-name parser variants beyond the exact
+//! serialized six-category form intentionally remain unselected. The separate
+//! `locale_objects` leaf can override this global CTYPE mode for the selected
+//! main/worker Static Initial TLS v1 paths without changing this module's
+//! process-global named-category owner. An
 //! unsupported name or empty environment request returns null without
 //! changing the current named state. The null-state `mbrtowc` and `mbrlen`
 //! paths retain distinct atomic internal state words like musl's distinct
@@ -180,6 +182,12 @@ struct DecodeOutcome {
 
 #[inline]
 fn locale_ctype_is_utf8() -> bool {
+    super::locale_objects::current_ctype_override().unwrap_or_else(global_ctype_is_utf8)
+}
+
+/// Read the process-global named LC_CTYPE mode for locale-object snapshots.
+#[inline]
+pub(super) fn global_ctype_is_utf8() -> bool {
     LOCALE_STATE.load(Ordering::Acquire) & (1 << LC_CTYPE) != 0
 }
 

@@ -440,10 +440,24 @@ static runtime fixture for 46 wide string/memory, code-point collation,
 Unicode classification/simple-case, descriptor, and display-width entries.
 Its compressed tables are mechanically transcribed from pinned musl 1.2.6,
 and an exhaustive U+0000-through-U+110000 fingerprint prevents Unicode-table
-drift. It adds no locale database, legacy encoding, `wcsdup`, locale-object or
-`_l` behavior, wide stdio/format/time surface, allocation, family completion,
-promotion, or public x86 support. Wide numeric parsing is separately selected
-and is not exercised by this artifact.
+drift. This core adds no locale database, legacy encoding, `wcsdup`,
+locale-object or `_l` behavior, wide stdio/format/time surface, allocation,
+family completion, promotion, or public x86 support. Wide numeric parsing and
+the locale-object/localized-wide surface are separately selected and are not
+exercised by this artifact.
+
+A separate private x86 built-in locale-object/localized-wide artifact is now
+verified by `./scripts/dev-x86_64.sh libc-locale-object-wide`. Immutable
+allocation-free `C`/`POSIX` and `C.UTF-8` tokens, fixed C/POSIX langinfo, and
+all 22 wide `_l` entries compose with selected-main/selected-worker Static
+Initial TLS v1 `uselocale` state. The pinned-musl/static fixture proves a new
+worker begins global-following, parent/worker overrides remain isolated,
+multibyte CODESET follows the calling thread, and the exhaustive localized
+Unicode classification/case fingerprint matches musl 1.2.6. Arbitrary locale
+names, environment and locale maps, allocation/refcounts, gettext, legacy
+encodings, bounded multibyte extensions, narrow `_l` APIs, locale-specific
+numeric parsing, wide stdio/format/time conversion, family completion,
+promotion, and public x86 support remain excluded.
 
 The x86 static C archive also has one private caller-owned mapping-core
 artifact: `./scripts/dev-x86_64.sh libc-mapping-core` runs the project-header

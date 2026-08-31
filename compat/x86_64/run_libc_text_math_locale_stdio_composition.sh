@@ -101,15 +101,12 @@ for symbol in __crabc_x86_static_tls_bootstrap __errno_location __fpclassify \
         fail "archive does not define ${symbol}"
 done
 # The archive-wide export contract deliberately contains other independently
-# selected leaves. The final linked fixture below, rather than this aggregate
-# archive listing, proves this composition did not pull formatter/wide I/O,
-# locale-object, scalar-libm, or allocation dependencies. The `_l` parser
-# wrappers are now independently selected by numeric.parse-float-locale. A separate
-# iconv artifact may share the archive but is neither invoked nor established
-# by this composition. The
-# permanent `fflush` owner now also owns the separately evidenced fixed path
-# slot, so its target leaf may materialize path symbols even though this fixture
-# neither references nor exercises that pathname lifecycle.
+# selected leaves. The focused fixture itself invokes none of the separate
+# formatter, pathname-stream, locale-object, iconv, or wide-character
+# contracts; shared selected roots can still materialize sibling symbols in
+# the final link. The `_l` parser wrappers are independently selected by
+# numeric.parse-float-locale. The final checks instead keep the candidate
+# static and free of dynamic TLS or unowned runtime dependencies.
 readelf --relocs --wide "$archive" >"$work_dir/archive-relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$work_dir/archive-relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
@@ -148,7 +145,7 @@ fi
 objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf|newlocale|iconv' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt|printf' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned or unselected runtime dependency"
 fi
