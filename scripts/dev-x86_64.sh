@@ -319,6 +319,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-float-parse  run the complete static x86 numeric.parse-float-locale slice
   libc-stdio-standard  run the static x86 crabc-libc permanent standard-stream slice
   libc-stdio-format-scan  run the static x86 crabc-libc byte-string format/scan slice
+  libc-stdio-integer-scan  run the static x86 crabc-libc bounded integer-source scan slice
   libc-stdio-float-hex-output  run the static x86 crabc-libc binary64 hexadecimal-output slice
   libc-stdio-errno-output  run the static x86 crabc-libc errno-message format slice
   libc-stdio-path-stream  run the static x86 crabc-libc fixed pathname-stream slice
@@ -3340,7 +3341,7 @@ case "$command" in
     libc-pathname-lifecycle) ;;
     libc-directory-streams) ;;
     libc-lchmod-unsupported) ;;
-    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
+    libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition) ;;
     libc-pthread-identity) ;;
     libc-pthread-affinity) ;;
     libc-pthread-cpuclock) ;;
@@ -4621,6 +4622,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-stdio-format-scan takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_stdio_format_scan.sh
+        ;;
+    libc-stdio-integer-scan)
+        [ "$#" -eq 0 ] || fail "libc-stdio-integer-scan takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_libc_stdio_integer_scan.sh
         ;;
     libc-stdio-float-hex-output)
         [ "$#" -eq 0 ] || fail "libc-stdio-float-hex-output takes no arguments"

@@ -77,9 +77,22 @@ fixed-C-locale error message with bounded string width/precision behavior.
 It neither calls public `strerror` nor selects diagnostics, locale translation,
 or a broader formatter grammar; `%lm` and positional `%1$m` remain rejected.
 `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double/
-wide/scanset/positional/pointer-valued `%p` conversion, allocation, locale objects, integer
-scanner overflow, general stdio, family/platform parity, promotion, and public
-x86 support remain excluded.
+wide/scanset/positional/pointer-valued `%p` conversion, allocation, locale objects, all
+integer scanner overflow apart from the separate bounded source profile below,
+general stdio, family/platform parity, promotion, and public x86 support remain
+excluded.
+
+The separate private `./scripts/dev-x86_64.sh libc-stdio-integer-scan`
+artifact adds no export or capability. It fixes evidence to narrow
+NUL-terminated byte literals and `%d`/`%i`/`%u`/`%x` scan forms (using `%llu`
+only to prove the ULLONG_MAX boundary), then compares pinned musl 1.2.6 with a
+true `-nostdlib -static` candidate. It records only the musl
+`vfscanf`/`intscan` source-overflow path: 20-digit decimal or 17-digit
+hexadecimal input beyond ULLONG_MAX consumes the full source run, sets ERANGE,
+saturates, clears a leading minus, and reaches the existing ordinary target
+store; `vsscanf` forwarding is included. This is not a portable ISO C
+target-overflow, float/wide/scanset/positional/FILE, byte-formatting, general
+scanner, general stdio, family-completion, promotion, or public-x86 claim.
 
 The separate private `./scripts/dev-x86_64.sh libc-stdio-float-hex-output`
 artifact adds no export and selects only allocation-free C-locale binary64

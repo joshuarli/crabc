@@ -4,14 +4,16 @@
 # One project-header C fixture first executes against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` candidate linked only through crabc's selected
 # archive. The default `integer` profile owns the bounded integer, count-store,
-# and byte-string format/scan grammar. The sibling `float-hex-output` profile
-# selects only binary64 `%a`/`%A` output, while the closed `errno-output`
-# profile adds only bare GNU/musl `%m` C-locale errno-message output through
-# that same formatter. None selects a general error-reporting, stream, locale,
-# or ambient-formatting boundary, FILE streams, printf/fprintf, scanf/fscanf,
-# decimal or long-double floats, wide text, scansets, positional arguments,
-# pointer-valued %p, allocation, a dynamic libc, CRT, loader, sysroot, or
-# public x86 support.
+# and byte-string format/scan grammar. The closed `integer-scan` profile owns
+# only musl's ULLONG_MAX source-overflow behavior for narrow `%d`/`%i`/`%u`/
+# `%x` scans through the existing `sscanf`/`vsscanf` boundary. The sibling
+# `float-hex-output` profile selects only binary64 `%a`/`%A` output, while the
+# closed `errno-output` profile adds only bare GNU/musl `%m` C-locale
+# errno-message output through that same formatter. None selects a general
+# error-reporting, stream, locale, or ambient-formatting boundary, FILE
+# streams, printf/fprintf, scanf/fscanf, decimal or long-double floats, wide
+# text, scansets, positional arguments, pointer-valued %p, allocation, a
+# dynamic libc, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -28,18 +30,28 @@ integer)
     readonly START_SOURCE=compat/x86_64/libc_stdio_format_scan_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FORMAT_SCAN_FREESTANDING
     readonly EVIDENCE_LABEL="byte-string stdio format/scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(snprintf vsnprintf sprintf vsprintf sscanf vsscanf)
+    ;;
+integer-scan)
+    readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_integer_scan_probe.c
+    readonly START_SOURCE=compat/x86_64/libc_stdio_integer_scan_start.S
+    readonly FREESTANDING_DEFINE=CRABC_STDIO_INTEGER_SCAN_FREESTANDING
+    readonly EVIDENCE_LABEL="bounded stdio integer source scan"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)
     ;;
 float-hex-output)
     readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_float_hex_output_probe.c
     readonly START_SOURCE=compat/x86_64/libc_stdio_float_hex_output_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_FLOAT_HEX_OUTPUT_FREESTANDING
     readonly EVIDENCE_LABEL="stdio binary64 hexadecimal output"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(snprintf vsnprintf sprintf vsprintf)
     ;;
 errno-output)
     readonly FIXTURE_SOURCE=compat/x86_64/libc_stdio_errno_output_probe.c
     readonly START_SOURCE=compat/x86_64/libc_stdio_errno_output_start.S
     readonly FREESTANDING_DEFINE=CRABC_STDIO_ERRNO_OUTPUT_FREESTANDING
     readonly EVIDENCE_LABEL="errno-message stdio output"
+    readonly -a REQUIRED_C_ABI_SYMBOLS=(snprintf vsnprintf sprintf vsprintf)
     ;;
 *)
     printf 'ERROR: unknown x86 stdio format/scan evidence profile: %s\n' \
@@ -118,7 +130,7 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __errno_location snprintf vsnprintf sprintf vsprintf sscanf vsscanf; do
+for symbol in __errno_location "${REQUIRED_C_ABI_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -145,7 +157,7 @@ readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
-for symbol in snprintf vsnprintf sprintf vsprintf sscanf vsscanf; do
+for symbol in "${REQUIRED_C_ABI_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks ${symbol}"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep -q .; then
@@ -189,6 +201,17 @@ if [ "$EVIDENCE_PROFILE" = errno-output ]; then
     grep -Fq 'errno::get_errno()' \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
         fail "errno-message conversion no longer reads the selected TLS slot"
+fi
+if [ "$EVIDENCE_PROFILE" = integer-scan ]; then
+    grep -Fq 'source-overflow path clears a negative sign' \
+        "$ROOT_DIR/compat/x86_64/libc_stdio_integer_scan_probe.c" ||
+        fail "integer scan fixture no longer records musl sign clearing"
+    grep -Fq 'overflowed = true' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "integer scan implementation no longer tracks source overflow"
+    grep -Fq 'u64::MAX' \
+        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
+        fail "integer scan implementation no longer saturates at ULLONG_MAX"
 fi
 if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
     :

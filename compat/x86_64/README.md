@@ -708,8 +708,25 @@ would-have-written/truncation/NUL/one-byte/zero-capacity behavior,
 ratchets deterministic `EINVAL` rejection for selected unsupported grammar.
 It excludes `FILE` streams, `printf`/`fprintf`/`scanf`/`fscanf`, decimal/long-double,
 wide, scanset, grouping/positional, and pointer-valued `%p` conversion,
-allocation, locale objects, integer scanner overflow, general stdio, parity,
+allocation, locale objects, all integer scanner overflow apart from the
+separate bounded source-overflow profile below, general stdio, parity,
 promotion, and public x86 support.
+
+The distinct `libc-stdio-integer-scan` gate
+(`./scripts/dev-x86_64.sh libc-stdio-integer-scan`) records one private
+`static-c-stdio-integer-scan` artifact without adding an export or capability.
+Its project-header fixture runs six fixed narrow NUL-byte strings through
+pinned musl 1.2.6 and one true `-nostdlib -static` candidate, limiting itself
+to `%d`/`%i`/`%u`/`%x` scans (with `%llu` only for the exact ULLONG_MAX
+boundary). It records musl `vfscanf`/`intscan` source overflow: a 20-digit
+decimal or 17-digit hexadecimal run beyond ULLONG_MAX consumes the complete
+run, writes ERANGE, saturates at ULLONG_MAX, clears a leading minus, and then
+uses the existing ordinary target store; the direct `vsscanf` path is covered
+as well. This is pinned-musl source-overflow evidence, not a portable ISO C
+target-overflow claim. `%o`/`%X` overflow, arbitrary input, float/wide/scanset/
+positional/FILE input, byte formatting, allocation, locale objects, a general
+scanner or stdio boundary, parity, promotion, and public x86 support remain
+outside it.
 
 The separate `libc-stdio-float-hex-output` gate
 (`./scripts/dev-x86_64.sh libc-stdio-float-hex-output`) records one private

@@ -22,10 +22,15 @@
 //! x86 fenv rounding direction for explicit precision; it does not select a
 //! decimal formatter or reproduce floating exception side effects. Valid C
 //! callers supply readable NUL-terminated format/input strings and suitably
-//! sized writable destinations. Integer scanner overflow and unsupported
-//! conversion grammar remain outside this closed artifact; unsupported
-//! conversions fail closed with `EINVAL` rather than silently routing through
-//! an ambient libc. `%m` is not a general error-reporting or locale boundary:
+//! sized writable destinations. The separate private
+//! `static-c-stdio-integer-scan` artifact owns only musl's unsigned-long-long
+//! source-overflow result for narrow `%d`/`%i`/`%u`/`%x`: it consumes the
+//! bounded digit run, sets `ERANGE`, saturates at `ULLONG_MAX`, and clears a
+//! negative sign before the ordinary selected target store. Other integer
+//! scanner overflow and unsupported conversion grammar remain outside this
+//! closed artifact; unsupported conversions fail closed with `EINVAL` rather
+//! than silently routing through an ambient libc. `%m` is not a general
+//! error-reporting or locale boundary:
 //! it neither calls public `strerror` nor selects locale translation, streams,
 //! or process diagnostics. `snprintf` additionally retains zero-capacity
 //! null-destination behavior: it never dereferences a null destination when
@@ -76,6 +81,7 @@ use core::ffi::{
 use super::{errno, error_strings};
 
 const EINVAL: c_int = 22;
+const ERANGE: c_int = 34;
 const EOVERFLOW: c_int = 75;
 const EOF: c_int = -1;
 
@@ -903,6 +909,7 @@ enum ScanBase {
     UnsignedDecimal,
     Octal,
     Hex,
+    HexUpper,
 }
 
 #[derive(Clone, Copy)]
@@ -921,7 +928,10 @@ unsafe fn skip_input_space(mut cursor: *const u8) -> *const u8 {
 
 /// Parse one selected scanf integer conversion.  The caller has already
 /// skipped ordinary conversion whitespace.  Width counts every sign/prefix
-/// byte, as musl's scanner does.
+/// byte, as musl's scanner does.  The bounded `static-c-stdio-integer-scan`
+/// profile additionally preserves `vfscanf`/`intscan`'s ULLONG_MAX
+/// source-overflow behavior for `%d`, `%i`, `%u`, and `%x`; `%o` and `%X`
+/// remain in the older scanner artifact's unowned overflow domain.
 unsafe fn scan_integer(
     start: *const u8,
     width: usize,
@@ -946,7 +956,7 @@ unsafe fn scan_integer(
     let mut base = match requested {
         ScanBase::Decimal | ScanBase::UnsignedDecimal => 10u8,
         ScanBase::Octal => 8,
-        ScanBase::Hex => 16,
+        ScanBase::Hex | ScanBase::HexUpper => 16,
         ScanBase::Auto => 0,
     };
     let mut value = 0u64;
@@ -977,6 +987,15 @@ unsafe fn scan_integer(
         base = 10;
     }
 
+    // musl's `vfscanf` invokes `__intscan` with ULLONG_MAX as its source
+    // limit, then performs its ordinary width-specific store.  Keep that
+    // narrow source-overflow behavior separate from `%o`, whose overflow was
+    // deliberately outside the preceding static scan artifact.
+    let track_source_overflow = matches!(
+        requested,
+        ScanBase::Decimal | ScanBase::Auto | ScanBase::UnsignedDecimal | ScanBase::Hex
+    );
+    let mut overflowed = false;
     while used < width {
         let current = unsafe { read_byte(cursor) };
         if current == 0 {
@@ -988,12 +1007,26 @@ unsafe fn scan_integer(
         if digit >= base {
             break;
         }
-        value = value
-            .wrapping_mul(base as u64)
-            .wrapping_add(digit as u64);
+        if track_source_overflow
+            && value > (u64::MAX - u64::from(digit)) / u64::from(base)
+        {
+            overflowed = true;
+        } else if !overflowed {
+            value = value
+                .wrapping_mul(base as u64)
+                .wrapping_add(digit as u64);
+        }
         digits += 1;
         cursor = cursor.wrapping_add(1);
         used += 1;
+    }
+    if overflowed {
+        // On a source run beyond ULLONG_MAX, `intscan` consumes the complete
+        // run, records ERANGE, fixes its result at the unsigned limit, and
+        // clears a leading minus because that limit is odd.
+        unsafe { errno::set_errno(ERANGE) };
+        value = u64::MAX;
+        negative = false;
     }
     (digits != 0).then_some(ScannedInteger {
         value,
@@ -1125,7 +1158,9 @@ unsafe fn scan_from_string(
                     b'i' => ScanBase::Auto,
                     b'u' => ScanBase::UnsignedDecimal,
                     b'o' => ScanBase::Octal,
-                    _ => ScanBase::Hex,
+                    b'x' => ScanBase::Hex,
+                    b'X' => ScanBase::HexUpper,
+                    _ => return assignments,
                 };
                 let Some(number) = (unsafe { scan_integer(cursor, width, base) }) else {
                     return if unsafe { read_byte(cursor) } == 0 && assignments == 0 {

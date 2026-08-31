@@ -1319,7 +1319,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-pathname-lifecycle",
             "libc-directory-streams",
             "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
+            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-line-io|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
             "libc-pthread-identity",
             "libc-pthread-affinity",
             "libc-pthread-cpuclock",
@@ -11320,6 +11320,102 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn("libc-stdio-format-scan", dispatcher)
         self.assertIn("run_libc_stdio_format_scan.sh", dispatcher)
+
+    def test_libc_static_c_abi_stdio_integer_scan_stays_narrow(self) -> None:
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" /
+            "stdio_format_scan.rs"
+        ).read_text(encoding="utf-8")
+        fixture = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_integer_scan_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" /
+            "libc_stdio_integer_scan_start.S"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_integer_scan.sh"
+        ).read_text(encoding="utf-8")
+        shared_runner = (
+            ROOT / "compat" / "x86_64" /
+            "run_libc_stdio_format_scan.sh"
+        ).read_text(encoding="utf-8")
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8")
+        static_export_names = {
+            line
+            for line in static_exports.splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "const ERANGE: c_int = 34;",
+            "track_source_overflow",
+            "u64::MAX",
+            "overflowed = true",
+            "negative = false",
+            "ScanBase::Octal",
+            "ScanBase::HexUpper",
+            "static-c-stdio-integer-scan",
+        ):
+            self.assertIn(required, implementation)
+        self.assertIn("sscanf", static_export_names)
+        self.assertIn("vsscanf", static_export_names)
+        for unselected in ("scanf", "fscanf", "vfscanf", "fwscanf", "swscanf"):
+            self.assertNotIn(unselected, static_export_names)
+        for required in (
+            "CRABC_TYPE_IS(__typeof__(&sscanf)",
+            "call_vsscanf",
+            '"18446744073709551615!"',
+            '"18446744073709551616!"',
+            '"-0x10000000000000000?"',
+            '"-18446744073709551616;"',
+            '"10000000000000000."',
+            '"%20u#"',
+            "ULLONG_MAX",
+            "UINT_MAX",
+            "ERANGE",
+            "CRABC_STDIO_INTEGER_SCAN_FREESTANDING",
+        ):
+            self.assertIn(required, fixture)
+        for required in (
+            "arch_prctl(ARCH_SET_FS",
+            "%fs:0",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+        self.assertIn(
+            "CRABC_STDIO_FORMAT_SCAN_PROFILE=integer-scan", wrapper
+        )
+        self.assertIn("run_libc_stdio_format_scan.sh", wrapper)
+        for required in (
+            "integer-scan)",
+            "CRABC_STDIO_INTEGER_SCAN_FREESTANDING",
+            "libc_stdio_integer_scan_probe.c",
+            "libc_stdio_integer_scan_start.S",
+            "REQUIRED_C_ABI_SYMBOLS=(sscanf vsscanf)",
+            "source-overflow path clears a negative sign",
+            "-nostdlib -static",
+            "--no-undefined",
+            "R_X86_64_TPOFF",
+            "__errno_location",
+        ):
+            self.assertIn(required, shared_runner)
+        self.assertNotIn("--whole-archive", shared_runner)
+        self.assertIn('id = "static-c-stdio-integer-scan"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-stdio-integer-scan"',
+            parity_ledger,
+        )
+        self.assertIn("libc-stdio-integer-scan", dispatcher)
+        self.assertIn("run_libc_stdio_integer_scan.sh", dispatcher)
 
     def test_libc_static_c_abi_stdio_float_hex_output_stays_narrow(self) -> None:
         implementation = (
