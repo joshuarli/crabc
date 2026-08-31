@@ -556,6 +556,392 @@ impl PageMapLifetimeModel {
     }
 }
 
+// This bounded model covers the atomic half of W07's
+// `ClaimedAbandonedRemoteFree` boundary. The concrete non-`Copy` production
+// capability is constructed by `push_live_allocation` and consumed by the
+// post-owner-exit continuation; its raw `Page` and block projections are
+// exercised by their deterministic fixture tests. Loom must stay at the
+// address-free atomic-helper boundary, so it deliberately does not fabricate
+// a production claim. Instead, the move-only witness below records the same
+// single successful CAS and the same move into either the terminal tail or an
+// error. Its publication, unown, and detach calls all go through the existing
+// source-shaped helpers.
+const STALE_SNAPSHOT_CLAIM_TOKEN: usize = 1;
+const STALE_SNAPSHOT_CONTINUATION_PENDING: usize = 0;
+const STALE_SNAPSHOT_CONTINUATION_RUNNING: usize = 1;
+const STALE_SNAPSHOT_CONTINUATION_FINISHED: usize = 2;
+const STALE_SNAPSHOT_CONTINUATION_RETAINED: usize = 3;
+
+/// The one coherent live-owner observation. It is intentionally move-only:
+/// one pointer-dispatched client reaches exactly one `allow_collect` CAS.
+struct StaleLiveRemoteFreeSnapshot {
+    block_index: usize,
+}
+
+/// Fault injected after source detach, where a terminal retry would be
+/// invalid because the list operation is already irreversible.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaleSnapshotContinuationError {
+    InjectedAfterDetach,
+}
+
+/// Test-only move witness for the real `ClaimedAbandonedRemoteFree` value.
+///
+/// This is not a second production token: it is the smallest representation
+/// Loom can use without inventing a raw page or block pointer. Like the real
+/// type, it has no `Copy` or `Clone`; terminal continuation consumes it and a
+/// fault returns this same witness intact.
+#[must_use = "a stale-snapshot claim must complete or retain its continuation"]
+struct ClaimedAbandonedContinuationWitness {
+    model: Arc<StaleSnapshotClaimModel>,
+    token_id: usize,
+    published_block: ThreadFree,
+}
+
+/// Retains the exact move witness after a post-detach fault.
+#[must_use = "a post-detach fault retains the source claim"]
+struct RetainedClaimedAbandonedContinuationWitness {
+    claim: ClaimedAbandonedContinuationWitness,
+    error: StaleSnapshotContinuationError,
+}
+
+impl ClaimedAbandonedContinuationWitness {
+    fn finish_terminal_continuation(
+        self,
+        fail_after_detach: bool,
+    ) -> Result<(), RetainedClaimedAbandonedContinuationWitness> {
+        match self
+            .model
+            .finish_claimed_continuation(self.token_id, self.published_block, fail_after_detach)
+        {
+            Ok(()) => Ok(()),
+            Err(error) => Err(RetainedClaimedAbandonedContinuationWitness { claim: self, error }),
+        }
+    }
+}
+
+/// Finite source-shaped state for one stale live-owner free.
+///
+/// The pointer dispatcher first observes a live identity. The source owner
+/// then publishes abandonment and unowns its empty head. Only after that
+/// handoff does the stale observation call `publish_to_head_with_owner`; the
+/// winning CAS supplies one move-only continuation witness. The model selects
+/// no geometry, PageMap implementation, arena, or release route.
+struct StaleSnapshotClaimModel {
+    head: AtomicUsize,
+    blocks: ModelBlocks,
+    used: AtomicUsize,
+    owner_identity: AtomicUsize,
+    snapshot_issued: AtomicUsize,
+    claimed_token: AtomicUsize,
+    source_publication_count: AtomicUsize,
+    continuation_state: AtomicUsize,
+    continuation_attempt_count: AtomicUsize,
+    terminal_release_count: AtomicUsize,
+    page_map_registered: AtomicBool,
+    metadata_released: AtomicBool,
+}
+
+impl StaleSnapshotClaimModel {
+    fn new() -> Self {
+        Self {
+            head: AtomicUsize::new(OWNER_EMPTY_HEAD),
+            blocks: ModelBlocks::new(),
+            used: AtomicUsize::new(1),
+            owner_identity: AtomicUsize::new(MODEL_OWNER_LIVE),
+            snapshot_issued: AtomicUsize::new(0),
+            claimed_token: AtomicUsize::new(0),
+            source_publication_count: AtomicUsize::new(0),
+            continuation_state: AtomicUsize::new(STALE_SNAPSHOT_CONTINUATION_PENDING),
+            continuation_attempt_count: AtomicUsize::new(0),
+            terminal_release_count: AtomicUsize::new(0),
+            page_map_registered: AtomicBool::new(true),
+            metadata_released: AtomicBool::new(false),
+        }
+    }
+
+    /// Captures the live identity before owner exit. This does not pin that
+    /// identity; the `allow_collect=true` source CAS must close the gap.
+    fn snapshot_live_owner(&self) -> StaleLiveRemoteFreeSnapshot {
+        assert_eq!(
+            self.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_LIVE,
+            "pointer dispatch snapshots the page before owner exit"
+        );
+        assert_eq!(
+            self.snapshot_issued.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the bounded model owns one exact client observation"
+        );
+        StaleLiveRemoteFreeSnapshot { block_index: 0 }
+    }
+
+    /// Models source owner exit after the live observation, including the
+    /// release of the empty low-bit head that the stale producer will claim.
+    fn abandon_after_stale_snapshot(&self) {
+        assert_eq!(
+            self.snapshot_issued.load(Ordering::Acquire),
+            1,
+            "owner exit follows the one stale live observation"
+        );
+        assert_eq!(
+            self.owner_identity.compare_exchange(
+                MODEL_OWNER_LIVE,
+                MODEL_OWNER_ABANDONED,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ),
+            Ok(MODEL_OWNER_LIVE),
+            "source owner publishes abandonment once"
+        );
+        let mut no_hook: Option<fn()> = None;
+        assert_eq!(
+            try_unown_abandoned_head_with(&self.head, &mut no_hook),
+            AbandonedOwnerHeadTransition::Released,
+            "owner exit releases its empty low-bit head"
+        );
+        assert_eq!(self.head.load(Ordering::Acquire), 0);
+    }
+
+    /// Executes the production-shaped stale `allow_collect` publication and
+    /// creates one continuation witness only when it acquires the unowned
+    /// abandoned head.
+    fn claim_from_stale_snapshot(
+        model: &Arc<Self>,
+        snapshot: StaleLiveRemoteFreeSnapshot,
+    ) -> ClaimedAbandonedContinuationWitness {
+        assert_eq!(snapshot.block_index, 0);
+        assert_eq!(
+            model.owner_identity.load(Ordering::Acquire),
+            MODEL_OWNER_ABANDONED,
+            "the stale observation reaches the abandoned owner identity"
+        );
+        assert!(
+            !model.blocks.publish_abandoned(&model.head, snapshot.block_index),
+            "the unowned head makes this source publication the unique owner"
+        );
+        assert_eq!(
+            model.source_publication_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "one client reaches one source publication"
+        );
+        assert_eq!(
+            model.claimed_token.compare_exchange(
+                0,
+                STALE_SNAPSHOT_CLAIM_TOKEN,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ),
+            Ok(0),
+            "the successful CAS yields one continuation witness"
+        );
+        ClaimedAbandonedContinuationWitness {
+            model: Arc::clone(model),
+            token_id: STALE_SNAPSHOT_CLAIM_TOKEN,
+            published_block: ModelBlocks::address(snapshot.block_index),
+        }
+    }
+
+    /// Runs the post-publication terminal tail without another publish. The
+    /// injected error is after detach; returning the moved witness is the only
+    /// valid way to retain the low-bit owner and its page lifetime.
+    fn finish_claimed_continuation(
+        &self,
+        token_id: usize,
+        published_block: ThreadFree,
+        fail_after_detach: bool,
+    ) -> Result<(), StaleSnapshotContinuationError> {
+        assert_eq!(token_id, STALE_SNAPSHOT_CLAIM_TOKEN);
+        assert_eq!(published_block, ModelBlocks::address(0));
+        assert_eq!(
+            self.claimed_token.load(Ordering::Acquire),
+            token_id,
+            "the terminal tail receives the exact successful claim"
+        );
+        assert_eq!(
+            self.continuation_state.compare_exchange(
+                STALE_SNAPSHOT_CONTINUATION_PENDING,
+                STALE_SNAPSHOT_CONTINUATION_RUNNING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ),
+            Ok(STALE_SNAPSHOT_CONTINUATION_PENDING),
+            "one claim enters one terminal continuation"
+        );
+        assert_eq!(
+            self.continuation_attempt_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the terminal continuation starts once"
+        );
+        assert_eq!(self.blocks.collect_once(&self.head), 1);
+        assert_eq!(
+            self.used.fetch_sub(1, Ordering::Relaxed),
+            1,
+            "the terminal collector consumes the one still-counted client"
+        );
+        assert_eq!(self.head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+
+        if fail_after_detach {
+            self.continuation_state
+                .store(STALE_SNAPSHOT_CONTINUATION_RETAINED, Ordering::Release);
+            return Err(StaleSnapshotContinuationError::InjectedAfterDetach);
+        }
+
+        assert!(
+            self.page_map_registered.swap(false, Ordering::AcqRel),
+            "one successful continuation unregisters the page once"
+        );
+        assert!(
+            !self.metadata_released.swap(true, Ordering::AcqRel),
+            "metadata release follows that one unregister"
+        );
+        assert_eq!(
+            self.terminal_release_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the claimed continuation reaches one terminal release"
+        );
+        self.continuation_state
+            .store(STALE_SNAPSHOT_CONTINUATION_FINISHED, Ordering::Release);
+        Ok(())
+    }
+
+    fn assert_completed_once(&self) {
+        assert_eq!(self.used.load(Ordering::Relaxed), 0);
+        assert_eq!(self.head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        assert_eq!(
+            self.source_publication_count.load(Ordering::Acquire),
+            1,
+            "the terminal tail never republishes its already-linked block"
+        );
+        assert_eq!(
+            self.continuation_state.load(Ordering::Acquire),
+            STALE_SNAPSHOT_CONTINUATION_FINISHED
+        );
+        assert_eq!(self.continuation_attempt_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 1);
+        assert!(!self.page_map_registered.load(Ordering::Acquire));
+        assert!(self.metadata_released.load(Ordering::Acquire));
+        self.blocks.assert_collected(0);
+    }
+
+    fn assert_retained_after_detach(&self) {
+        assert_eq!(self.used.load(Ordering::Relaxed), 0);
+        assert_eq!(self.head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        assert_eq!(
+            self.source_publication_count.load(Ordering::Acquire),
+            1,
+            "a retained claim cannot publish its client a second time"
+        );
+        assert_eq!(
+            self.continuation_state.load(Ordering::Acquire),
+            STALE_SNAPSHOT_CONTINUATION_RETAINED
+        );
+        assert_eq!(self.continuation_attempt_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 0);
+        assert!(self.page_map_registered.load(Ordering::Acquire));
+        assert!(!self.metadata_released.load(Ordering::Acquire));
+        self.blocks.assert_collected(0);
+    }
+}
+
+/// Forces the pointer-dispatch observation to become stale before its source
+/// CAS, while preserving the modeled move-only ownership of that observation.
+fn claim_after_stale_live_snapshot(
+) -> (Arc<StaleSnapshotClaimModel>, ClaimedAbandonedContinuationWitness) {
+    let model = Arc::new(StaleSnapshotClaimModel::new());
+    let producer_model = Arc::clone(&model);
+    let (snapshot_ready_send, snapshot_ready_receive) = mpsc::channel();
+    let (abandoned_send, abandoned_receive) = mpsc::channel();
+    let producer = thread::spawn(move || {
+        let snapshot = producer_model.snapshot_live_owner();
+        snapshot_ready_send
+            .send(())
+            .expect("owner keeps the stale-observation receiver");
+        abandoned_receive
+            .recv()
+            .expect("stale publisher waits for owner abandonment");
+        StaleSnapshotClaimModel::claim_from_stale_snapshot(&producer_model, snapshot)
+    });
+
+    snapshot_ready_receive
+        .recv()
+        .expect("producer records its live-owner observation");
+    model.abandon_after_stale_snapshot();
+    abandoned_send
+        .send(())
+        .expect("stale publisher remains available after owner exit");
+    let claim = producer
+        .join()
+        .expect("stale publisher completes its source claim");
+    (model, claim)
+}
+
+/// Compile-time guard for the concrete W07 boundary that this address-free
+/// model represents. Either `Copy` or `Clone` would make the implementation
+/// choice below ambiguous, so this test stops compiling if the real claim can
+/// be duplicated instead of moved into its continuation.
+#[test]
+fn claimed_abandoned_remote_free_stays_linear_at_the_loom_boundary() {
+    trait AmbiguousIfCopy<Marker> {
+        fn assertion() {}
+    }
+    impl<T: ?Sized> AmbiguousIfCopy<()> for T {}
+    impl<T: ?Sized + Copy> AmbiguousIfCopy<u8> for T {}
+
+    trait AmbiguousIfClone<Marker> {
+        fn assertion() {}
+    }
+    impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+    impl<T: ?Sized + Clone> AmbiguousIfClone<u8> for T {}
+
+    let _ = <super::ClaimedAbandonedRemoteFree as AmbiguousIfCopy<_>>::assertion;
+    let _ = <super::ClaimedAbandonedRemoteFree as AmbiguousIfClone<_>>::assertion;
+}
+
+#[test]
+fn loom_stale_live_snapshot_claimed_abandoned_remote_free_has_one_terminal_continuation() {
+    loom::model(|| {
+        let (model, claim) = claim_after_stale_live_snapshot();
+        assert_eq!(claim.token_id, STALE_SNAPSHOT_CLAIM_TOKEN);
+        assert_eq!(claim.published_block, ModelBlocks::address(0));
+        assert_eq!(
+            model.head.load(Ordering::Acquire),
+            ModelBlocks::address(0) | THREAD_FREE_OWNED,
+            "the stale observation claims the unowned head with its exact block"
+        );
+
+        match claim.finish_terminal_continuation(false) {
+            Ok(()) => {}
+            Err(_) => panic!("the non-faulting claimed continuation completes once"),
+        }
+        model.assert_completed_once();
+    });
+}
+
+#[test]
+fn loom_claimed_abandoned_remote_free_fault_retains_the_exact_token_without_republication() {
+    loom::model(|| {
+        let (model, claim) = claim_after_stale_live_snapshot();
+        let token_id = claim.token_id;
+        let published_block = claim.published_block;
+        let retained = match claim.finish_terminal_continuation(true) {
+            Ok(()) => panic!("the injected post-detach fault retains the continuation"),
+            Err(retained) => retained,
+        };
+
+        assert_eq!(retained.error, StaleSnapshotContinuationError::InjectedAfterDetach);
+        assert_eq!(
+            retained.claim.token_id, token_id,
+            "the error carries the exact successful claim rather than a replacement"
+        );
+        assert_eq!(
+            retained.claim.published_block, published_block,
+            "the retained claim still names the stale-snapshot client"
+        );
+        model.assert_retained_after_detach();
+    });
+}
+
 #[test]
 fn loom_multiple_remote_publishers_preserve_owner_bit_and_collect_every_block_once() {
     loom::model(|| {
