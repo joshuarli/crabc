@@ -20580,6 +20580,93 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_endhostent_artifact_stays_private_and_non_promoting(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-endhostent"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "legacy netdb terminator artifact",
+            "strong `void endhostent(void)`",
+            "weak same-address `endnetent` alias",
+            "`src/network/ent.c::endhostent`",
+            "`weak_alias(endhostent, endnetent)`",
+            "`sethostent`",
+            "`gethostent`",
+            "NSS",
+            "resolver behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+
+        owners = artifact["source_owners"]
+        assert isinstance(owners, list)
+        for owner in (
+            "libc/src/c_abi/x86_64/endhostent.rs",
+            "include/netdb.h",
+            "compat/x86_64/endhostent_header_abi_probe.c",
+            "compat/x86_64/endhostent_header_abi_probe.cpp",
+            "compat/x86_64/run_endhostent_header_abi.sh",
+            "compat/x86_64/libc_endhostent_probe.c",
+            "compat/x86_64/libc_endhostent_start.S",
+            "compat/x86_64/run_libc_endhostent.sh",
+            "compat/x86_64/static_c_abi_exports.txt",
+        ):
+            self.assertIn(owner, owners)
+
+        prerequisites = artifact["x86_abi_prerequisites"]
+        assert isinstance(prerequisites, list)
+        self.assertTrue(
+            any(
+                "SysV AMD64" in item
+                and "void endhostent(void)" in item
+                and "void endnetent(void)" in item
+                and "same address" in item
+                for item in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/network/ent.c::endhostent" in item
+                and "weak_alias(endhostent, endnetent)" in item
+                and "sethostent/setnetent" in item
+                for item in prerequisites
+            )
+        )
+
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        self.assertEqual(
+            evidence[0]["command"],
+            "./scripts/dev-x86_64.sh libc-endhostent",
+        )
+        for phrase in (
+            "Pinned-musl/project C/C++ header",
+            "true dependency-free x86 crabc-libc `-nostdlib -static` candidate",
+            "same-address alias identity",
+            "ent.lo/AArch64 strong/weak ownership",
+            "host/network enumeration and resolver extraction",
+            "family completion",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, evidence[0]["scope"])
+
+        prerequisites[1] = prerequisites[1].replace(
+            "weak_alias(endhostent, endnetent)", "distinct forwarding wrapper"
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "static-c-endhostent must retain its pinned-musl ent.c mapping",
+        ):
+            ledger.validate_ledger(data)
+
     def test_bsearch_artifact_stays_private_and_non_promoting(self) -> None:
         data = self.data()
         family = self.family(data, "libc.c-abi-compat")

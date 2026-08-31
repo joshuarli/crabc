@@ -203,6 +203,19 @@ delegates to close; the isolated true-static adapter retains only direct
 cancellation/AIO coordination, filesystem policy, family completion,
 promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-endhostent` is a separate private
+`static-c-endhostent` artifact inside still-planned `libc.c-abi-compat`. Its
+pinned-musl/project `<netdb.h>` C/C++ matrix proves unconditional
+`void endhostent(void)` and `void endnetent(void)` declarations under strict,
+POSIX, X/Open, and GNU profiles, with exact no-argument function-pointer
+types and unmangled C++ linkage. Pinned musl 1.2.6 `src/network/ent.c` makes
+`endhostent` a no-op and emits `endnetent` as its weak same-address alias; the
+true-static fixture proves direct and function-pointer calls plus that exact
+strong/weak address identity. It selects no host/network enumeration, legacy
+database state, `/etc/hosts` or `/etc/networks` files, NSS, resolver behavior,
+errno/TLS, allocation, syscall, family completion, promotion, or public x86
+support.
+
 `./scripts/dev-x86_64.sh libc-isatty` is a separate private `static-c-isatty`
 artifact inside still-planned `libc.posix-runtime`. Its strict/POSIX/X/Open/GNU/
 BSD C/C++ declaration gate and pinned-musl/static C fixture select only

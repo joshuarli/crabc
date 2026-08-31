@@ -1378,7 +1378,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-alarm|libc-sigaddset-sigdelset-sigfillset",
             "libc-sched-getcpu|libc-sched-yield",
             "sched-getscheduler-header-abi",
-            "ctermid-header-abi|gethostid-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
+            "ctermid-header-abi|gethostid-header-abi|endhostent-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|libc-ctermid|libc-gethostid|libc-endhostent|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|mkfifo-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
             "readlinkat-header-abi|libc-readlinkat",
             "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi",
             "math-complex-complete-header-abi|libc-math-complex-complete",
@@ -22116,6 +22116,148 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn(
             '    libc-posix-close)\n        [ "$#" -eq 0 ] || fail "libc-posix-close takes no arguments"',
+            runner,
+        )
+
+    def test_libc_static_c_abi_endhostent_artifact_stays_narrow(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "endhostent.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_endhostent_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_endhostent_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_endhostent.sh"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_endhostent_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        header_c = (
+            ROOT / "compat" / "x86_64" / "endhostent_header_abi_probe.c"
+        ).read_text(encoding="utf-8")
+        header_cxx = (
+            ROOT / "compat" / "x86_64" / "endhostent_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        netdb_header = (ROOT / "include" / "netdb.h").read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+        parity_ledger = (ROOT / "compat" / "x86_64" / "parity.toml").read_text(
+            encoding="utf-8"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('#[path = "endhostent.rs"]', static_root)
+        for required in (
+            "Selected static Linux/x86-64 legacy netdb terminator C ABI boundary",
+            "musl 1.2.6 release commit",
+            "src/network/ent.c",
+            "weak_alias(endhostent, endnetent)",
+            "System V AMD64 ABI",
+            ".weak endnetent",
+            ".set endnetent, endhostent",
+            'pub extern "C" fn endhostent()',
+        ):
+            self.assertIn(required, implementation)
+        for forbidden in (
+            "raw_syscall::",
+            "errno::",
+            "static_tls::",
+            "crabc_core",
+            "crabc_mimalloc",
+        ):
+            self.assertNotIn(forbidden, implementation)
+        self.assertTrue({"endhostent", "endnetent"} <= static_exports)
+        self.assertFalse(
+            static_exports
+            & {
+                "gethostent",
+                "getnetent",
+                "sethostent",
+                "setnetent",
+            }
+        )
+
+        for required in (
+            "#include <netdb.h>",
+            "typedef void (*endhostent_signature)(void)",
+            "const endhostent_signature host_function = endhostent",
+            "const endhostent_signature net_function = endnetent",
+            "endhostent();",
+            "endnetent();",
+            "CRABC_ENDHOSTENT_FREESTANDING",
+        ):
+            self.assertIn(required, probe)
+        for required in (
+            "crabc_x86_64_endhostent_probe",
+            "mov $60, %eax",
+        ):
+            self.assertIn(required, start)
+
+        for header in (header_c, header_cxx):
+            for required in (
+                "endhostent_signature",
+                "endhostent_function",
+                "endnetent_function",
+            ):
+                self.assertIn(required, header)
+        self.assertIn('#ifdef __cplusplus\nextern "C" {', netdb_header)
+        self.assertIn('#ifdef __cplusplus\n}\n#endif', netdb_header)
+        for required in (
+            "endhostent_header_abi_probe.c",
+            "endhostent_header_abi_probe.cpp",
+            "c11-strict",
+            "c11-posix-2008",
+            "c11-xopen-700",
+            "c11-gnu",
+            "cxx17-strict",
+            "cxx17-gnu",
+            "nm --undefined-only",
+            "retained a mangled $symbol reference",
+        ):
+            self.assertIn(required, header_runner)
+
+        for required in (
+            "run_endhostent_header_abi.sh",
+            "ent.lo",
+            "static_c_abi_exports.txt",
+            "-nostdlib -static",
+            "-Wl,--no-undefined",
+            "archive does not define $symbol",
+            "candidate endnetent is not the same-address weak endhostent alias",
+            "candidate exports an unselected netdb enumeration or resolver entry",
+            "endhostent unexpectedly performs a call or syscall",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertIn('id = "static-c-endhostent"', parity_ledger)
+        self.assertIn(
+            'command = "./scripts/dev-x86_64.sh libc-endhostent"', parity_ledger
+        )
+        self.assertIn("run_endhostent_header_abi()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_endhostent_header_abi.sh", runner
+        )
+        self.assertIn("run_libc_endhostent_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_endhostent.sh", runner
+        )
+        self.assertIn(
+            '    endhostent-header-abi)\n        [ "$#" -eq 0 ] || fail "endhostent-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-endhostent)\n        [ "$#" -eq 0 ] || fail "libc-endhostent takes no arguments"',
             runner,
         )
 

@@ -429,6 +429,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-ctermid
 ./scripts/dev-x86_64.sh gethostid-header-abi
 ./scripts/dev-x86_64.sh libc-gethostid
+./scripts/dev-x86_64.sh endhostent-header-abi
+./scripts/dev-x86_64.sh libc-endhostent
 ./scripts/dev-x86_64.sh gettid-header-abi
 ./scripts/dev-x86_64.sh libc-gettid
 ./scripts/dev-x86_64.sh posix-close-header-abi
@@ -3520,6 +3522,22 @@ does not select descriptor lifetime/ownership policy, cancellation/AIO
 coordination, filesystem policy, libc.so, CRT, loader, sysroot, family
 completion, promotion, or public x86 support.
 
+`endhostent-header-abi` and `libc-endhostent` record a separate private
+`static-c-endhostent` artifact inside still-planned `libc.c-abi-compat`, not a
+netdb or resolver capability. The pinned-musl/project `<netdb.h>` C/C++ matrix
+proves unconditional `void endhostent(void)` and `void endnetent(void)`
+declarations under strict, POSIX, X/Open, and GNU profiles, their exact
+no-argument types, and unmangled C++ linkage through the header's C-linkage
+guards. The shared C body then executes through pinned musl and one true
+dependency-free `-nostdlib -static` candidate. Musl 1.2.6
+`src/network/ent.c` supplies an empty `endhostent` body and
+`weak_alias(endhostent, endnetent)`; the fixture proves direct and
+function-pointer no-op calls plus the strong/weak same-address alias identity.
+The candidate rejects host/network enumeration and resolver extraction. It
+does not select legacy database state, `/etc/hosts` or `/etc/networks`, NSS,
+resolver behavior, generic netdb APIs, libc.so, CRT, loader, sysroot, family
+completion, promotion, or public x86 support.
+
 `libc-isatty` is a separately recorded static `static-c-isatty`
 `verified_artifact` gate over that archive, not a terminal capability. Its
 strict/POSIX/X/Open/GNU/BSD C/C++ `unistd.h` declaration gate and one
@@ -5732,6 +5750,7 @@ Apart from the narrowly named `libc-stat-compat`, `libc-credentials`,
 `libc-termios-control`,
 `libc-ctermid`,
 `libc-gethostid`,
+`libc-endhostent`,
 `libc-gettid`,
 `libc-posix-close`,
 `libc-isatty`,
