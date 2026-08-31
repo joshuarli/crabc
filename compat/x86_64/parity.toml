@@ -5024,6 +5024,59 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/sched/sched_yield.c::sched_yield: syscall(SYS_sched_yield) applies ordinary status/errno translation, unlike C11 thrd_yield's raw-result discard." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_yield=24 no-argument rax result and fixture-only prctl=157/seccomp=317 forced raw-EPERM contract." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "No-argument signed-int C ABI and freestanding static initial-exec errno fixture contract." }]
 
 [[family.verified_artifact]]
+id = "static-c-sched-get-priority-max"
+description = "Private native x86 selected-static-archive `sched_get_priority_max` query leaf. One dependency-free `crabc-libc` archive resolves exactly `int sched_get_priority_max(int)` into a freestanding C fixture after equivalent pinned-musl execution. The separate strict/POSIX/XOPEN/GNU C/C++ header gate proves the unconditional signed-int declaration, Linux SCHED_OTHER/FIFO/RR constants, and unmangled C++ linkage. The common fixture observes SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99, successful-query preservation of stale errno, and invalid-policy `-1`/EINVAL. Pinned musl's same source file also defines `sched_get_priority_min`; that sibling remains deliberately unselected. This artifact establishes no scheduler policy selection or mutation, priority-minimum query, scheduler parameters, affinity, scheduling-progress/fairness guarantee, C11/pthread lifecycle, process lifecycle, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/sched_get_priority_max.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/syscall.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/sched.h",
+  "include/sys/syscall.h",
+  "include/sys/types.h",
+  "include/time.h",
+  "include/features.h",
+  "include/bits/alltypes.h",
+  "include/bits/syscall.h",
+  "compat/x86_64/sched_get_priority_max_header_abi_probe.c",
+  "compat/x86_64/sched_get_priority_max_header_abi_probe.cpp",
+  "compat/x86_64/run_sched_get_priority_max_header_abi.sh",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sched_get_priority_max_probe.c",
+  "compat/x86_64/libc_sched_get_priority_max_start.S",
+  "compat/x86_64/run_libc_sched_get_priority_max.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "The SysV AMD64 `int sched_get_priority_max(int)` ABI supplies the signed policy selector in edi/rdi and returns the signed priority or -1 in eax. Linux 5.10 x86-64 `sched_get_priority_max=146` consumes that one syscall word and returns either a nonnegative priority or a raw -errno word",
+  "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 `src/sched/sched_get_priority_max.c::sched_get_priority_max` is `syscall(SYS_sched_get_priority_max, policy)`. The same source file's sched_get_priority_min sibling remains excluded",
+  "The shared pinned-musl/candidate fixture observes SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99, stale errno preservation on each successful query, and invalid policy -1/EINVAL without asserting host scheduling policy",
+  "The final `-nostdlib -static` candidate has a PT_TLS errno datum with direct initial-exec TPOFF access and no interpreter, DT_NEEDED, unresolved symbol, dynamic TLS resolver, or unowned runtime. Fixture-local startup writes one Variant-II %fs:0 thread-pointer self word without claiming CRT or TLS lifecycle",
+]
+x86_header_prerequisites = ["The strict/POSIX/XOPEN/GNU pinned-musl/project-header C11/C++17 `sched.h` gate proves unconditional `int sched_get_priority_max(int)`, SCHED_OTHER=0/SCHED_FIFO=1/SCHED_RR=2, and an unmangled C++ reference. It checks declaration/linkage only: priority-minimum, scheduler policy/parameters, affinity, C11/pthread lifecycle, archive linkage, installed-header completion, and public x86 support remain unselected."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sched-get-priority-max", scope = "Pinned-musl C reference plus the separate strict/POSIX/XOPEN/GNU C/C++ project-header gate, a true dependency-free x86 crabc-libc archive, and a `-nostdlib -static` candidate. The same fixture proves SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99, stale errno preservation on success, and invalid policy -1/EINVAL; emitted code uses direct sched_get_priority_max=146 and errno TLS. Archive/final ELF checks require the exact export, reject an interpreter/DT_NEEDED/unresolved symbol/dynamic TLS resolver or unowned runtime, and ensure final closure omits sched_get_priority_min, policy/parameter/affinity, C11/pthread, timer, and process-lifecycle entries. It excludes scheduler policy/fairness/progress guarantees, family completion, promotion, and public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source and declaration/behavior oracle for src/sched/sched_get_priority_max.c::sched_get_priority_max: syscall(SYS_sched_get_priority_max, policy) applies ordinary status/errno translation. The source sibling sched_get_priority_min remains excluded." },
+  { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "sched_get_priority_max=146 one signed policy word and raw priority/EINVAL result contract." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "One signed-int argument/result ABI and freestanding static initial-exec errno fixture contract." },
+]
+
+[[family.verified_artifact]]
 id = "static-c-readiness-signal-waits"
 description = "Private native x86 selected-static-archive readiness/signal-waits block. One dependency-free `crabc-libc` archive resolves only `poll`, GNU `ppoll`, `select`, `pselect`, `pause`, and `sigsuspend` into a freestanding C fixture after an equivalent pinned-musl execution. The fixture uses already-selected pipe and simple signal-control calls only as plumbing, then proves empty/readable/hangup/invalid descriptor readiness, copied public timeout records, select's local timeval normalization and validation, atomic temporary-mask delivery/restoration for ppoll/pselect/sigsuspend, and the emitted direct pause syscall path. This artifact is deliberately narrower than readiness, event, or signal capabilities. It does not exercise epoll/eventfd; a separate artifact owns those archive exports. C socket/open/path/fcntl/vector-I/O APIs, AIO, generic signal delivery or signal-wait APIs, process lifecycle, timers, pthread cancellation or mask policy, libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support remain excluded."
 source_owners = [

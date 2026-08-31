@@ -27,7 +27,7 @@
 //! create/explicit-exit/join/detach worker and its typed C11
 //! `thrd_create`/`thrd_exit`/`thrd_join`/`thrd_detach`/`thrd_sleep` sibling, a
 //! direct C11 `thrd_yield` leaf plus one separate POSIX status-returning
-//! `sched_yield` leaf, a
+//! `sched_yield` leaf and a private `sched_get_priority_max` query leaf, a
 //! process-private normal `pthread_mutex_*` block and its paired private
 //! process-private condition-variable handoff, a complete selected
 //! `pthread_rwlock_*`/`pthread_rwlockattr_*` block with private and
@@ -323,6 +323,8 @@ mod c11_thread_lifecycle;
 mod thrd_yield;
 #[path = "sched_yield.rs"]
 mod sched_yield;
+#[path = "sched_get_priority_max.rs"]
+mod sched_get_priority_max;
 #[path = "c11_sync.rs"]
 mod c11_sync;
 #[path = "pthread_once.rs"]

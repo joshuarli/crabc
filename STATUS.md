@@ -1398,6 +1398,17 @@ does not select scheduler policy/parameters, affinity, thread lifecycle,
 process control, CRT, loader, sysroot, family completion, promotion, or public
 x86 support.
 
+`./scripts/dev-x86_64.sh sched-get-priority-max-header-abi` and
+`./scripts/dev-x86_64.sh libc-sched-get-priority-max` provide a separate
+private `static-c-sched-get-priority-max` artifact in the same planned family.
+Its strict/POSIX/XOPEN/GNU C/C++ header matrix and pinned-musl/freestanding
+static fixture map only to musl 1.2.6
+`src/sched/sched_get_priority_max.c::sched_get_priority_max`: SCHED_OTHER is
+0, SCHED_FIFO/SCHED_RR are 99, success preserves stale `errno`, and an invalid
+selector is `-1`/EINVAL. It excludes the source sibling
+`sched_get_priority_min`, scheduler policy/parameters/affinity, scheduling
+guarantees, lifecycle, family completion, promotion, and public x86 support.
+
 `./scripts/dev-x86_64.sh libc-timegm` is a distinct private
 `static-c-timegm-utc` artifact in still-planned `libc.posix-runtime`. Its
 pinned-musl and true-static C fixture selects only GNU/BSD `timegm` as a

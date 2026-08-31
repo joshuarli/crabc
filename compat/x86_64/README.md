@@ -257,6 +257,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh immediate-termination-header-abi
 ./scripts/dev-x86_64.sh posix-exit-header-abi
 ./scripts/dev-x86_64.sh sched-yield-header-abi
+./scripts/dev-x86_64.sh sched-get-priority-max-header-abi
 ./scripts/dev-x86_64.sh callback-algorithms-header-abi
 ./scripts/dev-x86_64.sh ffs-header-abi
 ./scripts/dev-x86_64.sh byte-strings-header-abi
@@ -495,6 +496,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-timestamp-updates
 ./scripts/dev-x86_64.sh libc-process-resources
 ./scripts/dev-x86_64.sh libc-sched-yield
+./scripts/dev-x86_64.sh libc-sched-get-priority-max
 ./scripts/dev-x86_64.sh libc-readiness-waits
 ./scripts/dev-x86_64.sh libc-system-observation
 ./scripts/dev-x86_64.sh libc-system-information
@@ -1286,6 +1288,13 @@ POSIX, XOPEN, and GNU C11/C++17 `<sched.h>` declarations for
 `int sched_yield(void)`. It proves the unconditional no-argument signed-int
 declaration and unmangled C++ linkage only; it is not scheduler-policy,
 affinity, thread-lifecycle, or general-header-completion evidence.
+
+`sched-get-priority-max-header-abi` compiles project-first and pinned-musl
+strict, POSIX, XOPEN, and GNU C11/C++17 `<sched.h>` declarations for
+`int sched_get_priority_max(int)`. It ratchets the unconditional declaration,
+the Linux SCHED_OTHER/FIFO/RR constants, and unmangled C++ linkage only. It
+does not select `sched_get_priority_min`, policy/parameter APIs, affinity,
+thread lifecycle, or general-header completion.
 
 `callback-algorithms-header-abi` compiles project-first and pinned-musl C/C++
 `<stdlib.h>` declarations for `bsearch`, `qsort`, and GNU/BSD `qsort_r`.
@@ -4078,6 +4087,16 @@ stale `errno` unchanged, while fixture-local seccomp forces raw `EPERM` and
 proves `-1` with `errno=EPERM`. It excludes scheduler handoff, fairness,
 policy/parameters, affinity, C11/pthread and process lifecycle, general
 runtime, family completion, promotion, and public x86 support.
+
+`libc-sched-get-priority-max` is a separately recorded private
+`static-c-sched-get-priority-max` artifact, not scheduler support. Its
+project-header C fixture first runs against pinned musl and then through a
+`-nostdlib -static` candidate. It selects only
+`sched_get_priority_max(int)`: SCHED_OTHER returns 0, SCHED_FIFO and SCHED_RR
+return 99, successful calls preserve stale `errno`, and an invalid selector
+returns `-1`/EINVAL. The sibling `sched_get_priority_min`, policy/parameter
+and affinity APIs, scheduling guarantees, C11/pthread/process lifecycle,
+family completion, promotion, and public x86 support remain excluded.
 
 `libc-readiness-waits` is the fixture for a separately recorded
 `static-c-readiness-signal-waits` `verified_artifact` gate over that archive,

@@ -1178,6 +1178,7 @@ CHILD_REAPING_SYMBOLS = ("wait", "waitpid", "waitid")
 IMMEDIATE_TERMINATION_SYMBOLS = ("_Exit",)
 POSIX_EXIT_SYMBOLS = ("_exit",)
 SCHED_YIELD_SYMBOLS = ("sched_yield",)
+SCHED_GET_PRIORITY_MAX_SYMBOLS = ("sched_get_priority_max",)
 
 CALLBACK_ALGORITHM_SYMBOLS = ("bsearch", "__qsort_r", "qsort", "qsort_r")
 
@@ -15482,6 +15483,179 @@ def require_static_sched_yield_artifact(family: Mapping[str, Any]) -> None:
         require(
             snippet in dispatcher,
             f"static-c-sched-yield dispatcher omits {snippet}",
+        )
+
+
+def require_static_sched_get_priority_max_artifact(family: Mapping[str, Any]) -> None:
+    """Keep the selected priority-maximum query separate from scheduler support."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-sched-get-priority-max"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sched-get-priority-max artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sched-get-priority-max must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "static-c-sched-get-priority-max must not carry capabilities",
+    )
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "`sched_get_priority_max` query leaf",
+        "strict/POSIX/XOPEN/GNU",
+        "SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99",
+        "stale errno",
+        "invalid-policy `-1`/EINVAL",
+        "sched_get_priority_min",
+        "scheduler policy selection or mutation",
+        "priority-minimum query",
+        "scheduler parameters, affinity",
+        "family completion, promotion, or public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sched-get-priority-max description omits {phrase}",
+        )
+
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"],
+            "static-c-sched-get-priority-max.source_owners",
+        )
+    )
+    for owner in (
+        "libc/src/c_abi/x86_64/sched_get_priority_max.rs",
+        "include/sched.h",
+        "compat/x86_64/sched_get_priority_max_header_abi_probe.c",
+        "compat/x86_64/sched_get_priority_max_header_abi_probe.cpp",
+        "compat/x86_64/run_sched_get_priority_max_header_abi.sh",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sched_get_priority_max_probe.c",
+        "compat/x86_64/libc_sched_get_priority_max_start.S",
+        "compat/x86_64/run_libc_sched_get_priority_max.sh",
+    ):
+        require(
+            owner in owners,
+            f"static-c-sched-get-priority-max source ownership omits {owner}",
+        )
+
+    prerequisite_text = " ".join(
+        nonempty_strings(
+            artifact["x86_abi_prerequisites"],
+            "static-c-sched-get-priority-max.x86_abi_prerequisites",
+        )
+    )
+    for phrase in (
+        "int sched_get_priority_max(int)",
+        "sched_get_priority_max=146",
+        "edi/rdi",
+        "src/sched/sched_get_priority_max.c::sched_get_priority_max",
+        "syscall(SYS_sched_get_priority_max, policy)",
+        "sched_get_priority_min sibling remains excluded",
+        "SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99",
+        "stale errno preservation",
+        "invalid policy -1/EINVAL",
+        "Variant-II %fs:0",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-sched-get-priority-max ABI prerequisites omit {phrase}",
+        )
+
+    header_text = " ".join(
+        nonempty_strings(
+            artifact["x86_header_prerequisites"],
+            "static-c-sched-get-priority-max.x86_header_prerequisites",
+        )
+    )
+    for phrase in (
+        "strict/POSIX/XOPEN/GNU",
+        "C11/C++17",
+        "sched.h",
+        "int sched_get_priority_max(int)",
+        "SCHED_OTHER=0/SCHED_FIFO=1/SCHED_RR=2",
+        "unmangled C++ reference",
+        "priority-minimum",
+        "installed-header completion",
+    ):
+        require(
+            phrase in header_text,
+            f"static-c-sched-get-priority-max header prerequisites omit {phrase}",
+        )
+
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sched-get-priority-max"},
+        "static-c-sched-get-priority-max must use the closed libc-sched-get-priority-max command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl C reference",
+                "strict/POSIX/XOPEN/GNU C/C++",
+                "`-nostdlib -static`",
+                "SCHED_OTHER=0, SCHED_FIFO=99, SCHED_RR=99",
+                "stale errno preservation",
+                "invalid policy -1/EINVAL",
+                "sched_get_priority_max=146",
+                "sched_get_priority_min",
+                "policy/parameter/affinity",
+                "promotion",
+                "public x86 support",
+            )
+        ),
+        "static-c-sched-get-priority-max evidence must retain its observable bounded contract",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    oracle_text = " ".join(
+        str(entry.get("role", "")) for entry in oracle if isinstance(entry, Mapping)
+    )
+    require(
+        "src/sched/sched_get_priority_max.c::sched_get_priority_max" in oracle_text
+        and "syscall(SYS_sched_get_priority_max, policy)" in oracle_text
+        and "status/errno translation" in oracle_text
+        and "sched_get_priority_min remains excluded" in oracle_text,
+        "static-c-sched-get-priority-max must retain the exact musl source mapping",
+    )
+    exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        set(SCHED_GET_PRIORITY_MAX_SYMBOLS) <= exports,
+        "static-c-sched-get-priority-max must retain its exact selected export set",
+    )
+    dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
+    for snippet in (
+        "run_sched_get_priority_max_header_abi()",
+        "run_libc_sched_get_priority_max_probe()",
+        "sched-get-priority-max-header-abi)",
+        "libc-sched-get-priority-max)",
+    ):
+        require(
+            snippet in dispatcher,
+            f"static-c-sched-get-priority-max dispatcher omits {snippet}",
         )
 
 
@@ -41890,6 +42064,7 @@ def validate_ledger(
     require_immediate_termination_artifact(by_id["libc.posix-runtime"])
     require_static_posix_exit_artifact(by_id["libc.posix-runtime"])
     require_static_sched_yield_artifact(by_id["libc.posix-runtime"])
+    require_static_sched_get_priority_max_artifact(by_id["libc.posix-runtime"])
     require_callback_algorithms_artifact(by_id["libc.posix-runtime"])
     require_clock_gettime_artifact(by_id["libc.posix-runtime"])
     require_time_observation_artifact(by_id["libc.posix-runtime"])
