@@ -957,6 +957,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             "caller’s `Dl_info` untouched",
             "leaves `dlerror` clear",
             "The bridge admits only that null-address no-image observation",
+            "`dlopen(NULL, RTLD_NOLOAD)` returns the same permanent main handle",
+            "`if (!file) return head`",
+            "before inspecting `mode`",
+            "only that exact flags value into its existing local main-token open",
+            "`crabc_bounded_runtime_dlopen`",
+            "bare-null `RTLD_NOLOAD` rejection",
             "`RTLD_NEXT`",
             "`RTLD_GLOBAL`",
             "neither `loader.dlfcn-basic` nor `loader.dlfcn-introspection` is selected",
@@ -969,7 +975,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         prerequisites = " ".join(artifact["x86_abi_prerequisites"])
         for phrase in (
-            "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, and dlsym exports",
+            "AArch64 libc.so and libc.a ABI manifests retain dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports",
             "src/ldso/dlinfo.c:dlinfo",
             "Unsupported request %d",
             "does not consume that pending state",
@@ -987,6 +993,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             "dladdr(NULL)",
             "Dl_info",
             "non-null failure and unavailable-record paths retain their existing fail-closed handling",
+            "ldso/dynlink.c:dlopen",
+            "if (!file) return head",
+            "before inspecting `mode`",
+            "dlopen(NULL, RTLD_NOLOAD=4)",
+            "same permanent main token",
+            "existing `RTLD_NOW` main route",
+            "run_ldso_bounded_dlopen.sh",
+            "crabc_bounded_runtime_dlopen",
+            "bare `NULL RTLD_NOLOAD` retains the runtime sibling's initial-object rejection",
         ):
             self.assertIn(phrase, prerequisites)
         scope = artifact["native_evidence"][0]["scope"]
@@ -1005,13 +1020,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             "dladdr(NULL)",
             "preserve it",
             "leave `dlerror` clear",
+            "`dlopen(NULL, RTLD_NOLOAD)`",
+            "both executions return the same main handle",
         ):
             self.assertIn(phrase, scope)
         self.assertTrue(
             any(
                 entry["kind"] == "aarch64-contract"
                 and "aarch64/libc.so.dynamic.tsv" in entry["source"]
-                and "dladdr, dlclose, dlinfo, dlerror, and dlsym exports" in entry["role"]
+                and "dladdr, dlclose, dlinfo, dlerror, dlsym, and dlopen exports" in entry["role"]
                 and "not a behavioral fallback" in entry["role"]
                 for entry in artifact["oracle"]
             )
@@ -1033,6 +1050,8 @@ class X86ParityLedgerTests(unittest.TestCase):
                 "compat/x86_64/ldso_public_dlfcn_probe.c",
                 "compat/x86_64/ldso_public_dlfcn_header_probe.cpp",
                 "compat/x86_64/run_ldso_public_dlfcn.sh",
+                "compat/x86_64/ldso_bounded_dlopen_probe.c",
+                "compat/x86_64/run_ldso_bounded_dlopen.sh",
                 "scripts/dev-x86_64.sh",
             },
         )
@@ -1146,6 +1165,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "Two concurrent raw-clone callers",
             "RTLD_NOLOAD=4",
             "without a path lookup",
+            "bare `dlopen(NULL, RTLD_NOLOAD)`",
             "RTLD_NODELETE=4096",
             "lifecycle-neutral flag",
             "PT_TLS",
@@ -1183,12 +1203,21 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(phrase, artifact["native_evidence"][0]["scope"])
 
         for phrase in (
+            "NULL RTLD_NOLOAD",
+            "bare `dlopen(NULL, RTLD_NOLOAD)`",
             "NULL RTLD_NODELETE",
             "named-initial-object RTLD_NODELETE",
             "RTLD_NOLOAD|RTLD_NODELETE",
             "RTLD_NODELETE close/reopen residency",
         ):
             self.assertIn(phrase, artifact["native_evidence"][0]["scope"])
+        prerequisites = " ".join(artifact["x86_abi_prerequisites"])
+        for phrase in (
+            "private `crabc_bounded_runtime_dlopen`",
+            "bare `dlopen(NULL, RTLD_NOLOAD)`",
+            "NULL initial-object rejection",
+        ):
+            self.assertIn(phrase, prerequisites)
         self.assertEqual(
             set(artifact["source_owners"]),
             {

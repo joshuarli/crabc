@@ -5237,7 +5237,11 @@ symbol pointers, and invalid handles retain their existing loader paths. For a
 writable `Dl_info`, the pinned-musl `dladdr(NULL)` branch returns zero without
 changing it or publishing `dlerror`; the bridge preserves that no-image
 observation only for a null address. Non-null failure and unavailable-record
-paths retain their existing fail-closed handling. Pinned musl and project C/C++
+paths retain their existing fail-closed handling. Only in this non-runtime
+public bridge, `dlopen(NULL, RTLD_NOLOAD)` returns musl's permanent main handle
+and leaves `dlerror` clear before mode processing; the bounded runtime-mapping
+sibling continues to reject that bare NULL/NOLOAD initial-object request.
+Pinned musl and project C/C++
 headers prove the public LP64 ABI and ordinary behavior; raw clone workers
 prove diagnostic isolation without TLS, and absent/malformed records prove
 there is no ambient loader fallback. RTLD_NEXT, global promotion,

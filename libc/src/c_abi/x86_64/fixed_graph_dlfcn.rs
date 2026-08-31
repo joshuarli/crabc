@@ -32,6 +32,8 @@ const IMAGE_CAPACITY: usize = 4;
 const DIAGNOSTIC_SLOT_COUNT: usize = 32;
 const C_TEXT_CAPACITY: usize = TEXT_CAPACITY + 1;
 const RTLD_NOW: c_int = 2;
+#[allow(dead_code)]
+const RTLD_NOLOAD: c_int = 4;
 const RTLD_NEXT_BITS: usize = usize::MAX;
 const RTLD_DI_LINKMAP: c_int = 2;
 const SYS_GETPID: i64 = 39;
@@ -403,7 +405,16 @@ unsafe fn information_fn(record: &RuntimeRecordV1) -> InformationFn {
 /// # Safety
 ///
 /// `filename`, when non-null, must point to a readable NUL-terminated C
-/// string. The loader's fixed 256-byte name bound still applies.
+/// string. The loader's fixed 256-byte name bound still applies. In the
+/// non-runtime fixed graph only, pinned musl 1.2.6 commit
+/// 9fa28ece75d8a2191de7c5bb53bed224c5947417 `ldso/dynlink.c:dlopen` returns
+/// the permanent main handle at `if (!file) return head` before inspecting
+/// `mode`. Preserve exactly `dlopen(NULL, RTLD_NOLOAD)` by dispatching it as
+/// the existing local main-token open. The bounded runtime-mapping sibling
+/// keeps its distinct initial-object `RTLD_NOLOAD` rejection.
+// The bounded runtime runner supplies this fixture-private cfg directly; it
+// must not become a public Cargo feature of the staged static archive.
+#[allow(unexpected_cfgs)]
 #[no_mangle]
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
     let Some(slot) = diagnostic_slot() else {
@@ -415,7 +426,15 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
     };
     let mut handle = ptr::null_mut();
     let mut error = EMPTY_TEXT;
-    if open_fn(record)(filename.cast(), flags, &mut handle, &mut error) != 0 {
+    #[cfg(not(crabc_bounded_runtime_dlopen))]
+    let loader_flags = if filename.is_null() && flags == RTLD_NOLOAD {
+        RTLD_NOW
+    } else {
+        flags
+    };
+    #[cfg(crabc_bounded_runtime_dlopen)]
+    let loader_flags = flags;
+    if open_fn(record)(filename.cast(), loader_flags, &mut handle, &mut error) != 0 {
         set_error_text(slot, &error);
         ptr::null_mut()
     } else {

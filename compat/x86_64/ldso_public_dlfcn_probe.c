@@ -177,6 +177,11 @@ int main(void) {
     if (main_handle == NULL || mid_one == NULL || mid_one != mid_two || leaf == NULL) return 46;
 
     typed_dlerror();
+    void *main_noload = typed_dlopen(NULL, RTLD_NOLOAD);
+    if (main_noload != main_handle) return 69;
+    if (typed_dlerror() != NULL) return 70;
+
+    typed_dlerror();
     if (typed_dlclose(NULL) != 1) return 63;
     char *null_close = typed_dlerror();
     if (!text_equal(null_close, "Invalid library handle 0")
