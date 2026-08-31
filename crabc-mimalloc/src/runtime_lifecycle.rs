@@ -6964,7 +6964,7 @@ pub unsafe fn native_reallocate(
 /// needs B's attachment. This bridge intentionally uses the existing direct
 /// post-exit remote-free primitive instead: it introduces no page geometry
 /// selection, new route, registry, ledger, or C fallback. Once
-/// `ProcessPageMapLease::classify_live_allocation_pointer` reaches the native
+/// `ProcessPageMapLease::lookup_live_allocation` reaches the native
 /// dispatch, delete this temporary route probe.
 unsafe fn native_free_detached_route_entry_phase_a(
     storage: &NativePostExitRouteStorage,

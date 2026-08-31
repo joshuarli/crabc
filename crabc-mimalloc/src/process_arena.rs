@@ -1008,6 +1008,26 @@ impl ProcessPageArenaLease {
             .map_err(ProcessPageArenaLeaseError::PageMap)
     }
 
+    /// Borrows the paired process PageMap for structural operations on exact
+    /// ranges whose complete page lifetime the caller owns.
+    ///
+    /// # Safety
+    ///
+    /// The caller must satisfy
+    /// [`ProcessPageMapLease::page_map_for_owned_ranges`]'s exact-range,
+    /// no-overlap, metadata-lifetime, and unregister-before-release contract.
+    /// The paired arena identity does not add global PageMap mutation or
+    /// terminal-release authority.
+    #[inline]
+    pub(crate) unsafe fn page_map_for_owned_ranges(
+        self,
+    ) -> Result<&'static crate::page_map::PageMap, ProcessPageArenaLeaseError> {
+        // SAFETY: the caller supplies the delegated exact-range PageMap
+        // operation contract; this pairing only preserves map/arena identity.
+        unsafe { self.page_map.page_map_for_owned_ranges() }
+            .map_err(ProcessPageArenaLeaseError::PageMap)
+    }
+
     /// Borrows the exact registry-published arena after pairing validation.
     #[inline]
     pub(crate) fn arena(self) -> Result<ArenaView<'static>, ProcessPageArenaLeaseError> {
