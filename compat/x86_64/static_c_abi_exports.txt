@@ -72,6 +72,8 @@ abs
 accept
 accept4
 access
+acosh
+acoshf
 acoshl
 acosl
 alphasort

@@ -1272,6 +1272,24 @@ atan/tanh/sin/cos/asinh/acosh/hyperbolic functions, fenv API/policy,
 special/complex/binary80 math, family completion, promotion, and public x86
 support.
 
+The separate private `static-c-math-acosh` artifact records only binary64
+`acosh` and binary32 `acoshf`: `./scripts/dev-x86_64.sh libc-math-acosh` runs
+project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures
+through pinned musl and one freestanding static candidate. Its checked GCC
+15.2.0 translation of musl 1.2.6 `acosh.c`/`acoshf.c` plus private local
+log/log1p/sqrt providers, fixed tables, and typed domain helpers is the
+complete direct source closure: it retains below-one invalid behavior,
+near-one reconstruction, two-to-large branch selection, and source-faithful
+scalar arithmetic without a public math sibling or ambient libm. The
+256-record differential preserves raw result bits, flags, and all four
+requested-and-observed MXCSR directions over signed zero, raw below-one
+subnormal/normal values, near-one/two/large-cutoff neighborhoods, finite
+extremes, infinities, quiet-NaN, and signaling-NaN inputs. Strong target-owned
+definitions and final ELF checks reject weak compiler-builtins fallback,
+`acoshl`, adjacent acos/asinh/atanh/tanh/sin/cos/cosh/sinh functions, fenv
+API/policy, special/complex/binary80 math, family completion, promotion, and
+public x86 support.
+
 The separate private `static-c-math-ceil` artifact records only binary64
 `ceil` and binary32 `ceilf`: `./scripts/dev-x86_64.sh libc-math-ceil` runs
 project-header C and default-SSE/`-mfpmath=387` C++ function-pointer fixtures

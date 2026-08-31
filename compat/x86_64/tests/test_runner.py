@@ -23899,6 +23899,131 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, assembly)
 
+    def test_math_acosh_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
+        dispatcher = RUNNER.read_text(encoding="utf-8")
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_math_acosh.sh").read_text(
+            encoding="utf-8"
+        )
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_math_acosh_probe.c"
+        ).read_text(encoding="utf-8")
+        header = (
+            ROOT / "compat" / "x86_64" / "math_acosh_header_abi_probe.cpp"
+        ).read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_math_acosh_header_abi.sh"
+        ).read_text(encoding="utf-8")
+        leaf = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_acosh.rs"
+        ).read_text(encoding="utf-8")
+        assembly = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_acosh_musl_x86_64.S"
+        ).read_text(encoding="utf-8")
+        generator = (
+            ROOT / "compat" / "x86_64" / "generate_libc_math_acosh.py"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "math-acosh-header-abi)",
+            "run_math_acosh_header_abi()",
+            "libc-math-acosh)",
+            "run_libc_math_acosh_probe()",
+            "/workspace/compat/x86_64/run_libc_math_acosh.sh",
+        ):
+            self.assertIn(required, dispatcher)
+        for required in (
+            "-nostdlib -static",
+            "--no-undefined",
+            "--gc-sections",
+            "run_math_acosh_header_abi.sh",
+            "strong crabc-owned",
+            "weak compiler-builtins",
+            "candidate does not retain local",
+            "candidate accidentally retains unselected",
+            "candidate retains TLS",
+            "crabc_x86_math_acosh_provider_log_data",
+            "crabc_x86_math_acosh_provider_invalidf",
+            "addsd addss subsd subss mulsd mulss divsd divss cvtsd2ss cvtss2sd",
+            "tanl tanh tanhf tanhl",
+            "log logf logl log1p log1pf",
+            "math_special",
+        ):
+            self.assertIn(required, runner)
+        for required in (
+            "direct_acosh",
+            "direct_acoshf",
+            "ACOSH_RECORD_WORDS 4",
+            "ACOSH_RECORD_COUNT",
+            "binary64_inputs",
+            "binary32_inputs",
+            "FE_TONEAREST",
+            "FE_DOWNWARD",
+            "FE_UPWARD",
+            "FE_TOWARDZERO",
+            "fegetround",
+            "fetestexcept",
+            "0x3ff0000000000000",
+            "0x4000000000000000",
+            "0x4190000000000000",
+            "0x3f800000",
+            "0x40000000",
+            "0x45800000",
+            "0x7ff0000000000042",
+            "0x7f800042",
+        ):
+            self.assertIn(required, probe)
+        for required in ("double_unary", "float_unary", "direct_acosh", "direct_acoshf"):
+            self.assertIn(required, header)
+        for required in (
+            "math_acosh_header_abi_probe.cpp",
+            "-mfpmath=387",
+            "unmangled",
+        ):
+            self.assertIn(required, header_runner)
+        for required in (
+            "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+            "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+            "src/math/acosh.c",
+            "src/math/acoshf.c",
+            "src/math/{log,logf,log1p,log1pf,sqrt,sqrtf}.c",
+            "__math_divzero",
+            "-ffp-contract=off",
+            'include_str!("math_acosh_musl_x86_64.S")',
+            "public x86 support",
+        ):
+            self.assertIn(required, leaf)
+        for required in (
+            "2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88",
+            '"src/math/acosh.c"',
+            '"src/math/acoshf.c"',
+            '"src/math/log.c"',
+            '"src/math/log1pf.c"',
+            '"src/math/sqrtf.c"',
+            '"src/math/log_data.c"',
+            '"src/math/sqrt_data.c"',
+            '"src/math/__math_invalidf.c"',
+            '"15.2.0"',
+            '"-frounding-math"',
+            '"-ffp-contract=off"',
+            '"-mfpmath=sse"',
+            "PRIVATE_RENAMES",
+            "retained_notices",
+        ):
+            self.assertIn(required, generator)
+        for required in (
+            "Sun Microsystems",
+            "musl's MIT license",
+            "\t.globl\tacosh\n",
+            "\t.globl\tacoshf\n",
+            "\t.local crabc_x86_math_acosh_provider_log",
+            "\t.local crabc_x86_math_acosh_provider_log_data",
+            "\t.local crabc_x86_math_acosh_provider_rsqrt_tab",
+            "\t.local crabc_x86_math_acosh_provider_invalidf",
+            "cvtsd2ss",
+            "cvtss2sd",
+        ):
+            self.assertIn(required, assembly)
+
     def test_math_ceil_runner_keeps_the_binary32_binary64_static_boundary(self) -> None:
         dispatcher = RUNNER.read_text(encoding="utf-8")
         runner = (ROOT / "compat" / "x86_64" / "run_libc_math_ceil.sh").read_text(

@@ -541,6 +541,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-math-tan
 ./scripts/dev-x86_64.sh libc-math-tanh
 ./scripts/dev-x86_64.sh libc-math-atanh
+./scripts/dev-x86_64.sh libc-math-acosh
 ./scripts/dev-x86_64.sh libc-math-elementary-long-double
 ./scripts/dev-x86_64.sh libc-fdim
 ./scripts/dev-x86_64.sh libc-locale-profile
@@ -4821,6 +4822,26 @@ atan/tanh/sin/cos/asinh/acosh/hyperbolic functions, fenv API/policy,
 special/complex/binary80 math, dynamic linkage, TLS, and ambient libm. Family
 completion, promotion, full x86-64 parity, and public x86 support remain
 unselected.
+`libc-math-acosh` is the separate non-promoting `static-c-math-acosh` artifact
+for binary64/binary32 `acosh`/`acoshf`. Its project-header C fixture and
+default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
+and then through one garbage-collected `-nostdlib -static` candidate. The
+checked GCC 15.2.0 translation of musl 1.2.6 `acosh.c`/`acoshf.c` plus renamed
+local log/log1p/sqrt providers, their fixed logarithm/reciprocal-square-root
+tables, and typed domain helpers is the complete direct source closure: it
+retains below-one invalid behavior, near-one reconstruction, and two-to-large
+branch selection without calling ambient libm or a public math sibling. The
+256-record raw differential covers signed zero, raw below-one subnormal and
+normal values, near-one, two, and large-cutoff neighborhoods, finite extremes,
+infinities, quiet/signaling NaNs, result payloads, flags, and requested versus
+observed MXCSR direction in all four modes. Final-link proof requires strong
+crabc-owned definitions, local closure providers/data/helpers, and scalar
+`addsd`/`addss`/`subsd`/`subss`/`mulsd`/`mulss`/`divsd`/`divss`/
+`cvtsd2ss`/`cvtss2sd`, while rejecting weak compiler-builtins fallback,
+`acoshl`, adjacent acos/asinh/atanh/tanh/sin/cos/cosh/sinh functions, fenv
+API/policy, special/complex/binary80 math, dynamic linkage, TLS, and ambient
+libm. Family completion, promotion, full x86-64 parity, and public x86 support
+remain unselected.
 `libc-math-ceil` is the separate non-promoting `static-c-math-ceil` artifact
 for binary64/binary32 `ceil`/`ceilf`. Its project-header C fixture and
 default-SSE/`-mfpmath=387` C++ signature probes run first through pinned musl
