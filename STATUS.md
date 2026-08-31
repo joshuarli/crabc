@@ -530,9 +530,13 @@ the candidate substitutes that exact error only after its bounded loader reports
 `loader symbol name is invalid`. Non-empty missing names, null symbol pointers,
 and invalid handles retain their existing loader paths. For a writable `Dl_info`,
 musl's `dladdr(NULL)` returns zero before modifying it or publishing `dlerror`;
-the fixed bridge preserves that no-image observation only for the null-address
-branch. Non-null failure and unavailable-record paths retain their existing
-fail-closed handling. Only in this non-runtime public bridge,
+the fixed bridge preserves that null-address no-image observation. For a
+non-null address outside every retained fixed-image `PT_LOAD`,
+musl's `addr2dso` likewise finds no image and returns zero before touching
+`Dl_info` or `dlerror`; the bridge admits only its exact `loader address not
+found` result to preserve that observation. Other non-null failure and
+unavailable-record paths retain their output-clearing fail-closed handling.
+Only in this non-runtime public bridge,
 `dlopen(NULL, RTLD_NOLOAD)` returns musl's permanent main handle and leaves
 `dlerror` clear before mode processing; its bounded runtime-mapping sibling
 continues to reject that bare NULL/NOLOAD initial-object request. Search/mapping, graph mutation, `RTLD_NEXT`,

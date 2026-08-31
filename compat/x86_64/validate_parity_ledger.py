@@ -8216,7 +8216,11 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "`dladdr(NULL)` returns zero",
         "caller’s `Dl_info` untouched",
         "leaves `dlerror` clear",
-        "The bridge admits only that null-address no-image observation",
+        "The bridge preserves that no-image result also for an admitted non-null address outside every retained fixed-image PT_LOAD",
+        "non-null address outside every retained fixed-image PT_LOAD",
+        "`addr2dso` yields no DSO",
+        "`loader address not found`",
+        "other non-null failure and unavailable-record paths retain their existing output-clearing fail-closed handling",
         "`dlopen(NULL, RTLD_NOLOAD)` returns the same permanent main handle",
         "`if (!file) return head`",
         "before inspecting `mode`",
@@ -8293,7 +8297,10 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "if (!p) return 0",
         "dladdr(NULL)",
         "Dl_info",
-        "non-null failure and unavailable-record paths retain their existing fail-closed handling",
+        "p = addr2dso(addr)",
+        "nonnull address outside every retained PT_LOAD",
+        "loader address not found",
+        "output-clearing fail-closed handling",
         "ldso/dynlink.c:dlopen",
         "if (!file) return head",
         "before inspecting `mode`",
@@ -8343,6 +8350,8 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "dladdr(NULL)",
         "preserve it",
         "leave `dlerror` clear",
+        "non-null address outside every graph PT_LOAD",
+        "loader-confirmed `loader address not found`",
         "`dlopen(NULL, RTLD_NOLOAD)`",
         "both executions return the same main handle",
         "loader.dlfcn-basic",
@@ -8398,6 +8407,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "ldso/dynlink.c:dladdr",
         "if (!p) return 0",
         "information.is_null() || address.is_null()",
+        "LOADER_ADDRESS_NOT_FOUND",
+        "clear_dl_info",
+        "!text_matches(&error, LOADER_ADDRESS_NOT_FOUND)",
         "ldso/dynlink.c:dlopen",
         "if (!file) return head",
         "filename.is_null() && flags == RTLD_NOLOAD",
@@ -8407,6 +8419,13 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             snippet in bridge,
             f"public fixed-graph dlfcn bridge omits bounded dlinfo diagnostic {snippet}",
         )
+    loader = (ROOT / "ldso" / "src" / "x86_64_initial_graph.rs").read_text(
+        encoding="utf-8"
+    )
+    require(
+        'fixed_graph_set_error(error, b"loader address not found")' in loader,
+        "public fixed-graph dlfcn no-image dladdr branch lacks its loader source closure",
+    )
     probe = (ROOT / "compat" / "x86_64" / "ldso_public_dlfcn_probe.c").read_text(
         encoding="utf-8"
     )
@@ -8423,6 +8442,9 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "Dl_info null_address",
         "typed_dladdr(NULL, &null_address)",
         "null_address.dli_fname !=",
+        "Dl_info no_image_address",
+        "typed_dladdr((const void *)(uintptr_t)1, &no_image_address)",
+        "no_image_address.dli_fname !=",
         "void *main_noload = typed_dlopen(NULL, RTLD_NOLOAD)",
         "main_noload != main_handle",
     ):
@@ -8460,6 +8482,7 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
             and "exact null-dlclose return/diagnostic" in entry["role"]
             and "exact live-handle empty-dlsym diagnostic" in entry["role"]
             and "exact null-dladdr untouched-output/no-error behavior" in entry["role"]
+            and "exact nonnull-no-image dladdr untouched-output/no-error behavior" in entry["role"]
             and "exact null-RTLD_NOLOAD main-handle/no-error behavior" in entry["role"]
             for entry in oracle
         ),
