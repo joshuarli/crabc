@@ -1500,6 +1500,309 @@ impl AllowCollectTerminalRaceModel {
     }
 }
 
+// `native_usable_size` is read-only after pointer dispatch, but it still
+// needs one admission boundary between an exact-live-client observation and
+// its PageMap/metadata loads. This intentionally has no remote-head, queue,
+// bin, or client-ledger state: the compact production lifetime word is the
+// whole atomic protocol relevant to that read-only interval.
+const USABLE_SIZE_OBSERVATION_RACE_GENERATION: u32 = 1;
+const USABLE_SIZE_EXACT_LIVE_CLIENT_TOKEN: usize = 1;
+const MODEL_USABLE_SIZE_LIVE: usize = 73;
+const MODEL_USABLE_SIZE_RELEASED: usize = 0;
+
+/// One exact live client presented to the pointer-first usable-size boundary.
+///
+/// This is a source precondition token, not a PageMap reference or a page
+/// owner. Its consuming admission is what permits the later metadata read.
+struct ExactLiveClientUsableSizeObservation {
+    token_id: usize,
+}
+
+/// The one source observer either copies its immutable usable-size scalar or
+/// rejects before it touches the one-entry PageMap/metadata model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsableSizeObservationOutcome {
+    Read(usize),
+    RejectedBeforePageMapAccess,
+}
+
+/// The terminal owner either released before the source observer could enter
+/// its generation, or retried only after that observer completed its read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UsableSizeTerminalOutcome {
+    ReleasedBeforeObservationAdmission,
+    ReleasedAfterObservationRead,
+}
+
+/// Finite lifetime model for a read-only exact-live-client usable-size
+/// observation racing terminal PageMap release.
+///
+/// It calls the production generation admission and retirement helpers rather
+/// than modeling a separate usable-size lock. The PageMap fields are only an
+/// address-free external lifetime record: a successful admission may read
+/// them while its pin remains live; a rejected admission must not load them.
+/// This models neither PageMap geometry nor an allocator operation.
+struct UsableSizeObservationLifetimeModel {
+    lifetime: AtomicUsize,
+    exact_live_observation_count: AtomicUsize,
+    observer_admission_count: AtomicUsize,
+    page_map_access_count: AtomicUsize,
+    metadata_read_count: AtomicUsize,
+    observer_completion_count: AtomicUsize,
+    observer_rejection_count: AtomicUsize,
+    page_map_root: AtomicUsize,
+    page_map_entry: AtomicUsize,
+    metadata: AtomicUsize,
+    usable_size: AtomicUsize,
+    terminal_state: AtomicUsize,
+    terminal_release_count: AtomicUsize,
+}
+
+impl UsableSizeObservationLifetimeModel {
+    fn new() -> Self {
+        Self {
+            lifetime: AtomicUsize::new(live_remote_page_word(
+                USABLE_SIZE_OBSERVATION_RACE_GENERATION,
+                true,
+                0,
+            )),
+            exact_live_observation_count: AtomicUsize::new(0),
+            observer_admission_count: AtomicUsize::new(0),
+            page_map_access_count: AtomicUsize::new(0),
+            metadata_read_count: AtomicUsize::new(0),
+            observer_completion_count: AtomicUsize::new(0),
+            observer_rejection_count: AtomicUsize::new(0),
+            page_map_root: AtomicUsize::new(MODEL_ROOT_PUBLISHED),
+            page_map_entry: AtomicUsize::new(MODEL_ENTRY_PUBLISHED),
+            metadata: AtomicUsize::new(MODEL_METADATA_LIVE),
+            usable_size: AtomicUsize::new(MODEL_USABLE_SIZE_LIVE),
+            terminal_state: AtomicUsize::new(MODEL_TERMINAL_READY),
+            terminal_release_count: AtomicUsize::new(0),
+        }
+    }
+
+    /// Records the C API's exact-live-client precondition before this bounded
+    /// model races the page-lifetime admission. It intentionally loads no
+    /// PageMap or metadata field: those belong after a successful admission.
+    fn observe_exact_live_client(&self) -> ExactLiveClientUsableSizeObservation {
+        assert_eq!(
+            self.terminal_state.load(Ordering::Acquire),
+            MODEL_TERMINAL_READY,
+            "the exact client observation begins before terminal retirement"
+        );
+        assert_eq!(
+            self.exact_live_observation_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the bounded model has one exact live client observation"
+        );
+        ExactLiveClientUsableSizeObservation {
+            token_id: USABLE_SIZE_EXACT_LIVE_CLIENT_TOKEN,
+        }
+    }
+
+    /// Attempts the existing page-local generation admission before any
+    /// read-only PageMap or metadata access.
+    fn begin_usable_size_observation(
+        &self,
+        observation: &ExactLiveClientUsableSizeObservation,
+    ) -> Result<(), UsableSizeObservationOutcome> {
+        assert_eq!(
+            observation.token_id,
+            USABLE_SIZE_EXACT_LIVE_CLIENT_TOKEN,
+            "the source observer retains its exact live-client token"
+        );
+        match begin_live_remote_page_publication_with(
+            &self.lifetime,
+            USABLE_SIZE_OBSERVATION_RACE_GENERATION,
+        ) {
+            Ok(()) => {
+                assert_eq!(
+                    self.terminal_release_count.load(Ordering::Acquire),
+                    0,
+                    "a successful usable-size admission precedes terminal release"
+                );
+                assert_eq!(
+                    self.observer_admission_count.fetch_add(1, Ordering::AcqRel),
+                    0,
+                    "the one exact observer enters the lifetime once"
+                );
+                Ok(())
+            }
+            Err(LiveRemoteFreePagePublicationError::Retired) => {
+                assert_eq!(
+                    self.observer_rejection_count.fetch_add(1, Ordering::AcqRel),
+                    0,
+                    "a closed lifetime rejects the exact observer once"
+                );
+                Err(UsableSizeObservationOutcome::RejectedBeforePageMapAccess)
+            }
+            Err(error) => {
+                panic!("the bounded read-only observer has no other admission outcome: {error:?}")
+            }
+        }
+    }
+
+    /// Copies one immutable usable-size scalar while the successful source
+    /// admission prevents terminal PageMap release. This is deliberately a
+    /// read-only path: its counters are evidence only and no source head,
+    /// client count, queue, or PageMap mutation is modeled here.
+    fn read_usable_size_after_admission(
+        &self,
+        observation: &ExactLiveClientUsableSizeObservation,
+    ) -> UsableSizeObservationOutcome {
+        assert_eq!(observation.token_id, USABLE_SIZE_EXACT_LIVE_CLIENT_TOKEN);
+        assert_eq!(self.observer_admission_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 0);
+        assert_eq!(
+            self.page_map_access_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the one source observation accesses the PageMap once"
+        );
+        assert_eq!(
+            self.page_map_root.load(Ordering::Acquire),
+            MODEL_ROOT_PUBLISHED,
+            "the admitted observer reads the published PageMap root"
+        );
+        assert_eq!(
+            self.page_map_entry.load(Ordering::Acquire),
+            MODEL_ENTRY_PUBLISHED,
+            "the admitted observer reads its registered page entry"
+        );
+        assert_eq!(
+            self.metadata.load(Ordering::Acquire),
+            MODEL_METADATA_LIVE,
+            "the admitted observer reads live page metadata"
+        );
+        assert_eq!(
+            self.metadata_read_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the immutable usable-size metadata is copied once"
+        );
+        let usable_size = self.usable_size.load(Ordering::Acquire);
+        assert_eq!(
+            usable_size, MODEL_USABLE_SIZE_LIVE,
+            "the admitted observer copies the live usable-size scalar"
+        );
+        assert_eq!(
+            self.observer_completion_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the admitted observer completes one read-only interval"
+        );
+        finish_live_remote_page_publication_with(
+            &self.lifetime,
+            USABLE_SIZE_OBSERVATION_RACE_GENERATION,
+        );
+        UsableSizeObservationOutcome::Read(usable_size)
+    }
+
+    /// Closes the exact page lifetime. A read-only observer that acquired the
+    /// existing publication-style admission blocks this transition until it
+    /// has copied its scalar and left the lifetime word.
+    fn try_terminal_release(&self) -> Result<(), LiveRemoteFreePageRetirementError> {
+        assert_eq!(self.exact_live_observation_count.load(Ordering::Acquire), 1);
+        match begin_live_remote_page_retirement_with(
+            &self.lifetime,
+            USABLE_SIZE_OBSERVATION_RACE_GENERATION,
+        ) {
+            Ok(()) => {
+                self.release_page_map_after_terminal_close();
+                Ok(())
+            }
+            Err(LiveRemoteFreePageRetirementError::PublishersInFlight) => {
+                assert_eq!(
+                    self.terminal_release_count.load(Ordering::Acquire),
+                    0,
+                    "an admitted read-only observer blocks terminal PageMap release"
+                );
+                Err(LiveRemoteFreePageRetirementError::PublishersInFlight)
+            }
+            Err(error) => {
+                panic!("the bounded terminal owner has no other read-only outcome: {error:?}")
+            }
+        }
+    }
+
+    fn release_page_map_after_terminal_close(&self) {
+        assert_eq!(
+            self.lifetime.load(Ordering::Acquire),
+            live_remote_page_word(USABLE_SIZE_OBSERVATION_RACE_GENERATION, false, 0),
+            "terminal PageMap release follows the closed zero-observer lifetime"
+        );
+        assert_eq!(
+            self.terminal_state.compare_exchange(
+                MODEL_TERMINAL_READY,
+                MODEL_TERMINAL_RELEASING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ),
+            Ok(MODEL_TERMINAL_READY),
+            "one terminal owner releases the one-entry PageMap model"
+        );
+        assert_eq!(
+            self.page_map_entry
+                .swap(MODEL_ENTRY_UNREGISTERED, Ordering::AcqRel),
+            MODEL_ENTRY_PUBLISHED,
+            "terminal release unregisters the read-only observer's page first"
+        );
+        assert_eq!(
+            self.page_map_root.swap(0, Ordering::AcqRel),
+            MODEL_ROOT_PUBLISHED,
+            "the one-page model clears its PageMap root after unregistration"
+        );
+        assert_eq!(
+            self.metadata
+                .swap(MODEL_METADATA_RELEASED, Ordering::AcqRel),
+            MODEL_METADATA_LIVE,
+            "metadata retirement follows PageMap removal"
+        );
+        assert_eq!(
+            self.usable_size
+                .swap(MODEL_USABLE_SIZE_RELEASED, Ordering::AcqRel),
+            MODEL_USABLE_SIZE_LIVE,
+            "the released metadata no longer exposes a usable-size scalar"
+        );
+        assert_eq!(
+            self.terminal_release_count.fetch_add(1, Ordering::AcqRel),
+            0,
+            "the terminal owner releases PageMap state once"
+        );
+        self.terminal_state
+            .store(MODEL_TERMINAL_RELEASED, Ordering::Release);
+    }
+
+    fn assert_common_terminal_release(&self) {
+        assert_eq!(
+            self.lifetime.load(Ordering::Acquire),
+            live_remote_page_word(USABLE_SIZE_OBSERVATION_RACE_GENERATION, false, 0)
+        );
+        assert_eq!(self.exact_live_observation_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.page_map_entry.load(Ordering::Acquire), MODEL_ENTRY_UNREGISTERED);
+        assert_eq!(self.page_map_root.load(Ordering::Acquire), 0);
+        assert_eq!(self.metadata.load(Ordering::Acquire), MODEL_METADATA_RELEASED);
+        assert_eq!(self.usable_size.load(Ordering::Acquire), MODEL_USABLE_SIZE_RELEASED);
+        assert_eq!(self.terminal_state.load(Ordering::Acquire), MODEL_TERMINAL_RELEASED);
+        assert_eq!(self.terminal_release_count.load(Ordering::Acquire), 1);
+    }
+
+    fn assert_released_before_observer_admission(&self) {
+        self.assert_common_terminal_release();
+        assert_eq!(self.observer_admission_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.page_map_access_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.metadata_read_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.observer_completion_count.load(Ordering::Acquire), 0);
+        assert_eq!(self.observer_rejection_count.load(Ordering::Acquire), 1);
+    }
+
+    fn assert_released_after_observer_read(&self) {
+        self.assert_common_terminal_release();
+        assert_eq!(self.observer_admission_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.page_map_access_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.metadata_read_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.observer_completion_count.load(Ordering::Acquire), 1);
+        assert_eq!(self.observer_rejection_count.load(Ordering::Acquire), 0);
+    }
+}
+
 // This is the atomic source tail of one hypothetical pointer-centered
 // replacement realloc, not a model of a supported nonlocal-realloc route.
 // Pinned `alloc.c:379-451` makes the replacement/copy decision before it
@@ -2008,6 +2311,104 @@ fn loom_allow_collect_live_snapshot_racing_terminal_release_recollects_or_reject
                     "terminal close and stale allow-collect admission disagree: {terminal:?}, {producer:?}"
                 )
             }
+        }
+    });
+}
+
+#[test]
+fn loom_exact_live_usable_size_observer_racing_terminal_retirement_reads_or_rejects_before_pagemap_access(
+) {
+    loom::model(|| {
+        // Regression for the former modeled gap in a read-only pointer path:
+        // a `Retired` observer returns without calling
+        // `read_usable_size_after_admission`. If that branch read the
+        // PageMap/metadata fields, the terminal-winner schedule reaches their
+        // released values and goes red before this final match can pass.
+        let model = Arc::new(UsableSizeObservationLifetimeModel::new());
+        let observer_model = Arc::clone(&model);
+        let (observation_ready_send, observation_ready_receive) = mpsc::channel();
+        let (observer_start_send, observer_start_receive) = mpsc::channel();
+        let (observer_admitted_send, observer_admitted_receive) = mpsc::channel();
+        let (read_permission_send, read_permission_receive) = mpsc::channel();
+        let (read_done_send, read_done_receive) = mpsc::channel();
+
+        let observer = thread::spawn(move || {
+            let observation = observer_model.observe_exact_live_client();
+            observation_ready_send
+                .send(())
+                .expect("terminal owner waits for the exact live-client observation");
+            observer_start_receive
+                .recv()
+                .expect("read-only observer waits for the terminal race gate");
+
+            match observer_model.begin_usable_size_observation(&observation) {
+                Ok(()) => {
+                    observer_admitted_send
+                        .send(())
+                        .expect("an admitted observer retains the terminal admission receiver");
+                    read_permission_receive
+                        .recv()
+                        .expect("the terminal owner releases the read-only metadata gate");
+                    let outcome = observer_model.read_usable_size_after_admission(&observation);
+                    read_done_send
+                        .send(())
+                        .expect("the terminal owner waits for the admitted metadata read");
+                    outcome
+                }
+                Err(outcome) => outcome,
+            }
+        });
+
+        observation_ready_receive
+            .recv()
+            .expect("terminal owner begins only after the exact live-client observation");
+        observer_start_send
+            .send(())
+            .expect("read-only observer remains available for the lifetime race");
+
+        let terminal_model = Arc::clone(&model);
+        let terminal = thread::spawn(move || {
+            match terminal_model.try_terminal_release() {
+                Ok(()) => UsableSizeTerminalOutcome::ReleasedBeforeObservationAdmission,
+                Err(LiveRemoteFreePageRetirementError::PublishersInFlight) => {
+                    observer_admitted_receive
+                        .recv()
+                        .expect("the admitted observer reports its lifetime pin");
+                    read_permission_send
+                        .send(())
+                        .expect("the admitted observer remains available for its metadata read");
+                    read_done_receive
+                        .recv()
+                        .expect("the observer finishes before terminal retirement retries");
+                    assert_eq!(
+                        terminal_model.try_terminal_release(),
+                        Ok(()),
+                        "terminal retirement retries only after the admitted observer leaves"
+                    );
+                    UsableSizeTerminalOutcome::ReleasedAfterObservationRead
+                }
+                Err(error) => panic!("the bounded terminal owner has no other result: {error:?}"),
+            }
+        });
+
+        let terminal_outcome = terminal.join().expect("terminal owner completes its race");
+        let observer_outcome = observer.join().expect("read-only observer completes its path");
+
+        match (terminal_outcome, observer_outcome) {
+            (
+                UsableSizeTerminalOutcome::ReleasedBeforeObservationAdmission,
+                UsableSizeObservationOutcome::RejectedBeforePageMapAccess,
+            ) => model.assert_released_before_observer_admission(),
+            (
+                UsableSizeTerminalOutcome::ReleasedAfterObservationRead,
+                UsableSizeObservationOutcome::Read(usable_size),
+            ) => {
+                assert_eq!(usable_size, MODEL_USABLE_SIZE_LIVE);
+                model.assert_released_after_observer_read();
+            }
+            (terminal, observer) => panic!(
+                "read-only usable-size admission and terminal retirement disagree: {terminal:?}, {observer:?}"
+            ),
         }
     });
 }
