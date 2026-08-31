@@ -35,6 +35,54 @@ static int (*const typed_dlinfo)(void *, int, void *) = dlinfo;
 static int (*const typed_dl_iterate_phdr)(
     int (*)(struct dl_phdr_info *, size_t, void *), void *) = dl_iterate_phdr;
 
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE
+/*
+ * A strong application definition must displace the archive's weak static
+ * spelling. The separate candidate below still references dlopen so the
+ * bridge object is extracted before this override is exercised.
+ */
+static int override_dl_iterate_phdr_calls;
+
+int dl_iterate_phdr(int (*callback)(struct dl_phdr_info *, size_t, void *),
+                    void *data) {
+    (void)callback;
+    (void)data;
+    ++override_dl_iterate_phdr_calls;
+    return 79;
+}
+#endif
+
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN
+/*
+ * The static musl stub publishes dlopen as a weak alias. Keep this separate
+ * from the NULL-open behavior probe: dlsym forces the bridge object out of
+ * the archive, then this caller-owned strong definition must still win.
+ */
+static int override_dlopen_calls;
+
+void *dlopen(const char *filename, int flags) {
+    (void)filename;
+    (void)flags;
+    ++override_dlopen_calls;
+    return (void *)(uintptr_t)0x5a5a;
+}
+#endif
+
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR
+/*
+ * Musl's static dladdr stub is also a weak alias. dlsym keeps the bridge
+ * archive member live while this caller-owned strong spelling must win.
+ */
+static int override_dladdr_calls;
+
+int dladdr(const void *address, Dl_info *information) {
+    (void)address;
+    (void)information;
+    ++override_dladdr_calls;
+    return 78;
+}
+#endif
+
 struct observed_graph {
     int main_seen;
     int mid_seen;
@@ -163,6 +211,21 @@ static int run_concurrent_errors(struct error_worker *workers) {
 #endif
 
 int main(void) {
+#ifdef CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE
+    void *(*volatile extract_bridge)(const char *, int) = typed_dlopen;
+    if (extract_bridge == NULL) return 94;
+    return typed_dl_iterate_phdr(NULL, NULL) == 79
+        && override_dl_iterate_phdr_calls == 1 ? 0 : 95;
+#elif defined(CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN)
+    void *(*volatile extract_bridge)(void *restrict, const char *restrict) = typed_dlsym;
+    if (extract_bridge == NULL) return 96;
+    return typed_dlopen(NULL, RTLD_NOW) == (void *)(uintptr_t)0x5a5a
+        && override_dlopen_calls == 1 ? 0 : 97;
+#elif defined(CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR)
+    void *(*volatile extract_bridge)(void *restrict, const char *restrict) = typed_dlsym;
+    if (extract_bridge == NULL) return 98;
+    return typed_dladdr(NULL, NULL) == 78 && override_dladdr_calls == 1 ? 0 : 99;
+#else
     (void)typed_dlopen;
     (void)typed_dlclose;
     (void)typed_dladdr;
@@ -323,5 +386,6 @@ int main(void) {
 #endif
     if (typed_dlclose(leaf) != 0 || typed_dlclose(main_handle) != 0) return 58;
     return 0;
+#endif
 #endif
 }

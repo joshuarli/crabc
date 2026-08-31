@@ -416,6 +416,8 @@ mod immediate_termination;
 mod posix_exit;
 #[path = "static_startup.rs"]
 mod static_startup;
+#[path = "stack_chk_fail.rs"]
+mod stack_chk_fail;
 #[path = "process_globals.rs"]
 mod process_globals;
 #[path = "stdio_standard.rs"]
@@ -662,6 +664,8 @@ mod allocator {
 #[cfg(feature = "x86-allocator-string-duplication")]
 #[path = "allocator_string_duplication.rs"]
 mod allocator_string_duplication;
+#[path = "complex_projection.rs"]
+mod complex_projection;
 
 // The sole AArch64 allocator-observability capability is a separate strong
 // C entry, not part of the weak allocation family. Its private witness keeps

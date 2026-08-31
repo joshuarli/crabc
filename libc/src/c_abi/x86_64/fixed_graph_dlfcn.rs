@@ -417,6 +417,14 @@ unsafe fn information_fn(record: &RuntimeRecordV1) -> InformationFn {
 // must not become a public Cargo feature of the staged static archive.
 #[allow(unexpected_cfgs)]
 #[no_mangle]
+// Musl 1.2.6 `src/ldso/dlopen.c` keeps its static body private and publishes
+// `weak_alias(stub_dlopen, dlopen)`, while `ldso/dynlink.c:dlopen` supplies
+// the dynamic-loader spelling. The AArch64 static manifest therefore records
+// this archive entry as `STB_WEAK`. Keep this staged static body weak so an
+// application-owned strong `dlopen` can override it after another bridge
+// entry extracts the archive member; this does not alter the bounded NULL
+// input rule or admit any new loader operation.
+#[linkage = "weak"]
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
     let Some(slot) = diagnostic_slot() else {
         return ptr::null_mut();
@@ -570,6 +578,10 @@ unsafe fn clear_dl_info(information: *mut DlInfo) {
 /// graph's exact `loader address not found` error. Other non-null failures and
 /// unavailable records retain their existing output-clearing fail-closed paths.
 #[no_mangle]
+// Musl's static dladdr body is privately defined and exposed through
+// weak_alias(stub_dladdr, dladdr). Keep the selected archive spelling weak so
+// a caller-owned strong definition wins after archive extraction.
+#[linkage = "weak"]
 pub unsafe extern "C" fn dladdr(address: *const c_void, information: *mut DlInfo) -> c_int {
     if information.is_null() || address.is_null() {
         return 0;
@@ -764,6 +776,14 @@ pub unsafe extern "C" fn dlinfo(
 /// one already-pending same-thread `dlerror` state; this is not admission for
 /// callback-driven mapping, graph mutation, or a general reentrant loader.
 #[no_mangle]
+// Musl 1.2.6 `src/ldso/dl_iterate_phdr.c` keeps its static body private and
+// publishes `weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)`, so
+// `libc.a` records this entry as `STB_WEAK` even though shared `libc.so` uses
+// a global spelling. The existing target root enables the unstable linkage
+// attribute only on the two admitted Linux targets. Marking this direct body
+// weak preserves the archive override contract without a forwarding wrapper
+// or an extra helper export.
+#[linkage = "weak"]
 pub unsafe extern "C" fn dl_iterate_phdr(
     callback: Option<unsafe extern "C" fn(*mut DlPhdrInfo, usize, *mut c_void) -> c_int>,
     data: *mut c_void,

@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 260)
+        self.assertEqual(report["verified_artifact_count"], 261)
         self.assertEqual(report["header_layout_probe_count"], 47)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -601,6 +601,73 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-alloca command"):
             ledger.validate_ledger(changed)
 
+    def test_stack_check_failure_stays_a_private_terminal_archive_pair(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.c-abi-compat")
+        self.assertEqual(family["status"], "planned")
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if entry["id"] == "static-c-stack-check-failure"
+        )
+        assert isinstance(artifact, dict)
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv",
+            "libc/src/c_abi/x86_64/static_c_abi.rs",
+            "libc/src/c_abi/x86_64/stack_chk_fail.rs",
+            "libc/src/c_abi/x86_64/static_startup.rs",
+            "compat/x86_64/static_c_abi_exports.txt",
+            "compat/x86_64/libc_stack_chk_fail_probe.c",
+            "compat/x86_64/libc_stack_chk_fail_start.S",
+            "compat/x86_64/run_libc_stack_chk_fail.sh",
+            "compat/x86_64/aarch64_parity_inventory.py",
+            "compat/x86_64/aarch64_parity_inventory.json",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        for phrase in (
+            "`__stack_chk_fail`",
+            "`__stack_chk_fail_local`",
+            "hidden weak same-address",
+            "status 139 (`128 + SIGSEGV`)",
+            "x86 `hlt`",
+            "`__stack_chk_guard`",
+            "`__init_ssp`",
+            "terminal pair",
+            "error.reporting-termination",
+            "stack-protector startup policy",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        self.assertEqual(
+            {entry["command"] for entry in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-stack-chk-fail"},
+        )
+
+        changed = self.data()
+        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
+            "verified_artifact"
+        ]
+        assert isinstance(changed_artifacts, list)
+        changed_artifact = next(
+            entry
+            for entry in changed_artifacts
+            if entry["id"] == "static-c-stack-check-failure"
+        )
+        changed_artifact["native_evidence"][0]["scope"] = (
+            changed_artifact["native_evidence"][0]["scope"].replace(
+                "guard storage/initializer", "guard behavior"
+            )
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "evidence must retain its private negative boundary",
+        ):
+            ledger.validate_ledger(changed)
+
     def test_ldso_target_root_admission_is_a_planned_private_artifact(self) -> None:
         data = self.data()
         family = self.family(data, "ldso.dynamic-runtime")
@@ -1014,6 +1081,16 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "public-C dlfcn bridge artifact",
             "staged static `libc.a`",
+            "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+            "normal/malformed isolated candidates retain default-visible `STB_WEAK`",
+            "caller strong definition wins after a retained `dlopen` address forces bridge extraction",
+            "weak_alias(stub_dlopen, dlopen)",
+            "normal/malformed isolated candidates retain that weak `dlopen` binding",
+            "caller strong `dlopen` definition wins after a retained `dlsym` address extracts the bridge",
+            "weak_alias(stub_dladdr, dladdr)",
+            "normal/malformed isolated candidates retain that weak `dladdr` binding",
+            "caller strong `dladdr` definition wins after a retained `dlsym` address extracts the bridge",
+            "All three are static-link ABI ratchets only",
             "real ET_DYN main",
             "never falls back to an ambient loader",
             "32-live-thread",
@@ -12512,6 +12589,82 @@ class X86ParityLedgerTests(unittest.TestCase):
         thrd_yield = by_id["static-c-thrd-yield"]
         for artifact in artifacts:
             self.assertNotIn("capabilities", artifact)
+        for phrase in (
+            "private weak `__init_ssp` fallback",
+            "private weak `__stdio_exit` fallback",
+            "default-visible `STB_WEAK` binding",
+            "caller `STB_GLOBAL` private override",
+            "does not initialize a canary",
+            "selected ordinary exit does not dispatch the fallback",
+            "does not flush streams",
+            "stdio finalization",
+            "stack-protector startup",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt_handoff["description"])
+        crt_handoff_scope = crt_handoff["native_evidence"][0]["scope"]
+        for phrase in (
+            "default-visible STB_WEAK `__init_ssp`",
+            "caller STB_GLOBAL private override runs after real CRT extracts the archive static-startup owner",
+            "does not initialize a canary",
+            "stack-protector or loader behavior",
+            "default-visible STB_WEAK `__stdio_exit`",
+            "traps on any later dispatch",
+            "selected ordinary exit does not dispatch it",
+            "stream flush, FILE inspection, stdio lock/finalization",
+            "general process-exit behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, crt_handoff_scope)
+        crt_handoff_oracles = crt_handoff["oracle"]
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy1, __init_ssp)" in entry["role"]
+                and "src/env/__stack_chk_fail.c" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__init_ssp __libc_start_main.lo W WEAK" in entry["role"]
+                and "not canary initialization" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy, __stdio_exit)" in entry["role"]
+                and "src/stdio/__stdio_exit.c::__stdio_exit" in entry["role"]
+                and "not stream flushing" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__stdio_exit exit.lo W WEAK" in entry["role"]
+                and "__stdio_exit __stdio_exit.lo T GLOBAL" in entry["role"]
+                and "not stream flushing" in entry["role"]
+                for entry in crt_handoff_oracles
+            )
+        )
+        self.assertIn(
+            "__init_ssp",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
+        self.assertIn(
+            "__stdio_exit",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
         self.assertEqual(
             aggregate["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-tls-aggregate",
@@ -12532,6 +12685,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "still-planned `libc.pthread-tls`",
             "pthread_atfork",
             "__fork_handler",
+            "private weak `__ldso_atfork` and `__aio_atfork` fallbacks",
+            "traps on any later dispatch",
+            "AIO queue/lock, request-cancellation, file-descriptor coordination",
+            "selected fork path deliberately does not invoke either fallback",
             "child-only bounded ordinary-exit callback",
             "EAGAIN before any hook runs",
             "successful join reopens admission",
@@ -12548,9 +12705,50 @@ class X86ParityLedgerTests(unittest.TestCase):
             "parent route before errno publication",
             "successful fork after joining that worker",
             "child atexit/exit callback dispatch after atfork hooks",
+            "default-visible STB_WEAK `__ldso_atfork`",
+            "default-visible STB_WEAK `__ldso_atfork` and `__aio_atfork`",
+            "caller STB_GLOBAL private `__aio_atfork` override wins after `fork` extracts the member",
+            "traps on any later dispatch",
+            "no dispatch through either fallback",
+            "no AIO queue/lock, request-cancellation, or file-descriptor coordination behavior",
+            "loader lock/reset/mapping/finalization",
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, atfork_scope)
+        atfork_oracles = atfork["oracle"]
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy, __ldso_atfork)" in entry["role"]
+                and "weak_alias(dummy, __aio_atfork)" in entry["role"]
+                and "src/aio/aio.c::__aio_atfork" in entry["role"]
+                for entry in atfork_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__ldso_atfork fork.lo W WEAK" in entry["role"]
+                and "__aio_atfork fork.lo W WEAK" in entry["role"]
+                and "__aio_atfork aio.lo T GLOBAL" in entry["role"]
+                and "not loader hook execution" in entry["role"]
+                and "not AIO behavior" in entry["role"]
+                for entry in atfork_oracles
+            )
+        )
+        self.assertIn(
+            "__ldso_atfork",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
+        self.assertIn(
+            "__aio_atfork",
+            (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
         self.assertEqual(
             affinity["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-affinity",
@@ -12814,6 +13012,52 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(owner, explicit_exit["source_owners"])
         self.assertIn("null attributes pointer", normal_return["description"])
         self.assertIn("each concurrently live worker", normal_return["description"])
+        for phrase in (
+            "private weak `__membarrier_init` fallback",
+            "default-visible STB_WEAK binding",
+            "caller STB_GLOBAL private override",
+            "selected worker route never dispatches it",
+            "private expedited command",
+            "public membarrier API",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, normal_return["description"])
+        normal_return_scope = normal_return["native_evidence"][0]["scope"]
+        for phrase in (
+            "default-visible STB_WEAK `__membarrier_init`",
+            "caller STB_GLOBAL private override runs only after the selected worker routes",
+            "pthread_create does not dispatch it",
+            "membarrier syscall/registration",
+            "public API",
+            "dynamic-TLS",
+            "loader behavior",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, normal_return_scope)
+        normal_return_oracles = normal_return["oracle"]
+        self.assertTrue(
+            any(
+                entry["kind"] == "c-posix"
+                and "weak_alias(dummy_0, __membarrier_init)" in entry["role"]
+                and "src/linux/membarrier.c::__membarrier_init" in entry["role"]
+                for entry in normal_return_oracles
+            )
+        )
+        self.assertTrue(
+            any(
+                entry["kind"] == "aarch64-contract"
+                and entry["source"] == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+                and "__membarrier_init pthread_create.lo W WEAK" in entry["role"]
+                and "__membarrier_init membarrier.lo T GLOBAL" in entry["role"]
+                and "not membarrier registration" in entry["role"]
+                for entry in normal_return_oracles
+            )
+        )
+        static_exports = (
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertIn("__membarrier_init", static_exports)
+        self.assertNotIn("membarrier", static_exports)
         self.assertIn("pthread_exit", explicit_exit["description"])
         self.assertIn("fixed private 64-slot registry", explicit_exit["description"])
         self.assertIn("Linux gettid", explicit_exit["description"])

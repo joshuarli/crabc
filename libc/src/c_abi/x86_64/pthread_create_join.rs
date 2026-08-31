@@ -97,6 +97,24 @@ const PTHREAD_CLONE_FLAGS: i32 = CLONE_VM
     | CLONE_CHILD_CLEARTID
     | CLONE_DETACHED;
 
+/// Static-archive fallback for musl's private membarrier registration hook.
+///
+/// Musl 1.2.6 `src/thread/pthread_create.c` exposes its inert `dummy_0()`
+/// through `weak_alias(dummy_0, __membarrier_init)`. Its separate
+/// `src/linux/membarrier.c` object supplies the real strong registration body
+/// only when that optional membarrier support is linked. Preserve the weak
+/// static binding next to the selected `pthread_create` owner so a stronger
+/// application or runtime spelling can replace it.
+///
+/// This selected worker seam does not call the fallback. It therefore neither
+/// invokes Linux `membarrier`, registers a private expedited command, nor
+/// selects the public membarrier API, dynamic TLS, loader state, or a general
+/// multi-threaded process-startup policy.
+#[inline(never)]
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn __membarrier_init() {}
+
 // Keep the control record and worker stack in one private page-aligned
 // anonymous mapping. Static Initial TLS v1 owns a separate exact PT_TLS
 // materialization, so this worker mapping never guesses an errno offset or

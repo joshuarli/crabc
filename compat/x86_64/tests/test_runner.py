@@ -1403,7 +1403,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "stdio-permanent-fileno-unlocked-header-abi",
             "stdio-permanent-feof-unlocked-header-abi",
             "pthread-spin-destroy-header-abi",
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission",
+            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail",
             "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
             "ldso-fixed-graph-dlfcn",
             "ldso-public-dlfcn|ldso-dladdr-symbol-bounds",
@@ -3358,6 +3358,77 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('"$ROOT_DIR/compat/allocator/run-x86_64.sh"', source)
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn('-p crabc-ldso', source)
+
+    def test_stack_check_failure_runner_keeps_the_terminal_private_boundary(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        source = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "stack_chk_fail.rs"
+        ).read_text(encoding="utf-8")
+        probe = (
+            ROOT / "compat" / "x86_64" / "libc_stack_chk_fail_probe.c"
+        ).read_text(encoding="utf-8")
+        start = (
+            ROOT / "compat" / "x86_64" / "libc_stack_chk_fail_start.S"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_stack_chk_fail.sh"
+        ).read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+
+        self.assertIn(
+            '#[path = "stack_chk_fail.rs"]\nmod stack_chk_fail;', static_root
+        )
+        for required in (
+            "src/env/__stack_chk_fail.c::__stack_chk_fail",
+            "arch/x86_64/atomic_arch.h",
+            "weak_alias(__stack_chk_fail, __stack_chk_fail_local)",
+            "__stack_chk_guard",
+            "__init_ssp",
+            '"hlt"',
+            '".weak __stack_chk_fail_local"',
+            '".hidden __stack_chk_fail_local"',
+            '".set __stack_chk_fail_local, __stack_chk_fail"',
+        ):
+            self.assertIn(required, source)
+        self.assertIn("CRABC_STACK_CHK_FAIL_LOCAL_CALL", probe)
+        self.assertIn("crabc_x86_64_stack_chk_fail_probe", start)
+        self.assertNotIn("#include", probe)
+        self.assertTrue(
+            {"__stack_chk_fail", "__stack_chk_fail_local"} <= static_exports
+        )
+        self.assertNotIn("__stack_chk_guard", static_exports)
+
+        for required in (
+            "run_musl_oracle.sh",
+            "expect_sigsegv",
+            "139",
+            "-nostdlib -static",
+            "candidate_local",
+            "archive stack-check failure aliases do not share one address",
+            "candidate stack-check failure aliases do not share one address",
+            "__stack_chk_guard",
+            "__init_ssp",
+            "hlt termination",
+            "ambient failure handler",
+        ):
+            self.assertIn(required, artifact_runner)
+        self.assertIn("run_libc_stack_chk_fail_probe()", runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_libc_stack_chk_fail.sh", runner
+        )
+        self.assertIn(
+            '    libc-stack-chk-fail)\n        [ "$#" -eq 0 ] || fail "libc-stack-chk-fail takes no arguments"',
+            runner,
+        )
 
     def test_pinned_musl_oracle_and_reference_header_baseline_stay_closed(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
@@ -6450,6 +6521,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn __fork_handler",
             "fn pthread_atfork",
             "fn fork",
+            "fn __aio_atfork",
+            "weak_alias(dummy, __aio_atfork)",
+            "src/aio/aio.c",
             "ENOMEM",
             "EAGAIN",
             "callbacks must not create, join, or detach",
@@ -6473,6 +6547,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             fork_body.index("__fork_handler(if result == 0"),
             fork_body.index("c_status(result)"),
         )
+        self.assertNotIn("__aio_atfork", fork_body)
         for required in (
             "SELECTED_WORKER_REGISTRY_RESERVING",
             "has_live_selected_workers",
@@ -6495,6 +6570,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_join(worker, &result)",
             "recovery = check_parent_child_and_exit_order()",
             "atexit(child_exit_callback)",
+            "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
+            "check_aio_hook_override",
+            "__builtin_trap",
         ):
             self.assertIn(required, probe)
         self.assertLess(
@@ -6520,11 +6598,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "candidate selected dynamic interpreter",
             "candidate selected dynamic dependency",
             "candidate retains unresolved symbol",
+            "archive lost musl weak __aio_atfork binding",
+            "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
+            "caller strong __aio_atfork did not override the archive weak binding",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertTrue(
-            {"pthread_atfork", "fork", "__fork_handler", "atexit", "exit", "__funcs_on_exit"}
+            {
+                "pthread_atfork",
+                "fork",
+                "__fork_handler",
+                "__aio_atfork",
+                "atexit",
+                "exit",
+                "__funcs_on_exit",
+            }
             <= static_exports
         )
         self.assertIn("run_libc_pthread_atfork_probe()", runner)
@@ -10137,6 +10226,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "__cxa_atexit",
             "__cxa_finalize",
             "__funcs_on_exit",
+            "fn __stdio_exit()",
+            "weak_alias(dummy, __stdio_exit)",
+            "does not flush streams",
+            "stdio finalization",
             "pub unsafe extern \"C\" fn exit",
             "immediate_termination::_Exit(127)",
         ):
@@ -10153,6 +10246,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_join",
             "CRABC_CRT_STATIC_TLS_MUSL_REFERENCE",
             "CRABC_CRT_STATIC_TLS_CANDIDATE",
+            "CRABC_STATIC_STDIO_EXIT_OVERRIDE",
+            "check_static_stdio_exit_override",
+            "__builtin_trap",
             "atexit",
             "__cxa_atexit",
             "__cxa_finalize",
@@ -10179,6 +10275,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "RELATIVE TLS-bootstrap slot",
             "expect_bootstrap_rejection",
             "CRABC_CRT_STATIC_TLS_CANDIDATE",
+            "CRABC_STATIC_STDIO_EXIT_OVERRIDE",
+            "candidate_stdio_exit_override",
+            "archive lost musl weak __stdio_exit binding",
+            "caller strong __stdio_exit did not override the archive weak binding",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)

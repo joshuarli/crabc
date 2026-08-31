@@ -490,6 +490,8 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-allocator-runtime
 ./scripts/dev-x86_64.sh libc-allocator-string-duplication
 ./scripts/dev-x86_64.sh libc-allocator-observability
+./scripts/dev-x86_64.sh libc-alloca
+./scripts/dev-x86_64.sh libc-stack-chk-fail
 ./scripts/dev-x86_64.sh libc-static-c-abi-same-object-differential
 ./scripts/dev-x86_64.sh qualification-posix-abi-admission
 ./scripts/dev-x86_64.sh libc-header-layouts-baseline
@@ -3128,6 +3130,16 @@ selects neither `memory.allocator-basic` nor
 VLA/unwind/escaping-pointer behavior, heap allocation/lifecycle/interposition,
 CRT/sysroot, promotion, and public x86 support remain excluded.
 
+`libc-stack-chk-fail` is a separate private selected-static compiler-support
+artifact, not a stack-protector runtime. It maps only musl 1.2.6
+`src/env/__stack_chk_fail.c::__stack_chk_fail` and its x86 `a_crash()` `hlt`
+body, retaining the strong default-visible primary plus the hidden weak
+same-address `__stack_chk_fail_local` alias. Pinned musl's primary entry and
+two true `-nostdlib -static` candidates (one for each spelling) terminate with
+status 139 (`128 + SIGSEGV`); the archive and final-ELF checks reject guard
+storage, `__init_ssp`, ambient failure handlers, TLS, dynamic linkage, loader,
+pthread, lifecycle, public C declarations, promotion, and public x86 support.
+
 `libc-stat-compat` and `libc-credentials` are two private static
 `crabc-libc` semantic-vertical gates over one dependency-free `libc.a`. The
 stat fixture resolves only `stat`, `lstat`, `fstat`, `fstatat`, their
@@ -3410,6 +3422,28 @@ explicitly adapts that lifecycle. This does not select a general CRT/startup
 or libc entry ABI, stdio/C++/DSO or concurrent-exit lifecycle, pthread/TLS
 parity, loader TLS, sysroot, or public x86 support.
 
+The same static-startup archive owner retains pinned musl 1.2.6
+`src/env/__libc_start_main.c`'s private `weak_alias(dummy1, __init_ssp)`
+fallback. The AArch64 static manifest records weak `__init_ssp` in
+`__libc_start_main.lo`; the staged archive and ordinary static-PIE candidate
+retain that default-visible weak binding, and a caller-owned strong private
+definition wins after real CRT startup extracts the owner. This is only a
+static archive-binding boundary: the fallback ignores its entropy pointer and
+the selected startup never invokes it, so it does not initialize a canary,
+consume `AT_RANDOM`, select stack-protector startup, loader state, or a
+general process startup policy.
+
+The same static-startup/ordinary-exit owner also retains pinned musl 1.2.6
+`src/exit/exit.c`'s private `weak_alias(dummy, __stdio_exit)` fallback. The
+AArch64 static manifest records it as weak in `exit.lo` and the separate strong
+stream-finalization body in `__stdio_exit.lo`; the staged archive and
+static-PIE candidate retain the weak binding, while a caller-owned private
+strong spelling wins after real CRT startup extracts the owner. That override
+traps on any later dispatch while the full PIMBCAF lifecycle completes, proving
+selected ordinary exit never invokes it. This is archive-binding evidence only:
+no stream flush, `FILE` inspection, stdio lock/finalization, allocator, loader,
+or general process-exit policy is selected.
+
 `libc-crt1-static-tls` is the parallel private static `verified_artifact`
 under the same still-planned `libc.pthread-tls` family. It links real Rust
 `crt1.o`/`crti.o`/`crtn.o` through an ordinary final static `ET_EXEC` link,
@@ -3466,6 +3500,17 @@ cleanup/TSD/main-thread behavior, any self/equal behavior beyond the separately
 recorded identity artifact,
 cancellation, synchronization objects, dynamic TLS/DTV, loader or CRT TLS,
 broader C11 threads, or public x86 support.
+
+The same `pthread_create` archive owner also retains musl 1.2.6
+`src/thread/pthread_create.c`'s private `weak_alias(dummy_0,
+__membarrier_init)` fallback. The pinned AArch64 static manifest records that
+binding as weak in `pthread_create.lo` and records the optional strong body in
+`membarrier.lo`; the staged archive and normal candidate retain the weak
+definition, while a caller-owned private strong spelling wins after
+`pthread_create` extracts its owner. This is archive-binding evidence only:
+selected worker creation never calls it, so no `membarrier`
+syscall/registration, public API, dynamic TLS, loader state, or process-startup
+policy is selected.
 
 `libc-pthread-identity` is a separately recorded private static
 `verified_artifact` under the same still-planned `libc.pthread-tls` family. Its
@@ -3772,6 +3817,19 @@ registration/fork callers, and selected-worker lifecycle callers; signal masks/s
 allocator, TSD, cancellation, synchronization, or loader reset; dynamic TLS;
 CRT/sysroot integration; general fork, atfork, process-exit, or pthread
 behavior; full pthread/TLS or x86-64 parity; promotion; and public x86 support.
+
+The same static archive-binding check retains pinned musl 1.2.6
+`src/process/fork.c`'s private `weak_alias(dummy, __ldso_atfork)` and
+`weak_alias(dummy, __aio_atfork)` fallbacks. The AArch64 static manifest
+records both weak spellings in `fork.lo`, while `aio.lo` owns the separate
+strong `__aio_atfork` body. The staged archive and ordinary freestanding
+candidate retain the weak binding; a caller-owned strong private
+`__aio_atfork` definition wins after `fork` extracts the archive member and
+traps on any later dispatch while the bounded fork proof completes. This is
+neither a loader-hook nor AIO implementation: the fallbacks are inert, the
+bounded `fork` route does not dispatch through either, and no loader lock/reset,
+mapping, finalization, AIO queue/lock, request-cancellation, file-descriptor
+coordination, public AIO, or general atfork capability is selected.
 
 `libc-pthread-affinity` is a nineteenth private static `verified_artifact`
 under that same still-planned family. Its project-header C fixture first runs

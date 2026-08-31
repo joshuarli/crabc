@@ -8,6 +8,7 @@
 # with every deliberate selected boundary; the runners fail on drift. The
 _Exit
 ___environ
+__aio_atfork
 __crabc_x86_fixed_graph_dlfcn_record
 __crabc_x86_static_tls_bootstrap
 __ctype_b_loc
@@ -38,11 +39,14 @@ __fxstat
 __fxstatat
 __getauxval
 __inet_aton
+__init_ssp
+__ldso_atfork
 __lgammal_r
 __libc_current_sigrtmax
 __libc_current_sigrtmin
 __libc_start_main
 __lxstat
+__membarrier_init
 __memcpy_fwd
 __optpos
 __optreset
@@ -64,6 +68,9 @@ __signbitf
 __signbitl
 __signgam
 __sigsetjmp
+__stack_chk_fail
+__stack_chk_fail_local
+__stdio_exit
 __strerror_l
 __strtod_l
 __strtof_l

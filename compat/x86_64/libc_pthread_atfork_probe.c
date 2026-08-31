@@ -92,6 +92,62 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&atexit),
  * header's no-return semantic. */
 static void (*const exit_function_pointer)(int) = exit;
 
+#ifdef CRABC_ATFORK_LOADER_HOOK_OVERRIDE
+/*
+ * Musl's static `fork.o` publishes this private hook as a weak no-op.  Taking
+ * `fork`'s address extracts that archive member, then this caller-owned
+ * strong spelling must still win without selecting a loader runtime.
+ */
+static volatile int loader_hook_calls;
+static volatile int loader_hook_argument;
+
+void __ldso_atfork(int who)
+{
+    ++loader_hook_calls;
+    loader_hook_argument = who;
+}
+
+static int check_loader_hook_override(void)
+{
+    pid_t (*volatile extract_fork_member)(void) = fork;
+
+    if (extract_fork_member == NULL)
+        return 1;
+    __ldso_atfork(-31);
+    return loader_hook_calls == 1 && loader_hook_argument == -31 ? 0 : 2;
+}
+#endif
+
+#ifdef CRABC_ATFORK_AIO_HOOK_OVERRIDE
+/*
+ * Musl's static `fork.o` also keeps this private AIO hook as a weak no-op;
+ * `aio.o` owns its distinct strong lock-and-task implementation.  Extracting
+ * `fork` must leave a caller-owned strong replacement in force.  The second
+ * invocation traps, so the ordinary selected fork proof below also establishes
+ * that this bounded fork path does not dispatch AIO behavior.
+ */
+static volatile int aio_hook_calls;
+static volatile int aio_hook_argument;
+
+void __aio_atfork(int who)
+{
+    ++aio_hook_calls;
+    aio_hook_argument = who;
+    if (aio_hook_calls != 1)
+        __builtin_trap();
+}
+
+static int check_aio_hook_override(void)
+{
+    pid_t (*volatile extract_fork_member)(void) = fork;
+
+    if (extract_fork_member == NULL)
+        return 1;
+    __aio_atfork(-47);
+    return aio_hook_calls == 1 && aio_hook_argument == -47 ? 0 : 2;
+}
+#endif
+
 static volatile unsigned int callback_phase;
 static volatile int callback_failure;
 static int child_report_write = -1;
@@ -427,6 +483,15 @@ static int check_fixed_capacity_rejection(void)
 
 static int run_probe(void)
 {
+#ifdef CRABC_ATFORK_LOADER_HOOK_OVERRIDE
+    return check_loader_hook_override();
+#else
+#ifdef CRABC_ATFORK_AIO_HOOK_OVERRIDE
+    int aio_hook_status = check_aio_hook_override();
+
+    if (aio_hook_status != 0)
+        return 90 + aio_hook_status;
+#endif
     int result = register_selected_hooks();
 
     if (result != 0)
@@ -446,6 +511,7 @@ static int run_probe(void)
     if (result != 0)
         return 80 + result;
     return 0;
+#endif
 }
 
 #ifdef CRABC_ATFORK_FREESTANDING

@@ -44,6 +44,57 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_create),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_join),
     int (*)(pthread_t, void **)), "pthread_join declaration");
 
+#ifdef CRABC_STATIC_SSP_OVERRIDE
+/*
+ * Musl's static __libc_start_main object retains a weak no-op __init_ssp
+ * fallback. This caller-owned strong spelling exercises archive precedence
+ * after real CRT startup extracts that object; it does not exercise or select
+ * stack-canary initialization.
+ */
+static unsigned int static_ssp_calls;
+static void *static_ssp_entropy;
+
+void __init_ssp(void *entropy)
+{
+    ++static_ssp_calls;
+    static_ssp_entropy = entropy;
+}
+
+static int check_static_ssp_override(void)
+{
+    static unsigned char marker;
+
+    __init_ssp(&marker);
+    return static_ssp_calls == 1 && static_ssp_entropy == &marker ? 0 : 1;
+}
+#endif
+
+#ifdef CRABC_STATIC_STDIO_EXIT_OVERRIDE
+/*
+ * Musl's static exit object retains this private weak no-op while a separate
+ * stdio object supplies stream finalization. This caller-owned strong spelling
+ * proves archive precedence after real CRT startup extracts the exit owner;
+ * the trap makes any selected exit-path dispatch observable without claiming
+ * stream flushing or stdio lifecycle behavior.
+ */
+static volatile unsigned int static_stdio_exit_calls;
+
+void __stdio_exit(void)
+{
+    ++static_stdio_exit_calls;
+    if (static_stdio_exit_calls != 1)
+        __builtin_trap();
+}
+
+static int check_static_stdio_exit_override(void)
+{
+    if (static_stdio_exit_calls != 0)
+        return 1;
+    __stdio_exit();
+    return static_stdio_exit_calls == 1 ? 0 : 2;
+}
+#endif
+
 static void emit(char value)
 {
     register long result __asm__("rax") = 1;
@@ -234,6 +285,15 @@ int main(int argc, char **argv, char **envp)
 
     extern int __cxa_atexit(void (*)(void *), void *, void *);
     extern void __cxa_finalize(void *);
+
+#ifdef CRABC_STATIC_SSP_OVERRIDE
+    if (check_static_ssp_override() != 0)
+        return 96;
+#endif
+#ifdef CRABC_STATIC_STDIO_EXIT_OVERRIDE
+    if (check_static_stdio_exit_override() != 0)
+        return 97;
+#endif
 
 #if defined(CRABC_CRT_STATIC_TLS_MUSL_REFERENCE)
     /* Musl's ordinary route does not call .preinit_array. Keep its TLS and

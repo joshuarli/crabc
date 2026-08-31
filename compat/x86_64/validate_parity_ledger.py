@@ -8315,6 +8315,16 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "still-planned `ldso.dynamic-runtime`",
         "staged static `libc.a`",
         "`dlopen`, `dlsym`, `dlclose`, `dlerror`, `dladdr`, `dlinfo`, and `dl_iterate_phdr`",
+        "weak_alias(static_dl_iterate_phdr, dl_iterate_phdr)",
+        "normal/malformed isolated candidates retain default-visible `STB_WEAK`",
+        "caller strong definition wins after a retained `dlopen` address forces bridge extraction",
+        "weak_alias(stub_dlopen, dlopen)",
+        "normal/malformed isolated candidates retain that weak `dlopen` binding",
+        "caller strong `dlopen` definition wins after a retained `dlsym` address extracts the bridge",
+        "weak_alias(stub_dladdr, dladdr)",
+        "normal/malformed isolated candidates retain that weak `dladdr` binding",
+        "caller strong `dladdr` definition wins after a retained `dlsym` address extracts the bridge",
+        "All three are static-link ABI ratchets only",
         "real ET_DYN main",
         "weak undefined `R_X86_64_GLOB_DAT`",
         "never falls back to an ambient loader",
@@ -8455,6 +8465,12 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "pinned-musl 1.2.6",
         "project C/C++ header ABI",
         "staged libc.a export contract",
+        "pinned static STB_WEAK `dl_iterate_phdr` binding",
+        "caller STB_GLOBAL override after a `dlopen` reference extracts the bridge",
+        "pinned static STB_WEAK `dlopen` binding",
+        "caller STB_GLOBAL dlopen override after a `dlsym` reference extracts the bridge",
+        "pinned static STB_WEAK `dladdr` binding",
+        "caller STB_GLOBAL dladdr override after a `dlsym` reference extracts the bridge",
         "weak GLOB_DAT/64-byte RuntimeV1-prefix wire",
         "rejects ambient libc/loader dependencies and PT_TLS",
         "two concurrent TLS-free clone threads",
@@ -8502,6 +8518,15 @@ def require_ldso_public_fixed_graph_dlfcn_artifact(family: Mapping[str, Any]) ->
         "main-musl-public-dlfcn",
         "main-crabc-public-dlfcn-malformed",
         "main-crabc-public-dlfcn-absent",
+        "main-crabc-public-dlfcn-override",
+        "main-crabc-public-dlfcn-override-open",
+        "main-crabc-public-dlfcn-override-addr",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_ITERATE",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_OPEN",
+        "CRABC_PUBLIC_DLFCN_OVERRIDE_ADDR",
+        "staged static archive lost musl weak dl_iterate_phdr binding",
+        "staged static archive lost musl weak dlopen binding",
+        "staged static archive lost musl weak dladdr binding",
         "env -i PATH=/usr/bin:/bin",
     ):
         require(
@@ -9153,6 +9178,14 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "preinit, init, main",
         "32-registration",
         "atexit",
+        "private weak `__init_ssp` fallback",
+        "private weak `__stdio_exit` fallback",
+        "default-visible `STB_WEAK` binding",
+        "caller `STB_GLOBAL` private override",
+        "does not initialize a canary",
+        "selected ordinary exit does not dispatch the fallback",
+        "does not flush streams",
+        "stdio finalization",
         "PT_TLS.p_filesz",
         "general CRT/startup",
         "public x86 support",
@@ -9196,6 +9229,17 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "GOTTPOFF/DTPOFF",
         "__tls_get_addr",
         "__libc_start_main",
+        "weak_alias(dummy1, __init_ssp)",
+        "__init_ssp __libc_start_main.lo W WEAK",
+        "caller STB_GLOBAL private definition overrides it",
+        "does not initialize a canary",
+        "weak_alias(dummy, __stdio_exit)",
+        "src/stdio/__stdio_exit.c::__stdio_exit",
+        "__stdio_exit exit.lo W WEAK",
+        "__stdio_exit __stdio_exit.lo T GLOBAL",
+        "caller override traps on any later dispatch",
+        "selected ordinary exit never dispatches it",
+        "stdio finalization",
         "32-registration",
         "__cxa_finalize",
         "fresh Static Initial TLS v1 image",
@@ -9221,6 +9265,14 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         "archive-owned startup",
         "32-registration",
         "PIMBCAF",
+        "default-visible STB_WEAK `__init_ssp`",
+        "caller STB_GLOBAL private override runs after real CRT extracts the archive static-startup owner",
+        "does not initialize a canary",
+        "default-visible STB_WEAK `__stdio_exit`",
+        "traps on any later dispatch",
+        "selected ordinary exit does not dispatch it",
+        "stream flush, FILE inspection, stdio lock/finalization",
+        "general process-exit behavior",
         "PT_TLS p_filesz mutation",
         "exit 127",
         "general CRT",
@@ -9229,6 +9281,111 @@ def require_static_crt_initial_tls_handoff_artifact(family: Mapping[str, Any]) -
         require(
             phrase in scope,
             f"static-c-crt-initial-tls-handoff evidence scope omits {phrase}",
+        )
+    oracle_entries = artifact["oracle"]
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "weak_alias(dummy1, __init_ssp)" in entry["role"]
+            and "src/env/__stack_chk_fail.c" in entry["role"]
+            and "not stack-protector initialization" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __init_ssp source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "weak_alias(dummy, __stdio_exit)" in entry["role"]
+            and "src/stdio/__stdio_exit.c::__stdio_exit" in entry["role"]
+            and "not stream flushing" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __stdio_exit source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__init_ssp __libc_start_main.lo W WEAK" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            and "not canary initialization" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __init_ssp static-manifest oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__stdio_exit exit.lo W WEAK" in entry["role"]
+            and "__stdio_exit __stdio_exit.lo T GLOBAL" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            and "not stream flushing" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-crt-initial-tls-handoff must retain its pinned weak __stdio_exit static-manifest oracle",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "__init_ssp" in static_exports,
+        "static-c-crt-initial-tls-handoff must expose the selected weak __init_ssp fallback",
+    )
+    require(
+        "__stdio_exit" in static_exports,
+        "static-c-crt-initial-tls-handoff must expose the selected weak __stdio_exit fallback",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_startup.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "fn __stdio_exit()",
+        "weak_alias(dummy, __stdio_exit)",
+        "does not flush streams",
+        "stdio finalization",
+    ):
+        require(
+            phrase in implementation,
+            f"static-c-crt-initial-tls-handoff implementation omits {phrase}",
+        )
+    runner_source = (ROOT / "compat" / "x86_64" / "run_libc_crt_static_tls.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "__init_ssp",
+        "CRABC_STATIC_SSP_OVERRIDE",
+        "archive lost musl weak __init_ssp binding",
+        "archive static-startup member lost musl weak __init_ssp binding",
+        "caller override did not extract the archive static-startup member",
+        "caller strong __init_ssp did not override the archive weak binding",
+        "__stdio_exit",
+        "CRABC_STATIC_STDIO_EXIT_OVERRIDE",
+        "archive lost musl weak __stdio_exit binding",
+        "archive static-startup member lost musl weak __stdio_exit binding",
+        "stdio-exit caller override did not extract the archive static-startup member",
+        "caller strong __stdio_exit did not override the archive weak binding",
+    ):
+        require(
+            phrase in runner_source,
+            f"static-c-crt-initial-tls-handoff runner omits {phrase}",
         )
 
 
@@ -9810,6 +9967,160 @@ def require_no_std_static_pie_full_lto_consumer_artifact(
         require(
             phrase in native_scope,
             f"no-std-native-facade-full-lto-consumer evidence scope omits {phrase}",
+        )
+
+
+def require_static_pthread_create_membarrier_binding_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Retain musl's inert pthread-create membarrier fallback without promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.pthread-tls].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry
+        for entry in artifacts
+        if entry.get("id") == "static-c-pthread-create-join-tls"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.pthread-tls must contain exactly one static-c-pthread-create-join-tls artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-pthread-create-join-tls must not promote libc.pthread-tls",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "private weak `__membarrier_init` fallback",
+        "default-visible STB_WEAK binding",
+        "caller STB_GLOBAL private override",
+        "selected worker route never dispatches it",
+        "private expedited command",
+        "public membarrier API",
+        "public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-pthread-create-join-tls description omits {phrase}",
+        )
+    prerequisites = artifact["x86_abi_prerequisites"]
+    assert isinstance(prerequisites, list)
+    prerequisite_text = " ".join(prerequisites)
+    for phrase in (
+        "weak_alias(dummy_0, __membarrier_init)",
+        "src/linux/membarrier.c::__membarrier_init",
+        "__membarrier_init pthread_create.lo W WEAK",
+        "__membarrier_init membarrier.lo T GLOBAL",
+        "caller STB_GLOBAL private definition overrides it",
+        "selected worker creation never dispatches it",
+        "membarrier syscall/registration",
+        "public membarrier API",
+        "dynamic TLS",
+        "loader behavior",
+    ):
+        require(
+            phrase in prerequisite_text,
+            f"static-c-pthread-create-join-tls ABI prerequisites omit {phrase}",
+        )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-pthread-create-join-tls"},
+        "static-c-pthread-create-join-tls must use the closed create/join command",
+    )
+    scope = evidence[0]["scope"]
+    assert isinstance(scope, str)
+    for phrase in (
+        "default-visible STB_WEAK `__membarrier_init`",
+        "caller STB_GLOBAL private override runs only after the selected worker routes",
+        "pthread_create does not dispatch it",
+        "membarrier syscall/registration",
+        "public API",
+        "dynamic-TLS",
+        "loader behavior",
+        "public x86 support",
+    ):
+        require(
+            phrase in scope,
+            f"static-c-pthread-create-join-tls evidence scope omits {phrase}",
+        )
+    oracle_entries = artifact["oracle"]
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and entry.get("source")
+            == "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417"
+            and isinstance(entry.get("role"), str)
+            and "weak_alias(dummy_0, __membarrier_init)" in entry["role"]
+            and "src/linux/membarrier.c::__membarrier_init" in entry["role"]
+            and "not a membarrier syscall" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-pthread-create-join-tls must retain its pinned weak membarrier source oracle",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__membarrier_init pthread_create.lo W WEAK" in entry["role"]
+            and "__membarrier_init membarrier.lo T GLOBAL" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-pthread-create-join-tls must retain its pinned weak membarrier static-manifest oracle",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        "__membarrier_init" in static_exports,
+        "static-c-pthread-create-join-tls must expose the selected weak membarrier fallback",
+    )
+    # `membarrier` is separately selected by the POSIX-runtime artifact. Its
+    # aggregate export must not be attributed to this inert pthread fallback.
+    require(
+        "membarrier" in static_exports,
+        "the separately selected public membarrier artifact must remain recorded",
+    )
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "fn __membarrier_init()",
+        '#[linkage = "weak"]',
+        "does not call the fallback",
+        "public membarrier API",
+    ):
+        require(
+            phrase in implementation,
+            f"static-c-pthread-create-join-tls implementation omits {phrase}",
+        )
+    runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_pthread_create_join_tls.sh"
+    ).read_text(encoding="utf-8")
+    for phrase in (
+        "__membarrier_init",
+        "CRABC_PTHREAD_MEMBARRIER_INIT_OVERRIDE",
+        "archive pthread-create member lost musl weak __membarrier_init binding",
+        "caller override did not extract the archive pthread-create member",
+        "caller strong __membarrier_init did not override the archive weak binding",
+        "for unselected in clone __clone",
+    ):
+        require(
+            phrase in runner,
+            f"static-c-pthread-create-join-tls runner omits {phrase}",
         )
 
 
@@ -50338,6 +50649,10 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     for phrase in (
         "still-planned `libc.pthread-tls`",
         "pthread_atfork`/`fork`",
+        "private weak `__ldso_atfork` and `__aio_atfork` fallbacks",
+        "`__ldso_atfork` and `__aio_atfork` fallbacks",
+        "without routing the selected fork path through either",
+        "no AIO queue, lock, request-cancellation, or file-descriptor coordination behavior",
         "child ordinary-exit callback dispatch",
         "successful join reopens the route",
         "concurrent selected-worker lifecycle calls remain excluded",
@@ -50355,6 +50670,13 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "still-planned `libc.pthread-tls`",
         "pthread_atfork",
         "__fork_handler",
+        "private weak `__ldso_atfork` and `__aio_atfork` fallbacks",
+        "weak_alias",
+        "STB_WEAK",
+        "selected fork path deliberately does not invoke either fallback",
+        "traps on any later dispatch",
+        "AIO queue/lock, request-cancellation, file-descriptor coordination",
+        "loader lock/reset, mapping, finalization",
         "atexit`/`exit`/`__funcs_on_exit",
         "32 no-allocation hook triples",
         "reverse registration order",
@@ -50405,6 +50727,17 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
     for phrase in (
         "pthread_atfork.c::{__fork_handler,pthread_atfork}",
         "src/process/fork.c::fork",
+        "weak_alias(dummy, __ldso_atfork)",
+        "__ldso_atfork fork.lo W WEAK",
+        "weak_alias(dummy, __aio_atfork)",
+        "__aio_atfork fork.lo W WEAK",
+        "__aio_atfork aio.lo T GLOBAL",
+        "src/aio/aio.c::__aio_atfork",
+        "caller STB_GLOBAL private `__aio_atfork` definition overrides its fallback",
+        "traps on any later dispatch",
+        "bounded Rust fork path deliberately does not invoke either fallback",
+        "AIO queue/lock, request-cancellation, file-descriptor coordination",
+        "loader lock/reset, mapping, finalization",
         "32 optional SysV AMD64 no-argument callback triples",
         "raw fork=57",
         "ENOMEM without changing C errno",
@@ -50466,6 +50799,12 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "32 private hook records then ENOMEM",
         "live selected worker with EAGAIN before any callback",
         "successful fork after joining that worker",
+        "default-visible STB_WEAK `__ldso_atfork`",
+        "default-visible STB_WEAK `__ldso_atfork` and `__aio_atfork`",
+        "caller STB_GLOBAL private `__aio_atfork` override wins after `fork` extracts the member",
+        "traps on any later dispatch",
+        "no dispatch through either fallback",
+        "no AIO queue/lock, request-cancellation, or file-descriptor coordination behavior",
         "pthread_atfork, fork, __fork_handler",
         "raw fork=57",
         "direct errno TPOFF",
@@ -50501,6 +50840,30 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         and "src/process/fork.c" in role,
         "static-c-pthread-atfork-fork musl source mapping omits atfork/fork provenance",
     )
+    require(
+        isinstance(role, str)
+        and "weak_alias(dummy, __ldso_atfork)" in role
+        and "weak_alias(dummy, __aio_atfork)" in role
+        and "src/aio/aio.c::__aio_atfork" in role,
+        "static-c-pthread-atfork-fork musl source mapping omits the weak loader-atfork fallback",
+    )
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "aarch64-contract"
+            and entry.get("source")
+            == "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+            and isinstance(entry.get("role"), str)
+            and "__ldso_atfork fork.lo W WEAK" in entry["role"]
+            and "__aio_atfork fork.lo W WEAK" in entry["role"]
+            and "__aio_atfork aio.lo T GLOBAL" in entry["role"]
+            and "private static archive-binding evidence only" in entry["role"]
+            and "not loader hook execution" in entry["role"]
+            and "not AIO behavior" in entry["role"]
+            for entry in oracle_entries
+        ),
+        "static-c-pthread-atfork-fork must retain its pinned weak loader-atfork static-manifest oracle",
+    )
 
     static_exports = set(
         static_c_abi_export_names(
@@ -50508,10 +50871,25 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         )
     )
     require(
-        {"pthread_atfork", "fork", "__fork_handler"} <= static_exports,
+        {"pthread_atfork", "fork", "__fork_handler", "__ldso_atfork", "__aio_atfork"}
+        <= static_exports,
         "static-c-pthread-atfork-fork must expose its selected atfork/fork surface",
     )
-    for unselected in ("_Fork", "vfork", "clone", "execve", "posix_spawn"):
+    for unselected in (
+        "_Fork",
+        "vfork",
+        "clone",
+        "execve",
+        "posix_spawn",
+        "aio_read",
+        "aio_write",
+        "aio_fsync",
+        "aio_error",
+        "aio_return",
+        "aio_cancel",
+        "lio_listio",
+        "aio_suspend",
+    ):
         require(
             unselected not in static_exports,
             f"static-c-pthread-atfork-fork must not expose unselected {unselected}",
@@ -50523,6 +50901,25 @@ def require_static_pthread_atfork_artifact(family: Mapping[str, Any]) -> None:
         "run_libc_pthread_atfork.sh" in dispatcher_source,
         "static-c-pthread-atfork-fork dispatcher binding is missing",
     )
+    runner_source = (ROOT / "compat" / "x86_64" / "run_libc_pthread_atfork.sh").read_text(
+        encoding="utf-8"
+    )
+    for phrase in (
+        "__ldso_atfork",
+        "__aio_atfork",
+        "CRABC_ATFORK_LOADER_HOOK_OVERRIDE",
+        "CRABC_ATFORK_AIO_HOOK_OVERRIDE",
+        "archive lost musl weak __ldso_atfork binding",
+        "archive lost musl weak __aio_atfork binding",
+        "caller override did not extract the archive fork member",
+        "caller strong __ldso_atfork did not override the archive weak binding",
+        "AIO-atfork caller override did not extract the archive fork member",
+        "caller strong __aio_atfork did not override the archive weak binding",
+    ):
+        require(
+            phrase in runner_source,
+            f"static-c-pthread-atfork-fork runner omits {phrase}",
+        )
 
 
 def require_static_pthread_affinity_artifact(
@@ -51944,6 +52341,7 @@ def validate_ledger(
     require_static_initial_tls_v1_artifact(by_id["libc.pthread-tls"])
     require_static_crt_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
     require_static_crt1_initial_tls_handoff_artifact(by_id["libc.pthread-tls"])
+    require_static_pthread_create_membarrier_binding_artifact(by_id["libc.pthread-tls"])
     require_owned_static_sysroot_artifacts(
         by_id["sysroot.static-tls"], by_id["sysroot.owned-artifact"]
     )
