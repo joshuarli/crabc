@@ -41,6 +41,12 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwaitinfo),
     int (*)(const sigset_t *, siginfo_t *)), "POSIX sigwaitinfo declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwait),
     int (*)(const sigset_t *, int *)), "POSIX sigwait declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigaddset),
+    int (*)(sigset_t *, int)), "POSIX sigaddset declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigdelset),
+    int (*)(sigset_t *, int)), "POSIX sigdelset declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigfillset),
+    int (*)(sigset_t *)), "POSIX sigfillset declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigpending),
     int (*)(sigset_t *)), "POSIX sigpending declaration");
 

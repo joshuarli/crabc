@@ -2189,6 +2189,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/signal_foundation.rs",
   "libc/src/c_abi/x86_64/signal_control.rs",
   "libc/src/c_abi/x86_64/signal_pending.rs",
+  "libc/src/c_abi/x86_64/signal_set_mutation.rs",
   "libc/src/c_abi/x86_64/signal_execution.rs",
   "libc/src/c_abi/x86_64/signal_altstack.rs",
   "libc/src/c_abi/x86_64/system_observation.rs",
@@ -2334,6 +2335,7 @@ source_owners = [
   "libc/src/c_abi/x86_64/signal_foundation.rs",
   "libc/src/c_abi/x86_64/signal_control.rs",
   "libc/src/c_abi/x86_64/signal_pending.rs",
+  "libc/src/c_abi/x86_64/signal_set_mutation.rs",
   "include/errno.h",
   "include/signal.h",
   "include/bits/alltypes.h",
@@ -3751,6 +3753,52 @@ native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc
 oracle = [
   { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, POSIX declaration, and behavior oracle for src/signal/sigpending.c: it forwards the output pointer and `_NSIG/8` directly to SYS_rt_sigpending." },
   { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "rt_sigpending=127 pointer/one-word-size ABI, pending-bit and EFAULT behavior, plus fixture-only rt_sigprocmask=14/tgkill=234 setup." },
+  { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 sigset_t pointer/int result calling ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
+]
+
+[[family.verified_artifact]]
+id = "static-c-sigset-mutation"
+description = "Private native x86 selected-static-archive three-symbol POSIX signal-set mutation artifact inside planned `libc.posix-runtime`. One dependency-free `crabc-libc` archive exposes exactly `sigaddset`, `sigdelset`, and `sigfillset`; its freestanding project-header C fixture first runs through pinned musl 1.2.6 and then through a true `-nostdlib -static` candidate. Musl's x86 `_NSIG=65` and eight-byte unsigned-long layout make `SST_SIZE=1`: `sigfillset` writes only `0xfffffffc7fffffff`, while `sigaddset`/`sigdelset` modify only the first public word and leave all fifteen public tail words caller-resident. Add/delete return `-1` plus `EINVAL` before dereferencing for 0, musl-reserved 32 through 34, or 65; success returns zero with stale errno. The shared C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix retain exact pointer signatures and unmangled C linkage. This pure mutation leaf is disjoint from handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT, dynamic TLS lifecycle, loader, sysroot, signal-family completion, promotion, and public x86 support."
+source_owners = [
+  "compat/upstreams.toml",
+  "libc/Cargo.toml",
+  "libc/src/lib.rs",
+  "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/signal_set_mutation.rs",
+  "libc/src/c_abi/x86_64/errno.rs",
+  "libc/src/c_abi/x86_64/static_tls.rs",
+  "include/errno.h",
+  "include/signal.h",
+  "include/bits/alltypes.h",
+  "compat/x86_64/signal_header_abi_probe.c",
+  "compat/x86_64/signal_header_posix_abi_probe.c",
+  "compat/x86_64/run_signal_header_abi.sh",
+  "compat/x86_64/signal_set_mutation_header_abi_probe.cpp",
+  "compat/x86_64/static_c_abi_exports.txt",
+  "compat/x86_64/libc_sigaddset_sigdelset_sigfillset_probe.c",
+  "compat/x86_64/libc_sigaddset_sigdelset_sigfillset_start.S",
+  "compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh",
+  "compat/x86_64/aarch64_parity_inventory.py",
+  "compat/x86_64/aarch64_parity_inventory.json",
+  "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+  "compat/x86_64/tests/test_parity_ledger.py",
+  "compat/x86_64/tests/test_runner.py",
+  "compat/x86_64/validate_parity_ledger.py",
+  "compat/x86_64/README.md",
+  "STATUS.md",
+  "x86-64.md",
+  "scripts/dev-x86_64.sh",
+  "scripts/check_structure.py",
+]
+x86_abi_prerequisites = [
+  "Linux/x86-64 public sigset_t is 128-byte align-8 storage with sixteen unsigned-long words. Pinned musl x86 `_NSIG=65` and eight-byte unsigned long make `SST_SIZE=1`, so all three selected helpers read or write only the first public word and neither read nor write the fifteen tail words.",
+  "Pinned musl 1.2.6 `src/signal/sigaddset.c` and `src/signal/sigdelset.c` compute `unsigned s = sig-1`, reject `s >= _NSIG-1 || sig-32U < 3` before pointer access, then set or clear `set->__bits[s/8/sizeof *set->__bits]` at `s & (8*sizeof *set->__bits-1)`. `src/signal/sigfillset.c` takes its x86 unsigned-long branch and stores `0xfffffffc7fffffff` in `set->__bits[0]`; `_NSIG > 65` is false.",
+  "The common pinned-musl/candidate body proves sigfillset's first-word fill plus two tail sentinels, low and realtime add/delete, zero return with stale ERANGE, invalid 0/reserved-32/out-of-range-65 EINVAL, and invalid-before-dereference null calls. Its start delegates only the archive Static Initial TLS v1 bootstrap required to observe errno; it does not claim CRT or general TLS lifecycle.",
+]
+x86_header_prerequisites = ["The project-first/pinned-musl GNU/POSIX C signal-header gate proves the exact sigaddset(sigset_t *, int), sigdelset(sigset_t *, int), and sigfillset(sigset_t *) signatures in both profiles. A paired C++17 POSIX/GNU feature matrix checks those same declarations, project-header provenance, required visibility, and retained unmangled C references. The static fixture preprocesses project errno.h, signal.h, and bits/alltypes.h. This is a bounded POSIX declaration plus static linkage proof, not installed-header, signal/runtime family, or public-support completion."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset", scope = "Pinned-musl 1.2.6 project-header C reference plus a C++ POSIX/GNU feature matrix and a true dependency-free x86 crabc-libc archive with a `-nostdlib -static` candidate. The gate checks project-header provenance and exact crate-owned C-object export closure separately from compiler-builtins; rejects interpreter/DT_NEEDED/unresolved symbols/dynamic TLS/unowned runtime, handlers/actions, signal masks, process signaling, waits, queues, descriptors, timers, pthreads, allocator, auxv, and sysconf paths; proves direct initial-TLS errno plus sigaddset/sigdelset/sigfillset disassemblies with no call or syscall; and executes one-word fill, valid low/realtime add/delete, tail sentinels, stale-errno, and invalid 0/reserved-32/out-of-range-65 EINVAL-before-dereference observations. It adds no general signal framework, dynamic libc, CRT, loader, sysroot, signal-family completion, promotion, or public x86 support." }]
+oracle = [
+  { kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source, POSIX declarations, and behavior oracle for src/signal/sigaddset.c, src/signal/sigdelset.c, and src/signal/sigfillset.c: x86 SST_SIZE=1, reserved 32--34 validation, one-word mutation, x86 fill word, and zero/EINVAL returns." },
   { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 sigset_t pointer/int result calling ABI, C++ unmangled C linkage, and static initial-exec TLS fixture contract." },
 ]
 

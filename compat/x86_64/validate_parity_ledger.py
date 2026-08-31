@@ -17146,6 +17146,195 @@ def require_sigpending_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_sigset_mutation_artifact(family: Mapping[str, Any]) -> None:
+    """Keep pure POSIX signal-set mutation below signal-runtime promotion."""
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.posix-runtime].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "static-c-sigset-mutation"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.posix-runtime must contain exactly one static-c-sigset-mutation artifact",
+    )
+    require(
+        family.get("status") == "planned",
+        "static-c-sigset-mutation must not promote libc.posix-runtime",
+    )
+    artifact = matching[0]
+    description = artifact["description"]
+    assert isinstance(description, str)
+    for phrase in (
+        "three-symbol POSIX signal-set mutation artifact",
+        "planned `libc.posix-runtime`",
+        "exactly `sigaddset`, `sigdelset`, and `sigfillset`",
+        "`SST_SIZE=1`",
+        "`0xfffffffc7fffffff`",
+        "fifteen public tail words",
+        "`-1` plus `EINVAL` before dereferencing",
+        "stale errno",
+        "C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix",
+        "handlers/actions",
+        "signal masks",
+        "process signaling",
+        "waits, queues, descriptors, timers",
+        "pthread policy",
+        "signal-family completion, promotion, and public x86 support",
+    ):
+        require(
+            phrase in description,
+            f"static-c-sigset-mutation description omits {phrase}",
+        )
+    owners = set(
+        nonempty_strings(
+            artifact["source_owners"], "static-c-sigset-mutation.source_owners"
+        )
+    )
+    for owner in (
+        "compat/upstreams.toml",
+        "libc/Cargo.toml",
+        "libc/src/lib.rs",
+        "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/signal_set_mutation.rs",
+        "libc/src/c_abi/x86_64/errno.rs",
+        "libc/src/c_abi/x86_64/static_tls.rs",
+        "include/errno.h",
+        "include/signal.h",
+        "include/bits/alltypes.h",
+        "compat/x86_64/signal_header_abi_probe.c",
+        "compat/x86_64/signal_header_posix_abi_probe.c",
+        "compat/x86_64/run_signal_header_abi.sh",
+        "compat/x86_64/signal_set_mutation_header_abi_probe.cpp",
+        "compat/x86_64/static_c_abi_exports.txt",
+        "compat/x86_64/libc_sigaddset_sigdelset_sigfillset_probe.c",
+        "compat/x86_64/libc_sigaddset_sigdelset_sigfillset_start.S",
+        "compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh",
+        "compat/x86_64/aarch64_parity_inventory.py",
+        "compat/x86_64/aarch64_parity_inventory.json",
+        "compat/x86_64/tests/test_aarch64_parity_inventory.py",
+        "compat/x86_64/tests/test_parity_ledger.py",
+        "compat/x86_64/tests/test_runner.py",
+        "compat/x86_64/validate_parity_ledger.py",
+        "compat/x86_64/README.md",
+        "STATUS.md",
+        "x86-64.md",
+        "scripts/dev-x86_64.sh",
+        "scripts/check_structure.py",
+    ):
+        require(owner in owners, f"static-c-sigset-mutation source owners omit {owner}")
+    prerequisites = nonempty_strings(
+        artifact["x86_abi_prerequisites"],
+        "static-c-sigset-mutation.x86_abi_prerequisites",
+    )
+    require(
+        any(
+            "sigset_t is 128-byte align-8" in item
+            and "sixteen unsigned-long words" in item
+            and "_NSIG=65" in item
+            and "SST_SIZE=1" in item
+            and "fifteen tail words" in item
+            for item in prerequisites
+        ),
+        "static-c-sigset-mutation must retain its exact one-word x86 ABI",
+    )
+    require(
+        any(
+            "src/signal/sigaddset.c" in item
+            and "src/signal/sigdelset.c" in item
+            and "src/signal/sigfillset.c" in item
+            and "sig-32U < 3" in item
+            and "0xfffffffc7fffffff" in item
+            for item in prerequisites
+        ),
+        "static-c-sigset-mutation must retain its pinned-musl source closure",
+    )
+    require(
+        any(
+            "tail sentinels" in item
+            and "low and realtime add/delete" in item
+            and "stale ERANGE" in item
+            and "invalid 0/reserved-32/out-of-range-65 EINVAL" in item
+            and "null calls" in item
+            and "Static Initial TLS v1" in item
+            and "does not claim CRT" in item
+            for item in prerequisites
+        ),
+        "static-c-sigset-mutation must retain its isolated static differential",
+    )
+    headers = nonempty_strings(
+        artifact["x86_header_prerequisites"],
+        "static-c-sigset-mutation.x86_header_prerequisites",
+    )
+    require(
+        any(
+            "project-first/pinned-musl GNU/POSIX C signal-header gate" in item
+            and "sigaddset(sigset_t *, int)" in item
+            and "sigdelset(sigset_t *, int)" in item
+            and "sigfillset(sigset_t *)" in item
+            and "C++17 POSIX/GNU feature matrix" in item
+            and "unmangled C references" in item
+            for item in headers
+        ),
+        "static-c-sigset-mutation must retain its C/C++ feature/header matrix",
+    )
+    static_exports = set(
+        static_c_abi_export_names(
+            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+        )
+    )
+    require(
+        {"sigaddset", "sigdelset", "sigfillset"} <= static_exports,
+        "static-c-sigset-mutation must expose all three public POSIX spellings",
+    )
+    oracle = artifact["oracle"]
+    assert isinstance(oracle, list)
+    require(
+        any(
+            isinstance(entry, Mapping)
+            and entry.get("kind") == "c-posix"
+            and isinstance(entry.get("role"), str)
+            and "src/signal/sigaddset.c" in entry["role"]
+            and "src/signal/sigdelset.c" in entry["role"]
+            and "src/signal/sigfillset.c" in entry["role"]
+            and "SST_SIZE=1" in entry["role"]
+            for entry in oracle
+        ),
+        "static-c-sigset-mutation must retain its pinned-musl mutation oracle",
+    )
+    evidence = artifact["native_evidence"]
+    assert isinstance(evidence, list)
+    require(
+        {entry["command"] for entry in evidence}
+        == {"./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset"},
+        "static-c-sigset-mutation must use the closed mutation command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and all(
+            phrase in scope
+            for phrase in (
+                "Pinned-musl 1.2.6",
+                "C++ POSIX/GNU feature matrix",
+                "`-nostdlib -static` candidate",
+                "handlers/actions",
+                "signal masks",
+                "process signaling",
+                "waits, queues, descriptors, timers",
+                "no call or syscall",
+                "tail sentinels",
+                "stale-errno",
+                "invalid 0/reserved-32/out-of-range-65 EINVAL-before-dereference",
+                "signal-family completion, promotion, or public x86 support",
+            )
+        ),
+        "static-c-sigset-mutation evidence must retain its exact pure-mutation regression",
+    )
+
+
 def require_signal_execution_artifact(family: Mapping[str, Any]) -> None:
     """Keep the coherent C process-signal artifact bounded and evidence-led."""
     artifacts = require_verified_artifacts(
@@ -35558,6 +35747,7 @@ def validate_ledger(
     require_sigisemptyset_artifact(by_id["libc.posix-runtime"])
     require_sigandset_sigorset_artifact(by_id["libc.posix-runtime"])
     require_sigpending_artifact(by_id["libc.posix-runtime"])
+    require_sigset_mutation_artifact(by_id["libc.posix-runtime"])
     require_clock_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_nanosleep_artifact(by_id["libc.posix-runtime"])
     require_descriptor_entry_artifact(by_id["libc.posix-runtime"])

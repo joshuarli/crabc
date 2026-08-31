@@ -4,7 +4,7 @@
 //! revision `9fa28ece75d8a2191de7c5bb53bed224c5947417` under musl's MIT
 //! license. Its source mapping is `src/signal/sigaction.c` (validation,
 //! action conversion, and partial old-action writes), `signal.c`,
-//! `sig{empty,fill,add,del}set.c`, `sigismember.c`, and `sigrtmax.c`;
+//! `sigemptyset.c`, `sigismember.c`, and `sigrtmax.c`;
 //! `sigprocmask.c` supplies its public errno convention while
 //! `src/thread/pthread_sigmask.c` supplies the one-word syscall and returned
 //! reserved-bit filtering. It reuses the x86 `SA_RESTORER`/`rt_sigreturn`
@@ -171,57 +171,6 @@ pub unsafe extern "C" fn sigemptyset(set: *mut c_void) -> c_int {
     // Musl exposes only the kernel-visible word through these helper APIs.
     // SAFETY: the C caller owns the writable public-set storage.
     unsafe { core::ptr::write_unaligned(set.cast::<u64>(), 0) };
-    0
-}
-
-/// Fill the first kernel-visible word with all application-visible signals.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for one x86 public `sigset_t`.
-#[no_mangle]
-pub unsafe extern "C" fn sigfillset(set: *mut c_void) -> c_int {
-    // Matches musl's x86 word: signals 32, 33, and 34 stay reserved.
-    // SAFETY: the C caller owns the writable public-set storage.
-    unsafe { core::ptr::write_unaligned(set.cast::<u64>(), 0xffff_fffc_7fff_ffff) };
-    0
-}
-
-/// Add one application-visible signal to a public x86 signal set.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for one x86 public `sigset_t`.
-#[no_mangle]
-pub unsafe extern "C" fn sigaddset(set: *mut c_void, signal: c_int) -> c_int {
-    if !is_application_signal(signal) {
-        return invalid_argument();
-    }
-    // SAFETY: the validated shift fits one kernel word, and the caller owns
-    // writable public-set storage.
-    unsafe {
-        let word = core::ptr::read_unaligned(set.cast::<u64>());
-        core::ptr::write_unaligned(set.cast::<u64>(), word | (1_u64 << (signal - 1)));
-    }
-    0
-}
-
-/// Remove one application-visible signal from a public x86 signal set.
-///
-/// # Safety
-///
-/// `set` must point to writable storage for one x86 public `sigset_t`.
-#[no_mangle]
-pub unsafe extern "C" fn sigdelset(set: *mut c_void, signal: c_int) -> c_int {
-    if !is_application_signal(signal) {
-        return invalid_argument();
-    }
-    // SAFETY: the validated shift fits one kernel word, and the caller owns
-    // writable public-set storage.
-    unsafe {
-        let word = core::ptr::read_unaligned(set.cast::<u64>());
-        core::ptr::write_unaligned(set.cast::<u64>(), word & !(1_u64 << (signal - 1)));
-    }
     0
 }
 

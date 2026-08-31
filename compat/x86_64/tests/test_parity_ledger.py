@@ -50,7 +50,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 41)
-        self.assertEqual(report["verified_artifact_count"], 178)
+        self.assertEqual(report["verified_artifact_count"], 179)
         self.assertEqual(report["header_layout_probe_count"], 46)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -6292,6 +6292,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "libc/src/c_abi/x86_64/signal_foundation.rs",
             "libc/src/c_abi/x86_64/signal_control.rs",
             "libc/src/c_abi/x86_64/signal_pending.rs",
+            "libc/src/c_abi/x86_64/signal_set_mutation.rs",
             "compat/x86_64/static_c_abi_exports.txt",
             "compat/x86_64/libc_signal_control_probe.c",
             "compat/x86_64/libc_signal_control_start.S",
@@ -14256,6 +14257,104 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(evidence, list) and isinstance(evidence[0], dict)
         evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-sigpending command"):
+            ledger.validate_ledger(data)
+
+    def test_sigset_mutation_artifact_keeps_its_closed_static_contract(self) -> None:
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigset-mutation"
+        )
+        self.assertNotIn("capabilities", artifact)
+        for owner in (
+            "libc/src/c_abi/x86_64/signal_set_mutation.rs",
+            "compat/x86_64/signal_header_abi_probe.c",
+            "compat/x86_64/signal_header_posix_abi_probe.c",
+            "compat/x86_64/run_signal_header_abi.sh",
+            "compat/x86_64/signal_set_mutation_header_abi_probe.cpp",
+            "compat/x86_64/libc_sigaddset_sigdelset_sigfillset_probe.c",
+            "compat/x86_64/libc_sigaddset_sigdelset_sigfillset_start.S",
+            "compat/x86_64/run_libc_sigaddset_sigdelset_sigfillset.sh",
+        ):
+            self.assertIn(owner, artifact["source_owners"])
+        self.assertEqual(
+            {evidence["command"] for evidence in artifact["native_evidence"]},
+            {"./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset"},
+        )
+        for phrase in (
+            "three-symbol POSIX signal-set mutation artifact",
+            "planned `libc.posix-runtime`",
+            "exactly `sigaddset`, `sigdelset`, and `sigfillset`",
+            "`SST_SIZE=1`",
+            "`0xfffffffc7fffffff`",
+            "fifteen public tail words",
+            "`-1` plus `EINVAL` before dereferencing",
+            "C GNU/POSIX gate and paired C++17 POSIX/GNU feature matrix",
+            "handlers/actions",
+            "signal masks",
+            "process signaling",
+            "waits, queues, descriptors, timers",
+            "signal-family completion, promotion, and public x86 support",
+        ):
+            self.assertIn(phrase, artifact["description"])
+        prerequisites = artifact["x86_abi_prerequisites"]
+        self.assertTrue(
+            any(
+                "sigset_t is 128-byte align-8" in prerequisite
+                and "SST_SIZE=1" in prerequisite
+                and "fifteen tail words" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "src/signal/sigaddset.c" in prerequisite
+                and "src/signal/sigdelset.c" in prerequisite
+                and "src/signal/sigfillset.c" in prerequisite
+                and "sig-32U < 3" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+        self.assertTrue(
+            any(
+                "tail sentinels" in prerequisite
+                and "invalid 0/reserved-32/out-of-range-65 EINVAL" in prerequisite
+                and "null calls" in prerequisite
+                for prerequisite in prerequisites
+            )
+        )
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigset-mutation"
+        )
+        artifact["description"] = "private mutation helper"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "static-c-sigset-mutation description omits"
+        ):
+            ledger.validate_ledger(data)
+
+        data = self.data()
+        artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]
+        assert isinstance(artifacts, list)
+        artifact = next(
+            entry
+            for entry in artifacts
+            if isinstance(entry, dict) and entry["id"] == "static-c-sigset-mutation"
+        )
+        evidence = artifact["native_evidence"]
+        assert isinstance(evidence, list) and isinstance(evidence[0], dict)
+        evidence[0]["command"] = "./scripts/dev-x86_64.sh signal-reference"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "closed mutation command"
+        ):
             ledger.validate_ledger(data)
 
     def test_signal_execution_artifact_keeps_its_closed_static_contract(self) -> None:

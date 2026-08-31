@@ -95,6 +95,12 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigwait),
     int (*)(const sigset_t *, int *)), "GNU sigwait declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigpause),
     int (*)(int)), "GNU sigpause declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigaddset),
+    int (*)(sigset_t *, int)), "GNU/POSIX sigaddset declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigdelset),
+    int (*)(sigset_t *, int)), "GNU/POSIX sigdelset declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&sigfillset),
+    int (*)(sigset_t *)), "GNU/POSIX sigfillset declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigisemptyset),
     int (*)(const sigset_t *)), "GNU sigisemptyset declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigorset),

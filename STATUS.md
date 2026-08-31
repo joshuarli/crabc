@@ -1495,6 +1495,19 @@ It does not select handlers/actions, signal masks, process signaling, waits,
 queues, descriptors, timers, pthread policy, libc.so, CRT, loader, sysroot,
 family/platform parity, promotion, or public x86 support.
 
+`./scripts/dev-x86_64.sh libc-sigaddset-sigdelset-sigfillset` is a separate
+private `static-c-sigset-mutation` artifact inside planned
+`libc.posix-runtime`. Its three-symbol pinned-musl/freestanding-static C proof
+follows `sigaddset`, `sigdelset`, and `sigfillset`: x86 `_NSIG=65` makes the
+selected set extent one unsigned-long word, so fill writes
+`0xfffffffc7fffffff`, valid add/delete touch only that first word, and all
+fifteen tail words remain caller-resident. It proves stale `errno` on success
+and `-1`/`EINVAL` before dereferencing for 0, musl-reserved 32--34, and 65;
+the C GNU/POSIX gate plus C++ POSIX/GNU feature matrix retain the exact
+unmangled declarations. It does not select handlers/actions, masks, process
+signaling, waits, queues, descriptors, timers, pthread policy, libc.so, CRT,
+loader, sysroot, family/platform parity, promotion, or public x86 support.
+
 `./scripts/dev-x86_64.sh libc-ioctl` is a private
 `static-c-generic-ioctl` artifact inside planned `libc.posix-runtime`. It
 proves the direct signed `int ioctl(int, int, ...)` C boundary through pinned

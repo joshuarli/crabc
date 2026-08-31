@@ -220,6 +220,7 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
     Path("libc/src/c_abi/x86_64/signal_control.rs"),
     Path("libc/src/c_abi/x86_64/signal_pending.rs"),
+    Path("libc/src/c_abi/x86_64/signal_set_mutation.rs"),
     Path("libc/src/c_abi/x86_64/signal_execution.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_isempty.rs"),
     Path("libc/src/c_abi/x86_64/signal_set_binary.rs"),
@@ -3727,6 +3728,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         '#[path = "signal_foundation.rs"]',
         '#[path = "signal_control.rs"]',
         '#[path = "signal_pending.rs"]',
+        '#[path = "signal_set_mutation.rs"]',
         '#[path = "signal_execution.rs"]',
         '#[path = "signal_set_isempty.rs"]',
         '#[path = "signal_set_binary.rs"]',
@@ -4526,9 +4528,6 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         "sigaction",
         "signal",
         "sigemptyset",
-        "sigfillset",
-        "sigaddset",
-        "sigdelset",
         "sigismember",
         "sigprocmask",
         "__libc_current_sigrtmax",
@@ -4581,6 +4580,55 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             errors.append(
                 "libc/src/c_abi/x86_64/signal_pending.rs: selected static "
                 f"sigpending boundary must not select {forbidden!r}"
+            )
+
+    signal_set_mutation_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_set_mutation.rs"
+    )
+    signal_set_mutation_text = signal_set_mutation_source.read_text(errors="replace")
+    for required in (
+        "Selected static Linux/x86-64 POSIX signal-set mutation C boundary",
+        "src/signal/sigaddset.c",
+        "src/signal/sigdelset.c",
+        "src/signal/sigfillset.c",
+        "SST_SIZE",
+        "SIGFILLSET_FIRST_WORD",
+        "errno::set_errno",
+        "core::ptr::read_unaligned",
+        "core::ptr::write_unaligned",
+    ):
+        if required not in signal_set_mutation_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_set_mutation.rs: selected static "
+                f"signal-set mutation boundary is missing {required!r}"
+            )
+    signal_set_mutation_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            signal_set_mutation_text,
+        )
+    )
+    if signal_set_mutation_exports != {"sigaddset", "sigdelset", "sigfillset"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/signal_set_mutation.rs: selected static artifact "
+            "must export only sigaddset, sigdelset, and sigfillset"
+        )
+    for forbidden in (
+        "raw_syscall",
+        "sigaction(",
+        "sigprocmask(",
+        "sigpending(",
+        "sigsuspend(",
+        "sigwait",
+        "signalfd",
+        "timerfd",
+        "pthread_",
+        "signal_control",
+    ):
+        if forbidden in signal_set_mutation_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/signal_set_mutation.rs: selected static "
+                f"signal-set mutation boundary must not select {forbidden!r}"
             )
 
     pthread_identity_source = (
@@ -9533,6 +9581,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         fenv_text,
         signal_control_text,
         signal_pending_text,
+        signal_set_mutation_text,
         signal_execution_text,
         signal_set_isempty_text,
         signal_set_binary_text,
@@ -10083,7 +10132,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         errors.append(
             "libc/src/c_abi/x86_64: selected static archive must export only its "
             "stat, credential, errno, bootstrap-memory/fenv/continuation, simple "
-            "signal-control, one pure GNU signal-set predicate and paired GNU binary set-operation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
+            "signal-control, one pure GNU signal-set predicate, paired GNU binary set-operation leaf, and a three-symbol POSIX signal-set mutation leaf, bounded process-signal execution, and one legacy single-signal pause wait, bounded pthread create/exit/join/detach initial-TLS worker, its private selected-main/worker pthread-key/C11-TSS lifecycle, private process-normal pthread mutexes and their musl private condition-variable handoff, the complete selected rwlock/attribute family with private-or-shared futex operation, plus the distinct C11 plain-sync adapter and normal-return pthread/C11 once state machine, its typed C11 create/exit/join/detach sibling, and pthread/C11 identity aliases, named termios-control, direct terminal-descriptor and foreground-group observations plus one named foreground-group assignment, historical ctermid pathname spelling, constant historical gethostid compatibility, selected process-context, child-reaping, C11 immediate termination, callback algorithms, direct clock_gettime, caller-buffered fixed-UTC gmtime_r, fixed-UTC timegm, caller-owned mapping-core, no-cancellation mapping synchronization, direct anonymous-memory descriptor creation, nanosleep, and clock_nanosleep, selected "
             "POSIX _exit forwarding, descriptor-entry, selected filesystem-access, bounded descriptor-control, timestamp updates, and descriptor-I/O, selected process-resources, selected readiness/signal-waits, "
             "selected socket transport and selected socket-message/options, selected system-observation, selected UTS-identity, "
             "selected numeric-address codecs and legacy classful IPv4 arithmetic, fixed-profile h_errno message text, byte-string, legacy-memory adapters, source-backed memccpy, random-entropy, memory-search, C-string-copy, immutable error-string, "
@@ -10114,6 +10163,7 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
         ("signal_foundation.rs", signal_foundation_text),
         ("signal_control.rs", signal_control_text),
         ("signal_pending.rs", signal_pending_text),
+        ("signal_set_mutation.rs", signal_set_mutation_text),
         ("signal_execution.rs", signal_execution_text),
         ("signal_set_isempty.rs", signal_set_isempty_text),
         ("signal_set_binary.rs", signal_set_binary_text),
