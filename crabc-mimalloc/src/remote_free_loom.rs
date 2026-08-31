@@ -34,6 +34,10 @@
 //! client-count ledger or owner registry: the two address-free source blocks,
 //! one page-local publication word, and the source head are sufficient to
 //! establish the owner-exit and terminal-claim ordering.
+//! The late-second-claim witness additionally reaches the source
+//! `RemotePublished` unown result after an earlier collection. That red state
+//! is the existing low-bit invariant that blocks PageMap release until one
+//! more ordinary source collection consumes the late accepted claim.
 //!
 //! These are intentionally page-geometry-free models. They neither select a
 //! bin nor an arena/OS route, and they do not pretend that `PageMap`'s plain
@@ -51,7 +55,8 @@ use super::{
     begin_live_remote_page_owner_collection_with,
     begin_live_remote_page_publication_with,
     begin_live_remote_page_retirement_with, claim_abandoned_owner_with,
-    detach_from_head, finish_live_remote_page_publication_with, live_remote_page_word,
+    detach_from_head, finish_live_remote_page_owner_collection_with,
+    finish_live_remote_page_publication_with, live_remote_page_word,
     publish_to_head, publish_to_head_with_owner, reinitialize_live_remote_page_with,
     retain_live_remote_page_terminal_with,
     thread_free_block_address,
@@ -2059,6 +2064,154 @@ fn loom_two_remote_publishers_owner_exit_and_terminal_consumer_claim_need_no_led
             "the source low bit leaves exactly one terminal claimant without a client ledger or owner registry"
         );
         model.assert_terminal_release_once(&head);
+    });
+}
+
+#[test]
+fn loom_late_second_source_claim_forces_recollection_before_owner_exit_and_one_pagemap_release() {
+    loom::model(|| {
+        // This is the generic Phase C protocol, not a page-shape witness:
+        // two address-free remote claims, source head collection, owner exit
+        // and unown, then one terminal PageMap release. `ModelBlocks` gives
+        // the two source block identities; no `used` count, queue, arena, or
+        // allocation/client ledger is modeled here.
+        let generation = 1;
+        let lifetime = Arc::new(AtomicUsize::new(live_remote_page_word(
+            generation, true, 0,
+        )));
+        let head = Arc::new(AtomicUsize::new(OWNER_EMPTY_HEAD));
+        let blocks = Arc::new(ModelBlocks::new());
+        let owner_exit = Arc::new(MultiProducerOwnerExitTerminalModel::new());
+
+        // The first source producer completes before the owner starts its
+        // ordinary collection. It executes the production generation pin and
+        // `mi_free_block_mt` head CAS rather than a model-specific queue.
+        let first_lifetime = Arc::clone(&lifetime);
+        let first_head = Arc::clone(&head);
+        let first_blocks = Arc::clone(&blocks);
+        let first = thread::spawn(move || {
+            begin_live_remote_page_publication_with(&*first_lifetime, generation)
+                .expect("the active source generation admits the first remote claim");
+            first_blocks.publish(&first_head, 0);
+            finish_live_remote_page_publication_with(&*first_lifetime, generation);
+        });
+        first.join().expect("first remote producer completes");
+
+        begin_live_remote_page_owner_collection_with(&*lifetime, generation)
+            .expect("the live source owner begins its first collection");
+        let first_collected = blocks.collect_once(&head);
+        finish_live_remote_page_owner_collection_with(&*lifetime, generation);
+        assert_eq!(first_collected, 1);
+        blocks.assert_collected(0);
+
+        // The second producer begins at the exact source unown interleaving:
+        // `mi_abandoned_page_unown` has observed an owned empty head but has
+        // not attempted its release CAS. The expected red state is the real
+        // `RemotePublished` result below. It proves an old collection cannot
+        // skip a later accepted source claim or release PageMap state.
+        let (late_start_send, late_start_receive) = mpsc::channel();
+        let (late_done_send, late_done_receive) = mpsc::channel();
+        let late_lifetime = Arc::clone(&lifetime);
+        let late_head = Arc::clone(&head);
+        let late_blocks = Arc::clone(&blocks);
+        let late = thread::spawn(move || {
+            late_start_receive
+                .recv()
+                .expect("the owner retains the late source producer gate");
+            begin_live_remote_page_publication_with(&*late_lifetime, generation)
+                .expect("the open source generation admits the late remote claim");
+            late_blocks.publish(&late_head, 1);
+            finish_live_remote_page_publication_with(&*late_lifetime, generation);
+            late_done_send
+                .send(())
+                .expect("the owner waits for the accepted late source claim");
+        });
+
+        let mut publish_before_unown_cas = Some(|| {
+            late_start_send
+                .send(())
+                .expect("the late producer retains its source gate");
+            late_done_receive
+                .recv()
+                .expect("the late producer completes its source publication");
+        });
+        match try_unown_abandoned_head_with(&*head, &mut publish_before_unown_cas) {
+            AbandonedOwnerHeadTransition::RemotePublished(observed) => {
+                assert_eq!(
+                    observed,
+                    ModelBlocks::address(1) | THREAD_FREE_OWNED,
+                    "the existing source red invariant retains the late claim and owner bit"
+                );
+            }
+            AbandonedOwnerHeadTransition::Released => {
+                panic!("the source unown CAS must not release a page with a late remote claim")
+            }
+            AbandonedOwnerHeadTransition::NotOwned => {
+                panic!("the owner keeps the source low bit through the late publication race")
+            }
+        }
+        late.join().expect("late remote producer completes");
+
+        // The smallest source correction after that red observation is one
+        // more ordinary owner collection. The exact detach CAS consumes the
+        // late source claim; no page geometry or special exit route decides
+        // this transition.
+        begin_live_remote_page_owner_collection_with(&*lifetime, generation)
+            .expect("the owner re-enters collection for the late source claim");
+        let late_collected = blocks.collect_once(&head);
+        finish_live_remote_page_owner_collection_with(&*lifetime, generation);
+        assert_eq!(late_collected, 1);
+        blocks.assert_all_collected();
+        assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+
+        // The production lifetime close rejects future source claims before
+        // exit can unown the empty head. It must follow, rather than replace,
+        // collection of every accepted source claim.
+        assert_eq!(
+            begin_live_remote_page_retirement_with(&*lifetime, generation),
+            Ok(())
+        );
+        assert!(
+            owner_exit.begin_owner_exit(),
+            "the PageMap release model starts only after every source claim is collected"
+        );
+        owner_exit.abandon_after_remote_collection(&head);
+
+        // Two possible terminal consumers race only on the source low bit.
+        // One winner releases the PageMap after the final accepted claim; the
+        // loser performs no PageMap or metadata access.
+        let first_owner_exit = Arc::clone(&owner_exit);
+        let first_head = Arc::clone(&head);
+        let first_terminal = thread::spawn(move || {
+            first_owner_exit.terminal_consumer_claim_and_release(&first_head)
+        });
+
+        let second_owner_exit = Arc::clone(&owner_exit);
+        let second_head = Arc::clone(&head);
+        let second_terminal = thread::spawn(move || {
+            second_owner_exit.terminal_consumer_claim_and_release(&second_head)
+        });
+
+        let first_terminal = first_terminal
+            .join()
+            .expect("first terminal consumer completes");
+        let second_terminal = second_terminal
+            .join()
+            .expect("second terminal consumer completes");
+        assert!(
+            matches!(
+                (first_terminal, second_terminal),
+                (
+                    TerminalConsumerClaimOutcome::Released,
+                    TerminalConsumerClaimOutcome::AlreadyClaimed
+                ) | (
+                    TerminalConsumerClaimOutcome::AlreadyClaimed,
+                    TerminalConsumerClaimOutcome::Released
+                )
+            ),
+            "one low-bit claimant releases PageMap state after every source claim is consumed"
+        );
+        owner_exit.assert_terminal_release_once(&head);
     });
 }
 
